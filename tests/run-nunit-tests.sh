@@ -207,6 +207,7 @@ for proj in "${PROJECTS[@]}"; do
 		if dotnet "$METADATA_INSPECTOR_DLL" --unsigned-array-identities "$STDLIB_REF_DLL" \
 			"$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/ArrayIteratorCarrierTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/UnsignedArrayMemberTests.bir.json" \
 			>"$ROOT/build/nunit-$name.unsigned-array-identities.log" 2>&1; then
 			echo "  unsigned array declarations, calls and native helpers retain exact source identities"
 		else

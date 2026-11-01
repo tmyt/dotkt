@@ -30,9 +30,9 @@ if (args.Length == 6 && args[0] == "--representation-types")
     return;
 }
 
-if (args.Length == 4 && args[0] == "--unsigned-array-identities")
+if (args.Length == 5 && args[0] == "--unsigned-array-identities")
 {
-    VerifyUnsignedArrayIdentities(args[1], args[2], args[3]);
+    VerifyUnsignedArrayIdentities(args[1], args[2], args[3], args[4]);
     Console.WriteLine("unsigned array source identities, selected calls and allocated helpers: OK");
     return;
 }
@@ -428,13 +428,15 @@ static void VerifyKlibClassSupertypes(string path, string className, IReadOnlyLi
     throw new InvalidDataException($"KLIB class '{className}' not found");
 }
 
-static void VerifyUnsignedArrayIdentities(string referencePath, string runtimePath, string birPath)
+static void VerifyUnsignedArrayIdentities(string referencePath, string runtimePath, string birPath, string queryBirPath)
 {
     const string identityAttribute = "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute";
     using var referenceStream = File.OpenRead(referencePath);
     using var referencePe = new PEReader(referenceStream);
     var reference = referencePe.GetMetadataReader();
     var sourceIds = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+    var queryMethods = new[] { "contains", "containsAll", "isEmpty" };
+    var sourceQueryIds = new Dictionary<(string Owner, string Method), string>();
     var helperDeclarationIds = new HashSet<string>(StringComparer.Ordinal);
     foreach (var owner in new[] { "kotlin.UByteArray", "kotlin.UShortArray", "kotlin.UIntArray", "kotlin.ULongArray" })
     {
@@ -445,7 +447,9 @@ static void VerifyUnsignedArrayIdentities(string referencePath, string runtimePa
         Require(!sizeGetter.IsNil, $"{owner}.size must retain its getter declaration");
         var methods = reference.GetTypeDefinition(type).GetMethods()
             .Where(handle => !reference.GetString(reference.GetMethodDefinition(handle).Name).StartsWith('.')).ToArray();
-        Require(methods.Length == 8, $"{owner} must expose all eight Kotlin member declarations");
+        Require(methods.Length == 11, $"{owner} must expose all eleven Kotlin member declarations");
+        Require(queryMethods.All(name => methods.Any(method => reference.GetString(reference.GetMethodDefinition(method).Name) == name)),
+            $"{owner} lost an unsigned-array query member declaration");
         var identities = new HashSet<string>(StringComparer.Ordinal);
         foreach (var method in methods)
         {
@@ -454,12 +458,14 @@ static void VerifyUnsignedArrayIdentities(string referencePath, string runtimePa
                 reference.GetMethodDefinition(method).GetCustomAttributes(), identityAttribute);
             var identity = payload.RootElement.GetProperty("id").GetString();
             Require(!string.IsNullOrEmpty(identity) && identities.Add(identity), $"{owner} has a missing or duplicate identity");
-            if (method == sizeGetter || reference.GetString(reference.GetMethodDefinition(method).Name) is "get" or "set" or "iterator")
+            var methodName = reference.GetString(reference.GetMethodDefinition(method).Name);
+            if (queryMethods.Contains(methodName, StringComparer.Ordinal)) sourceQueryIds.Add((owner, methodName), identity!);
+            if (method == sizeGetter || methodName is "get" or "set" or "iterator" or "contains" or "containsAll" or "isEmpty")
                 helperDeclarationIds.Add(identity!);
         }
         sourceIds.Add(owner, identities);
     }
-    Require(sourceIds.Values.SelectMany(ids => ids).Distinct(StringComparer.Ordinal).Count() == 32,
+    Require(sourceIds.Values.SelectMany(ids => ids).Distinct(StringComparer.Ordinal).Count() == 44,
         "unsigned array declaration identities conflate different source classifiers");
 
     using var runtimeStream = File.OpenRead(runtimePath);
@@ -472,8 +478,8 @@ static void VerifyUnsignedArrayIdentities(string referencePath, string runtimePa
         using var payload = DecodeCarrierDocument(runtime, runtime.GetMethodDefinition(method).GetCustomAttributes(), identityAttribute);
         if (payload.RootElement.GetProperty("id").GetString() is string identity) helperIds.Add(identity);
     }
-    Require(helperDeclarationIds.Count == 16 && helperDeclarationIds.All(identity => helperIds.Contains(identity + "|alias-helper")),
-        "native-array get/set/iterator/size helpers lost their selected source declaration correspondence");
+    Require(helperDeclarationIds.Count == 28 && helperDeclarationIds.All(identity => helperIds.Contains(identity + "|alias-helper")),
+        "native-array access/iteration/query helpers lost their selected source declaration correspondence");
 
     var bir = JsonNode.Parse(File.ReadAllText(birPath))!;
     var selectedOwners = new HashSet<string>(StringComparer.Ordinal);
@@ -487,6 +493,20 @@ static void VerifyUnsignedArrayIdentities(string referencePath, string runtimePa
         if (call["method"]?.GetValue<string>() == "iterator") selectedOwners.Add(name);
     }
     Require(selectedOwners.SetEquals(sourceIds.Keys), "fixture must exercise selected iterator calls for all four unsigned arrays");
+
+    var selectedQueries = new HashSet<(string Owner, string Method)>();
+    foreach (var call in DescendantObjects(JsonNode.Parse(File.ReadAllText(queryBirPath))!))
+    {
+        if (call["k"]?.GetValue<string>() != "callInstance"
+            || call["ownerType"]?["name"]?.GetValue<string>() is not string owner
+            || call["method"]?.GetValue<string>() is not string method
+            || !sourceQueryIds.TryGetValue((owner, method), out var expectedId)) continue;
+        Require(call["declarationId"]?.GetValue<string>() == expectedId,
+            $"{owner}.{method} call lost or changed its exact selected query declaration");
+        selectedQueries.Add((owner, method));
+    }
+    Require(selectedQueries.SetEquals(sourceQueryIds.Keys),
+        "fixture must exercise all three selected query members for all four unsigned arrays");
 }
 
 static void VerifySuspendInlineDeclarations(string dllPath, string path)
