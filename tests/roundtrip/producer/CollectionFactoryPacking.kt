@@ -2,6 +2,8 @@ package roundtrip.factorypacking
 
 import ProjectedConstructionInterop.ObliviousBox
 
+fun <T> copyForwardedArrayList(values: Array<T>): ArrayList<T> = arrayListOf(*values)
+
 private fun <T> packedGenericValue(value: T): T =
     ObliviousBox<MutableList<out T>>(mutableListOf(value)).Value[0]
 

@@ -27,11 +27,8 @@ public actual fun <T> listOf(element: T): List<T> {
  * Returns a new [ArrayList] from the given Array.
  */
 @kotlin.internal.InlineOnly
-internal actual inline fun <T> Array<out T>.asArrayList(): ArrayList<T> {
-    val list = ArrayList<T>(this.size)
-    for (element in this) list.add(element)
-    return list
-}
+internal actual inline fun <T> Array<out T>.asArrayList(): ArrayList<T> =
+    ArrayList(asCollection(isVarargs = true))
 
 @PublishedApi
 @SinceKotlin("1.3")
