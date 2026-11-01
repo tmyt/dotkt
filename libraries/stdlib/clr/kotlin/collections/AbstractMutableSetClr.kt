@@ -3,9 +3,6 @@
  * Use of this source code is governed by the Apache 2.0 license that can be found in the license/LICENSE.txt file.
  */
 
-// Step-1 CLR stub mirroring the JVM `actual` declarations of this file.
-// Bodies are `TODO` pending the `@Clr`/BCL binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
-
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 
 package kotlin.collections
@@ -16,6 +13,7 @@ package kotlin.collections
  * @param E the type of elements contained in the set. The set is invariant in its element type.
  */
 @SinceKotlin("1.1")
+// The direct CLR face is retained; bulk mutation policy is shared with AbstractMutableCollection.
 public actual abstract class AbstractMutableSet<E> protected actual constructor() : MutableSet<E> {
     override fun equals(other: Any?): Boolean = DotKt.Runtime.CompilerServices.structuralEquals(this, other, 1)
     override fun hashCode(): Int = DotKt.Runtime.CompilerServices.structuralHash(this, 1)
@@ -51,29 +49,9 @@ public actual abstract class AbstractMutableSet<E> protected actual constructor(
         return false
     }
 
-    actual override fun removeAll(elements: Collection<E>): Boolean {
-        var modified = false
-        val iterator = iterator()
-        while (iterator.hasNext()) {
-            if (iterator.next() in elements) {
-                iterator.remove()
-                modified = true
-            }
-        }
-        return modified
-    }
+    actual override fun removeAll(elements: Collection<E>): Boolean = (this as MutableIterable<E>).removeAll { it in elements }
 
-    actual override fun retainAll(elements: Collection<E>): Boolean {
-        var modified = false
-        val iterator = iterator()
-        while (iterator.hasNext()) {
-            if (iterator.next() !in elements) {
-                iterator.remove()
-                modified = true
-            }
-        }
-        return modified
-    }
+    actual override fun retainAll(elements: Collection<E>): Boolean = (this as MutableIterable<E>).retainAll { it in elements }
 
     actual override fun clear(): Unit {
         val iterator = iterator()
