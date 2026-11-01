@@ -4,7 +4,7 @@ package kotlin.collections
 
 // Kotlin/JVM's unsigned-array value classes implement Collection<U>, while DotKt gives them the same native-array
 // representation as the signed primitive arrays. Keep the upstream common generated source untouched and supply the
-// array-receiver surface from this explicitly CLR-owned common-fragment overlay instead.
+// conversions and rendering from this CLR-owned common-fragment overlay. Member query bodies live in the array classes.
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -48,22 +48,6 @@ public fun UShortArray.toList(): List<UShort> =
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public fun UIntArray.isEmpty(): Boolean = size == 0
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun ULongArray.isEmpty(): Boolean = size == 0
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UByteArray.isEmpty(): Boolean = size == 0
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UShortArray.isEmpty(): Boolean = size == 0
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
 public fun UIntArray.isNotEmpty(): Boolean = size > 0
 
 @SinceKotlin("1.3")
@@ -77,22 +61,6 @@ public fun UByteArray.isNotEmpty(): Boolean = size > 0
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
 public fun UShortArray.isNotEmpty(): Boolean = size > 0
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public operator fun UIntArray.contains(element: UInt): Boolean = indexOf(element) >= 0
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public operator fun ULongArray.contains(element: ULong): Boolean = indexOf(element) >= 0
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public operator fun UByteArray.contains(element: UByte): Boolean = indexOf(element) >= 0
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public operator fun UShortArray.contains(element: UShort): Boolean = indexOf(element) >= 0
 
 // Upstream contentToString delegates to joinToString through the JVM Collection supertype. These internal overloads
 // preserve that source body for DotKt's native unsigned arrays without adding another public Kotlin API.
