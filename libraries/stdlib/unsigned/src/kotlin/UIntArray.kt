@@ -49,6 +49,16 @@ internal constructor(@PublishedApi internal val storage: IntArray) {
         override fun hasNext() = index < array.size
         override fun next() = if (index < array.size) array[index++].toUInt() else throw NoSuchElementException(index.toString())
     }
+
+    operator fun contains(element: UInt): Boolean {
+        return storage.contains(element.toInt())
+    }
+
+    fun containsAll(elements: Collection<UInt>): Boolean {
+        return (elements as Collection<*>).all { it is UInt && storage.contains(it.toInt()) }
+    }
+
+    fun isEmpty(): Boolean = this.storage.size == 0
 }
 
 /**

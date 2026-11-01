@@ -49,6 +49,16 @@ internal constructor(@PublishedApi internal val storage: ShortArray) {
         override fun hasNext() = index < array.size
         override fun next() = if (index < array.size) array[index++].toUShort() else throw NoSuchElementException(index.toString())
     }
+
+    operator fun contains(element: UShort): Boolean {
+        return storage.contains(element.toShort())
+    }
+
+    fun containsAll(elements: Collection<UShort>): Boolean {
+        return (elements as Collection<*>).all { it is UShort && storage.contains(it.toShort()) }
+    }
+
+    fun isEmpty(): Boolean = this.storage.size == 0
 }
 
 /**

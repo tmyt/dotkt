@@ -49,6 +49,16 @@ internal constructor(@PublishedApi internal val storage: ByteArray) {
         override fun hasNext() = index < array.size
         override fun next() = if (index < array.size) array[index++].toUByte() else throw NoSuchElementException(index.toString())
     }
+
+    operator fun contains(element: UByte): Boolean {
+        return storage.contains(element.toByte())
+    }
+
+    fun containsAll(elements: Collection<UByte>): Boolean {
+        return (elements as Collection<*>).all { it is UByte && storage.contains(it.toByte()) }
+    }
+
+    fun isEmpty(): Boolean = this.storage.size == 0
 }
 
 /**

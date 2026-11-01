@@ -49,6 +49,16 @@ internal constructor(@PublishedApi internal val storage: LongArray) {
         override fun hasNext() = index < array.size
         override fun next() = if (index < array.size) array[index++].toULong() else throw NoSuchElementException(index.toString())
     }
+
+    operator fun contains(element: ULong): Boolean {
+        return storage.contains(element.toLong())
+    }
+
+    fun containsAll(elements: Collection<ULong>): Boolean {
+        return (elements as Collection<*>).all { it is ULong && storage.contains(it.toLong()) }
+    }
+
+    fun isEmpty(): Boolean = this.storage.size == 0
 }
 
 /**

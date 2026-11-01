@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Restore upstream unsigned-array contains, containsAll and isEmpty member bodies while retaining native storage and forwarding existing CLR extension entry points to those members.
 - Restore the upstream array-to-ArrayList collection-constructor helper instead of a CLR-only element-copy loop.
 - Restore the unchanged upstream AbstractMutableMap implementation, sharing AbstractMap policy and retaining mutable entry-backed key/value views; concrete CLR maps keep their existing native equality boundary.
 - Reuse upstream AbstractSet policy for read-only native Map key and entry snapshots, including rendering through generic and opaque values, while preserving snapshot membership and live entry values. Remove obsolete nullable-generic remap narrowing at the native object-valued setter boundary.

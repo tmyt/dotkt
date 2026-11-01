@@ -1,10 +1,11 @@
-@file:Suppress("NOTHING_TO_INLINE")
+@file:Suppress("NOTHING_TO_INLINE", "EXTENSION_SHADOWED_BY_MEMBER")
 
 package kotlin.collections
 
 // Kotlin/JVM's unsigned-array value classes implement Collection<U>, while DotKt gives them the same native-array
 // representation as the signed primitive arrays. Keep the upstream common generated source untouched and supply the
-// array-receiver surface from this explicitly CLR-owned common-fragment overlay instead.
+// conversions, rendering and explicitly imported extension entry points from this CLR-owned fragment.
+// Query algorithms live in the array members; extension aliases must not lose their existing source surface.
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -48,19 +49,19 @@ public fun UShortArray.toList(): List<UShort> =
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public fun UIntArray.isEmpty(): Boolean = size == 0
+public fun UIntArray.isEmpty(): Boolean = this.isEmpty()
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public fun ULongArray.isEmpty(): Boolean = size == 0
+public fun ULongArray.isEmpty(): Boolean = this.isEmpty()
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public fun UByteArray.isEmpty(): Boolean = size == 0
+public fun UByteArray.isEmpty(): Boolean = this.isEmpty()
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public fun UShortArray.isEmpty(): Boolean = size == 0
+public fun UShortArray.isEmpty(): Boolean = this.isEmpty()
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
@@ -80,19 +81,19 @@ public fun UShortArray.isNotEmpty(): Boolean = size > 0
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public operator fun UIntArray.contains(element: UInt): Boolean = indexOf(element) >= 0
+public operator fun UIntArray.contains(element: UInt): Boolean = this.contains(element)
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public operator fun ULongArray.contains(element: ULong): Boolean = indexOf(element) >= 0
+public operator fun ULongArray.contains(element: ULong): Boolean = this.contains(element)
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public operator fun UByteArray.contains(element: UByte): Boolean = indexOf(element) >= 0
+public operator fun UByteArray.contains(element: UByte): Boolean = this.contains(element)
 
 @SinceKotlin("1.3")
 @ExperimentalUnsignedTypes
-public operator fun UShortArray.contains(element: UShort): Boolean = indexOf(element) >= 0
+public operator fun UShortArray.contains(element: UShort): Boolean = this.contains(element)
 
 // Upstream contentToString delegates to joinToString through the JVM Collection supertype. These internal overloads
 // preserve that source body for DotKt's native unsigned arrays without adding another public Kotlin API.
