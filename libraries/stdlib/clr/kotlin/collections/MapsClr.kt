@@ -17,11 +17,7 @@ package kotlin.collections
  *
  * @sample samples.collections.Maps.Instantiation.mapFromPairs
  */
-public actual fun <K, V> mapOf(pair: Pair<K, V>): Map<K, V> {
-    val map = LinkedHashMap<K, V>(mapCapacity(1))
-    map.put(pair.first, pair.second)
-    return map
-}
+public actual fun <K, V> mapOf(pair: Pair<K, V>): Map<K, V> = linkedMapOf(pair)
 
 @PublishedApi
 @SinceKotlin("1.3")
@@ -46,24 +42,11 @@ internal actual inline fun <K, V> buildMapInternal(capacity: Int, builderAction:
 internal actual inline fun <K, V> Map<K, V>.toSingletonMapOrSelf(): Map<K, V> = this
 
 // creates a singleton copy of map
-internal actual fun <K, V> Map<out K, V>.toSingletonMap(): Map<K, V> {
-    val result = LinkedHashMap<K, V>()
-    result.putAll(this)
-    return result
-}
+internal actual fun <K, V> Map<out K, V>.toSingletonMap(): Map<K, V>
+        = with(entries.iterator().next()) { mutableMapOf(key to value) }
 
 /**
- * Calculate the initial capacity of a map, based on Guava's
- * [com.google.common.collect.Maps.capacity](https://github.com/google/guava/blob/v28.2/guava/src/com/google/common/collect/Maps.java#L325)
- * approach.
+ * CLR collection constructors take an element-count capacity, without a load factor adjustment.
  */
 @PublishedApi
-internal actual fun mapCapacity(expectedSize: Int): Int = when {
-    // We are not coercing the value to a valid one and not throwing an exception. It is up to the caller to
-    // properly handle negative values.
-    expectedSize < 0 -> expectedSize
-    expectedSize < 3 -> expectedSize + 1
-    expectedSize < (1 shl 30) -> ((expectedSize / 0.75F) + 1.0F).toInt()
-    // any large value
-    else -> Int.MAX_VALUE
-}
+internal actual fun mapCapacity(expectedSize: Int): Int = expectedSize
