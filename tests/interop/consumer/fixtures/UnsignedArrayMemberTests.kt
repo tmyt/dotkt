@@ -2,6 +2,7 @@
 
 import NUnit.Framework.TestAttribute
 import UnsignedArrayMemberInterop.NativeArrays
+import kotlin.clr.byref
 
 class UnsignedArrayMemberInteropTests {
     @TestAttribute

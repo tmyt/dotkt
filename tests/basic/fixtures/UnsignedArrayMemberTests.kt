@@ -1,6 +1,8 @@
 @file:OptIn(ExperimentalUnsignedTypes::class)
 
 import NUnit.Framework.TestAttribute
+import kotlin.collections.contains as arrayContains
+import kotlin.collections.isEmpty as arrayIsEmpty
 
 class UnsignedArrayMemberTests {
     @TestAttribute
@@ -11,6 +13,10 @@ class UnsignedArrayMemberTests {
         val longs = ulongArrayOf(0uL, 9223372036854775808uL, ULong.MAX_VALUE)
         check(UByte.MAX_VALUE in bytes && UShort.MAX_VALUE in shorts)
         check(UInt.MAX_VALUE in ints && ULong.MAX_VALUE in longs)
+        check(bytes.arrayContains(UByte.MAX_VALUE) && !bytes.arrayContains(7u))
+        check(shorts.arrayContains(UShort.MAX_VALUE) && !shorts.arrayContains(7u))
+        check(ints.arrayContains(UInt.MAX_VALUE) && !ints.arrayContains(7u))
+        check(longs.arrayContains(ULong.MAX_VALUE) && !longs.arrayContains(7uL))
         check(bytes.containsAll(listOf<UByte>(0u, 128u, UByte.MAX_VALUE, UByte.MAX_VALUE)))
         check(shorts.containsAll(listOf<UShort>(0u, 32768u, UShort.MAX_VALUE)))
         check(ints.containsAll(listOf(0u, 2147483648u, UInt.MAX_VALUE)))
@@ -22,6 +28,9 @@ class UnsignedArrayMemberTests {
         check(!bytes.isEmpty() && !shorts.isEmpty() && !ints.isEmpty() && !longs.isEmpty())
         check(ubyteArrayOf().isEmpty() && ushortArrayOf().isEmpty())
         check(uintArrayOf().isEmpty() && ulongArrayOf().isEmpty())
+        check(!bytes.arrayIsEmpty() && !shorts.arrayIsEmpty() && !ints.arrayIsEmpty() && !longs.arrayIsEmpty())
+        check(ubyteArrayOf().arrayIsEmpty() && ushortArrayOf().arrayIsEmpty())
+        check(uintArrayOf().arrayIsEmpty() && ulongArrayOf().arrayIsEmpty())
         check(bytes.isNotEmpty() && ints.isNotEmpty())
     }
 
