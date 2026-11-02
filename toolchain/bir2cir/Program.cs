@@ -43,6 +43,7 @@ static class Bir2Cir
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
                 EnumIntrinsicLowering.SelfTest();
+                EnumValueLowering.SelfTest();
                 EnumEntriesLowering.SelfTest();
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
@@ -385,6 +386,8 @@ sealed class Pipeline
         // ALL input files: EnumIntrinsicLowering lowers `enumValues<RichEnum>()` to the synthesized static values()
         // (not the System.Enum-reflection semantic node — a rich enum is a plain singleton class).
         var localRichEnums = EnumIntrinsicLowering.CollectRichEnums(birFiles.Select(f => f.Root));
+        // Snapshot producer-owned instance slots module-wide before lowering any cross-file enum access.
+        var localRichEnumFields = EnumValueLowering.CollectRichInstanceFields(birFiles.Select(f => f.Root));
 
         // The local BASIC (value-type, `kind:"enum"`) enum type names across ALL files — EnumMemberBinding rebinds a
         // `System.Enum`-inherited Object-slot call (`E.A.toString()`) on such an owner to an `objMethod`. Must be
@@ -589,7 +592,7 @@ sealed class Pipeline
             // ENUM ENTRY VALUES: kotc preserves owner + entry-name Kotlin identity. Resolve a referenced rich enum's
             // carrier-mapped singleton field, or a CLR enum's potentially sparse/negative/aliased physical constant,
             // from the exact compile reference here.
-            _enumRuntimeLookup |= EnumValueLowering.Apply(bir.Root, refs, localBasicEnums, localExplicitEnums, localParseEnums);
+            _enumRuntimeLookup |= EnumValueLowering.Apply(bir.Root, refs, localRichEnumFields, localBasicEnums, localExplicitEnums, localParseEnums);
             // ARRAY CONSTRUCTION + INTRINSIC ELEMENT (#73 Phase 2b-A): kotc emits the faithful `kotlin.IntArray`
             // identity — the sized ctor as `new kotlin.IntArray(size, init)`, the arrayGet/arraySet/forArray
             // intrinsics with NO `elem`. Derive the sized-array construction (newArrayInit/newArraySized) + stamp the

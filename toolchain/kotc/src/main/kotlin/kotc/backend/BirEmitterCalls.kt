@@ -1382,9 +1382,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val ec = recv?.type?.classifierOrNull?.owner as? IrClass
 		if (recv != null && arg != null && ec?.kind == ClassKind.ENUM_CLASS) {
 			val enumType = birType(ec.defaultType).toJson()
-			fun ord(e: IrExpression): String = if (ec.origin.toString() == "DEFINED" && isRichEnum(ec))
-				"""{"k":"field","ownerType":${fqnJson(typeName(ec))},"recv":${expr(e)},"name":"__ordinal"}"""
-			else """{"k":"enumOrdinal","e":${expr(e)},"type":$enumType}"""
+			fun ord(e: IrExpression): String = """{"k":"enumOrdinal","e":${expr(e)},"type":$enumType}"""
 			return """{"k":"binOp","op":"-","lhs":${ord(recv)},"rhs":${ord(arg)}}"""
 		}
 		// A DIRECT primitive `Double/Float.compareTo(y)` is not special-cased here (Kotlin's TOTAL
@@ -1525,15 +1523,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// the general property path. bir2cir's CharCodeInvokeLowering re-emits the `{k:conv, to:kotlin.Int}` node (a
 	// genuine primitive IL op — the char value AS an int, distinct from `.toInt()`'s @ClrConv) off that faithful
 	// call. The Kotlin<->CLR relation lives in bir2cir; no physical accessor name is authored here.
-	// Preserve enum name/ordinal as Kotlin operations with the concrete enum identity. bir2cir resolves a referenced
-	// rich enum through its trusted carrier, strips the type from a local basic enum's ordinal, and otherwise authors
-	// the CLR enum representation. A source-local rich enum can use its own declared fields directly.
+	// Preserve enum name/ordinal as Kotlin operations with the concrete enum identity. bir2cir resolves local and
+	// referenced rich-enum storage from explicit producer facts, and authors the CLR representation of basic enums.
 	dispatchReceiver(call)?.takeIf { (it.type.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.ENUM_CLASS }?.let { rc ->
 		val rec = (rc.type.classifierOrNull?.owner as? IrClass)
-		if (rec != null && rec.origin.toString() == "DEFINED" && isRichEnum(rec)) when (callee.correspondingPropertySymbol?.owner?.name?.asString()) {
-			"name" -> return """{"k":"field","ownerType":${birType(rec.defaultType).toJson()},"recv":${expr(rc)},"name":"__name"}"""
-			"ordinal" -> return """{"k":"field","ownerType":${birType(rec.defaultType).toJson()},"recv":${expr(rc)},"name":"__ordinal"}"""
-		}
 		when (callee.correspondingPropertySymbol?.owner?.name?.asString()) {
 			"name" -> return """{"k":"enumName","e":${expr(rc)},"type":${birType(rec!!.defaultType).toJson()}}"""
 			"ordinal" -> return """{"k":"enumOrdinal","e":${expr(rc)},"type":${birType(rec!!.defaultType).toJson()}}"""

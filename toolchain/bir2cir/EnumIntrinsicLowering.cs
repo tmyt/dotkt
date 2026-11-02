@@ -132,8 +132,9 @@ static class EnumIntrinsicLowering
     {
         var parameter = new TypeNode.Tv("method", 0);
         var genericValues = new JsonObject { ["k"] = "enumValues", ["type"] = TypeJson.Write(parameter) };
+        var noRichFields = new Dictionary<string, (string Name, string Ordinal)>();
         var runtimeLookup = EnumValueLowering.Apply(genericValues, ReferenceMetadataIndex.Build(System.Array.Empty<string>()),
-            new HashSet<string>(), new Dictionary<string, BasicEnumMetadata>(), new Dictionary<string, BasicEnumMetadata>());
+            noRichFields, new HashSet<string>(), new Dictionary<string, BasicEnumMetadata>(), new Dictionary<string, BasicEnumMetadata>());
         if (!runtimeLookup || Str(genericValues["k"]) != "cast" || TypeJson.Read(genericValues["type"]) != new TypeNode.Array(parameter)
             || Str(genericValues["e"]?["method"]) != "kotlinEnumValues"
             || Str(genericValues["e"]?["args"]?[0]?["k"]) != "classRef"
@@ -149,7 +150,7 @@ static class EnumIntrinsicLowering
             ["e"] = new JsonObject { ["k"] = "local", ["name"] = "value" },
         };
         EnumValueLowering.Apply(ordinal, ReferenceMetadataIndex.Build(System.Array.Empty<string>()),
-            new HashSet<string> { "Ordinary" }, physicalEnums, parseEnums);
+            noRichFields, new HashSet<string> { "Ordinary" }, physicalEnums, parseEnums);
         if (!parseEnums.ContainsKey("Ordinary") || physicalEnums.ContainsKey("Ordinary")
             || ordinal.ContainsKey("type") || ordinal.ContainsKey("values"))
             throw new System.InvalidOperationException("Exact enum name tables changed ordinary ordinal's constant-time form");
