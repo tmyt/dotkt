@@ -4177,7 +4177,8 @@ internal sealed class AssemblyScanner : IDisposable
                 awaiterSignatures,
                 methodContext,
                 reader);
-            resultType = SubstituteTypeParameters(projected, awaiterType.Argument);
+            resultType = SubstituteTypeParameters(
+                projected, awaiterType.Argument.Select(argument => argument.Type).ToImmutableArray());
             return true;
         }
         return false;

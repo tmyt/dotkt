@@ -19,6 +19,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../field-slot-base/FieldSlotBase.csproj" />
+    <ProjectReference Include="../producer-nrt/InteropProducerNrt.csproj" />
     <Compile Include="../../roundtrip/property-slot-producer/InheritedGenericOwners.cs" Link="InheritedGenericOwners.cs" />
     <Compile Include="../../roundtrip/property-slot-producer/InheritedExplicitProperties.cs" Link="InheritedExplicitProperties.cs" />
     <Compile Include="../../roundtrip/property-slot-producer/ProtectedDefaultAccess.cs" Link="ProtectedDefaultAccess.cs" />

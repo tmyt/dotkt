@@ -1,5 +1,9 @@
 import ExternalAwaitable.MemberOperation
 import ExternalAwaitable.Operation
+import ExternalAwaitable.OptionalOperation
+import ExternalAwaitable.OptionalMemberOperation
+import ExternalAwaitable.TextOperation
+import ExternalAwaitable.NullableTextOperation
 import ExternalAwaitable.await
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
@@ -28,6 +32,34 @@ private fun <T> completeExternalAwait(complete: () -> Unit, block: suspend () ->
 }
 
 class ExternalAwaitTests {
+    @TestAttribute
+    fun externalGenericNullableResultsRemainNullableOnBothPaths() {
+        val immediate: String? = blockOn { OptionalOperation<String>(true).await() }
+        assertTrue(immediate == null)
+        val pending = OptionalOperation<String>(false)
+        val resumed: String? = completeExternalAwait({ pending.Complete() }) { pending.await() }
+        assertTrue(resumed == null)
+        val memberImmediate: String? = blockOn { OptionalMemberOperation<String>(true).await() }
+        assertTrue(memberImmediate == null)
+        val memberPending = OptionalMemberOperation<String>(false)
+        val memberResumed: String? = completeExternalAwait({ memberPending.Complete() }) { memberPending.await() }
+        assertTrue(memberResumed == null)
+    }
+
+    @TestAttribute
+    fun externalConcreteResultsUseTheAwaiterAssemblyNullability() {
+        val immediate: String = blockOn { TextOperation("ready", true).await() }
+        assertEquals("ready", immediate)
+        val pending = TextOperation("unused", false)
+        val resumed: String = completeExternalAwait({ pending.Complete("resumed") }) { pending.await() }
+        assertEquals("resumed", resumed)
+        val missing: String? = blockOn { NullableTextOperation(null, true).await() }
+        assertTrue(missing == null)
+        val nullablePending = NullableTextOperation("unused", false)
+        val nullableResumed: String? = completeExternalAwait({ nullablePending.Complete(null) }) { nullablePending.await() }
+        assertTrue(nullableResumed == null)
+    }
+
     @TestAttribute
     fun extensionReturningFrameworkAwaiterPreservesGenericResultsAndSuspends() {
         assertEquals(8, blockOn { Operation<Int>(7, true).await() + 1 })

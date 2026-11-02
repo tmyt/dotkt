@@ -9,7 +9,10 @@ internal static class ExternalAwaitMetadataInspector
         var fragment = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
             .Select(entry => { using var input = entry.Open(); return PackageFragment.Parser.ParseFrom(input); })
             .Single(fragment => Name(fragment, fragment.Package.PackageFqName) == "ExternalAwaitable");
-        var extension = fragment.Package.Function.Single(function => IsAwait(fragment, function));
+        Function Extension(string receiver) => fragment.Package.Function.Single(function =>
+            IsAwait(fragment, function) && function.ReceiverType is { HasClassName: true } type &&
+            Name(fragment, type.ClassName) == "ExternalAwaitable." + receiver);
+        var extension = Extension("Operation");
         var parameter = extension.TypeParameter.Single().Id;
         Require(extension.ReceiverType is { HasClassName: true } receiver &&
             Name(fragment, receiver.ClassName) == "ExternalAwaitable.Operation" &&
@@ -22,6 +25,24 @@ internal static class ExternalAwaitMetadataInspector
         Require(member.TypeParameter.Count == 0 && member.ReceiverType is null,
             "instance await acquired an extension receiver or method type parameters");
         VerifyResult(fragment, member, owner.TypeParameter.Single().Id);
+
+        var optionalExtension = Extension("OptionalOperation");
+        VerifyResult(fragment, optionalExtension, optionalExtension.TypeParameter.Single().Id);
+        Require(optionalExtension.ReturnType.Nullable, "external nullable generic extension result lost its use-site question mark");
+        var optionalOwner = fragment.Class.Single(type => Name(fragment, type.FqName) == "ExternalAwaitable.OptionalMemberOperation");
+        var optionalMember = optionalOwner.Function.Single(function => IsAwait(fragment, function));
+        VerifyResult(fragment, optionalMember, optionalOwner.TypeParameter.Single().Id);
+        Require(optionalMember.ReturnType.Nullable, "external nullable generic instance result lost its use-site question mark");
+        foreach (var (classifier, nullable) in new[] { ("TextOperation", false), ("NullableTextOperation", true) })
+        {
+            var concrete = fragment.Class.Single(type => Name(fragment, type.FqName) == "ExternalAwaitable." + classifier)
+                .Function.Single(function => IsAwait(fragment, function));
+            var result = concrete.ReturnType;
+            Require(result.HasClassName && Name(fragment, result.ClassName) == "kotlin.String" &&
+                result.Nullable == nullable && result.FlexibleUpperBound is null,
+                "external concrete await result used the oblivious provider's context instead of the awaiter's NRT context");
+            Require(concrete.ValueParameter.Count == 0, "concrete awaiter invented a ConfigureAwait overload");
+        }
     }
 
     static bool IsAwait(PackageFragment fragment, Function function) =>
