@@ -45,6 +45,7 @@ static partial class FBoundStarProjectionErasure
         public int Arity;
         public bool Needed;
         public readonly Dictionary<JsonObject, (JsonObject Slot, TypeNode[] Signature)> Slots = new();
+        public readonly Dictionary<JsonObject, JsonObject> InnerConstructorFactories = new();
         public readonly Dictionary<JsonObject, ReferenceContract> ReferenceContracts = new();
     }
 
@@ -2276,6 +2277,7 @@ static partial class FBoundStarProjectionErasure
                 foreach (var constructor in constructors.OfType<JsonObject>())
                 {
                     var factory = InnerConstructorFactory(owner, inner, constructor, ordinal++, owners, refs);
+                    owner.InnerConstructorFactories.Add(constructor, factory.Slot);
                     var key = MethodKey(factory.Slot);
                     if (key == null || !seen.Add(key))
                         throw new InvalidOperationException(
@@ -2705,6 +2707,7 @@ static partial class FBoundStarProjectionErasure
         {
             ["k"] = "new",
             ["type"] = TypeJson.Write(new TypeNode.Fqn(inner.Name, constructedArgs)),
+            ["constructorDeclarationId"] = constructorDeclaration,
             ["argTypes"] = exactSignature.DeepClone(),
             // Selection belongs to the constructor's open declaration frame, not the factory method frame.
             ["memberSignature"] = new JsonArray(constructorParams.OfType<JsonObject>()
@@ -4345,19 +4348,20 @@ static partial class FBoundStarProjectionErasure
                     $"bir2cir: local inner construction '{innerType.Name}' has no exact existential owner '{selectedOuter.Name}<*>'");
             var constructors = (innerDef["ctors"] as JsonArray)?.OfType<JsonObject>().ToList()
                 ?? new List<JsonObject>();
-            var matches = constructors.Select((ctor, ordinal) => (ctor, ordinal))
-                .Where(candidate => ConstructorDescribesUse(
-                    candidate.ctor, innerType.Args ?? Array.Empty<TypeNode>(),
-                    construction["memberSignature"] is JsonArray declarationSignature
-                        ? declarationSignature.Select(TypeJson.Read).ToArray() : authoredSignature,
-                    construction["memberSignature"] is JsonArray))
+            // The frontend already selected this declaration. Its physical parameters may now be erased arrays
+            // while memberSignature still carries the source array shape; do not select an overload again from
+            // those different representation stages. Generated factory bodies carry the same selected identity.
+            var selectedIdentity = Str(construction["constructorDeclarationId"]);
+            var matches = constructors
+                .Where(constructor => (constructor["params"] as JsonArray)?.Count == arguments.Count
+                    && Str(constructor[DeclarationIdentityBinding.Key]) == selectedIdentity)
                 .ToList();
             if (matches.Count != 1)
                 throw new InvalidOperationException(
                     $"bir2cir: star-projected inner construction '{inner.Name}' resolves to {matches.Count} exact local constructors");
-            var generatedFactory = InnerConstructorFactory(outer, inner, matches[0].ctor,
-                matches[0].ordinal, owners, refs);
-            var factory = generatedFactory.Slot;
+            // Consume the factory allocated with the original declaration. Rebuilding it from the now-projected
+            // constructor can manufacture a different physical signature from the emitted existential slot.
+            var factory = outer.InnerConstructorFactories[matches[0]];
             declarationParameters = FunctionSignatureIdentity.Signature((JsonArray)factory["params"]);
             physicalOwner = outer.ErasedName;
             physicalMethod = Str(factory["name"]);
@@ -4365,7 +4369,7 @@ static partial class FBoundStarProjectionErasure
                 .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>();
             physicalResult = TypeJson.Read(factory["ret"]);
             physicalTypeArguments = InnerFactoryCallTypeArguments(inner, innerType.Args ?? Array.Empty<TypeNode>());
-            if (outer.ReferenceContracts.TryGetValue(matches[0].ctor, out referenceContract))
+            if (outer.ReferenceContracts.TryGetValue(matches[0], out referenceContract))
                 referenceOwner = (TypeNode.Fqn)SubstituteDeclarationTypeArguments(referenceContract.Owner,
                     innerType.Args.Take(InnerCapturedCount(inner.Def)).ToArray(), Array.Empty<TypeNode>());
         }
@@ -4691,21 +4695,6 @@ static partial class FBoundStarProjectionErasure
             declaration["ret"] = TypeJson.Write(distinctReturns[0]);
             declaration[NormalizedInnerFactoryReturnKey] = true;
         }
-    }
-
-    static bool ConstructorDescribesUse(JsonObject constructor, IReadOnlyList<TypeNode> innerArguments,
-        IReadOnlyList<TypeNode> authoredSignature, bool declarationRelative)
-    {
-        var parameters = (constructor["params"] as JsonArray)?.OfType<JsonObject>()
-            .Select(parameter => TypeJson.Read(parameter[FunctionSignatureIdentity.Key] ?? parameter["type"])).ToArray() ?? Array.Empty<TypeNode>();
-        if (parameters.Length != authoredSignature.Count) return false;
-        // Slot zero is the hidden outer value. A Kotlin-selected inherited inner constructor legitimately supplies a
-        // derived receiver there; the declaration reachability check above proves that relation. Constructor overload
-        // identity is determined by the remaining source parameters and remains exact.
-        return parameters.Select((parameter, index) => (parameter, index)).Skip(1).Select(pair =>
-                (declarationRelative ? pair.parameter : CloseInnerConstructorType(pair.parameter, innerArguments))
-                    .Equals(authoredSignature[pair.index]))
-            .All(equal => equal);
     }
 
     internal static TypeNode CloseInnerConstructorType(TypeNode type, IReadOnlyList<TypeNode> innerArguments) =>
