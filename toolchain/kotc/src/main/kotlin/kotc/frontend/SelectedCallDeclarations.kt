@@ -6,6 +6,7 @@
 package kotc.frontend
 
 import org.jetbrains.kotlin.fir.FirElement
+import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.fir.backend.Fir2IrComponents
 import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
@@ -50,8 +51,9 @@ object SelectedCallDeclarations {
 					val symbol = (access.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol
 						as? FirNamedFunctionSymbol ?: return
 					val original = symbol.unwrapFakeOverrides()
-					// Callable references can acquire a use-site owner in Fir2Ir even without type substitution.
-					if (original === symbol && access !is FirCallableReferenceAccess) return
+					// Global references can acquire a use-site owner without type substitution. Local functions
+					// retain their emitted symbol; their Fir2Ir registration scope has ended by conversion time.
+					if (original === symbol && (access !is FirCallableReferenceAccess || symbol.fir.status.visibility == Visibilities.Local)) return
 					val location = access.source ?: return
 					val key = Key(path, location.endOffset, symbol.name.asString(), access is FirCallableReferenceAccess)
 					val previous = source.putIfAbsent(key, original)
