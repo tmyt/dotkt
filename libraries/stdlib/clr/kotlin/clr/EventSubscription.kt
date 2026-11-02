@@ -1,5 +1,7 @@
 package kotlin.clr
 
+import kotlin.concurrent.atomics.interlockedCompareExchangeRef
+
 /**
  * A closeable subscription returned by [ClrEvent.subscribe].
  *
@@ -10,11 +12,9 @@ public class EventSubscription<T>(
     private val handler: T,
     private val remove: (T) -> Unit,
 ) : AutoCloseable {
-    private var closed: Boolean = false
+    private var closed: Any? = null
 
     override fun close() {
-        if (closed) return
-        closed = true
-        remove(handler)
+        if (interlockedCompareExchangeRef(closed, this, null) == null) remove(handler)
     }
 }

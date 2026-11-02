@@ -623,8 +623,8 @@ sealed class Pipeline
             // (the Kotlin<->CLR layer); kotc is .NET-agnostic. Runs EARLY — before ShapeSynthesis (so a generic .NET
             // method's `shapeTypes` is derived) and before every type-erasing / substitution pass — reproducing the flow
             // that existed when kotc emitted the `clr*` nodes directly. A no-op for a `kotlin.*`/local/unresolvable owner
-            // (the stdlib is bound by MemberCallSubstitution off the ref.dll) and for the three CLR-only-vocab synthetics
-            // kotc lowers itself (ClrEvent<T>/ClrRef<T>/byref — they don't exist in any ref, so they never resolve here).
+            // (the stdlib is bound by MemberCallSubstitution off the ref.dll). Dedicated event-read and managed-reference
+            // vocabulary remains for its own lowering rather than being interpreted as an ordinary native call.
             // Non-ref only (the stdlib self-build injects no dll2klib .NET interop).
             if (!_options.RefBuild) NetInteropBinding.Apply(bir.Root, refs);
             // PROPERTY-REFERENCE FUNCTION MATERIALIZATION (#242): kotc emits a genuine KProperty construction plus
@@ -777,32 +777,28 @@ sealed class Pipeline
                 KotlinCollectionClassifierLowering.Apply(hoisted, refs);
             }
             if (attributeTopLevelOwner) StarProjectionLowering.Apply(hoisted, refs);
-            // .NET EVENT `subscribe` BINDING: kotc surfaces a .NET event as a `kotlin.clr.ClrEvent<T>` property and emits
-            // `w.Changed.subscribe(h)` as the PLAIN call `callInstance(kotlin.clr.ClrEvent.subscribe,
-            // recv = <clrEventGet w Changed>, [h])`. This pass BINDS that to the .NET add/remove accessor — the existing
-            // clrEventAdd/clrEventRemove node (ilemit unchanged), reading owner .NET type + event name straight off the
-            // clrEventGet member-access. The ClrEvent<T> value is never materialized (a .NET event isn't first-class);
-            // the clrEventGet receiver is consumed here, not emitted. Runs BEFORE MemberCallSubstitution so the synthetic
-            // call — which has no ref.dll owner — is bound here. `subscribe` also constructs the stdlib close token with
-            // a synthesized remove callback. A no-op for the ref/rt stdlib self-build (no .NET events).
+            // EVENT HANDLES: materialize each clrEventGet as an ordinary stdlib ClrEvent<H> construction with
+            // add/remove callback closures. Subscribe is a normal Kotlin member call, independent of whether its
+            // receiver was read directly, stored, returned or passed across a DLL. Run before member substitution
+            // so the new construction and callbacks receive the same ordinary physical binding as source code.
             hoisted = ClrEventSubscriptionBinding.Apply(
-                hoisted, refs, clrEventForwardedOwners, localTypeFqns, out var materializedEventSubscriptions);
-            foreach (var materialized in materializedEventSubscriptions)
+                hoisted, refs, clrEventForwardedOwners, out var materializedEventHandles);
+            foreach (var materialized in materializedEventHandles)
                 FunctionValueRepresentation.Apply(materialized, refs.IsByRefLikeFqn);
-            // Event binding has just synthesized receiver/handler locals plus add/remove member accesses. Feed those
+            // Event binding has just synthesized receiver locals plus add/remove member accesses. Feed those
             // NEW fixed slots through the same nullable-value use-axis rule as the original tree. In particular, a
             // proven-present Nullable<V> event receiver must enter the synthesized bare-V spill as V; the first pass
             // could not see a node that did not exist yet. Submit the exact materialized work items rather than
             // repairing the whole file after construction.
             NullableTvErasureCallRealign.ApplyMaterialized(
-                materializedEventSubscriptions, nullableTvDeclRets, isValueFqn, refs);
-            // `ClrEvent.subscribe` synthesizes the remove callback as a normal `newClosure` ingredient bag. The main
+                materializedEventHandles, nullableTvDeclRets, isValueFqn, refs);
+            // Event reads synthesize add/remove callbacks as normal `newClosure` ingredient bags. The main
             // ClosureSynthesis pass ran earlier, before event binding. Give the exact materialized roots to its late
             // entry contract so only these newly-created callback classes are assembled.
             var materializedEventClosureTypes = ClosureSynthesis.ApplyMaterialized(
-                hoisted, materializedEventSubscriptions, refs);
+                hoisted, materializedEventHandles, refs);
             if (DelegateTargetSlotAlignment.ApplyMaterialized(
-                    materializedEventSubscriptions, materializedEventClosureTypes, isValueFqn))
+                    materializedEventHandles, materializedEventClosureTypes, isValueFqn))
                 foreach (var materializedType in materializedEventClosureTypes)
                     NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(
                         materializedType, nullableTvDeclRets, isValueFqn, refs);

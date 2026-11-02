@@ -39,7 +39,7 @@ platform deviations.
   `ClrTypeAlias`, `ClrIntrinsic`, `ClrProperty`, `ClrConv`,
   `ClrRefArgument`, `ClrCollectionFactory`, or
   `ClrArrayFactory` is undefined behavior. User-authored use of the compiler
-  metadata carriers `ClrExternal`, `ClrAwaitBridge`,
+  metadata carriers `ClrExternal`, `ClrEventDeclaration`, `ClrAwaitBridge`,
   `ClrFlagsOperation`, `KotlinDeclarationIdentity`, and `KotlinDefault` is also
   undefined behavior.
   This does not apply to ordinary use of stdlib declarations carrying those
@@ -61,14 +61,12 @@ platform deviations.
   derived from it may be consumed inside the block but must not escape the
   block's dynamic extent. Violating these lifetime rules is undefined
   behavior.
-- In the current implementation, user-authored `ClrEvent<T>` usage is defined
-  only for an event property implemented with `by clrEvent()`. Subscription is
-  supported on such a property and on a compiler-projected CLR event; raising is
-  supported only on a Kotlin-implemented event that has the synthesized raise
-  accessor. Subclassing `ClrEvent<T>`, implementing custom add/remove behavior,
-  or materializing the event handle as an ordinary parameter, return value,
-  local, field, stored value, or captured value is currently undefined
-  behavior. Future versions may define additional `ClrEvent<T>` forms.
+- `ClrEvent<T>` handles read from a projected CLR event or an event implemented
+  with `by clrEvent()` may be ordinary parameters, return values, locals, fields,
+  stored values, and captured values. Subscription is supported through these
+  handles; raising remains supported only through a Kotlin event declaration
+  with a synthesized raise accessor. Subclassing `ClrEvent<T>` or supplying
+  custom add/remove behavior is currently undefined behavior.
 
 These mechanisms are intentionally not gated on a stdlib or user build mode.
 Undefined forms may therefore happen to compile and work. Do not add validation,

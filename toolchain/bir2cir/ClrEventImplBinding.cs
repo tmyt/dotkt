@@ -200,58 +200,6 @@ static class ClrEventImplBinding
             return matches.SingleOrDefault();
         }
 
-        TypeNode RemapForClosure(TypeNode type, JsonArray free) => type switch
-        {
-            TypeNode.Tv tv => free.Select(TypeJson.Read).OfType<TypeNode.Tv>()
-                .Select((original, index) => (original, index))
-                .Where(item => item.original.Scope == tv.Scope && item.original.I == tv.I)
-                .Select(item => (TypeNode)new TypeNode.Tv("type", item.index))
-                .FirstOrDefault() ?? type,
-            TypeNode.Fqn f when f.Args is not null =>
-                new TypeNode.Fqn(f.Name, f.Args.Select(arg => RemapForClosure(arg, free)).ToArray()),
-            TypeNode.Nullable n => new TypeNode.Nullable(RemapForClosure(n.Of, free)),
-            TypeNode.Oblivious o => new TypeNode.Oblivious(RemapForClosure(o.Of, free)),
-            TypeNode.Array a => new TypeNode.Array(RemapForClosure(a.Elem, free)),
-            TypeNode.ByRef r => new TypeNode.ByRef(RemapForClosure(r.Of, free)),
-            TypeNode.Mod m => new TypeNode.Mod(m.Req,
-                RemapForClosure(m.M, free), RemapForClosure(m.Of, free)),
-            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, RemapForClosure(fn.Ret, free),
-                fn.Params.Select(param => RemapForClosure(param, free)).ToArray(),
-                fn.Recv == null ? null : RemapForClosure(fn.Recv, free), fn.Clr,
-                fn.Ctx?.Select(param => RemapForClosure(param, free)).ToArray()),
-            _ => type,
-        };
-
-        LocalEventBinding RemapBindingForClosure(LocalEventBinding binding, JsonArray free) => new(
-            RemapForClosure(binding.DelegateType, free),
-            (TypeNode.Fqn)RemapForClosure(binding.AccessorOwner, free),
-            new JsonArray(binding.AddSignature.Select(item =>
-                TypeJson.Write(RemapForClosure(TypeJson.Read(item), free))).ToArray()),
-            new JsonArray(binding.RemoveSignature.Select(item =>
-                TypeJson.Write(RemapForClosure(TypeJson.Read(item), free))).ToArray()),
-            binding.AddIdentity, binding.RemoveIdentity);
-
-        var bySubscription = new Dictionary<string, LocalEventBinding>(StringComparer.Ordinal);
-        void Collect(JsonNode node, JsonArray typeParams, JsonArray methodParams)
-        {
-            if (node is JsonObject obj)
-            {
-                if (scopes.TryGetValue(obj, out var scope))
-                    (typeParams, methodParams) = scope;
-                var kind = Str(obj["k"]);
-                if (kind is "clrEventAdd" or "clrEventRemove"
-                    && Str(obj["eventSubscriptionKey"]) is string key
-                    && obj["eventBindingFree"] == null
-                    && Resolve(obj, typeParams, methodParams) is LocalEventBinding binding)
-                    bySubscription[key] = binding;
-                foreach (var child in obj.ToList())
-                    if (child.Value != null) Collect(child.Value, typeParams, methodParams);
-            }
-            else if (node is JsonArray array)
-                foreach (var child in array.ToList())
-                    if (child != null) Collect(child, typeParams, methodParams);
-        }
-
         void Stamp(JsonNode node, JsonArray typeParams, JsonArray methodParams)
         {
             if (node is JsonObject obj)
@@ -261,15 +209,7 @@ static class ClrEventImplBinding
                 var kind = Str(obj["k"]);
                 if (kind is "clrEventAdd" or "clrEventRemove")
                 {
-                    LocalEventBinding binding;
-                    // The remove callback is deliberately a new physical generic frame. Its binding is the add
-                    // site's already-selected declaration remapped into that frame, never a second semantic lookup.
-                    if (obj["eventBindingFree"] is JsonArray free
-                        && Str(obj["eventSubscriptionKey"]) is string key
-                        && bySubscription.TryGetValue(key, out var shared))
-                        binding = RemapBindingForClosure(shared, free);
-                    else
-                        binding = Resolve(obj, typeParams, methodParams);
+                    var binding = Resolve(obj, typeParams, methodParams);
                     if (binding != null)
                     {
                         var eventName = Str(obj["event"])
@@ -286,8 +226,6 @@ static class ClrEventImplBinding
                         // owner uses the synthesized public-virtual accessor normally.
                         obj["dispatch"] = TypeJson.Read(obj["type"]) is TypeNode.Tv ? "constrained" : "callvirt";
                     }
-                    obj.Remove("eventSubscriptionKey");
-                    obj.Remove("eventBindingFree");
                 }
                 foreach (var child in obj.ToList())
                     if (child.Value != null) Stamp(child.Value, typeParams, methodParams);
@@ -297,7 +235,6 @@ static class ClrEventImplBinding
                     if (child != null) Stamp(child, typeParams, methodParams);
         }
 
-        foreach (var root in rootList) Collect(root, empty, empty);
         foreach (var root in rootList) Stamp(root, empty, empty);
     }
 

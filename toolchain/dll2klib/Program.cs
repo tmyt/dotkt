@@ -3023,6 +3023,7 @@ internal sealed class AssemblyScanner : IDisposable
                         ? Flags.FakeOverride
                         : Flags.DeclarationMember),
             };
+            projectedEvent.PropertyAnnotation.Add(new Annotation { Id = names.Class("kotlin.clr.ClrEventDeclaration") });
             if (hiddenCompletion)
             {
                 // An accessor parameter is decoded as a platform type, whereas an Event row's
@@ -3074,7 +3075,7 @@ internal sealed class AssemblyScanner : IDisposable
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = handler,
             });
-            result.Property.Add(new Property
+            var projectedEvent = new Property
             {
                 Name = names.String(_md.GetString(ev.Name)),
                 ReturnType = eventType,
@@ -3084,7 +3085,9 @@ internal sealed class AssemblyScanner : IDisposable
                         : accessor.Attributes,
                     canWrite: false,
                     (accessor.Attributes & MethodAttributes.Static) != 0),
-            });
+            };
+            projectedEvent.PropertyAnnotation.Add(new Annotation { Id = names.Class("kotlin.clr.ClrEventDeclaration") });
+            result.Property.Add(projectedEvent);
             propertyNames.Add(_md.GetString(ev.Name));
         }
         foreach (var pair in accessorPairs)

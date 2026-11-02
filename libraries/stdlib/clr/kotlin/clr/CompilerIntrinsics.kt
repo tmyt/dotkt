@@ -56,17 +56,24 @@ public fun <T, R> stackBuffer(n: Int, block: (StackBuffer<T>) -> R): R =
     TODO("compiler intrinsic")
 
 /**
- * A compile-time handle for a CLR event.
+ * A retained handle for one CLR event and its source.
  *
- * Event reads, subscriptions, and raises are resolved by the compiler against the concrete event declaration;
- * no `ClrEvent` value or class is emitted.
+ * [T] is the complete handler type, not an event payload. Handles may be stored, returned, captured, and passed
+ * to ordinary functions. Reading an event evaluates its source once; each subscription uses that same source.
+ * Raising remains a declaration operation on a Kotlin event implemented with [clrEvent], not on a retained handle.
  */
-public abstract class ClrEvent<out T> private constructor() {
-    public abstract fun subscribe(handler: @UnsafeVariance T): EventSubscription<@UnsafeVariance T>
+public class ClrEvent<out T> @PublishedApi internal constructor(
+    private val add: (@UnsafeVariance T) -> Unit,
+    private val remove: (@UnsafeVariance T) -> Unit,
+) {
+    public fun subscribe(handler: @UnsafeVariance T): EventSubscription<@UnsafeVariance T> {
+        add(handler)
+        return EventSubscription(handler, remove)
+    }
 
-    public abstract operator fun invoke(vararg args: Any?)
+    public operator fun invoke(vararg args: Any?): Unit = TODO("compiler intrinsic")
 
-    public abstract operator fun getValue(thisRef: Any?, property: KProperty<*>): ClrEvent<T>
+    public operator fun getValue(thisRef: Any?, property: KProperty<*>): ClrEvent<T> = this
 }
 
 /** Declares a Kotlin-owned CLR event for a delegated property. */

@@ -1256,14 +1256,15 @@ internal fun BirEmitter.isLateinitProperty(p: IrProperty): Boolean =
 	p.isLateinit ||
 		(p as? org.jetbrains.kotlin.fir.lazy.Fir2IrLazyProperty)?.fir?.isLateInit == true
 
-/** A property whose type is `kotlin.clr.ClrEvent<T>` — the compile-time-only fiction surfacing a .NET event.
- *  A .NET event is consumed via `subscribe` and is NEVER a first-class value or a real inherited property, so
- *  such a property must never be emitted as a member. This matters for a FAKE-OVERRIDE: when a Kotlin class
- *  subclasses a .NET type whose interface carries an event (`class MyApp : Avalonia.Application`, whose bases
- *  implement an event-bearing interface), fir2ir synthesizes a fake-override getter returning `ClrEvent<T>`;
- *  declaring it would emit an accessor/property over the un-emittable `kotlin.clr.ClrEvent` type — skip it. */
-internal fun BirEmitter.isClrEventProperty(p: IrProperty): Boolean =
-	p.getter?.returnType?.classFqName?.asString() == "kotlin.clr.ClrEvent"
+/** An event declaration, not an ordinary property storing a first-class ClrEvent handle. The projection marker
+ *  and overridden declarations preserve that role through fake overrides and class delegation. */
+internal fun BirEmitter.isClrEventProperty(p: IrProperty): Boolean {
+	val seen = HashSet<IrProperty>()
+	fun event(property: IrProperty): Boolean = seen.add(property) && (
+		property.annotations.any { it.type.classFqName?.asString() == "kotlin.clr.ClrEventDeclaration" } ||
+		clrEventDelegateCall(property) != null || property.overriddenSymbols.any { event(it.owner) })
+	return event(p)
+}
 
 /** The `clrEvent()` delegate-initializer call of a `by clrEvent()` property (§4.2/§5 of design-clr-event-model.md), or
  *  null. A DELEGATED property whose delegate expression is a call to `kotlin.clr.clrEvent` — the marker "synthesize the
