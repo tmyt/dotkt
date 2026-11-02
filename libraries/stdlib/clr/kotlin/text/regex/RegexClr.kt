@@ -368,9 +368,11 @@ internal class ClrGroup {
     val length: Int get() = TODO("clr binding should be implemented")
 }
 
-/** Binds System.Text.RegularExpressions.GroupCollection (Count + the by-index and by-name `this[..]` indexers). */
+/** Binds System.Text.RegularExpressions.GroupCollection membership, count and indexers. */
 @kotlin.clr.ClrTypeAlias("System.Text.RegularExpressions.GroupCollection")
 internal class ClrGroupCollection {
+    @kotlin.clr.ClrIntrinsic("ContainsKey")
+    fun containsKey(name: String): Boolean = TODO("clr binding should be implemented")
     @kotlin.clr.ClrIntrinsic("Count")
     val count: Int get() = TODO("clr binding should be implemented")
     @kotlin.clr.ClrIntrinsic("get_Item")
@@ -443,6 +445,7 @@ internal class ClrMatchGroupCollection(
     }
 
     override fun get(name: String): MatchGroup? {
+        require(nativeGroups.containsKey(name)) { "No group with name <$name>" }
         val g = nativeGroups[name]
         return if (g.success) MatchGroup(g.value, g.index until (g.index + g.length)) else null
     }

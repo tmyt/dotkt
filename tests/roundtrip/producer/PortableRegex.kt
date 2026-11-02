@@ -8,4 +8,6 @@ fun matchesFrom(input: String, startIndex: Int): Sequence<MatchResult> =
 
 fun capturedMatch(input: String): MatchResult = Regex("(?<word>a)(?<tail>b)?").find(input)!!
 
+fun capturedGroup(match: MatchResult, name: String): MatchGroup? = match.groups[name]
+
 inline fun observeCapturedGroups(input: String, block: (MatchResult) -> String): String = block(capturedMatch(input))
