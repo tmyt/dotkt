@@ -191,8 +191,10 @@ class RegexTests {
         val partial = Regex("(?<first>a)(?<optional>b)?(?<empty>)").find("a")!!
         assertEquals("a", partial.groups["first"]?.value)
         assertNull(partial.groups["optional"])
-        assertEquals("", partial.groups["empty"]?.value)
-        assertEquals(1..0, partial.groups["empty"]?.range)
+        val empty = partial.groups["empty"]!!
+        assertEquals("", empty.value)
+        assertEquals(1, empty.range.first)
+        assertEquals(0, empty.range.last)
         for (name in listOf("missing", "FIRST", "")) {
             var rejected = false
             try { partial.groups[name] } catch (e: IllegalArgumentException) { rejected = true }
