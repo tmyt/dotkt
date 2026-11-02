@@ -244,6 +244,8 @@ static class EnumValueLowering
                         ["k"] = property == "name" ? "enumName" : "enumOrdinal",
                         ["type"] = owner.DeepClone(), ["e"] = receiver.DeepClone(),
                     };
+                if (!propertyCall && NodeType.Of(read) != TypeJson.Read(TypeJson.Fqn(result)))
+                    throw new InvalidOperationException("Semantic enum access lost its node-local result type before lowering");
                 Apply(read, refs, fields, new HashSet<string>(),
                     new Dictionary<string, BasicEnumMetadata>(), new Dictionary<string, BasicEnumMetadata>());
                 if (read["k"]?.GetValue<string>() != "field" || read["name"]?.GetValue<string>() != field

@@ -174,7 +174,7 @@ public static class NodeType
                 return NothingTn;
             case "arrayLen": case "enumOrdinal":
                 return IntTn;
-            case "concat":
+            case "concat": case "enumName":
                 return StringTn;
             case "newArray": case "newArrayInit": case "newArraySized": case "spreadConcat":
                 // Every array-producing construction names its ELEMENT and nothing else — including the vararg

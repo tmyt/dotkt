@@ -34,6 +34,8 @@ import System.Enum as SystemEnum
 import System.Type
 import kotlin.clr.ClrEvent
 import kotlin.clr.ClrEnum
+import kotlin.clr.ClrRef
+import kotlin.clr.byref
 import kotlin.clr.clrEvent
 
 private const val enumExplicitConst = 9
@@ -95,6 +97,7 @@ fun enumExplicitIntLabel(value: EnumExplicitInt): String = when (value) {
 }
 
 fun <T : Enum<T>> enumGenericOrdinal(value: T): Int = value.ordinal
+private fun enumNameLength(offset: Int = 0, value: ClrRef<String>): Int = offset + value.value.length
 inline fun <reified T : Enum<T>> enumReifiedOrdinal(value: T): Int = value.ordinal
 
 @ClrEnum
@@ -552,6 +555,7 @@ class EnumTests {
 
     @TestAttribute
     fun ctorAndMethod() {
+        assertEquals(5, enumNameLength(value = byref(EnumPlanet.EARTH.name)))
         assertEquals(5, EnumPlanet.EARTH.mass)                    // 5
         assertTrue(EnumPlanet.EARTH.heavy())                     // True
         assertFalse(EnumPlanet.MARS.heavy())                    // False
