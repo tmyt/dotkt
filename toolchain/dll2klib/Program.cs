@@ -4086,7 +4086,7 @@ internal sealed class AssemblyScanner : IDisposable
             var context = ownerContext with { Method = methodHandle };
             var signature = method.DecodeSignature(signatures, context);
             if (signature.ParameterTypes.Length != 0 ||
-                !TryAwaitResult(signature.ReturnType, names, signatures, out var resultType))
+                !TryAwaitResult(methodHandle, signature.ReturnType, names, signatures, out var resultType))
                 continue;
             AddAwaitBridge(
                 declaration.Function,
@@ -4110,31 +4110,36 @@ internal sealed class AssemblyScanner : IDisposable
     }
 
     private bool TryAwaitResult(
+        MethodDefinitionHandle getAwaiterHandle,
         KType awaiterType,
         NameTable names,
         SignatureDecoder signatures,
         out KType resultType)
     {
         resultType = null!;
-        if (LocalDefinition(awaiterType, names) is not TypeDefinitionHandle awaiterHandle)
+        if (!_publicTypeCatalog.TryResolveMethodReturnDefinition(
+                _md, getAwaiterHandle, out var definition, _definitionPath))
             return false;
-        var awaiter = _md.GetTypeDefinition(awaiterHandle);
+        var reader = definition.Reader;
+        var awaiterHandle = definition.Handle;
+        var awaiter = reader.GetTypeDefinition(awaiterHandle);
+        var awaiterSignatures = DecoderFor(reader, names, signatures, definition.DefinitionPath);
         var typeParameterIds = awaiter.GetGenericParameters()
-            .ToDictionary(h => h, h => _md.GetGenericParameter(h).Index);
+            .ToDictionary(h => h, h => reader.GetGenericParameter(h).Index);
         var context = new GenericContext(awaiterHandle, default, typeParameterIds);
 
         var completed = awaiter.GetProperties().Any(propertyHandle =>
         {
-            var property = _md.GetPropertyDefinition(propertyHandle);
-            if (_md.GetString(property.Name) != "IsCompleted") return false;
+            var property = reader.GetPropertyDefinition(propertyHandle);
+            if (reader.GetString(property.Name) != "IsCompleted") return false;
             var getterHandle = property.GetAccessors().Getter;
             if (getterHandle.IsNil) return false;
-            var getter = _md.GetMethodDefinition(getterHandle);
+            var getter = reader.GetMethodDefinition(getterHandle);
             if (!IsPublicOrProtected(getter.Attributes) ||
                 (getter.Attributes & MethodAttributes.Static) != 0)
                 return false;
             var signature = property.DecodeSignature(
-                signatures, context with { Method = getterHandle });
+                awaiterSignatures, context with { Method = getterHandle });
             return signature.ParameterTypes.Length == 0 &&
                 IsNamed(signature.ReturnType, "kotlin.Boolean", names);
         });
@@ -4142,35 +4147,36 @@ internal sealed class AssemblyScanner : IDisposable
 
         var onCompleted = awaiter.GetMethods().Any(methodHandle =>
         {
-            var method = _md.GetMethodDefinition(methodHandle);
-            if (_md.GetString(method.Name) != "OnCompleted" ||
+            var method = reader.GetMethodDefinition(methodHandle);
+            if (reader.GetString(method.Name) != "OnCompleted" ||
                 !IsPublicOrProtected(method.Attributes) ||
                 (method.Attributes & MethodAttributes.Static) != 0)
                 return false;
             var signature = method.DecodeSignature(
-                signatures, context with { Method = methodHandle });
+                awaiterSignatures, context with { Method = methodHandle });
             return signature.ParameterTypes.Length == 1;
         });
         if (!onCompleted) return false;
 
         foreach (var methodHandle in awaiter.GetMethods())
         {
-            var method = _md.GetMethodDefinition(methodHandle);
-            if (_md.GetString(method.Name) != "GetResult" ||
+            var method = reader.GetMethodDefinition(methodHandle);
+            if (reader.GetString(method.Name) != "GetResult" ||
                 !IsPublicOrProtected(method.Attributes) ||
                 (method.Attributes & MethodAttributes.Static) != 0 ||
                 method.GetGenericParameters().Count != 0)
                 continue;
             var methodContext = context with { Method = methodHandle };
-            var signature = method.DecodeSignature(signatures, methodContext);
+            var signature = method.DecodeSignature(awaiterSignatures, methodContext);
             if (signature.ParameterTypes.Length != 0) continue;
             var projected = ProjectReturn(
                 methodHandle,
                 method,
                 signature.ReturnType,
                 names,
-                signatures,
-                methodContext);
+                awaiterSignatures,
+                methodContext,
+                reader);
             resultType = SubstituteTypeParameters(projected, awaiterType.Argument);
             return true;
         }
@@ -4249,7 +4255,7 @@ internal sealed class AssemblyScanner : IDisposable
             if (signature.ParameterTypes.Length != 0) continue;
             var concreteAwaiter = SubstituteTypeParameters(
                 signature.ReturnType, awaitableType.Argument);
-            return TryAwaitResult(concreteAwaiter, names, signatures, out resultType);
+            return TryAwaitResult(methodHandle, concreteAwaiter, names, signatures, out resultType);
         }
         return false;
     }
@@ -4858,7 +4864,7 @@ internal sealed class AssemblyScanner : IDisposable
             var isGetAwaiter = _md.GetString(method.Name) == "GetAwaiter";
             KType? awaitResult = null;
             var hasAwaitResult = isGetAwaiter &&
-                TryAwaitResult(sig.ReturnType, names, signatures, out awaitResult);
+                TryAwaitResult(methodHandle, sig.ReturnType, names, signatures, out awaitResult);
             if (isGetAwaiter && Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_DEBUG_AWAIT") == "1")
                 Console.Error.WriteLine(
                     $"dll2klib: await extension {MetadataTypeName(owner)}.{_md.GetString(method.Name)} " +
@@ -6579,11 +6585,14 @@ internal sealed class AssemblyScanner : IDisposable
         KType physical,
         NameTable names,
         SignatureDecoder signatures,
-        GenericContext context)
+        GenericContext context,
+        MetadataReader? declarationReader = null)
     {
+        var reader = declarationReader ?? _md;
+        var attrs = signatures.Attributes;
         var returnHandle = method.GetParameters()
-            .FirstOrDefault(h => _md.GetParameter(h).SequenceNumber == 0);
-        if (_attrs.Has(returnHandle, MetadataAttributes.DotKtNs + "KotlinNothingAttribute"))
+            .FirstOrDefault(h => reader.GetParameter(h).SequenceNumber == 0);
+        if (attrs.Has(returnHandle, MetadataAttributes.DotKtNs + "KotlinNothingAttribute"))
             return signatures.NamedType("kotlin.Nothing");
         // A CLR ref return is consumed as a Kotlin value by default. The
         // explicit byref(call()) marker retains lvalue identity at the call
@@ -6591,15 +6600,17 @@ internal sealed class AssemblyScanner : IDisposable
         // makes delegated `by byref(...)` expose ClrRef<T> as its value.
         if (signatures.ByRefElement(physical) is { } element)
             physical = element;
-        var suspend = ((_attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0) & 4) != 0;
+        var suspend = ((attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0) & 4) != 0;
         if (suspend)
         {
-            var logical = _attrs.CarrierType(
+            var logical = attrs.CarrierType(
                 methodHandle, MetadataAttributes.DotKtNs + "KotlinSuspendResultAttribute")
                 ?? throw new InvalidDataException(
-                    $"suspend MethodDef '{_md.GetString(method.Name)}' has no trusted logical-result carrier");
+                    $"suspend MethodDef '{reader.GetString(method.Name)}' has no trusted logical-result carrier");
             return signatures.FromTypeNode(logical);
         }
+        if (!IsCurrentAssembly(reader))
+            return ProjectInheritedType(reader, returnHandle, physical, methodHandle, signatures, flowContract: true);
         return ProjectType(
             returnHandle,
             physical,

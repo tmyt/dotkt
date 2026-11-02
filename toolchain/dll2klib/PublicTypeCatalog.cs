@@ -211,6 +211,20 @@ internal sealed class PublicTypeCatalog : IDisposable
         return value is not null;
     }
 
+    public bool TryResolveMethodReturnDefinition(
+        MetadataReader reader,
+        MethodDefinitionHandle method,
+        out ResolvedTypeDefinition resolved,
+        string? definitionPath = null)
+    {
+        // Resolve the signature's scoped nominal identity, before Kotlin naming or substitution.
+        var value = reader.GetMethodDefinition(method)
+            .DecodeSignature(new DefinitionProvider(this, definitionPath), genericContext: null)
+            .ReturnType;
+        resolved = value!;
+        return value is not null;
+    }
+
     public void Dispose()
     {
         foreach (var assembly in _loaded.Values)

@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 2 && args[0] == "--external-awaiters")
+{
+    ExternalAwaitMetadataInspector.Verify(args[1]);
+    Console.WriteLine("external awaiters preserve suspend/result frames without inventing ConfigureAwait: OK");
+    return;
+}
+
 if (args.Length == 6 && args[0] == "--representation-types")
 {
     RepresentationTypeMetadataInspector.Verify(args[1], args[2], args[3], args[4], args[5]);
