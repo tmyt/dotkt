@@ -313,7 +313,7 @@
     </PropertyGroup>
     <ItemGroup>
       <_DotKtNativeResourceInput Remove="@(_DotKtNativeResourceInput)" />
-      <_DotKtNativeResourceInput Include="$(_DotKtSelectedManifest);$(Win32Resource);$(ApplicationIcon);$(RoslynCoreAssembliesPath)/Microsoft.CodeAnalysis.dll;$(RoslynCoreAssembliesPath)/Microsoft.CodeAnalysis.CSharp.dll" />
+      <_DotKtNativeResourceInput Include="$(_DotKtSelectedManifest);$(Win32Resource);$(ApplicationIcon)" />
       <_DotKtAssemblyAttribute Remove="@(_DotKtAssemblyAttribute)" />
       <_DotKtAssemblyAttribute Include="@(AssemblyAttribute)" Condition="'$(GenerateAssemblyInfo)' == 'true'" />
     </ItemGroup>

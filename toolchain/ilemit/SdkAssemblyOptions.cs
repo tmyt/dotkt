@@ -23,8 +23,7 @@ sealed class SdkAssemblyOptions
 
     public string Attribute(string name)
     {
-        var matches = Attributes.Where(a => a.Type == "System.Reflection." + name ||
-            a.Type == "System.Reflection." + name + "Attribute").ToArray();
+        var matches = Attributes.Where(a => IsAttribute(a.Type, name)).ToArray();
         if (matches.Length > 1) throw new InvalidDataException($"Duplicate assembly attribute: {name}");
         if (matches.Length == 0) return null;
         var value = matches[0];
@@ -33,6 +32,16 @@ sealed class SdkAssemblyOptions
         if (value.TypeName is not (null or "" or "System.String"))
             throw new InvalidDataException($"{name} requires a string parameter");
         return value.Value;
+    }
+
+    // SDK AssemblyInfo uses System.Reflection imports. Normalize these spellings at the build-driver boundary,
+    // not as Kotlin name resolution or as a parser for arbitrary C# expressions.
+    public static bool IsAttribute(string type, string name)
+    {
+        var global = type.StartsWith("global::", StringComparison.Ordinal);
+        if (global) type = type[8..];
+        return type == "System.Reflection." + name || type == "System.Reflection." + name + "Attribute" ||
+            (!global && (type == name || type == name + "Attribute"));
     }
 
     public AssemblyVersions Versions()

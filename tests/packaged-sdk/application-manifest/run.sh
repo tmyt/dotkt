@@ -170,7 +170,7 @@ pair coff-resource "-p:Win32Resource=$manifests/resource.obj"
 inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
 pair switched-resource "-p:Win32Resource=$manifests/second.res"
 inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
-inspect --write-res "$manifests/second.res" changed-payload
+inspect --write-res-reversed-languages "$manifests/second.res" changed-payload
 pair changed-resource "-p:Win32Resource=$manifests/second.res"
 inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
 pair cleared-resource -p:Win32Resource=

@@ -64,6 +64,8 @@ adapter transports resource records and relocations rather than independently im
 
 The removed placeholder's PDB was not a Kotlin source PDB. The SDK no longer generates or copies that
 misleading file; actual Kotlin source debugging information remains separate compiler work.
+Likewise, `GenerateDocumentationFile` does not produce a placeholder C# XML document: Kotlin XML documentation
+generation is not implemented, and build/publish/pack do not advertise a nonexistent documentation output.
 
 See [Microsoft's manifest compiler option](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/compiler-options/resources#win32manifest)
 and [application manifests](https://learn.microsoft.com/en-us/windows/win32/sbscs/application-manifests).

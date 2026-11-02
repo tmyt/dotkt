@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Build.Framework;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 
 namespace DotKt.Build;
 
@@ -27,6 +29,9 @@ public sealed class WriteAssemblyOptions : Microsoft.Build.Utilities.Task
             {
                 outputFileName = OutputFileName, outputType = OutputType, deterministic = Deterministic, jitDebugging = JitDebugging,
                 noWin32Manifest = NoWin32Manifest,
+                // Track the generators actually loaded by this MSBuild host, not a potentially absent compiler path.
+                resourceGenerator = new { core = typeof(Compilation).Module.ModuleVersionId,
+                    language = typeof(CSharpCompilation).Module.ModuleVersionId },
                 win32Manifest = Win32Manifest, win32Resource = Win32Resource, applicationIcon = ApplicationIcon,
                 attributes = Attributes.Select(a => new
                 {

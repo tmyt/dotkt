@@ -14,7 +14,7 @@
 #
 # Order (design §5): recreate DotKt.* in the isolated cache -> non-incremental build -> dotnet test --no-build ->
 # ilverify. The non-incremental build is load-bearing after repacking the SDK at the same version: otherwise MSBuild
-# can retain a tiny placeholder assembly even though the DotKt compiler inputs are present. Green (exit 0) iff
+# can retain stale compiler outputs from the prior package cohort. Green (exit 0) iff
 # every project builds, discovers at least one test, every `dotnet test` exits 0, and ILVerify is clean
 # against tests/run-ilverify.sh's baseline.
 set -euo pipefail

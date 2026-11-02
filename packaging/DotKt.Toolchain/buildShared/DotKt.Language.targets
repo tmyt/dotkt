@@ -7,10 +7,15 @@
     <!-- No source PDB is emitted yet. Set output facts during evaluation so no-build publish/project-reference
          paths do not attempt to copy a nonexistent file; preserve the user's DebugSymbols/DebugType settings. -->
     <_DebugSymbolsProduced>false</_DebugSymbolsProduced>
+    <!-- No Kotlin XML documentation emitter exists either; do not advertise the placeholder C# compiler's XML. -->
+    <_DocumentationFileProduced>false</_DocumentationFileProduced>
   </PropertyGroup>
   <ItemGroup>
     <_DebugSymbolsIntermediatePath Remove="@(_DebugSymbolsIntermediatePath)" />
     <_DebugSymbolsOutputPath Remove="@(_DebugSymbolsOutputPath)" />
+    <DocFileItem Remove="@(DocFileItem)" />
+    <FinalDocFile Remove="@(FinalDocFile)" />
+    <DocumentationProjectOutputGroupOutput Remove="@(DocumentationProjectOutputGroupOutput)" />
   </ItemGroup>
   <Target Name="CoreCompile" DependsOnTargets="$(CoreCompileDependsOn)" />
 </Project>

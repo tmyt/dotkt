@@ -34,6 +34,11 @@ for spec in "DotKt.Sdk/$version|$kt/App.ktproj" "Microsoft.NET.Sdk|$cs/Control.c
   <AssemblyAttribute Include="System.Reflection.AssemblyFileVersion"><_Parameter1>6.7.8.9</_Parameter1></AssemblyAttribute>
   <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersion"><_Parameter1>custom-short</_Parameter1></AssemblyAttribute>
 </ItemGroup>
+<ItemGroup Condition="'$(UnqualifiedVersionAttributes)' == 'true'">
+  <AssemblyAttribute Include="AssemblyVersion"><_Parameter1>1.2.3.4</_Parameter1></AssemblyAttribute>
+  <AssemblyAttribute Include="AssemblyFileVersionAttribute"><_Parameter1>6.7.8.9</_Parameter1></AssemblyAttribute>
+  <AssemblyAttribute Include="global::System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1>custom-unqualified</_Parameter1></AssemblyAttribute>
+</ItemGroup>
 </Project>
 EOF
   sed -i "s|SDK_PLACEHOLDER|$sdk|" "$project"
@@ -92,6 +97,15 @@ pair evaluated-attributes -p:EvaluatedVersionAttributes=true -p:GenerateAssembly
 check 1.0.0.0 1.0.0.0 custom-evaluated
 pair short-attributes -p:ShortVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
 check 1.0.0.0 6.7.8.9 custom-short
+pair unqualified-attributes -p:UnqualifiedVersionAttributes=true -p:GenerateAssemblyVersionAttribute=false -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
+check 1.2.3.4 6.7.8.9 custom-unqualified
+for project in "$kt/App.ktproj" "$cs/Control.csproj"; do
+  duplicate_stage="duplicate-unqualified-${project##*.}"
+  if build "$project" "$duplicate_stage" -p:UnqualifiedVersionAttributes=true; then
+    echo 'Duplicate qualified/unqualified version attributes unexpectedly accepted' >&2; exit 1
+  fi
+  grep -q 'Duplicate' "$ws/$duplicate_stage.log"
+done
 pair empty-attributes -p:EmptyVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
 check 1.0.0.0 '' ''
 pair no-file-version -p:GenerateAssemblyFileVersionAttribute=false
@@ -120,6 +134,24 @@ dotnet publish "$kt/App.ktproj" -c Debug --no-build -v:q --nologo "${defaults[@]
 [[ "$publish_before" == "$(state)" ]] || { echo 'no-build publish regenerated the library' >&2; exit 1; }
 inspect --managed-match "$cs/$out/publish/Versioned.dll" "$kt/$out/publish/Versioned.dll"
 inspect --kotlin "$kt/$out/publish/Versioned.dll"
+
+# These options must not advertise the removed C# compiler's nonexistent XML output to publish or pack.
+for operation in build publish; do
+  dotnet "$operation" "$kt/App.ktproj" -v:q --nologo "${defaults[@]}" "${explicit[@]}" -p:OutputType=Library -p:GenerateDocumentationFile=true > "$ws/documentation-$operation.log" 2>&1
+done
+documentation_before="$(state)"
+dotnet publish "$kt/App.ktproj" --no-build -v:q --nologo -p:GenerateDocumentationFile=true -p:OutputType=Library > "$ws/documentation-no-build.log" 2>&1
+dotnet pack "$kt/App.ktproj" --no-build -v:q --nologo -p:GenerateDocumentationFile=true -p:OutputType=Library -p:IsPackable=true -o "$ws/documentation-pack" > "$ws/documentation-pack.log" 2>&1
+[[ "$documentation_before" == "$(state)" ]] || { echo 'no-build documentation operations regenerated the library' >&2; exit 1; }
+[[ ! -e "$kt/$out/Versioned.xml" && ! -e "$kt/$out/publish/Versioned.xml" ]]
+inspect --kotlin "$kt/$out/publish/Versioned.dll"
+
+# An irrelevant C# compiler-host option may come from shared props; it must not introduce missing file inputs.
+build "$kt/App.ktproj" framework-option "${defaults[@]}" "${explicit[@]}" -p:OutputType=Library -p:BuildWithNetFrameworkHostedCompiler=true
+framework_before="$(state)"
+build "$kt/App.ktproj" framework-option-noop "${defaults[@]}" "${explicit[@]}" -p:OutputType=Library -p:BuildWithNetFrameworkHostedCompiler=true
+[[ "$framework_before" == "$(state)" ]] || { echo 'C# compiler host option broke no-op emission' >&2; exit 1; }
+[[ "$front_before" == "$(frontend)" ]] || { echo 'documentation/host options recompiled Kotlin' >&2; exit 1; }
 
 # Separately compiled Kotlin and C# consumers must encode the producer's nonzero AssemblyRef version and run.
 for spec in "DotKt.Sdk/$version|Kotlin consumer|Consumer.ktproj" "Microsoft.NET.Sdk|CSharp consumer|Consumer.csproj"; do

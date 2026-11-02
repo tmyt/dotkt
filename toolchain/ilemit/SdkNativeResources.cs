@@ -132,6 +132,21 @@ sealed class SdkNativeResources : ResourceSectionBuilder
 
     protected override void Serialize(BlobBuilder builder, SectionLocation location)
     {
+        // RES is a sequence, while PE directories require named entries first and ascending keys at every level.
+        // ResourceDirectoryBuffer preserves model order, so establish its precondition before delegating layout.
+        static void Order(ResourceDirectory node)
+        {
+            // member-lookup-residual: ordering native resource keys, not selecting managed members
+            var entries = node.Entries.OrderBy(e => e.Name == null ? 1 : 0)
+                .ThenBy(e => e.Name, StringComparer.Ordinal).ThenBy(e => e.Id).ToArray();
+            node.Entries.Clear();
+            foreach (var entry in entries)
+            {
+                if (entry is ResourceDirectory child) Order(child);
+                node.Entries.Add(entry);
+            }
+        }
+        Order(root);
         var directory = new ResourceDirectoryBuffer();
         directory.AddDirectory(root);
         directory.UpdateOffsets(new RelocationParameters(0, checked((uint)location.RelativeVirtualAddress)));

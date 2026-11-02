@@ -64,7 +64,7 @@ sealed partial class Emitter
                 new[] { Bcl("System.String") }, _targetFrameworkMoniker);
         }
         // Platform-qualified TFMs carry two independent SDK-owned facts. MSBuild supplies the exact strings it would
-        // put on the placeholder; ilemit preserves them on the final assembly without parsing a TFM name or deriving
+        // emit as attributes; ilemit preserves them on the final assembly without parsing a TFM name or deriving
         // target capabilities from its host.
         if (_targetPlatform != null)
         {

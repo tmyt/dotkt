@@ -21,8 +21,7 @@ public sealed class WriteNativeResources : Microsoft.Build.Utilities.Task
             var options = SdkAssemblyOptions.Read(InputFile);
             var versions = options.Versions();
             // Resolve wildcard identity once, shared by managed metadata and Roslyn's resource generation.
-            options.Attributes.RemoveAll(a => a.Type is "System.Reflection.AssemblyVersion" or
-                "System.Reflection.AssemblyVersionAttribute");
+            options.Attributes.RemoveAll(a => SdkAssemblyOptions.IsAttribute(a.Type, "AssemblyVersion"));
             options.Attributes.Add(new("System.Reflection.AssemblyVersionAttribute", versions.Identity.ToString(), "", ""));
             if (!string.IsNullOrEmpty(options.Win32Resource))
             {

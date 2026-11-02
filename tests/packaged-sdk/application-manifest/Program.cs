@@ -58,21 +58,33 @@ try
         writer.Write(new byte[16]);
         writer.Write(uint.Parse(args[2])); writer.Write(0); // BGRA pixel + padded AND mask
     }
-    else if (args[0] == "--write-res")
+    else if (args[0] is "--write-res" or "--write-res-reversed-languages")
     {
-        // rc.exe-style .res with one named resource and a non-neutral language, shared by both compiler controls.
+        // Deliberately unordered RES records: named/numeric types and names, plus languages out of order.
+        // Both compiler controls consume the same bytes; the PE oracle checks ordering as well as payloads.
         using var stream = File.Create(args[1]);
         using var writer = new BinaryWriter(stream, Encoding.Unicode);
         writer.Write(new byte[] { 0, 0, 0, 0, 32, 0, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0 });
         writer.Write(new byte[16]); // mandatory null resource header
-        var names = Encoding.Unicode.GetBytes("NativeTest\0Payload\0");
-        var nameSize = (names.Length + 3) & ~3;
         var data = Encoding.UTF8.GetBytes(args[2]);
-        writer.Write(data.Length); writer.Write(8 + nameSize + 16);
-        writer.Write(names); writer.Write(new byte[nameSize - names.Length]);
-        writer.Write(0); writer.Write((ushort)0x30); writer.Write((ushort)1033);
-        writer.Write(0); writer.Write(0); writer.Write(data);
-        writer.Write(new byte[((data.Length + 3) & ~3) - data.Length]);
+        var reversedLanguages = args[0] == "--write-res-reversed-languages";
+        foreach (var (type, name, language) in new (object, object, ushort)[] {
+            ("NativeTest", "Payload", 1033), (10, 7, reversedLanguages ? (ushort)1041 : (ushort)1033), ("Zulu", "item", 1033), ("Alpha", "item", 1033),
+            (10, "zeta", 1033), (10, "alpha", 1033), (10, 7, reversedLanguages ? (ushort)1033 : (ushort)1041), (10, 3, 1033) })
+        {
+            using var identifiers = new MemoryStream();
+            using var namesWriter = new BinaryWriter(identifiers, Encoding.Unicode, leaveOpen: true);
+            foreach (var key in new[] { type, name })
+                if (key is int id) { namesWriter.Write(ushort.MaxValue); namesWriter.Write((ushort)id); }
+                else { namesWriter.Write(((string)key).ToCharArray()); namesWriter.Write((ushort)0); }
+            var names = identifiers.ToArray();
+            var nameSize = (names.Length + 3) & ~3;
+            writer.Write(data.Length); writer.Write(8 + nameSize + 16);
+            writer.Write(names); writer.Write(new byte[nameSize - names.Length]);
+            writer.Write(0); writer.Write((ushort)0x30); writer.Write(language);
+            writer.Write(0); writer.Write(0); writer.Write(data);
+            writer.Write(new byte[((data.Length + 3) & ~3) - data.Length]);
+        }
     }
     else if (args[0] == "--write-coff")
     {
@@ -95,13 +107,16 @@ try
             }
         }
         Visit(0);
-        var split = entries.Min(at => checked((int)Read32(at) - section.RelativeVirtualAddress));
-        var payloadOffsets = entries.Select(at => checked(Read32(at) - (uint)section.RelativeVirtualAddress - (uint)split)).ToArray();
+        // Roslyn may interleave data-entry records and payloads. Keep the entire directory image in $01 and an
+        // independent payload image in $02 rather than incorrectly splitting at the first payload's offset.
+        var payloads = (byte[])content.Clone();
+        var split = content.Length;
+        var payloadOffsets = entries.Select(at => checked(Read32(at) - (uint)section.RelativeVirtualAddress)).ToArray();
         foreach (var at in entries) BinaryPrimitives.WriteUInt32LittleEndian(content.AsSpan(at, 4), 0);
         using var stream = File.Create(args[2]);
         using var writer = new BinaryWriter(stream);
         const int headers = 20 + 3 * 40;
-        var relocationsAt = headers + content.Length;
+        var relocationsAt = headers + content.Length + payloads.Length;
         var symbolsAt = relocationsAt + entries.Count * 10;
         writer.Write((ushort)0x14c); writer.Write((ushort)3); writer.Write(0);
         writer.Write(symbolsAt); writer.Write(entries.Count); writer.Write((ushort)0); writer.Write((ushort)0);
@@ -113,8 +128,8 @@ try
         }
         Header(".drectve", 0, 0, 0, 0);
         Header(".rsrc$01", split, headers, relocationsAt, checked((ushort)entries.Count));
-        Header(".rsrc$02", content.Length - split, headers + split, 0, 0);
-        writer.Write(content);
+        Header(".rsrc$02", payloads.Length, headers + split, 0, 0);
+        writer.Write(content); writer.Write(payloads);
         for (var i = 0; i < entries.Count; i++)
         { writer.Write(entries[i]); writer.Write(i); writer.Write((ushort)7); } // IMAGE_REL_I386_DIR32NB
         for (var i = 0; i < entries.Count; i++)
@@ -126,7 +141,9 @@ try
     }
     else if (args[0] == "--resources")
     {
-        var expected = Resources(args[1]);
+        // Compare the control's payloads, but independently enforce valid ordering on DotKt's outputs.
+        // C# preserves RES language insertion order rather than sorting it, so it is not an ordering oracle.
+        var expected = Resources(args[1], requireOrdering: false);
         foreach (var file in args.Skip(2))
         {
             var actual = Resources(file);
@@ -255,7 +272,7 @@ static string[] Versions(string file)
         attributes.GetValueOrDefault("AssemblyInformationalVersionAttribute"), attributes.GetValueOrDefault("AssemblyVersionAttribute") };
 }
 
-static Dictionary<string, NativeResource> Resources(string file)
+static Dictionary<string, NativeResource> Resources(string file, bool requireOrdering = true)
 {
     var result = new Dictionary<string, NativeResource>();
     using var pe = new PEReader(File.OpenRead(file));
@@ -266,13 +283,23 @@ static Dictionary<string, NativeResource> Resources(string file)
     ushort U16(int at) => BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(at, 2));
     void Read(int directory, string prefix)
     {
-        var count = U16(directory + 12) + U16(directory + 14);
+        var namedCount = U16(directory + 12);
+        var count = namedCount + U16(directory + 14);
+        string previousName = null;
+        uint previousId = 0;
         for (var i = 0; i < count; i++)
         {
             var entry = checked(directory + 16 + i * 8);
             var id = U32(entry);
             var offset = checked((int)(id & 0x7fffffff));
             var name = (id & 0x80000000) == 0 ? "#" + id : Encoding.Unicode.GetString(bytes, offset + 2, U16(offset) * 2);
+            var named = (id & 0x80000000) != 0;
+            if (requireOrdering && (named != (i < namedCount) ||
+                (named && previousName != null && StringComparer.Ordinal.Compare(previousName, name) >= 0) ||
+                (!named && i > namedCount && id <= previousId)))
+                throw new InvalidDataException($"Unsorted native resource directory '{prefix}' in {file}");
+            previousName = named ? name : previousName;
+            previousId = id;
             var key = prefix + name;
             var target = U32(entry + 4);
             var data = checked((int)(target & 0x7fffffff));
