@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Reject undefined Regex group names with `IllegalArgumentException`, while retaining null for defined unmatched groups and preserving successful and empty captures.
 - Resolve awaiter declarations across the supplied CLR reference set, preserving generic result types for instance and extension await bridges.
 - Project unambiguous non-generic native interface protocol views from compiler binding metadata, allowing native disposable receivers in unchanged Kotlin `use` while preserving CLR member names and implementation requirements.
 - Reuse upstream join and self-reference policy for mutable collection default rendering while preserving the existing CLR element renderer and interface faces.

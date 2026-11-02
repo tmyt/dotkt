@@ -19,6 +19,16 @@ class PortableRegexTests {
         check(match.destructured.toList() == listOf("a", ""))
         check(match.groups.containsAll(listOf(match.groups[0], null)))
         check(match.groups["word"]?.value == "a")
+        check(match.groups["tail"] == null)
+        check(capturedGroup(match, "word")?.value == "a")
+        check(capturedGroup(match, "tail") == null)
+        check(capturedGroup(capturedMatch("ab"), "tail")?.value == "b")
+        var missingHere = false
+        try { match.groups["missing"] } catch (e: IllegalArgumentException) { missingHere = true }
+        check(missingHere)
+        var missingInProducer = false
+        try { capturedGroup(match, "missing") } catch (e: IllegalArgumentException) { missingInProducer = true }
+        check(missingInProducer)
         val iterator = match.groups.iterator()
         repeat(match.groups.size) { iterator.next() }
         check(!iterator.hasNext())

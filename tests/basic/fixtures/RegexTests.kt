@@ -187,6 +187,20 @@ class RegexTests {
         // named group
         val named = "(?<yr>\\d{4})".toRegex().find("2026")!!
         assertEquals("2026", named.groups["yr"]?.value)  // 2026
+
+        val partial = Regex("(?<first>a)(?<optional>b)?(?<empty>)").find("a")!!
+        assertEquals("a", partial.groups["first"]?.value)
+        assertNull(partial.groups["optional"])
+        val empty = partial.groups["empty"]!!
+        assertEquals("", empty.value)
+        assertEquals(1, empty.range.first)
+        assertEquals(0, empty.range.last)
+        for (name in listOf("missing", "FIRST", "")) {
+            var rejected = false
+            try { partial.groups[name] } catch (e: IllegalArgumentException) { rejected = true }
+            assertTrue(rejected)
+        }
+        assertEquals("a", partial.groups["first"]?.value)
     }
 
     // il-regexseq (#104): Sequence-returning Regex members findAll / splitToSequence over ordinary Sequence
