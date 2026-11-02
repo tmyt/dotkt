@@ -60,7 +60,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/roundtrip/consumer"]=749
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=2
 	["tests/roundtrip/bidirectional/consumer"]=56
-	["tests/interop/consumer"]=504
+	["tests/interop/consumer"]=507
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -82,8 +82,8 @@ declare -A EXTRA_EMIT=(
 	["tests/roundtrip/bidirectional/consumer"]="BidirectionalKotlin.dll"
 	["tests/interop/consumer"]="DotKt.Tests.EventSupport.dll"
 	# The C#-producer dll is csc-emitted (not ilemit), so it needs no DotKt ilverify of its own; ilverify over the
-	# CONSUMER assembly (the .ktproj-named dll) is what proves the emitted interop IL is clean. No EXTRA_EMIT entry
-	# for tests/interop/consumer — adding the plain C# producer would only formally re-verify a non-DotKt assembly.
+	# CONSUMER assembly (the .ktproj-named dll) is what proves the emitted interop IL is clean. Its EXTRA_EMIT entry
+	# verifies only the Kotlin event-value support DLL, not the plain C# producer.
 )
 
 # Read the packed SDK version from the single source of truth so a version bump needs no edit here.

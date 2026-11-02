@@ -13,9 +13,15 @@ public class Source {
     public int RemoveCount => removeCount;
     public object AddedHandler { get; private set; }
     public object RemovedHandler { get; private set; }
+    public Action Removing;
+    public bool ThrowOnRemove { get; set; }
     public virtual event Action<int> Changed {
         add { AddCount++; AddedHandler = value; changed += value; }
-        remove { Interlocked.Increment(ref removeCount); RemovedHandler = value; changed -= value; }
+        remove {
+            Interlocked.Increment(ref removeCount); RemovedHandler = value; changed -= value;
+            Removing?.Invoke();
+            if (ThrowOnRemove) throw new InvalidOperationException("remove");
+        }
     }
     public event Action Empty;
     public event Action<object, string> Pair;

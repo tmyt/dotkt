@@ -623,8 +623,8 @@ sealed class Pipeline
             // (the Kotlin<->CLR layer); kotc is .NET-agnostic. Runs EARLY — before ShapeSynthesis (so a generic .NET
             // method's `shapeTypes` is derived) and before every type-erasing / substitution pass — reproducing the flow
             // that existed when kotc emitted the `clr*` nodes directly. A no-op for a `kotlin.*`/local/unresolvable owner
-            // (the stdlib is bound by MemberCallSubstitution off the ref.dll) and for the three CLR-only-vocab synthetics
-            // kotc lowers itself (ClrEvent<T>/ClrRef<T>/byref — they don't exist in any ref, so they never resolve here).
+            // (the stdlib is bound by MemberCallSubstitution off the ref.dll). Dedicated event-read and managed-reference
+            // vocabulary remains for its own lowering rather than being interpreted as an ordinary native call.
             // Non-ref only (the stdlib self-build injects no dll2klib .NET interop).
             if (!_options.RefBuild) NetInteropBinding.Apply(bir.Root, refs);
             // PROPERTY-REFERENCE FUNCTION MATERIALIZATION (#242): kotc emits a genuine KProperty construction plus

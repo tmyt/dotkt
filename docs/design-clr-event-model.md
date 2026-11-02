@@ -239,8 +239,8 @@ one rule:
 |------|-------------------------------|-------------------------------|-------------|
 | `class ViewModelBase : INotifyPropertyChanged` (override an interface slot) | no (interface only) | **yes** (obligation forces it, §3) | **SYNTHESIZE** field-like (§4.2), handler type from the interface slot |
 | `val clicked: ClrEvent<D> by clrEvent()` (declare a NEW event, no `override`) | n/a — brand-new member | **yes** | **SYNTHESIZE** field-like (§4.2), handler type `D` from the **explicit `ClrEvent<D>`** annotation |
-| `class MyApp : Avalonia.Application` | **yes** (base class implements it) | no (nothing to write — concrete fake-override) | **ELIDE** (`isClrEventProperty`, unchanged) |
-| `class A : B by c` *(deferred → 0.9.8, §4.4 / S4)* | no — delegate `c` supplies at runtime | no (`by c`) | **SYNTHESIZE forwarder** (§4.4) |
+| `class MyApp : Avalonia.Application` | **yes** (base class implements it) | no (nothing to write — concrete fake-override) | **ELIDE** (event declaration role) |
+| `class A : B by c` | no — delegate `c` supplies at runtime | no (`by c`) | **SYNTHESIZE forwarder** (§4.4) |
 
 **`val`-only — `var E by clrEvent()` is a hard error.** An event is a read-only handle (you
 subscribe/unsubscribe/raise, never reassign). `ClrEvent<T>` provides only `operator fun getValue`, no
@@ -274,12 +274,13 @@ accessor *accessibility* is emitter-controlled — a public raise method is enti
 `RaiseEvent` uses exactly such a Fire method). So DotKt exposing raise is **not a broken CLR rule**; it
 is choosing an accessibility C# declines to expose. The user's MVVM pattern raises
 `vm.PropertyChanged.invoke(vm, args)` from **outside** — inside `ViewModelProperty.setValue`, a
-*different* type. DotKt **relaxes the C# convention**: a `ClrEvent<T>` handle **exposes raise**. Concretely (§4.2/§4.3), the synthesized `raise_<E>` accessor is emitted **public** (the
-`.event`'s `.fire`), and `handle.invoke(...)` lowers to a call of it. So `vm.PropertyChanged.invoke(...)`
+*different* type. DotKt **relaxes the C# convention** for event declarations. Concretely (§4.2/§4.3), the synthesized
+`raise_<E>` accessor is emitted **public** (the `.event`'s `.fire`), and declaration-bound `vm.E.invoke(...)` lowers to it.
+The operation is not available on an arbitrary saved handle. Thus `vm.PropertyChanged.invoke(...)`
 from any type is legal and simply calls `vm.raise_PropertyChanged(...)`.
 
-This passes all three conditions of the acceptance test (`docs/dotkt-semantics.md`): **consistent** (a
-`ClrEvent<T>` handle uniformly supports `subscribe`/`invoke`), **documented** (§8d + this note), and
+This passes all three conditions of the acceptance test (`docs/dotkt-semantics.md`): **consistent** (consumer handles
+subscribe; event declarations may raise), **documented** (§8d + this note), and
 **convincingly explainable** (it is exactly the general-purpose event pattern .NET libraries hand-roll
 with a `protected virtual void OnPropertyChanged(...)` raiser — DotKt makes the raiser a first-class
 part of the event handle rather than boilerplate the author must write, which is what enables the

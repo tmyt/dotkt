@@ -2141,14 +2141,14 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   class's existing `MethodImpl`/backing store; it never synthesizes a second Kotlin event store.
 - **Implementing and raising a CLR event from Kotlin** (MVVM / `INotifyPropertyChanged`): a Kotlin class that directly
   implements an event-bearing interface writes `override val E by clrEvent()` to synthesize the event (a backing
-  delegate field + real `add_E`/`remove_E`/`raise_E` accessors); a `ClrEvent<T>` handle exposes `invoke(sender, args)`
+  delegate field + real `add_E`/`remove_E`/`raise_E` accessors); the event declaration exposes `invoke(sender, args)`
   to **raise** it. **Deliberate CLR-native deviation (interop-first):** C# permits raising an event only from **within**
-  its declaring type, but the DotKt `ClrEvent<T>` handle exposes raise, so `vm.PropertyChanged.invoke(vm, args)` is
+  its declaring type, but the DotKt event declaration exposes raise, so `vm.PropertyChanged.invoke(vm, args)` is
   legal from **outside** the declaring type (it calls a public synthesized `raise_` accessor — the `.event`'s `.fire`).
   This is exactly the raiser .NET libraries hand-roll as `protected virtual void OnPropertyChanged(...)`, promoted to a
-  first-class part of the event handle — it is what lets the idiomatic property-delegate MVVM pattern
-  (`ViewModelProperty.setValue` raising a base class's `PropertyChanged`) work. Consistent (a handle uniformly supports
-  `subscribe`/`invoke`), documented (here + `docs/design-clr-event-model.md`), convincingly explainable — passes all
+  part of the event declaration — it is what lets the idiomatic property-delegate MVVM pattern
+  (`ViewModelProperty.setValue` raising a base class's `PropertyChanged`) work. Consumer handles support subscription;
+  only declaration-bound access supports raising. This boundary is consistent, documented, and explainable — it passes all
   three conditions of the acceptance test. A **consumed** foreign .NET event has no synthesized `raise_`, so `invoke`
   on it stays an error — you still cannot raise an event you did not declare. Full model:
   [`docs/design-clr-event-model.md`](design-clr-event-model.md).

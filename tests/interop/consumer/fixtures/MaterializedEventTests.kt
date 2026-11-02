@@ -9,6 +9,10 @@ import MaterializedEvents.Concurrency
 import Eventext.Beacon
 import dotkt.support.events.EventBox
 import dotkt.support.events.LocalSource
+import dotkt.support.events.NominalLocalSource
+import dotkt.support.events.StoredEvent
+import dotkt.support.events.ForwardedEvent
+import dotkt.support.events.InheritedForwardedEvent
 import dotkt.support.events.GenericSource
 import dotkt.support.events.ReorderedSource
 import dotkt.support.events.passEvent
@@ -129,6 +133,54 @@ class MaterializedEventTests {
         val wrapper = ReorderedSource<Int, String>(source)
         var value = 0
         val subscription = wrapper.handle().subscribe { value = it }
+        source.fire(42)
+        subscription.close()
+        source.fire(99)
+        assertEquals(42, value)
+    }
+
+    @TestAttribute
+    fun ordinaryHandlePropertiesKeepTheirRoleThroughClassDelegationAndInheritance() {
+        val source = Source()
+        val stored = StoredEvent(source.Changed)
+        val direct = ForwardedEvent(stored)
+        val inherited = InheritedForwardedEvent(stored)
+        var sum = 0
+        val first = direct.event.subscribe { sum += it }
+        val second = inherited.event.subscribe { sum += it * 10 }
+        source.Fire(2)
+        assertEquals(22, sum)
+        first.close()
+        source.Fire(3)
+        assertEquals(52, sum)
+        second.close()
+        source.Fire(99)
+        assertEquals(52, sum)
+        assertEquals(2, source.RemoveCount)
+    }
+
+    @TestAttribute
+    fun reentrantCloseAndThrowingRemovalDoNotRemoveTwice() {
+        val source = Source()
+        val subscription = source.Changed.subscribe { }
+        var removalCallbacks = 0
+        source.Removing = System.Action { removalCallbacks++; subscription.close() }
+        source.ThrowOnRemove = true
+        var threw = false
+        try { subscription.close() } catch (_: System.InvalidOperationException) { threw = true }
+        assertTrue(threw)
+        subscription.close()
+        assertEquals(1, source.RemoveCount)
+        assertEquals(1, removalCallbacks)
+        assertTrue(source.AddedHandler === source.RemovedHandler)
+    }
+
+    @TestAttribute
+    fun kotlinDeclaredNominalEventCanBeReadDirectlyAcrossDlls() {
+        val source = NominalLocalSource()
+        val event = source.Changed
+        var value = 0
+        val subscription = event.subscribe { value = it }
         source.fire(42)
         subscription.close()
         source.fire(99)

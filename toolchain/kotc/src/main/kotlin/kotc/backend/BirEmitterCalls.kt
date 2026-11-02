@@ -1051,14 +1051,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// named `stackBuffer` is not mistaken for the intrinsic.
 	if (callee.fqNameWhenAvailable?.asString() == "kotlin.clr.stackBuffer")
 		return emitStackBuffer(call)
-	// #186: a class-DELEGATED ClrEvent<T> property on a Kotlin receiver is still an event handle. Include a fake override
-	// inherited by a subclass, but do not capture every local ClrEvent property: field-like `by clrEvent()` and future
-	// local implementations have their own provider semantics rather than a delegated-interface receiver.
-	fun hasDelegatedEventOrigin(p: IrProperty, seen: MutableSet<IrProperty> = HashSet()): Boolean {
-		if (!seen.add(p)) return false
-		return p.origin == IrDeclarationOrigin.DELEGATED_MEMBER ||
-			p.overriddenSymbols.any { hasDelegatedEventOrigin(it.owner, seen) }
-	}
 	fun eventOwnerType(p: IrProperty, recv: IrExpression): String {
 		val declarationOwner = p.parent as? IrClass
 		return if (declarationOwner != null && anonNames.containsKey(declarationOwner))
@@ -1078,7 +1070,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	val localEventOwner = localEventProp?.parent as? IrClass
 	if (localEventProp != null && callee === selectedEventProp.getter
 		&& callee.returnType.classFqName?.asString() == "kotlin.clr.ClrEvent"
-		&& (hasDelegatedEventOrigin(localEventProp) || clrEventDelegateCall(localEventProp) != null)
+		&& isClrEventProperty(localEventProp)
 		&& localEventOwner != null && !isExternalNetType(localEventOwner)) {
 		val eventRecv = dispatchReceiver(call)
 		if (eventRecv != null)
@@ -1096,10 +1088,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val eventAccess = handle as? IrCall
 		val prop = eventAccess?.symbol?.owner?.correspondingPropertySymbol?.owner
 		val eventRecv = eventAccess?.dispatchReceiver
-		if (prop == null || eventRecv == null) {
+		if (prop == null || eventRecv == null || !isClrEventProperty(prop)) {
 			hadError = true
 			messageCollector?.report(CompilerMessageSeverity.ERROR,
-				"a .NET event can be raised only through an instance event handle (`vm.<Event>.invoke(...)`)", locationOf(call))
+				"a .NET event can be raised only through an instance event declaration (`vm.<Event>.invoke(...)`)", locationOf(call))
 			return """{"k":"unsupportedExpr","of":"clr-event-raise-non-instance-handle"}"""
 		}
 		// invoke is `vararg args: Any?` — the individual sender/args arrive wrapped in a single IrVararg; unwrap them.
@@ -1642,11 +1634,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			else -> (recvClass?.superTypes ?: (recv.type.classifierOrNull?.owner as? org.jetbrains.kotlin.ir.declarations.IrTypeParameter)?.superTypes)
 				?.firstOrNull { it.classifierOrNull?.owner == declClass }?.let { birType(it) } ?: clrType
 		}
-		// A .NET event is NOT rewritten to an `add_<E>`/`remove_<E>` call here. It is surfaced as a
-		// `kotlin.clr.ClrEvent<T>` property and consumed via `subscribe`; kotc emits the plain subscribe call (handled
-		// at the top of this function), and bir2cir's ClrEventSubscriptionBinding binds it to add + close-token remove.
-		// No `add_`/`remove_` naming, no clrEventAdd
-		// in kotc — the Kotlin<->CLR event relation is bir2cir's (layer purity).
+		// Event declarations carry a clrEventGet read; ordinary ClrEvent-valued properties use the normal getter.
+		// bir2cir materializes the read and binds its callbacks. Subscribe is an ordinary runtime member call.
 		// A generic .NET method (`Unsafe.SizeOf<T>()`, `Activator.CreateInstance<T>()`) -> resolve the open
 		// generic-method definition from the frontend-resolved declaration, then carry its type arguments. The CLR has
 		// reified generics, so this is just an ordinary generic-method call (no

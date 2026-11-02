@@ -523,7 +523,8 @@ sealed partial class Emitter
     //   add/remove -> a lock-free CAS loop (Delegate.Combine/Remove + Interlocked.CompareExchange<D>);
     //   raise      -> `field?.Invoke(args...)` (the null-conditional makes a zero-subscriber raise a safe no-op).
     // The method's trailing `ret` is appended by EmitTrailingRet (all three are void). ilemit knows NO Kotlin here — the
-    // delegate + field are already resolved. (§9 — ClrEvent<T>/clrEvent() never reach this layer.)
+    // delegate + field are already resolved. Declaration markers and event-read dialect nodes never reach this layer;
+    // the retained stdlib ClrEvent runtime class uses ordinary class/member emission.
     void EmitClrEventAccessorImpl(JsonElement e)
     {
         var kind = e.GetProperty("kind").GetString();
