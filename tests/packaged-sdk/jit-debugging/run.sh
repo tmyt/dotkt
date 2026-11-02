@@ -47,4 +47,5 @@ pair debug-unoptimized-nosymbols Debug true -p:Optimize=false -p:DebugSymbols=fa
 pair release-optimized-nosymbols Release false -p:Optimize=true -p:DebugType=None
 pair debug-optimized-symbols Debug false -p:Optimize=true -p:DebugSymbols=true -p:DebugType=portable
 pair release-unoptimized-nosymbols Release true -p:Optimize=false -p:DebugSymbols=false
+pair custom-configuration Staging true
 echo 'JIT policy: Optimize defaults/overrides, independent symbols, target metadata, runtime and no-op/incremental checks passed.'
