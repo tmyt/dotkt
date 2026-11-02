@@ -40,6 +40,7 @@ sealed partial class Emitter
         if (_jitDebugging is bool jitDebugging)
         {
             var parameters = new[] { Bcl("System.Boolean"), Bcl("System.Boolean") };
+            // member-lookup-residual: driver-selected physical assembly metadata, not a Kotlin program call
             var constructor = Bcl("System.Diagnostics.DebuggableAttribute").GetConstructor(parameters);
             SetAttribute(ab.SetCustomAttribute, constructor, parameters, jitDebugging, jitDebugging);
         }
