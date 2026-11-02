@@ -15,6 +15,7 @@ pins in a given build.
 | kotlinx.coroutines (bundled transitively with the Kotlin compiler) | `kotc` | Apache-2.0 | https://github.com/Kotlin/kotlinx.coroutines |
 | JetBrains Java annotations (`org.jetbrains:annotations`, bundled with the Kotlin compiler) | `kotc` | Apache-2.0 | https://github.com/JetBrains/java-annotations |
 | System.Reflection.MetadataLoadContext | `bir2cir`, `ilemit` | MIT (.NET Foundation) | https://github.com/dotnet/runtime |
+| AsmResolver, AsmResolver.PE.File and AsmResolver.PE | `ilemit` native resource directory serialization | MIT | https://github.com/Washi1337/AsmResolver |
 
 The full text of the Apache License 2.0 governing DotKt itself is in `LICENSE`. The Apache-2.0 and
 MIT licenses of the redistributed components are available from their respective project pages above.

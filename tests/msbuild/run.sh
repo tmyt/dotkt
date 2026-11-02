@@ -127,7 +127,7 @@ if [[ $incr_rc1 -eq 0 && $incr_rc2 -eq 0 && "$incr1" == "12" && "$incr2" == "12"
 fi
 rm -rf "$incr"
 
-# C#-only incremental invalidation must not publish its placeholder over Kotlin code (#963).
+# Metadata-only invalidation must preserve Kotlin output, no-op behavior and compilation-hook recovery.
 bash "$ROOT/tests/msbuild/incremental-emission.sh" "$WORK/incremental-emission" || fail=1
 
 # #467 + #592: every compiler-produced intermediate follows $(IntermediateOutputPath), not the project-wide
@@ -237,7 +237,7 @@ for cfg_root in "$cfg_debug_root" "$cfg_release_root"; do
 			|| [[ ! -f "$cfg_root/dotkt-bir2cir.rsp" ]] \
 			|| [[ ! -f "$cfg_root/dotkt-ilemit.rsp" ]] \
 			|| [[ ! -f "$cfg_root/dotkt-compile-options.txt" ]] \
-			|| [[ ! -f "$cfg_root/bir/_DotKtPlaceholder.cs" ]];
+			|| [[ ! -f "$cfg_root/dotkt-emit-options.txt" ]];
 	}; then
 		config_msg="incomplete compiler state under ${cfg_root#"$ROOT/"}"
 	fi

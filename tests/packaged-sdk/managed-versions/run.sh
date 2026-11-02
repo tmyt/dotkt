@@ -55,6 +55,7 @@ pair() {
   build "$kt/App.ktproj" "$stage" "${defaults[@]}" "$@"
   build "$cs/Control.csproj" "control-$stage" --no-incremental "${defaults[@]}" "$@"
   inspect --managed-match "$cs/$out/Versioned.dll" "$kt/$out/Versioned.dll"
+  inspect --resources "$cs/$out/Versioned.dll" "$kt/$out/Versioned.dll"
   inspect --kotlin "$kt/$out/Versioned.dll"
 }
 check() { inspect --managed "$@" "$kt/$out/Versioned.dll"; }
@@ -76,6 +77,8 @@ pair version -p:Version=4.5.6-preview
 check 4.5.6.0 4.5.6.0 4.5.6-preview
 pair prefix-suffix -p:VersionPrefix=5.6.7 -p:VersionSuffix=beta
 check 5.6.7.0 5.6.7.0 5.6.7-beta
+pair dotted-prerelease -p:VersionPrefix=5.6.7 -p:VersionSuffix=preview.1.2
+check 5.6.7.0 5.6.7.0 5.6.7-preview.1.2
 pair revision -p:ProbeInfo=1.2.3 -p:SourceRevisionId=deadbeef -p:IncludeSourceRevisionInInformationalVersion=true
 check 1.0.0.0 1.0.0.0 1.2.3+deadbeef
 pair revision-plus -p:ProbeInfo=1.2.3+meta -p:SourceRevisionId=deadbeef -p:IncludeSourceRevisionInInformationalVersion=true
@@ -112,6 +115,11 @@ for project in "$kt/App.ktproj" "$cs/Control.csproj"; do
   dotnet publish "$project" -c Debug --no-restore -v:q --nologo "${defaults[@]}" "${explicit[@]}" -p:OutputType=Library >> "$ws/publish.log" 2>&1
 done
 inspect --managed-match "$cs/$out/publish/Versioned.dll" "$kt/$out/publish/Versioned.dll"
+publish_before="$(state)"
+dotnet publish "$kt/App.ktproj" -c Debug --no-build -v:q --nologo "${defaults[@]}" "${explicit[@]}" -p:OutputType=Library > "$ws/publish-no-build.log" 2>&1
+[[ "$publish_before" == "$(state)" ]] || { echo 'no-build publish regenerated the library' >&2; exit 1; }
+inspect --managed-match "$cs/$out/publish/Versioned.dll" "$kt/$out/publish/Versioned.dll"
+inspect --kotlin "$kt/$out/publish/Versioned.dll"
 
 # Separately compiled Kotlin and C# consumers must encode the producer's nonzero AssemblyRef version and run.
 for spec in "DotKt.Sdk/$version|Kotlin consumer|Consumer.ktproj" "Microsoft.NET.Sdk|CSharp consumer|Consumer.csproj"; do

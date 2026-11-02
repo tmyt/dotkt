@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Generate SDK-selected assembly versions and native resources without placeholder C# compilation, preserving incremental builds and publish while no longer producing a misleading placeholder PDB.
 - Honor the SDK's resolved `Optimize` setting in generated assembly JIT debugging attributes, independently of symbol settings and without advertising Edit and Continue.
 - Preserve semantic enum name, ordinal and comparison operands in BIR, resolving local rich-enum storage from its explicit declaration map in bir2cir.
 - Reject undefined Regex group names with `IllegalArgumentException`, while retaining null for defined unmatched groups and preserving successful and empty captures.

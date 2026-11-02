@@ -1,3 +1,4 @@
+#nullable disable
 using System.Globalization;
 using System.Reflection.Metadata;
 using System.Text.Json;
@@ -8,11 +9,11 @@ sealed class SdkAssemblyOptions
     public string OutputFileName { get; set; }
     public string OutputType { get; set; }
     public bool Deterministic { get; set; }
-    public string SdkResourceAssembly { get; set; }
     public bool NoWin32Manifest { get; set; }
     public string Win32Manifest { get; set; }
     public string Win32Resource { get; set; }
     public string ApplicationIcon { get; set; }
+    public string NativeResource { get; set; }
     public List<AttributeValue> Attributes { get; set; } = [];
     public sealed record AttributeValue(string Type, string Value, string IsLiteral, string TypeName);
 

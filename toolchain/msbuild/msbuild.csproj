@@ -10,5 +10,10 @@
     <!-- MSBuild supplies its own task API; do not ship a second MSBuild runtime. -->
     <Reference Include="Microsoft.Build.Framework" HintPath="$(MSBuildBinPath)/Microsoft.Build.Framework.dll" Private="false" />
     <Reference Include="Microsoft.Build.Utilities.Core" HintPath="$(MSBuildBinPath)/Microsoft.Build.Utilities.Core.dll" Private="false" />
+    <!-- Use the selected SDK's public resource-generation API, not a second compiler distribution. -->
+    <Reference Include="Microsoft.CodeAnalysis" HintPath="$(RoslynTargetsPath)/bincore/Microsoft.CodeAnalysis.dll" Private="false" />
+    <Reference Include="Microsoft.CodeAnalysis.CSharp" HintPath="$(RoslynTargetsPath)/bincore/Microsoft.CodeAnalysis.CSharp.dll" Private="false" />
+    <Compile Include="../ilemit/SdkAssemblyOptions.cs" Link="SdkAssemblyOptions.cs" />
+    <Compile Include="../ilemit/AssemblyVersions.cs" Link="AssemblyVersions.cs" />
   </ItemGroup>
 </Project>

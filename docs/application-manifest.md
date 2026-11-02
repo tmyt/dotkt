@@ -13,9 +13,9 @@ Use the standard SDK property to embed an application manifest:
 </Project>
 ```
 
-The path is project-relative (absolute paths and spaces also work). DotKt generates native PE resources
-directly from the SDK-selected inputs, including the resolved `Win32Manifest` bytes as `RT_MANIFEST`.
-No placeholder C# source or provider assembly is compiled. The final declarations and method bodies
+The path is project-relative (absolute paths and spaces also work). DotKt passes SDK-selected inputs
+to Roslyn's public resource-generation API, including the resolved `Win32Manifest` bytes as `RT_MANIFEST`.
+No placeholder C# assembly is compiled. The final declarations and method bodies
 are emitted from CIR. The standard SDK apphost
 then carries it into the final Windows executable for build and publish. Executable outputs use resource ID 1;
 Library outputs use DLL isolation-aware resource ID 2, matching C#. No managed `EmbeddedResource`,
@@ -47,10 +47,10 @@ and managed attributes. The SDK also preserves the concrete CLR assembly version
 Version-only changes refresh emission without recompiling Kotlin; unchanged builds do not re-emit.
 MSBuild transports evaluated `AssemblyAttribute` string values in an intermediate JSON options file.
 The emitter encodes the version identity and attributes directly; assembly-version wildcards are expanded
-once during emission and require `Deterministic=false`. Versions are never guessed from native strings.
+once during emission preparation and require `Deterministic=false`. Versions are never guessed from native strings.
 MSBuild property expressions remain supported because MSBuild evaluates them before transport. Source-code
-fragments supplied through `_Parameter1_IsLiteral=true` are not supported: this is a Kotlin project, and
-there is no C# compiler or separate C# expression evaluator in the pipeline. Kotlin source-level assembly
+fragments supplied through `_Parameter1_IsLiteral=true` are not supported: the resource API receives
+evaluated string values, not arbitrary C# attribute expressions. Kotlin source-level assembly
 annotation syntax is not introduced by this build change.
 
 `ApplicationIcon` is encoded as native icon/group resources. An explicit `Win32Resource` (RES or COFF)
@@ -58,7 +58,9 @@ replaces generated resources, rather than being merged with a default manifest o
 Switching or clearing native resource options refreshes the final PE without recompiling Kotlin.
 Direct `ilemit` callers have no implicit resources: the project driver supplies `--assembly-options <JSON>`
 when needed. Its values are physical build inputs, not Kotlin semantics or a previous application's metadata.
-The default manifest asset is read as data from the selected SDK; no Roslyn compiler code is loaded.
+The selected SDK's Roslyn API owns VERSIONINFO, default manifests and icon conversion; AsmResolver
+serializes the native resource directory, and .NET's `ManagedPEBuilder` writes the final PE. DotKt's
+adapter transports resource records and relocations rather than independently implementing their synthesis.
 
 The removed placeholder's PDB was not a Kotlin source PDB. The SDK no longer generates or copies that
 misleading file; actual Kotlin source debugging information remains separate compiler work.

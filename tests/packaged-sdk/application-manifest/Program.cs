@@ -60,7 +60,7 @@ try
     }
     else if (args[0] == "--write-res")
     {
-        // rc.exe-style .res with one named resource and a non-neutral language. Csc owns conversion to PE.
+        // rc.exe-style .res with one named resource and a non-neutral language, shared by both compiler controls.
         using var stream = File.Create(args[1]);
         using var writer = new BinaryWriter(stream, Encoding.Unicode);
         writer.Write(new byte[] { 0, 0, 0, 0, 32, 0, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0 });

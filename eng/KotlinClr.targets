@@ -23,8 +23,8 @@
     <DotKtStdlibAsm Condition="'$(DotKtStdlibAsm)' == ''">$(KotlinClrRoot)/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll</DotKtStdlibAsm>
     <DotKtRefAsm Condition="'$(DotKtRefAsm)' == ''">$(KotlinClrRoot)/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll</DotKtRefAsm>
     <!-- Project hygiene the shipping SDK applies via Sdk.props: we generate the assembly ourselves (kt -> BIR ->
-         CIL), so don't let the .NET SDK glob .cs / infer a language, and don't produce a (placeholder) ref assembly
-         a downstream C# <ProjectReference> would wrongly bind. -->
+         CIL), so don't let the .NET SDK glob .cs / infer a language, and reference the actual Kotlin assembly rather
+         than asking a different language compiler to produce a reference assembly. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
     <LanguageTargets Condition="'$(LanguageTargets)' == ''">$(KotlinClrRoot)/packaging/DotKt.Toolchain/buildShared/DotKt.Language.targets</LanguageTargets>
     <ProduceReferenceAssembly Condition="'$(ProduceReferenceAssembly)' == ''">false</ProduceReferenceAssembly>

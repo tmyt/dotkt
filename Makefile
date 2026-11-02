@@ -66,7 +66,7 @@ build/$(1)-bin/$(1).dll: $$(call tool_src,$(1))
 endef
 $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 
-build/msbuild-bin/DotKt.Build.dll: $(call tool_src,msbuild)
+build/msbuild-bin/DotKt.Build.dll: $(call tool_src,msbuild) toolchain/ilemit/SdkAssemblyOptions.cs toolchain/ilemit/AssemblyVersions.cs
 	dotnet build toolchain/msbuild -c Release -o build/msbuild-bin -v q --nologo
 
 # ---- stdlib (klib + ref + rt); see CLAUDE.md "Building the CLR stdlib" -----------------------------
@@ -156,7 +156,7 @@ verify-sanity: ## offline IR-sanity gate (semantic invariants over fresh BIR/CIR
 verify-lowering: bir2cir stdlib-ref ## lowering self-tests (synthetic BIR -> bir2cir -> CIR assertions, for rules the corpus no longer witnesses)
 	bash tests/ir/run-lowering.sh
 
-verify-msbuild: ## stateful MSBuild integration (same obj/ across source mutation)
+verify-msbuild: build/msbuild-bin/DotKt.Build.dll ## stateful MSBuild integration (same obj/ across source mutation)
 	bash tests/msbuild/run.sh
 
 verify-gate-selection: ## change-aware gate selector policy self-test

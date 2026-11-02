@@ -76,6 +76,10 @@ for project in "$kt/App.ktproj" "$cs/Control.csproj"; do
 done
 inspect "$manifests/second.manifest" "$kt/$out/publish/App.exe" "$cs/$out/publish/Control.exe"
 inspect --bytes "$manifests/second.manifest" "$kt/$out/publish/App.exe"
+publish_before="$(state)"
+dotnet publish "$kt/App.ktproj" -c Debug --no-build -v:q --nologo '-p:ApplicationManifest=../manifest files/second.manifest' > "$ws/publish-no-build.log" 2>&1
+[[ "$publish_before" == "$(state)" ]] || { echo 'no-build publish regenerated the application' >&2; exit 1; }
+inspect --bytes "$manifests/second.manifest" "$kt/$out/publish/App.exe"
 build "$kt/App.ktproj" cleared '-p:ApplicationManifest=' '-p:NoWin32Manifest=true'
 inspect --absent "$kt/$out/App.dll" "$kt/$out/App.exe"
 [[ "$front_before" == "$(frontend_state)" ]] || { echo 'native manifest edits recompiled Kotlin' >&2; exit 1; }

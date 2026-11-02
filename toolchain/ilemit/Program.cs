@@ -102,7 +102,7 @@ static class IlEmit
             var files = bir.Select(LoadInputDocument).ToList();
             var assemblyOptions = assemblyOptionsPath == null ? null : SdkAssemblyOptions.Read(assemblyOptionsPath);
             var versions = assemblyOptions?.Versions();
-            var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions, versions);
+            var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions);
             new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform, nativeResources, versions, jitDebugging)
                 .EmitAssembly(MergeByFileClass(files));
             return 0;

@@ -48,4 +48,9 @@ pair release-optimized-nosymbols Release false -p:Optimize=true -p:DebugType=Non
 pair debug-optimized-symbols Debug false -p:Optimize=true -p:DebugSymbols=true -p:DebugType=portable
 pair release-unoptimized-nosymbols Release true -p:Optimize=false -p:DebugSymbols=false
 pair custom-configuration Staging true
+task_before_publish=$(state Release)
+dotnet publish "$task_kt/App.ktproj" -c Release --no-build -v:q --nologo -p:Optimize=false -p:DebugSymbols=true -p:DebugType=portable > "$task_work/publish-no-build.log" 2>&1
+[[ "$task_before_publish" == "$(state Release)" ]] || { echo 'No-build publish regenerated output' >&2; exit 1; }
+dotnet "$task_inspector" true "$task_kt/bin/Release/net10.0/publish/DebugPolicy.dll"
+[[ $(dotnet "$task_kt/bin/Release/net10.0/publish/DebugPolicy.dll") == 42 ]]
 echo 'JIT policy: Optimize defaults/overrides, independent symbols, target metadata, runtime and no-op/incremental checks passed.'

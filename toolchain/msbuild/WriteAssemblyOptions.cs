@@ -11,7 +11,6 @@ public sealed class WriteAssemblyOptions : Microsoft.Build.Utilities.Task
     [Required] public string OutputFile { get; set; } = "";
     [Required] public string OutputFileName { get; set; } = "";
     [Required] public string OutputType { get; set; } = "";
-    [Required] public string SdkResourceAssembly { get; set; } = "";
     public bool Deterministic { get; set; }
     public bool JitDebugging { get; set; }
     public bool NoWin32Manifest { get; set; }
@@ -27,7 +26,7 @@ public sealed class WriteAssemblyOptions : Microsoft.Build.Utilities.Task
             var json = JsonSerializer.Serialize(new
             {
                 outputFileName = OutputFileName, outputType = OutputType, deterministic = Deterministic, jitDebugging = JitDebugging,
-                sdkResourceAssembly = SdkResourceAssembly, noWin32Manifest = NoWin32Manifest,
+                noWin32Manifest = NoWin32Manifest,
                 win32Manifest = Win32Manifest, win32Resource = Win32Resource, applicationIcon = ApplicationIcon,
                 attributes = Attributes.Select(a => new
                 {
