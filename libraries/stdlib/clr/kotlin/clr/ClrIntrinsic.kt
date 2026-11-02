@@ -17,6 +17,12 @@ package kotlin.clr
 @Retention(AnnotationRetention.BINARY)
 public annotation class ClrExternal(val owner: String, val physicalOwner: String, val sourceView: String = "")
 
+// A projected event declaration, as distinct from an ordinary property storing a ClrEvent value. dll2klib owns
+// this fact; kotc carries event-member reads, while bir2cir selects the exact native accessors.
+@Target(AnnotationTarget.PROPERTY)
+@Retention(AnnotationRetention.BINARY)
+public annotation class ClrEventDeclaration
+
 // Marks a metadata-only suspend declaration synthesized by dll2klib beside a
 // conforming CLR GetAwaiter pattern. kotc forwards this declaration fact to
 // BIR; bir2cir resolves GetAwaiter/GetResult and realizes the suspension.

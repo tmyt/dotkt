@@ -31,6 +31,7 @@
          extensions and bound back to its executable top-level implementation methods. -->
     <ProjectReference Include="../../special/csharp14-static-extensions/producer/StaticExtensionProducer.csproj" />
     <ProjectReference Include="../../support/coroutines/DotKt.Tests.CoroutineSupport.ktproj" />
+    <ProjectReference Include="../../support/events/DotKt.Tests.EventSupport.ktproj" />
   </ItemGroup>
 
   <ItemGroup>

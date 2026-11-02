@@ -2118,15 +2118,16 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
 }
 ```
 
-- The event surfaces as a **read-only property** `CollectionChanged: ClrEvent<HandlerFn>`, where `HandlerFn` is
-  the handler's **Kotlin function type** (`(Any?, Any?) -> Unit`) — so a lambda `{ s, e -> … }` binds directly.
-  `ClrEvent<T>` (`kotlin.clr.ClrEvent`) is a **compile-time-only handle**: a .NET event is not a first-class value
-  (you can only add/remove/raise it), so `c.CollectionChanged` never materializes an object — it exists only to make
-  `subscribe` resolve. The compiler binds it to the event's underlying **add/remove accessors**; the handler lambda
-  is wrapped as the event's own delegate type (not `Action`/`Func`).
-- `subscribe(handler)` adds the handler and returns `kotlin.clr.EventSubscription<HandlerFn>`, an
-  `AutoCloseable`. `close()` is idempotent and removes the **same handler instance** that was added, so a direct
-  lambda can be safely scoped with `use` without separately retaining it.
+- The event surfaces as a **read-only property** `CollectionChanged: ClrEvent<H>`, where `H` is the complete
+  nominal delegate type. A lambda `{ s, e -> … }` binds through ordinary SAM conversion. The compiler neither
+  chooses an event payload nor drops sender/return/argument information.
+- Reading an event creates a retained `kotlin.clr.ClrEvent<H>` handle bound to that event and source, evaluating
+  the source once. Handles can be parameters, returned values, fields, locals, and captures, including across DLLs.
+  An ordinary property storing a handle remains an ordinary property, not a new CLR event declaration.
+- `subscribe(handler)` adds the handler and returns `kotlin.clr.EventSubscription<H>`, an `AutoCloseable`.
+  `close()` atomically claims removal and removes the **same handler instance** exactly once, including concurrent
+  or reentrant close calls. It does not wait for callbacks already in flight; a Flow adapter's channel owns delivery
+  and cancellation semantics. The stdlib has no dependency on kotlinx.coroutines.
 - Public `+=` / `-=` are intentionally not exposed: they split handler identity and subscription lifetime across
   caller-managed values. This also replaces the earlier `add_<Event>` / `remove_<Event>` accessor-method spelling.
 - **Static events** subscribe the same way and are reached directly on their declaring type

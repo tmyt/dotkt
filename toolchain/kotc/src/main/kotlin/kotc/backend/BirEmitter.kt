@@ -112,7 +112,6 @@ private val CLR_COMPILE_TIME_INTRINSIC_CLASSES = setOf(
 	"kotlin.clr.ClrPointer",
 	"kotlin.clr.StackBuffer",
 	"kotlin.clr.Span",
-	"kotlin.clr.ClrEvent",
 )
 
 class BirEmitter(internal val messageCollector: MessageCollector? = null, internal val irBuiltIns: IrBuiltIns? = null) {
@@ -319,17 +318,6 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
 			"kotc internal error: broken emitter invariant — $invariant", locationOf(node))
 		return """{"k":"unsupportedExpr","of":${str("broken emitter invariant — $invariant")}}"""
-	}
-
-	// A `kotlin.clr.ClrEvent<T>` value is a compile-time-only fiction (the surfaced form of a .NET event); it may
-	// appear ONLY as the receiver of `subscribe(handler)`, never be materialized as a real
-	// value. This flag is set true ONLY while emitting the event member-access that is the receiver of one of those
-	// ClrEvent operations;
-	// a ClrEvent-typed property read seen with it FALSE is a misuse (`val e = w.Changed`) and is a compile error.
-	internal var clrEventReceiverOk = false
-	internal inline fun <R> asClrEventReceiver(body: () -> R): R {
-		val prev = clrEventReceiverOk; clrEventReceiverOk = true
-		try { return body() } finally { clrEventReceiverOk = prev }
 	}
 
 	// Subject substitutions follow the resolved declaration, not its spelling in an enclosing scope.

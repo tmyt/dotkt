@@ -346,8 +346,8 @@ KINDS = {
     "stackAlloc", "stackGet", "stackSet", "stackAsSpan",
     "byrefOf", "byrefLoad", "byrefStore",
     # kotc-dialect CLR-only-vocab: a .NET event READ (`w.Changed`), the ClrEvent<T> handle. Emitted by kotc (a .NET
-    # event has no plain-Kotlin call form), consumed by bir2cir ClrEventOperatorBinding with the +=/-= into
-    # clrEventAdd/Remove — never reaches ilemit/CIR. (byref/ClrRef are the other two CLR-only-vocab forms.)
+    # event has no getter), materialized by bir2cir into a retained ClrEvent value with add/remove callbacks.
+    # The dialect node never reaches ilemit/CIR; the ordinary runtime ClrEvent class does.
     "clrEventGet",
     # kotc-dialect CLR-only-vocab for the .NET-event IMPLEMENT/RAISE feature (§4.2/§4.3, #187). BIR-only (kotc -> bir2cir):
     #   clrEventBacking  — a per-event `by clrEvent()` backing directive (in a type's `clrEvents` array; carries the handler

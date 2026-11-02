@@ -60,7 +60,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/roundtrip/consumer"]=749
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=2
 	["tests/roundtrip/bidirectional/consumer"]=56
-	["tests/interop/consumer"]=497
+	["tests/interop/consumer"]=504
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -80,6 +80,7 @@ declare -A EXTRA_EMIT=(
 	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll UpstreamStdlibProducer.dll"
 	["tests/roundtrip/charsequence-polymorphic-consumer"]="UpstreamStdlibProducer.dll"
 	["tests/roundtrip/bidirectional/consumer"]="BidirectionalKotlin.dll"
+	["tests/interop/consumer"]="DotKt.Tests.EventSupport.dll"
 	# The C#-producer dll is csc-emitted (not ilemit), so it needs no DotKt ilverify of its own; ilverify over the
 	# CONSUMER assembly (the .ktproj-named dll) is what proves the emitted interop IL is clean. No EXTRA_EMIT entry
 	# for tests/interop/consumer — adding the plain C# producer would only formally re-verify a non-DotKt assembly.

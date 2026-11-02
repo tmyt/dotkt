@@ -4,18 +4,10 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// .NET EVENT `subscribe` binding. A .NET event is surfaced by dll2klib/kotc as a
-// read-only `kotlin.clr.ClrEvent<T>` property (a compile-time fiction — a .NET event is NOT a first-class value), and
-// `w.Changed.subscribe(handler)` resolves through NORMAL Kotlin resolution. kotc emits it as a PLAIN call
-// `callInstance(ownerType = kotlin.clr.ClrEvent, method = subscribe,
-// recv = <clrEventGet w Changed>, args = [handler])` — no `add_`/`remove_` naming, no CLR binding. The event READ
-// `w.Changed` is a DEDICATED kotc-dialect node `clrEventGet` (the ClrEvent<T> handle — a CLR-only-vocab synthetic
-// kotc lowers itself; NOT `clrPropGet`, which after A2/#61 is exclusively a real bir2cir-produced .NET property).
-// This pass BINDS the pair: it reads the owner .NET type + event name straight off the clrEventGet member-access node
-// and emits the EXISTING clrEventAdd/clrEventRemove nodes (ilemit's EmitClrEvent, unchanged). `subscribe` additionally
-// creates the real stdlib EventSubscription<T> with a synthesized remove callback, after spilling receiver + handler
-// once. The emitted add/remove accessor IL is identical to the old direct-accessor model. The ClrEvent<T> value + clrEventGet
-// are consumed here, never emitted (a .NET event isn't materializable). This is the Kotlin<->CLR event relation, bir2cir's to own.
+// Materialize each event-member read as a real stdlib ClrEvent<H>. The source is evaluated once and
+// captured by ordinary add/remove callback closures. H is the complete handler shape; subscribe and close
+// are ordinary stdlib calls, so stored, returned, captured and cross-module handles use the same path.
+// Only this layer resolves the Kotlin event declaration into its concrete CLR accessors.
 static class ClrEventSubscriptionBinding
 {
     sealed class Binder
@@ -23,7 +15,6 @@ static class ClrEventSubscriptionBinding
         readonly string _scope;
         readonly ReferenceMetadataIndex _refs;
         readonly IReadOnlyDictionary<(string Owner, string Event), JsonNode> _forwardedOwners;
-        readonly IReadOnlySet<string> _localTypes;
         readonly Dictionary<JsonObject, (JsonArray TypeParams, JsonArray MethodParams)> _scopes = new();
         readonly JsonArray _empty = new();
         int _next;
@@ -33,12 +24,10 @@ static class ClrEventSubscriptionBinding
         public Binder(
             JsonNode root,
             ReferenceMetadataIndex refs,
-            IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners,
-            IReadOnlySet<string> localTypes)
+            IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners)
         {
             _refs = refs;
             _forwardedOwners = forwardedOwners;
-            _localTypes = localTypes;
             var fileClass = root is JsonObject f ? Str(f["fileClass"]) : null;
             _scope = string.Concat((fileClass ?? "File").Select(c => char.IsLetterOrDigit(c) ? c : '_'));
             IndexScopes(root);
@@ -94,124 +83,90 @@ static class ClrEventSubscriptionBinding
 
         JsonNode Transform(JsonObject node, JsonArray typeParams, JsonArray methodParams)
         {
-            if (Str(node["k"]) != "callInstance") return null;
-            if (TypeJson.OwnerName(node["ownerType"]) != "kotlin.clr.ClrEvent") return null;
-            if (Str(node["method"]) != "subscribe") return null;
-            // The receiver is the event member-access `w.Changed`, emitted by kotc as a `clrEventGet` carrying the .NET
-            // owner type (`type`), the event name (`name`), and the actual owner value (`recv`). Anything else is not an event op.
-            if (node["recv"] is not JsonObject eventGet || Str(eventGet["k"]) != "clrEventGet") return null;
-            if (node["args"] is not JsonArray args || args.Count != 1) return null;
-            var materialized = Subscribe(node, eventGet, args[0], typeParams, methodParams);
+            if (Str(node["k"]) != "clrEventGet") return null;
+            var materialized = Materialize(node, typeParams, methodParams);
             MaterializedRoots.Add(materialized);
             return materialized;
         }
 
-        JsonNode Subscribe(
-            JsonObject call,
-            JsonObject eventGet,
-            JsonNode handler,
-            JsonArray typeParams,
-            JsonArray methodParams)
+        JsonNode Materialize(JsonObject eventGet, JsonArray typeParams, JsonArray methodParams)
         {
-            var handlerType = HandlerType(call, handler)
-                ?? throw new InvalidOperationException("bir2cir: ClrEvent.subscribe is missing its instantiated handler type");
+            var eventType = TypeJson.Read(eventGet["sty"] ?? eventGet["ret"]) as TypeNode.Fqn;
+            if (eventType?.Name != "kotlin.clr.ClrEvent" || eventType.Args == null)
+                throw new InvalidOperationException("bir2cir: an event read is missing its complete handler type");
+            var handlerArguments = _refs.NullableTypeFrames.TryGetValue(eventType.Name, out var frame)
+                ? frame.OrdinaryArguments(eventType.Args) : eventType.Args;
+            if (handlerArguments.Length != 1)
+                throw new InvalidOperationException("bir2cir: an event read has no unique handler argument");
+            var handlerType = TypeJson.Write(handlerArguments[0]);
             var ownerType = EventOwner(eventGet)
-                ?? throw new InvalidOperationException("bir2cir: ClrEvent.subscribe is missing its event owner type");
+                ?? throw new InvalidOperationException("bir2cir: an event read is missing its event owner type");
             var isStatic = (eventGet["static"] as JsonValue)?.GetValue<bool>() ?? false;
-            // A CLR static class is surfaced as a Kotlin object, so kotc's neutral Kotlin projection carries an
-            // INSTANCE-looking receiver. Bind the actual CLR event declaration here; this is the lowering layer that
-            // owns the ABI decision. If metadata cannot establish one unique declaration, preserve the projected bit
-            // and let ClrMemberResolution emit its existing precise missing/ambiguous-member diagnostic.
-            var ownerName = TypeJson.OwnerName(ownerType);
-            var eventName = Str(eventGet["name"]);
-            if (_refs.TryClrEventIsStatic(ownerName, eventName, out var declaredStatic))
+            if (_refs.TryClrEventIsStatic(TypeJson.OwnerName(ownerType), Str(eventGet["name"]), out var declaredStatic))
                 isStatic = declaredStatic;
+
             var id = _next++;
-            var bindingKey = _scope + ":" + id;
-            var handlerLocal = $"__clrEventSubscriptionHandler{id}";
-            var receiverLocal = $"__clrEventSubscriptionReceiver{id}";
-            var closureName = $"dotkt${_scope}$EventRemove{id}";
-
+            var receiverLocal = $"__clrEventReceiver{id}";
             var free = FreeTypeVariables(ownerType, handlerType);
-            // The remove callback is a new physical generic class. Preserve the source parameters' constraints so a
-            // captured `T : EventOwner<U>` remains a verifier-valid constrained receiver, and recursively capture U
-            // even when it is absent from the handler type. These are source-frame facts available at synthesis time;
-            // later layers must not reconstruct them from the closure field layout.
             ExpandConstraintVariables(free, typeParams, methodParams);
-            var closureOwnerType = RemapForClosure(ownerType, free);
-            var closureHandlerType = RemapForClosure(handlerType, free);
+            // Author ingredients in the enclosing lexical frame. ClosureSynthesis owns the one rebind into its
+            // dense class frame; pre-remapping here would rebind type-scoped permutations a second time.
+            var closureOwnerType = ownerType.DeepClone();
+            var closureHandlerType = handlerType.DeepClone();
             var unit = Fqn("kotlin.Unit");
-            var publicRemoveFnType = Fn(handlerType, unit);
-            var closureFqn = Fqn(closureName);
-            // ClrEvent<T>.subscribe accepts T, and Kotlin permits a function value to undergo SAM conversion at that
-            // call. Keep that conversion explicit in CIR: construct the event's one exact nominal delegate once, then
-            // store and reuse the same object for add and remove. Re-wrapping an Action at each accessor would preserve
-            // Delegate equality, but it would leave the EventSubscription<T> constructor and the spill itself with a
-            // function/delegate type mismatch.
-            var exactHandler = ExactHandler(handler, handlerType);
+            var callbackType = Fn(handlerType, unit);
 
-            var fields = new JsonArray();
-            var captures = new JsonArray();
-            JsonNode removeReceiver = null;
-            if (!isStatic)
+            JsonObject Callback(bool add)
             {
-                fields.Add(new JsonObject { ["name"] = "__receiver", ["type"] = closureOwnerType.DeepClone() });
-                captures.Add(Local(receiverLocal, ownerType));
-                removeReceiver = new JsonObject
+                var kind = add ? "Add" : "Remove";
+                var closureName = $"dotkt${_scope}$Event{kind}{id}";
+                var closureFqn = Fqn(closureName);
+                var fields = new JsonArray();
+                var captures = new JsonArray();
+                JsonNode receiver = null;
+                if (!isStatic)
                 {
-                    ["k"] = "field",
-                    ["ownerType"] = closureFqn.DeepClone(),
-                    ["recv"] = new JsonObject { ["k"] = "this" },
-                    ["name"] = "__receiver",
+                    fields.Add(new JsonObject { ["name"] = "__receiver", ["type"] = closureOwnerType.DeepClone() });
+                    captures.Add(Local(receiverLocal, ownerType));
+                    receiver = new JsonObject
+                    {
+                        ["k"] = "field", ["ownerType"] = closureFqn.DeepClone(),
+                        ["recv"] = new JsonObject { ["k"] = "this" }, ["name"] = "__receiver",
+                    };
+                }
+                var operation = new JsonObject
+                {
+                    ["k"] = add ? "clrEventAdd" : "clrEventRemove",
+                    ["type"] = closureOwnerType.DeepClone(), ["event"] = eventGet["name"]?.DeepClone(),
+                    ["static"] = isStatic, ["recv"] = receiver,
+                    ["handler"] = Local("handler", closureHandlerType), ["handlerExact"] = true,
                 };
+                var synthClass = new JsonObject
+                {
+                    ["name"] = closureName, ["fields"] = fields,
+                    ["params"] = new JsonArray
+                    {
+                        new JsonObject { ["name"] = "handler", ["type"] = closureHandlerType.DeepClone() },
+                    },
+                    ["ret"] = unit.DeepClone(),
+                    ["body"] = new JsonArray { new JsonObject { ["k"] = "exprStmt", ["expr"] = operation } },
+                };
+                if (free.Count > 0)
+                    synthClass["typeParams"] = new JsonArray(free.Select((item, i) =>
+                        ClosureTypeParameter(item, i, typeParams, methodParams)).ToArray());
+                var callback = new JsonObject
+                {
+                    ["k"] = "newClosure", ["closureType"] = closureFqn, ["captures"] = captures,
+                    ["method"] = "invoke", ["funcType"] = callbackType.DeepClone(), ["synthClass"] = synthClass,
+                };
+                if (free.Count > 0)
+                    callback["typeArgs"] = new JsonArray(free.Select(item => item.Original.DeepClone()).ToArray());
+                return callback;
             }
 
-            var remove = new JsonObject
-            {
-                ["k"] = "clrEventRemove",
-                ["type"] = closureOwnerType.DeepClone(),
-                ["event"] = eventGet["name"]?.DeepClone(),
-                ["static"] = isStatic,
-                ["recv"] = removeReceiver,
-                ["handler"] = Local("handler", closureHandlerType),
-                ["handlerExact"] = true,
-                // The add site still lives in the source generic frame and can resolve a type-parameter event owner
-                // from its constraint.  The remove callback is a synthesized generic class with remapped slots; this
-                // key lets the later module-wide local-event pass copy that exact declaration binding rather than
-                // attempting to rediscover Kotlin semantics from the closure's physical frame.
-                ["eventSubscriptionKey"] = bindingKey,
-                ["eventBindingFree"] = new JsonArray(free.Select(item => item.Original.DeepClone()).ToArray()),
-            };
-            var synthClass = new JsonObject
-            {
-                ["name"] = closureName,
-                ["fields"] = fields,
-                ["params"] = new JsonArray
-                {
-                    new JsonObject { ["name"] = "handler", ["type"] = closureHandlerType.DeepClone() },
-                },
-                ["ret"] = unit.DeepClone(),
-                ["body"] = new JsonArray
-                {
-                    new JsonObject { ["k"] = "exprStmt", ["expr"] = remove },
-                },
-            };
-            if (free.Count > 0)
-                synthClass["typeParams"] = new JsonArray(free.Select((item, i) =>
-                    ClosureTypeParameter(item, i, free, typeParams, methodParams)).ToArray());
-
-            var removeClosure = new JsonObject
-            {
-                ["k"] = "newClosure",
-                ["closureType"] = closureFqn,
-                ["captures"] = captures,
-                ["method"] = "invoke",
-                ["funcType"] = publicRemoveFnType.DeepClone(),
-                ["synthClass"] = synthClass,
-            };
-            if (free.Count > 0)
-                removeClosure["typeArgs"] = new JsonArray(free.Select(x => x.Original.DeepClone()).ToArray());
-
+            var handleType = TypeJson.Write(eventType);
+            // The event-read result already passed through declaration-frame materialization. Reuse that complete
+            // physical application, including storage companions, rather than closing its source frame twice.
             var stmts = new JsonArray();
             if (!isStatic)
                 stmts.Add(new JsonObject
@@ -219,115 +174,16 @@ static class ClrEventSubscriptionBinding
                     ["k"] = "var", ["name"] = receiverLocal, ["type"] = ownerType.DeepClone(),
                     ["init"] = eventGet["recv"]?.DeepClone(),
                 });
-            stmts.Add(new JsonObject
-            {
-                ["k"] = "var", ["name"] = handlerLocal, ["type"] = handlerType.DeepClone(),
-                ["init"] = exactHandler,
-            });
-            var add = new JsonObject
-            {
-                ["k"] = "clrEventAdd",
-                ["type"] = ownerType.DeepClone(),
-                ["event"] = eventGet["name"]?.DeepClone(),
-                ["static"] = isStatic,
-                ["recv"] = isStatic ? null : Local(receiverLocal, ownerType),
-                ["handler"] = Local(handlerLocal, handlerType),
-                ["handlerExact"] = true,
-                ["eventSubscriptionKey"] = bindingKey,
-            };
-            stmts.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = add });
-
-            var subscriptionType = new JsonObject
-            {
-                ["t"] = "fqn",
-                ["name"] = "kotlin.clr.EventSubscription",
-                ["args"] = new JsonArray { handlerType.DeepClone() },
-            };
-            // This construction is authored after source frame materialization.
-            // Its handler is already the exact physical delegate selected by the
-            // event binding, so every storage companion closes over that same
-            // delegate; do not leave the source-arity owner on a physical ctor.
-            if (_refs.KotlinConstructorOwnerFrames.TryGetValue(
-                    TypeJson.OwnerName(subscriptionType), out var constructorFrame))
-            {
-                var handlerArgument = TypeJson.Read(handlerType);
-                TypeNode NullableHandler(TypeNode type) => NullableGenericErasure.EraseArgument(
-                    new TypeNode.Nullable(type), _refs.IsValueType);
-                subscriptionType["args"] = new JsonArray(constructorFrame.Close(
-                    new[] { handlerArgument }, type => type, NullableHandler,
-                    type => type, NullableHandler).Select(TypeJson.Write).ToArray());
-            }
             return new JsonObject
             {
-                ["k"] = "valueBlock",
-                ["stmts"] = stmts,
+                ["k"] = "valueBlock", ["stmts"] = stmts, ["sty"] = handleType.DeepClone(),
                 ["result"] = new JsonObject
                 {
-                    ["k"] = "new",
-                    ["type"] = subscriptionType,
-                    ["argTypes"] = new JsonArray { handlerType.DeepClone(), publicRemoveFnType.DeepClone() },
-                    ["args"] = new JsonArray { Local(handlerLocal, handlerType), removeClosure },
+                    ["k"] = "new", ["type"] = handleType,
+                    ["argTypes"] = new JsonArray { callbackType.DeepClone(), callbackType.DeepClone() },
+                    ["args"] = new JsonArray { Callback(true), Callback(false) },
                 },
             };
-        }
-
-        JsonNode ExactHandler(JsonNode handler, JsonNode targetTypeNode)
-        {
-            var targetType = TypeJson.Read(targetTypeNode)
-                ?? throw new InvalidOperationException("bir2cir: ClrEvent.subscribe has no readable handler target type");
-            // A literal/callable-reference construction can use the ordinary declared-slot mechanism directly. In
-            // particular, ClosureSynthesis has already turned a CLR-SAM newSam into a newClosure and marked it; wrapping
-            // that construction again would bind the outer Action.Invoke pointer to the already-retargeted nominal
-            // delegate object.
-            if (handler?.DeepClone() is JsonObject construction
-                && ClrMemberResolution.MarkDelegateSlot(construction, targetType, _refs, _localTypes))
-                return construction;
-            // Read the produced value's type, not an internal operand signature. In particular a SAM
-            // conversion produces its nominal target even though funcType describes its source function.
-            var sourceType = NodeType.Of(handler);
-            sourceType ??= targetType;
-            if (SamePhysicalDelegate(sourceType, targetType)) return handler?.DeepClone();
-            if (sourceType is not TypeNode.Fn sourceFunction)
-                throw new InvalidOperationException(
-                    $"bir2cir: ClrEvent.subscribe cannot convert handler {TypeNode.ToJson(sourceType)} " +
-                    $"to {TypeNode.ToJson(targetType)}");
-
-            var loweredSource = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(
-                sourceFunction, refBuild: false, force: false);
-            var sourceDelegate = BirTypeLowering.DelegateFqnOf(loweredSource)
-                ?? throw new InvalidOperationException(
-                    $"bir2cir: ClrEvent.subscribe handler {TypeNode.ToJson(sourceType)} has no CLR delegate representation");
-            var conversion = new JsonObject
-            {
-                ["k"] = "newBoundClrDelegate",
-                ["clrType"] = TypeJson.Write(sourceDelegate),
-                ["method"] = "Invoke",
-                ["argTypes"] = new JsonArray(loweredSource.DelegateParams.Select(TypeJson.Write).ToArray()),
-                ["virtual"] = true,
-                ["recv"] = handler?.DeepClone(),
-                // This is the source method-pointer shape. The ordinary delegate-slot materializer below changes the
-                // constructed delegate to targetType and authors the existing Unit adapter if the returns require it.
-                ["funcType"] = TypeJson.Write(sourceFunction),
-            };
-            ClrMemberResolution.MarkDelegateSlot(conversion, targetType, _refs, _localTypes);
-            return conversion;
-        }
-
-        static bool SamePhysicalDelegate(TypeNode left, TypeNode right)
-        {
-            static TypeNode Physical(TypeNode type)
-            {
-                while (type is TypeNode.Nullable nullable) type = nullable.Of;
-                while (type is TypeNode.Oblivious oblivious) type = oblivious.Of;
-                if (type is not TypeNode.Fn function) return type;
-                var lowered = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(function, refBuild: false, force: false);
-                return BirTypeLowering.DelegateFqnOf(lowered);
-            }
-
-            var leftPhysical = Physical(left);
-            var rightPhysical = Physical(right);
-            return leftPhysical != null && rightPhysical != null
-                && TypeNode.ToJson(leftPhysical) == TypeNode.ToJson(rightPhysical);
         }
 
         static JsonNode SourceTypeParameter(FreeTv item, JsonArray typeParams, JsonArray methodParams)
@@ -354,7 +210,6 @@ static class ClrEventSubscriptionBinding
         static JsonNode ClosureTypeParameter(
             FreeTv item,
             int index,
-            List<FreeTv> free,
             JsonArray typeParams,
             JsonArray methodParams)
         {
@@ -363,8 +218,6 @@ static class ClrEventSubscriptionBinding
                 return JsonValue.Create(name);
             var clone = descriptor.DeepClone() as JsonObject;
             clone["name"] = name;
-            if (clone["constraints"] is JsonArray constraints)
-                clone["constraints"] = RemapForClosure(constraints, free);
             return clone;
         }
 
@@ -462,10 +315,9 @@ static class ClrEventSubscriptionBinding
         JsonNode root,
         ReferenceMetadataIndex refs,
         IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners,
-        IReadOnlySet<string> localTypes,
         out IReadOnlyList<JsonNode> materializedRoots)
     {
-        var binder = new Binder(root, refs, forwardedOwners, localTypes);
+        var binder = new Binder(root, refs, forwardedOwners);
         var result = binder.Apply(root);
         materializedRoots = binder.MaterializedRoots;
         return result;
@@ -485,16 +337,6 @@ static class ClrEventSubscriptionBinding
     {
         ["sty"] = type.DeepClone(), ["k"] = "local", ["name"] = name,
     };
-
-    static JsonNode HandlerType(JsonObject call, JsonNode handler)
-    {
-        if (call["ownerType"] is JsonObject owner && owner["args"] is JsonArray oa && oa.Count == 1)
-            return oa[0]?.DeepClone();
-        if (call["sig"] is JsonArray sig && sig.Count == 1) return sig[0]?.DeepClone();
-        if (call["argTypes"] is JsonArray ats && ats.Count == 1) return ats[0]?.DeepClone();
-        if (handler is JsonObject h && h["sty"] != null) return h["sty"]?.DeepClone();
-        return null;
-    }
 
     sealed record FreeTv(string Scope, int Index, JsonNode Original);
 
@@ -521,27 +363,4 @@ static class ClrEventSubscriptionBinding
         return result;
     }
 
-    static JsonNode RemapForClosure(JsonNode node, List<FreeTv> free)
-    {
-        if (node is JsonObject o)
-        {
-            if (Str(o["t"]) == "tv")
-            {
-                var scope = Str(o["scope"]) ?? "method";
-                var index = (o["i"] as JsonValue)?.GetValue<int>() ?? 0;
-                var mapped = free.FindIndex(x => x.Scope == scope && x.Index == index);
-                if (mapped >= 0) return new JsonObject { ["t"] = "tv", ["scope"] = "type", ["i"] = mapped };
-            }
-            var copy = new JsonObject();
-            foreach (var kv in o) copy[kv.Key] = kv.Value == null ? null : RemapForClosure(kv.Value, free);
-            return copy;
-        }
-        if (node is JsonArray a)
-        {
-            var copy = new JsonArray();
-            foreach (var child in a) copy.Add(child == null ? null : RemapForClosure(child, free));
-            return copy;
-        }
-        return node.DeepClone();
-    }
 }
