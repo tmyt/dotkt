@@ -4314,19 +4314,13 @@ static partial class FBoundStarProjectionErasure
         if (!variantOuter && (suppliedOuter == null || !ContainsExistential(suppliedOuter,
                 existentialTypeParameters, existentialMethodParameters))) return;
 
-        // memberSignature remains declaration-relative, including the hidden enclosing instance and own slots
-        // (for example GenericEntry<E>'s value slot is type#1). argTypes closes that selected constructor descriptor
-        // at this use, including its actual enclosing instance; factory arguments use this caller-relative vector.
+        // The selected descriptor identifies the hidden outer in its declaration frame. The factory call below
+        // uses the allocated physical slot, not the source parameter vector.
         var isLocalInner = defs.TryGetValue(innerType.Name, out var innerDef) && IsInner(innerDef);
         var isReferencedInner = refs.TryInnerSemanticOwner(innerType.Name, out var referencedOuter);
         // A regular constructor may simply take a star-projected value as its first source parameter. Only a local
         // inner declaration or trusted referenced inner-owner fact proves that this slot is the hidden outer.
         if (!isLocalInner && !isReferencedInner) return;
-        var selectedDescriptor = construction["argTypes"] as JsonArray ?? signature;
-        var authoredSignature = selectedDescriptor.Select(TypeJson.Read).ToArray();
-        if (authoredSignature.Any(type => type == null))
-            throw new InvalidOperationException(
-                $"bir2cir: star-projected inner construction '{innerType.Name}' has a malformed selected constructor descriptor");
         string physicalOwner = null;
         string physicalMethod = null;
         TypeNode[] physicalParameters = null;
@@ -4696,28 +4690,6 @@ static partial class FBoundStarProjectionErasure
             declaration[NormalizedInnerFactoryReturnKey] = true;
         }
     }
-
-    internal static TypeNode CloseInnerConstructorType(TypeNode type, IReadOnlyList<TypeNode> innerArguments) =>
-        type switch
-        {
-            TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < innerArguments.Count
-                => innerArguments[tv.I],
-            TypeNode.Projection projection => new TypeNode.Projection(projection.Variance,
-                CloseInnerConstructorType(projection.Of, innerArguments)),
-            TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
-                args.Select(argument => CloseInnerConstructorType(argument, innerArguments)).ToArray()),
-            TypeNode.Nullable n => new TypeNode.Nullable(CloseInnerConstructorType(n.Of, innerArguments)),
-            TypeNode.Oblivious o => new TypeNode.Oblivious(CloseInnerConstructorType(o.Of, innerArguments)),
-            TypeNode.Array a => new TypeNode.Array(CloseInnerConstructorType(a.Elem, innerArguments)),
-            TypeNode.ByRef b => new TypeNode.ByRef(CloseInnerConstructorType(b.Of, innerArguments)),
-            TypeNode.Ptr p => new TypeNode.Ptr(CloseInnerConstructorType(p.Of, innerArguments)),
-            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
-                CloseInnerConstructorType(fn.Ret, innerArguments),
-                fn.Params.Select(parameter => CloseInnerConstructorType(parameter, innerArguments)).ToArray(),
-                fn.Recv == null ? null : CloseInnerConstructorType(fn.Recv, innerArguments), fn.Clr,
-                fn.Ctx?.Select(context => CloseInnerConstructorType(context, innerArguments)).ToArray()),
-            _ => type,
-        };
 
     static TypeNode ExpressionType(JsonNode expression)
     {
