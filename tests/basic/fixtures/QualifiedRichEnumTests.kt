@@ -19,6 +19,7 @@ fun privateName(): String = State.ONE.name
 private fun privateOrdinal(value: State): Int = value.ordinal
 fun publicName(): String = PublicState.ONE.name
 fun publicOrdinal(value: PublicState): Int = value.ordinal
+fun publicCompare(left: PublicState, right: PublicState): Int = left.compareTo(right)
 fun nestedName(): String = NestedEnumOwner.State.ONE.name
 fun nestedOrdinal(value: NestedEnumOwner.State): Int = value.ordinal
 
@@ -31,6 +32,12 @@ class QualifiedRichEnumTests {
         assertEquals(1, State.TWO.ownOrdinal())
         assertEquals("ONE", publicName())
         assertEquals(1, publicOrdinal(PublicState.TWO))
+        assertEquals(-1, publicCompare(PublicState.ONE, PublicState.TWO))
+        assertEquals(1, publicCompare(PublicState.TWO, PublicState.ONE))
+        val name: (PublicState) -> String = PublicState::name
+        val ordinal: (PublicState) -> Int = PublicState::ordinal
+        assertEquals("TWO", name(PublicState.TWO))
+        assertEquals(1, ordinal(PublicState.TWO))
         assertEquals("ONE", nestedName())
         assertEquals(1, nestedOrdinal(NestedEnumOwner.State.TWO))
         assertEquals("TWO", PublicState.valueOf("TWO").name)

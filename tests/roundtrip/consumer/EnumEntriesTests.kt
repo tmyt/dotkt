@@ -9,6 +9,9 @@ import roundtrip.entries.BasicEntry
 import roundtrip.entries.RichEntry
 import roundtrip.entries.basicEntries
 import roundtrip.entries.richEntries
+import roundtrip.entries.richName
+import roundtrip.entries.richOrdinal
+import roundtrip.entries.richCompare
 import roundtrip.entries.sharedEntries
 import roundtrip.entries.relayEntries
 
@@ -39,5 +42,17 @@ class EnumEntriesRoundtripTests {
         assertEquals(RichEntry.SECOND, entries[1])
         assertEquals(1, entries.lastIndexOf(RichEntry.SECOND))
         assertEquals("7|9", entries.joinToString("|") { it.score.toString() })
+        assertEquals("SECOND", richName(RichEntry.SECOND))
+        assertEquals(1, richOrdinal(RichEntry.SECOND))
+        assertEquals(-1, richCompare(RichEntry.FIRST, RichEntry.SECOND))
+        assertEquals("SECOND", RichEntry.SECOND.name)
+        assertEquals(1, RichEntry.SECOND.ordinal)
+        assertEquals(-1, RichEntry.FIRST.compareTo(RichEntry.SECOND))
+        val name: (RichEntry) -> String = RichEntry::name
+        val ordinal: (RichEntry) -> Int = RichEntry::ordinal
+        val compare: (RichEntry, RichEntry) -> Int = RichEntry::compareTo
+        assertEquals("SECOND", name(RichEntry.SECOND))
+        assertEquals(1, ordinal(RichEntry.SECOND))
+        assertEquals(-1, compare(RichEntry.FIRST, RichEntry.SECOND))
     }
 }

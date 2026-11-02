@@ -1,27 +1,41 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// A Kotlin enum entry is semantic declaration identity: owner + entry name. A referenced rich Kotlin enum carries an
+// A Kotlin enum entry is semantic declaration identity: owner + entry name. Local and referenced rich Kotlin enums carry an
 // explicit producer map from that identity to its singleton field; a basic local enum uses its contiguous ordinal,
 // while a referenced C# enum may be sparse, negative, aliased, or UInt64-backed. Only bir2cir may translate each of
 // those Kotlin identities to the selected reference DLL's physical representation.
 static class EnumValueLowering
 {
+    public static IReadOnlyDictionary<string, (string Name, string Ordinal)> CollectRichInstanceFields(IEnumerable<JsonNode> roots)
+    {
+        var fields = new Dictionary<string, (string Name, string Ordinal)>(StringComparer.Ordinal);
+        foreach (var root in roots)
+            if (root is JsonObject module && module["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>())
+                    if (type["enumRich"]?.GetValue<bool>() == true)
+                        fields.Add(type["name"].GetValue<string>(),
+                            (type["richEnum"]["name"].GetValue<string>(), type["richEnum"]["ordinal"].GetValue<string>()));
+        return fields;
+    }
+
     public static bool Apply(
         JsonNode root,
         ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, (string Name, string Ordinal)> localRichFields,
         ISet<string> localBasicEnums,
         IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums,
         IReadOnlyDictionary<string, BasicEnumMetadata> localParseEnums)
     {
         var runtimeLookup = false;
-        Walk(root, refs, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
+        Walk(root, refs, localRichFields, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
         return runtimeLookup;
     }
 
     static void Walk(
         JsonNode node,
         ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, (string Name, string Ordinal)> localRichFields,
         ISet<string> localBasicEnums,
         IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums,
         IReadOnlyDictionary<string, BasicEnumMetadata> localParseEnums, ref bool runtimeLookup)
@@ -30,14 +44,14 @@ static class EnumValueLowering
         {
             var kind = obj["k"]?.GetValue<string>();
             // Lifted property-reference getters preserve the selected inherited Enum property as an ordinary
-            // property call. A referenced rich enum has no physical name/ordinal getter: its producer supplies the
+            // property call. A rich enum has no physical name/ordinal getter: its producer supplies the
             // exact field identities. Consume that same authority as the semantic enumName/enumOrdinal path.
             if (kind == "callInstance" && obj["prop"]?.GetValue<string>() == "get"
                 && obj["method"]?.GetValue<string>() is "name" or "ordinal"
                 && obj["args"] is JsonArray { Count: 0 }
                 && obj["recv"] is JsonNode propertyReceiver && obj["ownerType"] is JsonNode propertyOwner
                 && TypeJson.OwnerName(propertyOwner) is string propertyEnum
-                && refs.TryKotlinRichEnumInstanceFields(propertyEnum, out var propertyNameField, out var propertyOrdinalField))
+                && TryRichInstanceFields(propertyEnum, refs, localRichFields, out var propertyNameField, out var propertyOrdinalField))
                 RewriteRichField(obj, propertyReceiver, propertyOwner,
                     obj["method"].GetValue<string>() == "name" ? propertyNameField : propertyOrdinalField,
                     obj["method"].GetValue<string>() == "name" ? "kotlin.String" : "kotlin.Int");
@@ -111,7 +125,7 @@ static class EnumValueLowering
                 && obj["type"] is JsonNode enumType
                 && TypeJson.OwnerName(enumType) is string enumOwner)
             {
-                if (refs.TryKotlinRichEnumInstanceFields(enumOwner, out var nameField, out var ordinalField))
+                if (TryRichInstanceFields(enumOwner, refs, localRichFields, out var nameField, out var ordinalField))
                 {
                     var physicalField = kind == "enumName" ? nameField : ordinalField;
                     RewriteRichField(obj, receiver, enumType, physicalField,
@@ -173,11 +187,24 @@ static class EnumValueLowering
             }
 
             foreach (var kv in obj)
-                if (kv.Value != null) Walk(kv.Value, refs, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
+                if (kv.Value != null) Walk(kv.Value, refs, localRichFields, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
         }
         else if (node is JsonArray arr)
             foreach (var item in arr)
-                if (item != null) Walk(item, refs, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
+                if (item != null) Walk(item, refs, localRichFields, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
+    }
+
+    static bool TryRichInstanceFields(string owner, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, (string Name, string Ordinal)> localRichFields,
+        out string name, out string ordinal)
+    {
+        if (localRichFields.TryGetValue(owner, out var fields))
+        {
+            name = fields.Name;
+            ordinal = fields.Ordinal;
+            return true;
+        }
+        return refs.TryKotlinRichEnumInstanceFields(owner, out name, out ordinal);
     }
 
     static void RewriteRichField(JsonObject node, JsonNode receiver, JsonNode owner, string field, string resultType)
@@ -190,6 +217,43 @@ static class EnumValueLowering
         node["recv"] = receiverClone;
         node["name"] = field;
         node["ret"] = TypeJson.Fqn(resultType);
+    }
+
+    internal static void SelfTest()
+    {
+        var declaration = JsonNode.Parse("""
+            {"types":[{"kind":"class","name":"MappedRich","enumRich":true,
+              "richEnum":{"entries":[],"name":"display","ordinal":"rank","values":"all","valueOf":"parse"}}]}
+            """);
+        var useSite = JsonNode.Parse("""{"types":[]}""");
+        var fields = CollectRichInstanceFields(new[] { useSite, declaration });
+        var refs = ReferenceMetadataIndex.Build(System.Array.Empty<string>());
+        foreach (var propertyCall in new[] { false, true })
+            foreach (var (property, field, result) in new[] {
+                ("name", "display", "kotlin.String"), ("ordinal", "rank", "kotlin.Int") })
+            {
+                var owner = TypeJson.Fqn("MappedRich");
+                var receiver = new JsonObject { ["k"] = "local", ["name"] = "value" };
+                var read = propertyCall
+                    ? new JsonObject {
+                        ["k"] = "callInstance", ["ownerType"] = owner.DeepClone(),
+                        ["method"] = property, ["prop"] = "get", ["recv"] = receiver.DeepClone(),
+                        ["args"] = new JsonArray(),
+                    }
+                    : new JsonObject {
+                        ["k"] = property == "name" ? "enumName" : "enumOrdinal",
+                        ["type"] = owner.DeepClone(), ["e"] = receiver.DeepClone(),
+                    };
+                if (!propertyCall && NodeType.Of(read) != TypeJson.Read(TypeJson.Fqn(result)))
+                    throw new InvalidOperationException("Semantic enum access lost its node-local result type before lowering");
+                Apply(read, refs, fields, new HashSet<string>(),
+                    new Dictionary<string, BasicEnumMetadata>(), new Dictionary<string, BasicEnumMetadata>());
+                if (read["k"]?.GetValue<string>() != "field" || read["name"]?.GetValue<string>() != field
+                    || !JsonNode.DeepEquals(read["ownerType"], owner) || !JsonNode.DeepEquals(read["recv"], receiver)
+                    || !JsonNode.DeepEquals(read["ret"], TypeJson.Fqn(result)))
+                    throw new InvalidOperationException("Rich enum access lost its explicit local storage map or selected receiver");
+            }
+        Console.WriteLine("[enum instance fields] self-test OK (module-wide explicit map, semantic reads, lifted property getters)");
     }
 
     static JsonArray Values(BasicEnumMetadata metadata) => new(metadata.Entries.Select(entry => (JsonNode)new JsonObject
