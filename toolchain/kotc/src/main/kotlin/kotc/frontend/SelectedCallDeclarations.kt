@@ -50,8 +50,8 @@ object SelectedCallDeclarations {
 					val symbol = (access.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol
 						as? FirNamedFunctionSymbol ?: return
 					val original = symbol.unwrapFakeOverrides()
-					// An unsubstituted declaration already survives as its own IR symbol.
-					if (original === symbol) return
+					// Callable references can acquire a use-site owner in Fir2Ir even without type substitution.
+					if (original === symbol && access !is FirCallableReferenceAccess) return
 					val location = access.source ?: return
 					val key = Key(path, location.endOffset, symbol.name.asString(), access is FirCallableReferenceAccess)
 					val previous = source.putIfAbsent(key, original)

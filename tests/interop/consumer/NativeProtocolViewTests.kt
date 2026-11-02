@@ -100,6 +100,13 @@ class NativeProtocolViewTests {
         closeCastStatement(GenericDerived<String>("cast", counter))
         closeIntersection(GenericDerived<String>("bounds", counter))
         check(counter.Calls == 3)
+        ValueResource(11, counter).close()
+        val native: System.IDisposable = GenericDerived<String>("reference", counter)
+        val bound = native::close
+        bound()
+        val unbound = System.IDisposable::close
+        unbound(native)
+        check(counter.Calls == 6)
         val stream = System.IO.MemoryStream()
         closeCheckedConcrete(stream)
         check(!stream.CanRead)

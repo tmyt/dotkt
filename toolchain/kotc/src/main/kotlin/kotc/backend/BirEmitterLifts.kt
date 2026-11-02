@@ -605,7 +605,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// for the substituted callable shape below; only the declaration fingerprint comes from here. Unlike a MethodDef
 	// emission decision, a use site always fingerprints the selected Kotlin declaration; bir2cir decides whether that
 	// identity has a physical carrier in the current/reference module.
-	val identityDeclaration = (node.reflectionTarget?.owner as? IrSimpleFunction) ?: fn
+	val identityDeclaration = selectedDeclaration ?: (node.reflectionTarget?.owner as? IrSimpleFunction) ?: fn
 	val selectedDeclarationId = declarationIdForPhysicalAllocation(identityDeclaration)
 	val physicalIdentityDeclaration = if (identityDeclaration.isFakeOverride && selectedDeclarationId == null)
 		identityDeclaration.resolveFakeOverride() ?: identityDeclaration else identityDeclaration
