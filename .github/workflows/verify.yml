@@ -74,6 +74,7 @@ jobs:
           build/ilemit-bin
           build/bir2cir-bin
           build/dll2klib-bin
+          build/msbuild-bin
           build/clr-stdlib-frontend-klib
           build/clr-stdlib
           build/clr-stdlib-rt/dll

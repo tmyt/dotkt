@@ -30,5 +30,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" />
+    <!-- Delegate native resource directory layout/RVA serialization to a PE library. -->
+    <PackageReference Include="AsmResolver.PE" Version="6.0.1" />
   </ItemGroup>
 </Project>

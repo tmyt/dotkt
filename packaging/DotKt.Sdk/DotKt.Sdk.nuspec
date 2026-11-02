@@ -15,5 +15,6 @@
   <files>
     <file src="../DotKt.README.md" target="" />
     <file src="Sdk/**" target="Sdk" />
+    <file src="../DotKt.Toolchain/buildShared/DotKt.Language.targets" target="Sdk/DotKt.Language.targets" />
   </files>
 </package>

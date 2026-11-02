@@ -27,19 +27,19 @@ for spec in "DotKt.Sdk/$version|$kt/App.ktproj" "Microsoft.NET.Sdk|$cs/Control.c
   <AssemblyAttribute Include="System.Reflection.AssemblyFileVersionAttribute"><_Parameter1></_Parameter1></AssemblyAttribute>
   <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1></_Parameter1></AssemblyAttribute>
 </ItemGroup>
-<ItemGroup Condition="'$(LiteralVersionAttributes)' == 'true'">
-  <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1>"custom" + "-literal"</_Parameter1><_Parameter1_IsLiteral>true</_Parameter1_IsLiteral></AssemblyAttribute>
+<ItemGroup Condition="'$(EvaluatedVersionAttributes)' == 'true'">
+  <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1>$([System.String]::Concat('custom', '-evaluated'))</_Parameter1></AssemblyAttribute>
 </ItemGroup>
 <ItemGroup Condition="'$(ShortVersionAttributes)' == 'true'">
   <AssemblyAttribute Include="System.Reflection.AssemblyFileVersion"><_Parameter1>6.7.8.9</_Parameter1></AssemblyAttribute>
   <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersion"><_Parameter1>custom-short</_Parameter1></AssemblyAttribute>
 </ItemGroup>
-<Target Name="RecordProviderVersion" BeforeTargets="DotKtIlEmit">
-  <GetAssemblyIdentity AssemblyFiles="$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
-    <Output TaskParameter="Assemblies" ItemName="ProviderIdentity" />
-  </GetAssemblyIdentity>
-  <WriteLinesToFile File="$(IntermediateOutputPath)provider-version.txt" Lines="@(ProviderIdentity->'%(Version)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
-</Target></Project>
+<ItemGroup Condition="'$(UnqualifiedVersionAttributes)' == 'true'">
+  <AssemblyAttribute Include="AssemblyVersion"><_Parameter1>1.2.3.4</_Parameter1></AssemblyAttribute>
+  <AssemblyAttribute Include="AssemblyFileVersionAttribute"><_Parameter1>6.7.8.9</_Parameter1></AssemblyAttribute>
+  <AssemblyAttribute Include="global::System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1>custom-unqualified</_Parameter1></AssemblyAttribute>
+</ItemGroup>
+</Project>
 EOF
   sed -i "s|SDK_PLACEHOLDER|$sdk|" "$project"
 done
@@ -47,7 +47,12 @@ printf '%s\n' 'class Versioned { fun value(): String = "versioned" }' 'fun main(
 printf '%s\n' 'public class Versioned { public string value() => "versioned"; public static void Main() => System.Console.WriteLine("versioned"); }' > "$cs/Program.cs"
 dotnet build "$REPO/tests/packaged-sdk/application-manifest/ManifestInspector.csproj" -o "$ws/inspector" -v:q --nologo > "$ws/inspector.log" 2>&1
 inspect() { dotnet "$ws/inspector/ManifestInspector.dll" "$@"; }
-build() { local project="$1" stage="$2"; shift 2; dotnet build "$project" -v:q --nologo "$@" > "$ws/$stage.log" 2>&1; }
+build() {
+  local project="$1" stage="$2"; shift 2
+  local no_csc=()
+  [[ "$project" != *.ktproj ]] || no_csc=(-p:UseSharedCompilation=false -p:CscToolExe=dotkt-csc-must-not-run)
+  dotnet build "$project" -v:q --nologo "${no_csc[@]}" "$@" > "$ws/$stage.log" 2>&1
+}
 out="bin/Debug/net10.0"; obj="obj/Debug/net10.0"
 defaults=(-p:IncludeSourceRevisionInInformationalVersion=false)
 pair() {
@@ -55,10 +60,11 @@ pair() {
   build "$kt/App.ktproj" "$stage" "${defaults[@]}" "$@"
   build "$cs/Control.csproj" "control-$stage" --no-incremental "${defaults[@]}" "$@"
   inspect --managed-match "$cs/$out/Versioned.dll" "$kt/$out/Versioned.dll"
+  inspect --resources "$cs/$out/Versioned.dll" "$kt/$out/Versioned.dll"
   inspect --kotlin "$kt/$out/Versioned.dll"
 }
 check() { inspect --managed "$@" "$kt/$out/Versioned.dll"; }
-state() { stat -c '%y' "$kt/$out/Versioned.dll" "$kt/$obj/dotkt-ilemit.stamp" "$kt/$obj/Versioned.pdb"; }
+state() { stat -c '%y' "$kt/$out/Versioned.dll" "$kt/$obj/dotkt-ilemit.stamp" "$kt/$obj/dotkt-emit-options.txt"; }
 frontend() { stat -c '%y' "$kt/$obj/bir/.stamp" "$kt/$obj/cir/.stamp"; }
 
 pair default
@@ -76,6 +82,8 @@ pair version -p:Version=4.5.6-preview
 check 4.5.6.0 4.5.6.0 4.5.6-preview
 pair prefix-suffix -p:VersionPrefix=5.6.7 -p:VersionSuffix=beta
 check 5.6.7.0 5.6.7.0 5.6.7-beta
+pair dotted-prerelease -p:VersionPrefix=5.6.7 -p:VersionSuffix=preview.1.2
+check 5.6.7.0 5.6.7.0 5.6.7-preview.1.2
 pair revision -p:ProbeInfo=1.2.3 -p:SourceRevisionId=deadbeef -p:IncludeSourceRevisionInInformationalVersion=true
 check 1.0.0.0 1.0.0.0 1.2.3+deadbeef
 pair revision-plus -p:ProbeInfo=1.2.3+meta -p:SourceRevisionId=deadbeef -p:IncludeSourceRevisionInInformationalVersion=true
@@ -85,10 +93,19 @@ check 1.0.0.0 1.0.0.0 1.2.3
 pair special -p:SpecialVersion=true
 pair custom-attributes -p:CustomVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
 check 1.0.0.0 6.7.8.9 custom
-pair literal-attributes -p:LiteralVersionAttributes=true -p:GenerateAssemblyInformationalVersionAttribute=false
-check 1.0.0.0 1.0.0.0 custom-literal
+pair evaluated-attributes -p:EvaluatedVersionAttributes=true -p:GenerateAssemblyInformationalVersionAttribute=false
+check 1.0.0.0 1.0.0.0 custom-evaluated
 pair short-attributes -p:ShortVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
 check 1.0.0.0 6.7.8.9 custom-short
+pair unqualified-attributes -p:UnqualifiedVersionAttributes=true -p:GenerateAssemblyVersionAttribute=false -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
+check 1.2.3.4 6.7.8.9 custom-unqualified
+for project in "$kt/App.ktproj" "$cs/Control.csproj"; do
+  duplicate_stage="duplicate-unqualified-${project##*.}"
+  if build "$project" "$duplicate_stage" -p:UnqualifiedVersionAttributes=true; then
+    echo 'Duplicate qualified/unqualified version attributes unexpectedly accepted' >&2; exit 1
+  fi
+  grep -q 'Duplicate' "$ws/$duplicate_stage.log"
+done
 pair empty-attributes -p:EmptyVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
 check 1.0.0.0 '' ''
 pair no-file-version -p:GenerateAssemblyFileVersionAttribute=false
@@ -101,17 +118,40 @@ pair no-assembly-info -p:GenerateAssemblyInfo=false -p:CustomVersionAttributes=t
 check 0.0.0.0 '<absent>' '<absent>'
 pair reenabled "${explicit[@]}"
 check 2.3.4.5 5.4.3.2 7.8.9-preview+test
-# C# expands wildcards at compilation time. Compare with this exact provider, not a later C# invocation's clock.
+# Wildcards expand once during emission. Validate against the actual invocation's local clock interval rather
+# than requiring a throwaway C# provider or comparing to a later C# compilation across a two-second boundary.
+wildcard_started="$(date +%s)"
 build "$kt/App.ktproj" wildcard "${defaults[@]}" '-p:AssemblyVersion=2.3.*' -p:FileVersion=2.3.0.0 -p:Deterministic=false
-provider="$(tr -d '\r\n' < "$kt/$obj/provider-version.txt")"
-[[ "$provider" == 2.3.* ]] || { echo 'wildcard provider version was not expanded' >&2; exit 1; }
-check "$provider" 2.3.0.0 1.0.0
+inspect --wildcard "$wildcard_started" "$(date +%s)" "$kt/$out/Versioned.dll"
 pair library -p:OutputType=Library "${explicit[@]}"
 [[ "$front_before" == "$(frontend)" ]] || { echo 'version options recompiled Kotlin' >&2; exit 1; }
 for project in "$kt/App.ktproj" "$cs/Control.csproj"; do
   dotnet publish "$project" -c Debug --no-restore -v:q --nologo "${defaults[@]}" "${explicit[@]}" -p:OutputType=Library >> "$ws/publish.log" 2>&1
 done
 inspect --managed-match "$cs/$out/publish/Versioned.dll" "$kt/$out/publish/Versioned.dll"
+publish_before="$(state)"
+dotnet publish "$kt/App.ktproj" -c Debug --no-build -v:q --nologo "${defaults[@]}" "${explicit[@]}" -p:OutputType=Library > "$ws/publish-no-build.log" 2>&1
+[[ "$publish_before" == "$(state)" ]] || { echo 'no-build publish regenerated the library' >&2; exit 1; }
+inspect --managed-match "$cs/$out/publish/Versioned.dll" "$kt/$out/publish/Versioned.dll"
+inspect --kotlin "$kt/$out/publish/Versioned.dll"
+
+# These options must not advertise the removed C# compiler's nonexistent XML output to publish or pack.
+for operation in build publish; do
+  dotnet "$operation" "$kt/App.ktproj" -v:q --nologo "${defaults[@]}" "${explicit[@]}" -p:OutputType=Library -p:GenerateDocumentationFile=true > "$ws/documentation-$operation.log" 2>&1
+done
+documentation_before="$(state)"
+dotnet publish "$kt/App.ktproj" --no-build -v:q --nologo -p:GenerateDocumentationFile=true -p:OutputType=Library > "$ws/documentation-no-build.log" 2>&1
+dotnet pack "$kt/App.ktproj" --no-build -v:q --nologo -p:GenerateDocumentationFile=true -p:OutputType=Library -p:IsPackable=true -o "$ws/documentation-pack" > "$ws/documentation-pack.log" 2>&1
+[[ "$documentation_before" == "$(state)" ]] || { echo 'no-build documentation operations regenerated the library' >&2; exit 1; }
+[[ ! -e "$kt/$out/Versioned.xml" && ! -e "$kt/$out/publish/Versioned.xml" ]]
+inspect --kotlin "$kt/$out/publish/Versioned.dll"
+
+# An irrelevant C# compiler-host option may come from shared props; it must not introduce missing file inputs.
+build "$kt/App.ktproj" framework-option "${defaults[@]}" "${explicit[@]}" -p:OutputType=Library -p:BuildWithNetFrameworkHostedCompiler=true
+framework_before="$(state)"
+build "$kt/App.ktproj" framework-option-noop "${defaults[@]}" "${explicit[@]}" -p:OutputType=Library -p:BuildWithNetFrameworkHostedCompiler=true
+[[ "$framework_before" == "$(state)" ]] || { echo 'C# compiler host option broke no-op emission' >&2; exit 1; }
+[[ "$front_before" == "$(frontend)" ]] || { echo 'documentation/host options recompiled Kotlin' >&2; exit 1; }
 
 # Separately compiled Kotlin and C# consumers must encode the producer's nonzero AssemblyRef version and run.
 for spec in "DotKt.Sdk/$version|Kotlin consumer|Consumer.ktproj" "Microsoft.NET.Sdk|CSharp consumer|Consumer.csproj"; do

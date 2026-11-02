@@ -92,7 +92,8 @@ assert_runtime
 bir_state="$(file_state "$obj/bir/.stamp")"
 cir_state="$(file_state "$obj/cir/.stamp")"
 
-# Both an AssemblyInfo-only change and an arbitrary C#-only option must leave actual Kotlin code in the DLL.
+# An assembly-metadata change must refresh emission. A C#-only option no longer has a compiler to invalidate;
+# neither change may recompile Kotlin or replace Kotlin declarations/bodies with a different language's output.
 for mutation in revision nullable; do
 	if [[ "$mutation" == nullable ]]; then
 		sed -i 's/<Nullable>disable<\//<Nullable>enable<\//' "$producer"
@@ -100,7 +101,11 @@ for mutation in revision nullable; do
 	build "$producer" "$mutation" second
 	[[ "$(file_state "$obj/bir/.stamp")" == "$bir_state" ]]
 	[[ "$(file_state "$obj/cir/.stamp")" == "$cir_state" ]]
-	grep -q 'DotKt: emitting CIL' "$work/$mutation.log"
+	if [[ "$mutation" == revision ]]; then
+		grep -q 'DotKt: emitting CIL' "$work/$mutation.log"
+	elif grep -q 'DotKt: emitting CIL' "$work/$mutation.log"; then
+		echo "C#-only option unnecessarily re-emitted Kotlin"; exit 1
+	fi
 	if grep -Eq 'DotKt: (compiling|lowering)' "$work/$mutation.log"; then
 		echo "C#-only change reran Kotlin compilation/lowering"; exit 1
 	fi
@@ -119,12 +124,12 @@ for mutation in revision nullable; do
 	if grep -Eq 'DotKt: (projecting|compiling|lowering|emitting)|/csc\.dll' "$work/$mutation-noop.log"; then
 		echo "No-op build invoked a compiler stage"; exit 1
 	fi
-	grep -q 'Skipping target "CoreCompile"' "$work/$mutation-noop.log"
+	grep -q 'Skipping target "DotKtIlEmit"' "$work/$mutation-noop.log"
 	assert_runtime
 	echo "PASS incremental-emission:$mutation (metadata, runtime, C# no-op)"
 done
 
-# A failed existing compilation hook must not make a successful unchanged retry publish its placeholder.
+# A failed existing compilation hook must leave emission incomplete, and an unchanged retry must recover.
 touch "$work/producer/fail-hook"
 if build "$producer" failed-hook third > "$work/failed-hook-expected.log" 2>&1; then
 	echo "Expected existing compilation hook to fail"; exit 1
@@ -132,7 +137,6 @@ fi
 grep -q 'Intentional existing hook failure' "$work/failed-hook.log"
 rm "$work/producer/fail-hook"
 build "$producer" hook-retry third
-grep -q 'Skipping target "CoreCompile"' "$work/hook-retry.log"
 grep -q 'DotKt: emitting CIL' "$work/hook-retry.log"
 assert_output "$producer_dll" "PASS incremental Kotlin entry point: 42"
 [[ "$(file_state "$obj/cir/.stamp")" == "$cir_state" ]]

@@ -55,6 +55,7 @@ assert_suites schema-contract docs/bir-cir.schema.json 'schema dll2klib'
 # MSBuild and target-universe evaluate the in-repo targets; DLL-to-KLIB E2E invokes the tools directly.
 targets_suites='msbuild targetuniverse'
 assert_suites in-repo-targets-consumers eng/KotlinClr.targets "$targets_suites"
+assert_suites msbuild-task-consumers toolchain/msbuild/WriteAssemblyOptions.cs 'msbuild targetuniverse packagedsdk'
 plan="$(bash "$ROOT/scripts/gate.sh" --dry-run eng/KotlinClr.targets)"
 grep -qx 'clean stdlib rebuild: no' <<<"$plan" || die "in-repo targets do not bake the stdlib"
 mixed_suites="$(suite_line eng/KotlinClr.targets tests/msbuild/run.sh tests/target-universe/run.sh \

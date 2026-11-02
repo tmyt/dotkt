@@ -7,7 +7,7 @@
     <license type="expression">Apache-2.0</license>
     <readme>DotKt.README.md</readme>
     <projectUrl>https://github.com/tmyt/dotkt</projectUrl>
-    <description>DotKt compiler toolchain: the Kotlin-&gt;CLR compiler (kotc; JVM, requires a JRE), bir2cir, ilemit, dll2klib, the CLR frontend stdlib klib, and the compile-time stdlib reference assembly (DotKt.Private.Stdlib.dll). The runtime stdlib ships separately as DotKt.Stdlib. Redistributes third-party components (Kotlin compiler/runtime, kotlinx-coroutines, JetBrains annotations, System.Reflection.MetadataLoadContext) — see THIRD-PARTY-NOTICES.md.</description>
+    <description>DotKt compiler toolchain: the Kotlin-&gt;CLR compiler (kotc; JVM, requires a JRE), bir2cir, ilemit, dll2klib, the CLR frontend stdlib klib, and the compile-time stdlib reference assembly (DotKt.Private.Stdlib.dll). The runtime stdlib ships separately as DotKt.Stdlib. Redistributes third-party components (Kotlin compiler/runtime, kotlinx-coroutines, JetBrains annotations, System.Reflection.MetadataLoadContext, AsmResolver) — see THIRD-PARTY-NOTICES.md.</description>
     <tags>kotlin clr dotnet compiler kotlin-$kotlinVersion$</tags>
     <repository type="git" url="https://github.com/tmyt/dotkt.git" commit="$repoCommit$" />
   </metadata>
@@ -18,6 +18,7 @@
     <file src="build/DotKt.Toolchain.props" target="build/DotKt.Toolchain.props" />
     <file src="build/DotKt.Toolchain.targets" target="build/DotKt.Toolchain.targets" />
     <file src="buildShared/DotKt.Toolchain.public.props" target="buildShared/DotKt.Toolchain.public.props" />
+    <file src="buildShared/DotKt.Language.targets" target="buildShared/DotKt.Language.targets" />
     <file src="buildMultiTargeting/DotKt.Toolchain.props" target="buildMultiTargeting/DotKt.Toolchain.props" />
     <file src="buildMultiTargeting/DotKt.Toolchain.targets" target="buildMultiTargeting/DotKt.Toolchain.targets" />
   </files>

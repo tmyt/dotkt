@@ -20,10 +20,9 @@
     <!-- We generate the assembly ourselves (kt -> BIR -> CIL); don't let the .NET SDK glob .cs and don't infer
          a language from the project file. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
-    <LanguageTargets Condition="'$(LanguageTargets)' == ''">$(MSBuildToolsPath)/Microsoft.CSharp.targets</LanguageTargets>
-    <!-- The SDK's reference assembly (obj/ref) is built by csc from our placeholder .cs, so it holds the placeholder
-         instead of the Kotlin types ilemit writes into the real dll — a downstream C# <ProjectReference> would bind
-         the empty ref assembly (CS0246). Disable it so consumers reference the real emitted output. -->
+    <LanguageTargets Condition="'$(LanguageTargets)' == ''">$(MSBuildThisFileDirectory)DotKt.Language.targets</LanguageTargets>
+    <!-- ilemit currently emits one implementation assembly. Consumers must reference that assembly, not an SDK
+         reference assembly produced by a different language compiler. -->
     <ProduceReferenceAssembly Condition="'$(ProduceReferenceAssembly)' == ''">false</ProduceReferenceAssembly>
   </PropertyGroup>
 

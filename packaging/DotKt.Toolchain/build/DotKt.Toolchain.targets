@@ -4,6 +4,14 @@
      (eng/KotlinClr.targets) imports it explicitly. The packaged SDK companion under buildMultiTargeting handles
      cross-targeting outer builds. Tool paths come from DotKt.Toolchain.props ($(DotKt*)). -->
 <Project>
+  <UsingTask TaskName="DotKt.Build.WriteAssemblyOptions" AssemblyFile="$(DotKtBuildTasks)" Runtime="NET"
+             Condition="'$(MSBuildRuntimeType)' == 'Core'" />
+  <UsingTask TaskName="DotKt.Build.WriteAssemblyOptions" AssemblyFile="$(DotKtBuildTasks)" Runtime="NET"
+             TaskFactory="TaskHostFactory" Condition="'$(MSBuildRuntimeType)' == 'Full'" />
+  <UsingTask TaskName="DotKt.Build.WriteNativeResources" AssemblyFile="$(DotKtBuildTasks)" Runtime="NET"
+             Condition="'$(MSBuildRuntimeType)' == 'Core'" />
+  <UsingTask TaskName="DotKt.Build.WriteNativeResources" AssemblyFile="$(DotKtBuildTasks)" Runtime="NET"
+             TaskFactory="TaskHostFactory" Condition="'$(MSBuildRuntimeType)' == 'Full'" />
   <PropertyGroup>
     <!-- Incremental stamps for the back-half (#134). The BIR/CIR dirs are glob OUTPUTS (a variable file set), so
          each back-half target keys its Inputs/Outputs off a stable .stamp instead of the dir glob: KotlinCompile's
@@ -48,9 +56,11 @@
       <DotKtEmitOptionsManifest
           Condition="'$(DotKtEmitOptionsManifest)' == ''">$(IntermediateOutputPath)dotkt-emit-options.txt</DotKtEmitOptionsManifest>
       <_DotKtIlEmitStamp>$(IntermediateOutputPath)dotkt-ilemit.stamp</_DotKtIlEmitStamp>
+      <_DotKtResolvedEmitOptions>$(IntermediateOutputPath)dotkt-resolved-emit-options.json</_DotKtResolvedEmitOptions>
+      <_DotKtNativeResources>$(IntermediateOutputPath)dotkt-native.res</_DotKtNativeResources>
     </PropertyGroup>
     <ItemGroup>
-      <FileWrites Include="$(_DotKtIlEmitStamp);$(DotKtEmitOptionsManifest)" />
+      <FileWrites Include="$(_DotKtIlEmitStamp);$(DotKtEmitOptionsManifest);$(_DotKtResolvedEmitOptions);$(_DotKtNativeResources)" />
     </ItemGroup>
   </Target>
 
@@ -192,8 +202,7 @@
     <!-- Deletion-safety (#50): the BIR is globbed from $(DotKtIntermediateBirPath), which was never cleaned, so a deleted/renamed .kt
          left a stale *.bir.json behind → the deleted class/function survived into the emitted DLL. Wiping the dir on
          every (already-deemed-necessary) recompile guarantees a fresh BIR set with no orphan artifact. This body only
-         runs when the Inputs/Outputs check above deems a rebuild needed; the .stamp is recreated at the end and the
-         csc placeholder by DotKtIlPlaceholder afterward, so incremental is preserved. -->
+         runs when the Inputs/Outputs check above deems a rebuild needed; the .stamp is recreated only after success. -->
     <RemoveDir Directories="$(DotKtIntermediateBirPath)" />
     <MakeDir Directories="$(DotKtIntermediateBirPath)" />
     <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
@@ -232,24 +241,6 @@
     <Exec Condition="'@(KotlinCompile)' != ''"
           Command="&quot;$(DotKtCompiler)&quot; @&quot;$(DotKtCompilerResponseFile)&quot; $(DotKtKotcOptions)" />
     <Touch Files="$(DotKtIntermediateBirPath)/.stamp" AlwaysCreate="true" />
-  </Target>
-
-  <!-- Give csc a trivial valid assembly to produce; ilemit overwrites it. The user's entry (e.g. AppKt) doesn't
-       exist in the placeholder, so point csc at the placeholder's Main for this throwaway compile. -->
-  <Target Name="DotKtIlPlaceholder" BeforeTargets="CoreCompile"
-          DependsOnTargets="DotKtInitializeIntermediatePaths;KotlinCompile">
-    <PropertyGroup>
-      <StartupObject Condition="'$(StartupObject)' != '' or '$(OutputType)' == 'Exe'">_DotKtPlaceholder</StartupObject>
-    </PropertyGroup>
-    <MakeDir Directories="$(DotKtIntermediateBirPath)" />
-    <!-- WriteOnlyWhenDifferent (#134): the placeholder body is a CONSTANT, so keep its mtime stable across no-op
-         builds — otherwise its bumped timestamp forces CoreCompile (csc) to recompile every single build, defeating
-         the whole incremental chain. It flips only if the constant itself ever changes. -->
-    <WriteLinesToFile File="$(DotKtIntermediateBirPath)/_DotKtPlaceholder.cs" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="public static class _DotKtPlaceholder { public static void Main(string[] a) { } }" />
-    <ItemGroup>
-      <Compile Include="$(DotKtIntermediateBirPath)/_DotKtPlaceholder.cs" />
-    </ItemGroup>
   </Target>
 
   <Target Name="DotKtComputeBir2CirModeStamp" DependsOnTargets="DotKtInitializeIntermediatePaths">
@@ -302,35 +293,41 @@
     <Touch Files="$(DotKtIntermediateCirPath)/.stamp;$(_DotKtBir2CirModeStamp)" AlwaysCreate="true" />
   </Target>
 
-  <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The exact
-       compile reference set owns external metadata identities; copy-local refs only disambiguate runtime twins and
-       provide deployable implementations. -->
-  <!-- The shared obj DLL is also an input: Csc can replace it without changing CIR. Only successful Kotlin emission
-       updates the independent completion stamp, so a newer placeholder cannot masquerade as a completed output,
-       including after a failed compilation hook. A true no-op leaves both files untouched; a missing DLL or stamp
-       requires emission. DotKtResolveReferenceSets materializes the reference items before incremental evaluation. -->
-  <!-- Csc owns SDK-selected native resources and managed versions (including defaults and opt-outs). Its output
-       provides these physical assembly facts, never declarations or method bodies. Track option selection
-       BEFORE CoreCompile so switching to an older file or clearing an option refreshes that provider too. -->
+  <!-- GetAssemblyAttributes owns SDK defaults, source revision composition and per-attribute opt-outs. Consume its
+       item values directly, not generated C# source. GenerateAssemblyInfo=false also suppresses explicit items. -->
+  <Target Name="DotKtGetAssemblyAttributes" DependsOnTargets="GetAssemblyAttributes"
+          Condition="'$(GenerateAssemblyInfo)' == 'true'" />
+
   <Target Name="DotKtComputeEmitOptions" BeforeTargets="CoreCompile"
-          DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties;GenerateAssemblyInfo">
+          DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties;DotKtGetAssemblyAttributes">
     <PropertyGroup>
       <_DotKtResolvedOptimize>$(Optimize)</_DotKtResolvedOptimize>
       <_DotKtResolvedOptimize Condition="'$(_DotKtResolvedOptimize)' == ''">false</_DotKtResolvedOptimize>
       <_DotKtJitDebugging>true</_DotKtJitDebugging>
       <_DotKtJitDebugging Condition="$(_DotKtResolvedOptimize)">false</_DotKtJitDebugging>
+      <_DotKtDeterministic>false</_DotKtDeterministic>
+      <_DotKtDeterministic Condition="'$(Deterministic)' != ''">$(Deterministic)</_DotKtDeterministic>
+      <_DotKtNoWin32Manifest>false</_DotKtNoWin32Manifest>
+      <_DotKtNoWin32Manifest Condition="'$(NoWin32Manifest)' != ''">$(NoWin32Manifest)</_DotKtNoWin32Manifest>
+      <_DotKtSelectedManifest>$(Win32Manifest)</_DotKtSelectedManifest>
     </PropertyGroup>
     <ItemGroup>
       <_DotKtNativeResourceInput Remove="@(_DotKtNativeResourceInput)" />
-      <_DotKtNativeResourceInput Include="$(Win32Manifest);$(Win32Resource);$(ApplicationIcon)" />
-      <CustomAdditionalCompileInputs Include="$(DotKtEmitOptionsManifest)" />
+      <_DotKtNativeResourceInput Include="$(_DotKtSelectedManifest);$(Win32Resource);$(ApplicationIcon)" />
+      <_DotKtAssemblyAttribute Remove="@(_DotKtAssemblyAttribute)" />
+      <_DotKtAssemblyAttribute Include="@(AssemblyAttribute)" Condition="'$(GenerateAssemblyInfo)' == 'true'" />
     </ItemGroup>
-    <WriteLinesToFile File="$(DotKtEmitOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="output-type=$(OutputType);jit-debugging=$(_DotKtJitDebugging);no-win32-manifest=$(NoWin32Manifest);manifest=$(Win32Manifest);resource=$(Win32Resource);icon=$(ApplicationIcon);generate-assembly-info=$(GenerateAssemblyInfo);assembly-version-enabled=$(GenerateAssemblyVersionAttribute);file-version-enabled=$(GenerateAssemblyFileVersionAttribute);informational-version-enabled=$(GenerateAssemblyInformationalVersionAttribute)" />
+    <DotKt.Build.WriteAssemblyOptions OutputFile="$(DotKtEmitOptionsManifest)" OutputFileName="$(TargetName)$(TargetExt)"
+        OutputType="$(OutputType)" Deterministic="$(_DotKtDeterministic)" JitDebugging="$(_DotKtJitDebugging)"
+        NoWin32Manifest="$(_DotKtNoWin32Manifest)" Win32Manifest="$(_DotKtSelectedManifest)"
+        Win32Resource="$(Win32Resource)" ApplicationIcon="$(ApplicationIcon)" Attributes="@(_DotKtAssemblyAttribute)" />
   </Target>
 
+  <!-- The emitter owns the only project assembly. The independent completion stamp is written only after success.
+       Include the output as an input too, so external replacement or a failing post-emit hook cannot be mistaken
+       for completed emission. SDK options are content-stable; switching/removing a file selection is observable. -->
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets;DotKtComputeEmitOptions"
-          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);$(DotKtEmitOptionsManifest);@(_DotKtNativeResourceInput)"
+          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);$(DotKtBuildTasks);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);$(DotKtEmitOptionsManifest);@(_DotKtNativeResourceInput)"
           Outputs="$(_DotKtIlEmitStamp);$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
     <ItemGroup>
       <_DotKtCir Include="$(DotKtIntermediateCirPath)/*.cir.json" />
@@ -348,6 +345,8 @@
            DotKt.Runtime reference is needed (that pre-stdlib runtime DLL is retired). -->
     </ItemGroup>
     <Message Importance="high" Text="DotKt: emitting CIL from CIR -> $(TargetName)$(TargetExt)" />
+    <DotKt.Build.WriteNativeResources InputFile="$(DotKtEmitOptionsManifest)" OutputFile="$(_DotKtResolvedEmitOptions)"
+                                     ResourceFile="$(_DotKtNativeResources)" />
     <!-- #51: pass the TARGET RID + the SDK's RID fallback graph so ilemit selects the runtimes/<rid>/lib asset the
          TARGET runtime would load (not the build HOST's) when a copy-local package ships multiple RID builds. RAR
          gives ilemit ALL RID assets of a RID-impl package; the tool must pick per the target RID. $(RuntimeIdentifier)
@@ -357,7 +356,7 @@
     <PropertyGroup>
       <_DotKtIlEmitOutputPath>$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))</_DotKtIlEmitOutputPath>
       <_DotKtEscapedIlEmitOutputPath>$(_DotKtIlEmitOutputPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedIlEmitOutputPath>
-      <_DotKtEscapedResourceProvider>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)$(TargetName)$(TargetExt)').Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedResourceProvider>
+      <_DotKtEscapedAssemblyOptions>$([System.IO.Path]::GetFullPath('$(_DotKtResolvedEmitOptions)').Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedAssemblyOptions>
       <_DotKtEscapedTargetName>$(TargetName.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedTargetName>
       <_DotKtEscapedCompileReferences>$(_DotKtCompileReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCompileReferences>
       <_DotKtEscapedRuntimeReferences>$(_DotKtRuntimeReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedRuntimeReferences>
@@ -375,12 +374,13 @@
     </PropertyGroup>
     <ItemGroup>
       <_DotKtIlEmitResponseArgument Remove="@(_DotKtIlEmitResponseArgument)" />
+      <_DotKtIlEmitOutput Remove="@(_DotKtIlEmitOutput)" />
       <_DotKtEscapedCir Remove="@(_DotKtEscapedCir)" />
       <_DotKtEscapedCir Include="@(_DotKtCir->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
       <_DotKtIlEmitResponseArgument Include="_output"><Value>&quot;$(_DotKtEscapedIlEmitOutputPath)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly"><Value>&quot;$(_DotKtEscapedTargetName)&quot;</Value></_DotKtIlEmitResponseArgument>
-      <_DotKtIlEmitResponseArgument Include="_assembly_versions_option"><Value>--assembly-versions-from</Value></_DotKtIlEmitResponseArgument>
-      <_DotKtIlEmitResponseArgument Include="_assembly_versions"><Value>&quot;$(_DotKtEscapedResourceProvider)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_assembly_options_option"><Value>--assembly-options</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_assembly_options"><Value>&quot;$(_DotKtEscapedAssemblyOptions)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_jit_debugging_option"><Value>--jit-debugging</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_jit_debugging"><Value>$(_DotKtJitDebugging)</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_compile_refs_option"><Value>--compile-refs</Value></_DotKtIlEmitResponseArgument>
@@ -397,20 +397,25 @@
       <_DotKtIlEmitResponseArgument Include="_rid"><Value>&quot;$(_DotKtEscapedRuntimeIdentifier)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_rid_graph_option"><Value>--rid-graph-path</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_rid_graph"><Value>&quot;$(_DotKtEscapedRuntimeIdentifierGraphPath)&quot;</Value></_DotKtIlEmitResponseArgument>
-      <_DotKtIlEmitResponseArgument Include="_native_resources_option"><Value>--win32-resources-from</Value></_DotKtIlEmitResponseArgument>
-      <_DotKtIlEmitResponseArgument Include="_native_resources"><Value>&quot;$(_DotKtEscapedResourceProvider)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="@(_DotKtEscapedCir)"><Value>&quot;%(Identity)&quot;</Value></_DotKtIlEmitResponseArgument>
     </ItemGroup>
     <WriteLinesToFile File="$(DotKtIlEmitResponseFile)"
                       Lines="@(_DotKtIlEmitResponseArgument->'%(Value)')"
                       Overwrite="true" />
-    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; @&quot;$(DotKtIlEmitResponseFile)&quot;" />
+    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; @&quot;$(DotKtIlEmitResponseFile)&quot;"
+          ConsoleToMSBuild="true" IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" PropertyName="_DotKtIlEmitExitCode" />
+      <Output TaskParameter="ConsoleOutput" ItemName="_DotKtIlEmitOutput" />
+    </Exec>
+    <Error Condition="'$(_DotKtIlEmitExitCode)' != '0'"
+           Text="ilemit failed (exit $(_DotKtIlEmitExitCode)): @(_DotKtIlEmitOutput, '%0A')" />
+    <CallTarget Targets="$(TargetsTriggeredByCompilation)" Condition="'$(TargetsTriggeredByCompilation)' != ''" />
     <Touch Files="$(_DotKtIlEmitStamp)" AlwaysCreate="true" />
   </Target>
 
   <!-- `dotnet clean`: wipe project-local compiler state and generated reference KLIBs before CoreClean. -->
   <Target Name="DotKtClean" BeforeTargets="CoreClean" DependsOnTargets="DotKtInitializeIntermediatePaths">
     <RemoveDir Directories="$(DotKtIntermediateBirPath);$(DotKtIntermediateCirPath);$(DotKtReferenceKlibPath)" />
-    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompilerResponseFile);$(DotKtBir2CirResponseFile);$(DotKtIlEmitResponseFile);$(DotKtCompileOptionsManifest);$(DotKtEmitOptionsManifest);$(_DotKtIlEmitStamp)" />
+    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompilerResponseFile);$(DotKtBir2CirResponseFile);$(DotKtIlEmitResponseFile);$(DotKtCompileOptionsManifest);$(DotKtEmitOptionsManifest);$(_DotKtIlEmitStamp);$(_DotKtResolvedEmitOptions);$(_DotKtNativeResources)" />
   </Target>
 </Project>

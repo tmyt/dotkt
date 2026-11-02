@@ -13,6 +13,8 @@
     <DotKtCompilerFingerprint Condition="'$(DotKtCompilerFingerprint)' == ''">$(DotKtToolchainDir)kotc/lib/kotc.jar</DotKtCompilerFingerprint>
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(DotKtToolchainDir)bir2cir/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(DotKtToolchainDir)ilemit/ilemit.dll</DotKtIlEmit>
+    <DotKtBuildTasks Condition="'$(DotKtBuildTasks)' == ''">$(DotKtToolchainDir)msbuild/DotKt.Build.dll</DotKtBuildTasks>
+    <LanguageTargets Condition="'$(LanguageTargets)' == ''">$(MSBuildThisFileDirectory)../buildShared/DotKt.Language.targets</LanguageTargets>
     <DotKtDll2Klib Condition="'$(DotKtDll2Klib)' == ''">$(DotKtToolchainDir)dll2klib/dll2klib.dll</DotKtDll2Klib>
     <!-- Worker-process concurrency for reference DLL -> KLIB projection. 0 means one worker per stale reference. -->
     <DotKtDll2KlibJobs Condition="'$(DotKtDll2KlibJobs)' == ''">$([System.Environment]::ProcessorCount)</DotKtDll2KlibJobs>

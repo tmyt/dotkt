@@ -92,6 +92,7 @@ class StdlibBuildTests(unittest.TestCase):
         self.write("gradlew", "#!/usr/bin/env bash\nexit 0\n", executable=True)
         for tool in ("bir2cir", "ilemit", "dll2klib"):
             self.write(f"build/{tool}-bin/{tool}.dll", "fixture tool\n")
+        self.write("build/msbuild-bin/DotKt.Build.dll", "fixture build task\n")
         self.write("refs/Framework.dll", "fixture reference\n")
         self.env = dict(os.environ, PATH=str(self.root / "bin") + os.pathsep + os.environ["PATH"],
                         TRACE=str(self.trace), DOTNET_REFPACK_DIR=str(self.root / "refs"),

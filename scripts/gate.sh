@@ -121,6 +121,9 @@ classify() { # <path>
 		scripts/lib.sh|scripts/build-stdlib*.sh|scripts/dotkt.sh|scripts/gen-*|scripts/hooks/*)
 			NEED_FULL=1; reason "$p -> FULL (shared build machinery)" ;;
 		# ---- toolchain --------------------------------------------------------------------------
+		toolchain/msbuild|toolchain/msbuild/*)
+			want msbuild; want targetuniverse; want packagedsdk
+			reason "$p -> MSBuild task consumers: dev pipeline + target-universe + packaged SDK" ;;
 		toolchain/bir2cir|toolchain/bir2cir/*|toolchain/ilemit|toolchain/ilemit/*)
 			want compiler_tests; want schema; want sanity; want lowering; want msbuild; want targetuniverse
 			want pinvoke; want dll2klib; want packagedsdk; CLEAN=1
