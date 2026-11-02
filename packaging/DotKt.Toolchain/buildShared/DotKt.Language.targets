@@ -1,0 +1,9 @@
+<Project>
+  <!-- Reuse the SDK's project/reference/deployment integration, not its C# compilation. This file is also packed
+       inside DotKt.Sdk so it is available on the first restore, before the Toolchain package has been resolved. -->
+  <Import Project="$(MSBuildToolsPath)/Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <Language>Kotlin</Language>
+  </PropertyGroup>
+  <Target Name="CoreCompile" DependsOnTargets="$(CoreCompileDependsOn)" />
+</Project>

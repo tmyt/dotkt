@@ -83,6 +83,7 @@ info "build compiler (installDist) + tools"
 dotnet build "$ROOT/toolchain/ilemit"    -c Release -o "$ROOT/build/ilemit-bin"    -v q --nologo
 dotnet build "$ROOT/toolchain/bir2cir"   -c Release -o "$ROOT/build/bir2cir-bin"   -v q --nologo
 dotnet build "$ROOT/toolchain/dll2klib"   -c Release -o "$ROOT/build/dll2klib-bin"   -v q --nologo
+dotnet build "$ROOT/toolchain/msbuild"   -c Release -o "$ROOT/build/msbuild-bin"   -v q --nologo
 
 # The CLR FRONTEND stdlib KLIB (kotc -classpath) + the stdlib dll pair are REQUIRED package contents (the shipped
 # DotKt.Toolchain.targets needs both dlls: the ref feeds bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution, the rt is
@@ -106,6 +107,7 @@ cp "$FE_KLIB" "$TC/kotlin-stdlib-clr-frontend.klib"
 cp -r "$ROOT/build/ilemit-bin"    "$TC/ilemit"
 cp -r "$ROOT/build/bir2cir-bin"   "$TC/bir2cir"
 cp -r "$ROOT/build/dll2klib-bin"  "$TC/dll2klib"
+cp -r "$ROOT/build/msbuild-bin"   "$TC/msbuild"
 # The compile-time stdlib REFERENCE assembly rides with the compiler (DotKt.Toolchain.props points
 # $(DotKtStdlibRefAsm) here; Sdk.props turns it into a non-copy <Reference>).
 mkdir -p "$TC/stdlib"

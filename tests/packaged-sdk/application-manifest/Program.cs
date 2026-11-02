@@ -22,6 +22,19 @@ try
             if (!expected.SequenceEqual(Versions(file)))
                 throw new InvalidDataException("Unexpected managed versions: " + file + ": " + string.Join(" / ", Versions(file)));
     }
+    else if (args[0] == "--wildcard")
+    {
+        var version = new Version(Versions(args[3])[0]);
+        var start = long.Parse(args[1]); var end = long.Parse(args[2]);
+        var matched = false;
+        for (var second = start; second <= end; second++)
+        {
+            var time = DateTimeOffset.FromUnixTimeSeconds(second).LocalDateTime;
+            var expected = new Version(2, 3, (time.Date - new DateTime(2000, 1, 1)).Days, (int)time.TimeOfDay.TotalSeconds / 2);
+            matched |= version == expected;
+        }
+        if (!matched) throw new InvalidDataException($"Assembly wildcard version {version} is outside its emission interval");
+    }
     else if (args[0] == "--reference-version")
     {
         foreach (var file in args.Skip(3))
@@ -61,16 +74,75 @@ try
         writer.Write(0); writer.Write(0); writer.Write(data);
         writer.Write(new byte[((data.Length + 3) & ~3) - data.Length]);
     }
+    else if (args[0] == "--write-coff")
+    {
+        // Produce a COFF resource object from the oracle's resource section, not from the implementation under
+        // test. Preserve named IDs, language IDs, code pages and bytes, and express each payload RVA as a symbol.
+        using var pe = new PEReader(File.OpenRead(args[1]));
+        var section = pe.PEHeaders.PEHeader.ResourceTableDirectory;
+        var content = pe.GetSectionData(section.RelativeVirtualAddress).GetContent(0, section.Size).ToArray();
+        uint Read32(int at) => BinaryPrimitives.ReadUInt32LittleEndian(content.AsSpan(at, 4));
+        ushort Read16(int at) => BinaryPrimitives.ReadUInt16LittleEndian(content.AsSpan(at, 2));
+        var entries = new List<int>();
+        void Visit(int directory)
+        {
+            var count = Read16(directory + 12) + Read16(directory + 14);
+            for (var i = 0; i < count; i++)
+            {
+                var target = Read32(directory + 20 + i * 8);
+                if ((target & 0x80000000u) != 0) Visit(checked((int)(target & 0x7fffffffu)));
+                else entries.Add(checked((int)target));
+            }
+        }
+        Visit(0);
+        var split = entries.Min(at => checked((int)Read32(at) - section.RelativeVirtualAddress));
+        var payloadOffsets = entries.Select(at => checked(Read32(at) - (uint)section.RelativeVirtualAddress - (uint)split)).ToArray();
+        foreach (var at in entries) BinaryPrimitives.WriteUInt32LittleEndian(content.AsSpan(at, 4), 0);
+        using var stream = File.Create(args[2]);
+        using var writer = new BinaryWriter(stream);
+        const int headers = 20 + 3 * 40;
+        var relocationsAt = headers + content.Length;
+        var symbolsAt = relocationsAt + entries.Count * 10;
+        writer.Write((ushort)0x14c); writer.Write((ushort)3); writer.Write(0);
+        writer.Write(symbolsAt); writer.Write(entries.Count); writer.Write((ushort)0); writer.Write((ushort)0);
+        void Header(string name, int size, int start, int relocs, ushort count)
+        {
+            writer.Write(Encoding.ASCII.GetBytes(name.PadRight(8, '\0')));
+            writer.Write(0); writer.Write(0); writer.Write(size); writer.Write(start); writer.Write(relocs);
+            writer.Write(0); writer.Write(count); writer.Write((ushort)0); writer.Write(0x40000040u);
+        }
+        Header(".drectve", 0, 0, 0, 0);
+        Header(".rsrc$01", split, headers, relocationsAt, checked((ushort)entries.Count));
+        Header(".rsrc$02", content.Length - split, headers + split, 0, 0);
+        writer.Write(content);
+        for (var i = 0; i < entries.Count; i++)
+        { writer.Write(entries[i]); writer.Write(i); writer.Write((ushort)7); } // IMAGE_REL_I386_DIR32NB
+        for (var i = 0; i < entries.Count; i++)
+        {
+            writer.Write(Encoding.ASCII.GetBytes($"r{i:D7}")); writer.Write(payloadOffsets[i]);
+            writer.Write((short)3); writer.Write((ushort)0); writer.Write((byte)2); writer.Write((byte)0);
+        }
+        writer.Write(4); // empty COFF string table
+    }
     else if (args[0] == "--resources")
     {
         var expected = Resources(args[1]);
         foreach (var file in args.Skip(2))
         {
             var actual = Resources(file);
-            if (expected.Count != actual.Count || expected.Any(e =>
-                !actual.TryGetValue(e.Key, out var value) || e.Value.CodePage != value.CodePage ||
-                !e.Value.Data.AsSpan().SequenceEqual(value.Data)))
-                throw new InvalidDataException("Native resource payloads differ from " + args[1] + ": " + file);
+            if (expected.Count != actual.Count)
+                throw new InvalidDataException($"Native resource count differs: {expected.Count} vs {actual.Count}: {file}");
+            foreach (var (key, resource) in expected)
+            {
+                if (!actual.TryGetValue(key, out var value)) throw new InvalidDataException($"Missing native resource {key}: {file}");
+                if (resource.CodePage != value.CodePage) throw new InvalidDataException($"Native resource {key} code page differs: {file}");
+                if (!resource.Data.AsSpan().SequenceEqual(value.Data))
+                {
+                    var at = 0;
+                    while (at < Math.Min(resource.Data.Length, value.Data.Length) && resource.Data[at] == value.Data[at]) at++;
+                    throw new InvalidDataException($"Native resource {key} differs at byte {at}, lengths {resource.Data.Length}/{value.Data.Length}: {file}");
+                }
+            }
         }
     }
     else if (args[0] == "--default")

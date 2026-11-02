@@ -23,6 +23,7 @@ SHELL := /bin/bash
 KOTC       := toolchain/kotc/build/install/kotc/bin/kotc
 TOOLS      := ilemit bir2cir dll2klib
 TOOL_DLLS  := $(foreach t,$(TOOLS),build/$(t)-bin/$(t).dll)
+TOOL_DLLS  += build/msbuild-bin/DotKt.Build.dll
 FE_KLIB    := build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib
 STDLIB_REF := build/clr-stdlib/dll/DotKt.Private.Stdlib.dll
 STDLIB_RT  := build/clr-stdlib-rt/dll/DotKt.Stdlib.dll
@@ -64,6 +65,9 @@ build/$(1)-bin/$(1).dll: $$(call tool_src,$(1))
 	dotnet build toolchain/$(1) -c Release -o build/$(1)-bin -v q --nologo
 endef
 $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
+
+build/msbuild-bin/DotKt.Build.dll: $(call tool_src,msbuild)
+	dotnet build toolchain/msbuild -c Release -o build/msbuild-bin -v q --nologo
 
 # ---- stdlib (klib + ref + rt); see CLAUDE.md "Building the CLR stdlib" -----------------------------
 stdlib: stdlib-klib stdlib-ref stdlib-rt ## the CLR stdlib: frontend KLIB + reference dll + runtime dll

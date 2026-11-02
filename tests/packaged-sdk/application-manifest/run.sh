@@ -35,7 +35,12 @@ printf '%s\n' 'fun main() { println("Kotlin manifest app") }' > "$kt/Program.kt"
 printf '%s\n' 'public static class Program { public static void Main() => System.Console.WriteLine("CSharp manifest control"); }' > "$cs/Program.cs"
 dotnet build "$FIXTURE/ManifestInspector.csproj" -o "$ws/inspector" -v:q --nologo > "$ws/inspector.log" 2>&1
 inspect() { dotnet "$ws/inspector/ManifestInspector.dll" "$@"; }
-build() { local project="$1" stage="$2"; shift 2; dotnet build "$project" -v:q --nologo "$@" > "$ws/$stage.log" 2>&1; }
+build() {
+  local project="$1" stage="$2"; shift 2
+  local no_csc=()
+  [[ "$project" != *.ktproj ]] || no_csc=(-p:UseSharedCompilation=false -p:CscToolExe=dotkt-csc-must-not-run)
+  dotnet build "$project" -v:q --nologo "${no_csc[@]}" "$@" > "$ws/$stage.log" 2>&1
+}
 out="bin/Debug/net10.0/win-x64"
 obj="obj/Debug/net10.0/win-x64"
 state() { stat -c '%y' "$kt/$out/App.dll" "$kt/$out/App.exe" "$kt/$obj/dotkt-ilemit.stamp"; }
@@ -116,14 +121,12 @@ before="$(state)"; front_before="$(frontend_state)"
 [[ "$(dotnet "$kt/$out/App.dll")" == 'Kotlin manifest app' ]] || { echo 'Kotlin entry point did not run' >&2; exit 1; }
 build "$kt/App.ktproj" defaults-no-op "${defaults[@]}"
 [[ "$before" == "$(state)" ]] || { echo 'default resources no-op changed outputs' >&2; exit 1; }
-# Re-emission may run after CoreCompile has skipped, so the resource provider can be the previous Kotlin PE.
+# Re-emission depends on CIR and selected resource inputs, not a previous provider DLL or a placeholder PDB.
 before="$(state)"
-pdb_before="$(stat -c '%y' "$kt/$obj/App.pdb")"
 touch "$kt/$obj/cir/.stamp"
 build "$kt/App.ktproj" reemit "${defaults[@]}" -v:n
 [[ "$before" != "$(state)" ]] || { echo 'reemit did not update outputs' >&2; exit 1; }
-[[ "$pdb_before" == "$(stat -c '%y' "$kt/$obj/App.pdb")" ]] || { echo 'reemit unexpectedly reran Csc' >&2; exit 1; }
-grep -Fq 'Skipping target "CoreCompile"' "$ws/reemit.log"
+[[ ! -e "$kt/$obj/App.pdb" ]] || { echo 'placeholder PDB was generated' >&2; exit 1; }
 inspect --resources "$cs/$out/App.dll" "$kt/$out/App.dll"
 inspect --kotlin "$kt/$out/App.dll"
 front_before="$(frontend_state)"
@@ -157,6 +160,9 @@ inspect --write-res "$manifests/first.res" first-payload
 inspect --write-res "$manifests/second.res" second-payload
 pair custom-resource "-p:Win32Resource=$manifests/first.res"
 inspect --absent "$kt/$out/App.dll" "$kt/$out/App.exe"
+inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
+inspect --write-coff "$cs/$out/App.dll" "$manifests/resource.obj"
+pair coff-resource "-p:Win32Resource=$manifests/resource.obj"
 inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
 pair switched-resource "-p:Win32Resource=$manifests/second.res"
 inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"

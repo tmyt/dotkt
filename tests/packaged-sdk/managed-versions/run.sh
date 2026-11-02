@@ -27,19 +27,14 @@ for spec in "DotKt.Sdk/$version|$kt/App.ktproj" "Microsoft.NET.Sdk|$cs/Control.c
   <AssemblyAttribute Include="System.Reflection.AssemblyFileVersionAttribute"><_Parameter1></_Parameter1></AssemblyAttribute>
   <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1></_Parameter1></AssemblyAttribute>
 </ItemGroup>
-<ItemGroup Condition="'$(LiteralVersionAttributes)' == 'true'">
-  <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1>"custom" + "-literal"</_Parameter1><_Parameter1_IsLiteral>true</_Parameter1_IsLiteral></AssemblyAttribute>
+<ItemGroup Condition="'$(EvaluatedVersionAttributes)' == 'true'">
+  <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1>$([System.String]::Concat('custom', '-evaluated'))</_Parameter1></AssemblyAttribute>
 </ItemGroup>
 <ItemGroup Condition="'$(ShortVersionAttributes)' == 'true'">
   <AssemblyAttribute Include="System.Reflection.AssemblyFileVersion"><_Parameter1>6.7.8.9</_Parameter1></AssemblyAttribute>
   <AssemblyAttribute Include="System.Reflection.AssemblyInformationalVersion"><_Parameter1>custom-short</_Parameter1></AssemblyAttribute>
 </ItemGroup>
-<Target Name="RecordProviderVersion" BeforeTargets="DotKtIlEmit">
-  <GetAssemblyIdentity AssemblyFiles="$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
-    <Output TaskParameter="Assemblies" ItemName="ProviderIdentity" />
-  </GetAssemblyIdentity>
-  <WriteLinesToFile File="$(IntermediateOutputPath)provider-version.txt" Lines="@(ProviderIdentity->'%(Version)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
-</Target></Project>
+</Project>
 EOF
   sed -i "s|SDK_PLACEHOLDER|$sdk|" "$project"
 done
@@ -47,7 +42,12 @@ printf '%s\n' 'class Versioned { fun value(): String = "versioned" }' 'fun main(
 printf '%s\n' 'public class Versioned { public string value() => "versioned"; public static void Main() => System.Console.WriteLine("versioned"); }' > "$cs/Program.cs"
 dotnet build "$REPO/tests/packaged-sdk/application-manifest/ManifestInspector.csproj" -o "$ws/inspector" -v:q --nologo > "$ws/inspector.log" 2>&1
 inspect() { dotnet "$ws/inspector/ManifestInspector.dll" "$@"; }
-build() { local project="$1" stage="$2"; shift 2; dotnet build "$project" -v:q --nologo "$@" > "$ws/$stage.log" 2>&1; }
+build() {
+  local project="$1" stage="$2"; shift 2
+  local no_csc=()
+  [[ "$project" != *.ktproj ]] || no_csc=(-p:UseSharedCompilation=false -p:CscToolExe=dotkt-csc-must-not-run)
+  dotnet build "$project" -v:q --nologo "${no_csc[@]}" "$@" > "$ws/$stage.log" 2>&1
+}
 out="bin/Debug/net10.0"; obj="obj/Debug/net10.0"
 defaults=(-p:IncludeSourceRevisionInInformationalVersion=false)
 pair() {
@@ -58,7 +58,7 @@ pair() {
   inspect --kotlin "$kt/$out/Versioned.dll"
 }
 check() { inspect --managed "$@" "$kt/$out/Versioned.dll"; }
-state() { stat -c '%y' "$kt/$out/Versioned.dll" "$kt/$obj/dotkt-ilemit.stamp" "$kt/$obj/Versioned.pdb"; }
+state() { stat -c '%y' "$kt/$out/Versioned.dll" "$kt/$obj/dotkt-ilemit.stamp" "$kt/$obj/dotkt-emit-options.txt"; }
 frontend() { stat -c '%y' "$kt/$obj/bir/.stamp" "$kt/$obj/cir/.stamp"; }
 
 pair default
@@ -85,8 +85,8 @@ check 1.0.0.0 1.0.0.0 1.2.3
 pair special -p:SpecialVersion=true
 pair custom-attributes -p:CustomVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
 check 1.0.0.0 6.7.8.9 custom
-pair literal-attributes -p:LiteralVersionAttributes=true -p:GenerateAssemblyInformationalVersionAttribute=false
-check 1.0.0.0 1.0.0.0 custom-literal
+pair evaluated-attributes -p:EvaluatedVersionAttributes=true -p:GenerateAssemblyInformationalVersionAttribute=false
+check 1.0.0.0 1.0.0.0 custom-evaluated
 pair short-attributes -p:ShortVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
 check 1.0.0.0 6.7.8.9 custom-short
 pair empty-attributes -p:EmptyVersionAttributes=true -p:GenerateAssemblyFileVersionAttribute=false -p:GenerateAssemblyInformationalVersionAttribute=false
@@ -101,11 +101,11 @@ pair no-assembly-info -p:GenerateAssemblyInfo=false -p:CustomVersionAttributes=t
 check 0.0.0.0 '<absent>' '<absent>'
 pair reenabled "${explicit[@]}"
 check 2.3.4.5 5.4.3.2 7.8.9-preview+test
-# C# expands wildcards at compilation time. Compare with this exact provider, not a later C# invocation's clock.
+# Wildcards expand once during emission. Validate against the actual invocation's local clock interval rather
+# than requiring a throwaway C# provider or comparing to a later C# compilation across a two-second boundary.
+wildcard_started="$(date +%s)"
 build "$kt/App.ktproj" wildcard "${defaults[@]}" '-p:AssemblyVersion=2.3.*' -p:FileVersion=2.3.0.0 -p:Deterministic=false
-provider="$(tr -d '\r\n' < "$kt/$obj/provider-version.txt")"
-[[ "$provider" == 2.3.* ]] || { echo 'wildcard provider version was not expanded' >&2; exit 1; }
-check "$provider" 2.3.0.0 1.0.0
+inspect --wildcard "$wildcard_started" "$(date +%s)" "$kt/$out/Versioned.dll"
 pair library -p:OutputType=Library "${explicit[@]}"
 [[ "$front_before" == "$(frontend)" ]] || { echo 'version options recompiled Kotlin' >&2; exit 1; }
 for project in "$kt/App.ktproj" "$cs/Control.csproj"; do

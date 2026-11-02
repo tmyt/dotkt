@@ -1,6 +1,6 @@
 // ilemit — emit a runnable .NET assembly directly as CIL from Backend IR (BIR) JSON. No C#, no csc.
 //
-//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-resources-from <pe>] <file1.cir.json>...
+//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] <file1.cir.json>...
 //
 // All BIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
 // D1.2 = M0 subset; D1.4 = user classes (fields, ctors, methods, inheritance, virtual/override).
@@ -25,7 +25,7 @@ static class IlEmit
             Console.Error.WriteLine($"ilemit: {ex.Message}");
             return 1;
         }
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-resources-from <pe>] <file.cir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] <file.cir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);
@@ -50,8 +50,7 @@ static class IlEmit
         string targetFrameworkMoniker = null;
         string targetPlatform = null;
         string supportedOsPlatform = null;
-        string win32ResourcesFrom = null;
-        string assemblyVersionsFrom = null;
+        string assemblyOptionsPath = null;
         bool? jitDebugging = null;
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
@@ -72,10 +71,8 @@ static class IlEmit
             else if (rest[i] == "--target-platform") { Console.Error.WriteLine("ilemit: --target-platform requires a platform name"); return 1; }
             else if (rest[i] == "--supported-os-platform" && i + 1 < rest.Count) supportedOsPlatform = rest[++i];
             else if (rest[i] == "--supported-os-platform") { Console.Error.WriteLine("ilemit: --supported-os-platform requires a platform name"); return 1; }
-            else if (rest[i] == "--win32-resources-from" && i + 1 < rest.Count) win32ResourcesFrom = rest[++i];
-            else if (rest[i] == "--win32-resources-from") { Console.Error.WriteLine("ilemit: --win32-resources-from requires a PE file path"); return 1; }
-            else if (rest[i] == "--assembly-versions-from" && i + 1 < rest.Count) assemblyVersionsFrom = rest[++i];
-            else if (rest[i] == "--assembly-versions-from") { Console.Error.WriteLine("ilemit: --assembly-versions-from requires a PE file path"); return 1; }
+            else if (rest[i] == "--assembly-options" && i + 1 < rest.Count) assemblyOptionsPath = rest[++i];
+            else if (rest[i] == "--assembly-options") { Console.Error.WriteLine("ilemit: --assembly-options requires a JSON file path"); return 1; }
             else if (rest[i] == "--jit-debugging")
             {
                 if (i + 1 >= rest.Count || !bool.TryParse(rest[++i], out var enabled))
@@ -103,8 +100,9 @@ static class IlEmit
         {
             using var target = new TargetReferenceUniverse(compileRefs, runtimeRefs, targetRid, ridGraphPath);
             var files = bir.Select(LoadInputDocument).ToList();
-            var nativeResources = win32ResourcesFrom == null ? null : Win32Resources.FromPE(win32ResourcesFrom);
-            var versions = assemblyVersionsFrom == null ? null : AssemblyVersions.FromPE(assemblyVersionsFrom);
+            var assemblyOptions = assemblyOptionsPath == null ? null : SdkAssemblyOptions.Read(assemblyOptionsPath);
+            var versions = assemblyOptions?.Versions();
+            var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions, versions);
             new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform, nativeResources, versions, jitDebugging)
                 .EmitAssembly(MergeByFileClass(files));
             return 0;
