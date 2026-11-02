@@ -35,6 +35,15 @@ sealed partial class Emitter
                 ab.SetCustomAttribute(ctor, attribute.Blob);
             }
         }
+        // The driver supplies physical JIT policy, independently of symbols or project configuration names.
+        // This constructor sets only Default/DisableOptimizations, never Edit and Continue or PDB suppression.
+        if (_jitDebugging is bool jitDebugging)
+        {
+            var parameters = new[] { Bcl("System.Boolean"), Bcl("System.Boolean") };
+            // member-lookup-residual: driver-selected physical assembly metadata, not a Kotlin program call
+            var constructor = Bcl("System.Diagnostics.DebuggableAttribute").GetConstructor(parameters);
+            SetAttribute(ab.SetCustomAttribute, constructor, parameters, jitDebugging, jitDebugging);
+        }
         // Assembly provenance: the emitter owns the final assembly in BOTH SDK and direct-CLI flows, so it stamps an
         // explicit, versioned DotKt protocol marker here (not in MSBuild-only SDK plumbing). dll2klib requires this
         // signal together with compiler-generated embedded metadata carriers before applying Kotlin-only reverse maps.

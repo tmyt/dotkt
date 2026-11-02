@@ -23,6 +23,12 @@ generation opt-outs, quoting, wildcard expansion, no-op/incremental changes, Lib
 separately compiled Kotlin/C# consumers with nonzero AssemblyRef versions. The manifest scenario also
 compares managed versions alongside the native resources, keeping these distinct surfaces coherent.
 
+The JIT-debugging scenario checks Debug/Release defaults, explicit `Optimize` overrides and independent
+symbol settings against actual assembly `DebuggableAttribute` metadata and same-target C# controls.
+It verifies target-BCL identity, rejects unintended Edit and Continue/symbol-store flags, runs the Kotlin
+outputs, and checks no-op builds plus emission-only invalidation when optimization changes. This does
+not claim Kotlin source-line breakpoints: Portable PDB documents/sequence points are tracked in #1257.
+
 The state the scenarios create stays inside the repository, all of it gitignored: the scratch workspace
 `build/verify-packaged-sdk` and the local feed `build/nuget-feed`, both wiped at the start of every run, plus
 the cached refcheck tool in `build/verify-packaged-sdk-tool`, which is kept between runs on purpose. Within

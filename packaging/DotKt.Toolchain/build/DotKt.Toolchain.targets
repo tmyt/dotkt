@@ -314,13 +314,19 @@
        BEFORE CoreCompile so switching to an older file or clearing an option refreshes that provider too. -->
   <Target Name="DotKtComputeEmitOptions" BeforeTargets="CoreCompile"
           DependsOnTargets="DotKtInitializeIntermediatePaths;SetWin32ManifestProperties;GenerateAssemblyInfo">
+    <PropertyGroup>
+      <_DotKtResolvedOptimize>$(Optimize)</_DotKtResolvedOptimize>
+      <_DotKtResolvedOptimize Condition="'$(_DotKtResolvedOptimize)' == ''">false</_DotKtResolvedOptimize>
+      <_DotKtJitDebugging>true</_DotKtJitDebugging>
+      <_DotKtJitDebugging Condition="$(_DotKtResolvedOptimize)">false</_DotKtJitDebugging>
+    </PropertyGroup>
     <ItemGroup>
       <_DotKtNativeResourceInput Remove="@(_DotKtNativeResourceInput)" />
       <_DotKtNativeResourceInput Include="$(Win32Manifest);$(Win32Resource);$(ApplicationIcon)" />
       <CustomAdditionalCompileInputs Include="$(DotKtEmitOptionsManifest)" />
     </ItemGroup>
     <WriteLinesToFile File="$(DotKtEmitOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="output-type=$(OutputType);no-win32-manifest=$(NoWin32Manifest);manifest=$(Win32Manifest);resource=$(Win32Resource);icon=$(ApplicationIcon);generate-assembly-info=$(GenerateAssemblyInfo);assembly-version-enabled=$(GenerateAssemblyVersionAttribute);file-version-enabled=$(GenerateAssemblyFileVersionAttribute);informational-version-enabled=$(GenerateAssemblyInformationalVersionAttribute)" />
+                      Lines="output-type=$(OutputType);jit-debugging=$(_DotKtJitDebugging);no-win32-manifest=$(NoWin32Manifest);manifest=$(Win32Manifest);resource=$(Win32Resource);icon=$(ApplicationIcon);generate-assembly-info=$(GenerateAssemblyInfo);assembly-version-enabled=$(GenerateAssemblyVersionAttribute);file-version-enabled=$(GenerateAssemblyFileVersionAttribute);informational-version-enabled=$(GenerateAssemblyInformationalVersionAttribute)" />
   </Target>
 
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets;DotKtComputeEmitOptions"
@@ -375,6 +381,8 @@
       <_DotKtIlEmitResponseArgument Include="_assembly"><Value>&quot;$(_DotKtEscapedTargetName)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly_versions_option"><Value>--assembly-versions-from</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly_versions"><Value>&quot;$(_DotKtEscapedResourceProvider)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_jit_debugging_option"><Value>--jit-debugging</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_jit_debugging"><Value>$(_DotKtJitDebugging)</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_compile_refs_option"><Value>--compile-refs</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_compile_refs"><Value>&quot;$(_DotKtEscapedCompileReferences)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_runtime_refs_option"><Value>--runtime-refs</Value></_DotKtIlEmitResponseArgument>
