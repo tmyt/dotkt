@@ -1477,11 +1477,21 @@ case_managed_versions() {
 	fi
 }
 
+case_jit_debugging() {
+	if bash "$ROOT/tests/packaged-sdk/jit-debugging/run.sh" "$FEED" "$VER" "$WS/jit-debugging" \
+			>"$WS/jit-debugging.log" 2>&1; then
+		pass jit-debugging
+	else
+		fail jit-debugging "SDK Optimize/JIT metadata regression" "$(tail -40 "$WS/jit-debugging.log")"
+	fi
+}
+
 case_toolchain_assembly_identity
 case_exe
 case_incremental_emission
 case_application_manifest
 case_managed_versions
+case_jit_debugging
 case_multitarget_klib_references
 case_library
 case_csharp_consumer

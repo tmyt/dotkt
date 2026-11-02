@@ -1,6 +1,6 @@
 // ilemit — emit a runnable .NET assembly directly as CIL from Backend IR (BIR) JSON. No C#, no csc.
 //
-//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-resources-from <pe>] <file1.cir.json>...
+//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-resources-from <pe>] <file1.cir.json>...
 //
 // All BIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
 // D1.2 = M0 subset; D1.4 = user classes (fields, ctors, methods, inheritance, virtual/override).
@@ -25,7 +25,7 @@ static class IlEmit
             Console.Error.WriteLine($"ilemit: {ex.Message}");
             return 1;
         }
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-resources-from <pe>] <file.cir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--win32-resources-from <pe>] <file.cir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);
@@ -52,6 +52,7 @@ static class IlEmit
         string supportedOsPlatform = null;
         string win32ResourcesFrom = null;
         string assemblyVersionsFrom = null;
+        bool? jitDebugging = null;
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
         {
@@ -75,6 +76,15 @@ static class IlEmit
             else if (rest[i] == "--win32-resources-from") { Console.Error.WriteLine("ilemit: --win32-resources-from requires a PE file path"); return 1; }
             else if (rest[i] == "--assembly-versions-from" && i + 1 < rest.Count) assemblyVersionsFrom = rest[++i];
             else if (rest[i] == "--assembly-versions-from") { Console.Error.WriteLine("ilemit: --assembly-versions-from requires a PE file path"); return 1; }
+            else if (rest[i] == "--jit-debugging")
+            {
+                if (i + 1 >= rest.Count || !bool.TryParse(rest[++i], out var enabled))
+                {
+                    Console.Error.WriteLine("ilemit: --jit-debugging requires true or false");
+                    return 1;
+                }
+                jitDebugging = enabled;
+            }
             else if (rest[i] == "--ref") { Console.Error.WriteLine("ilemit: --ref was replaced by --runtime-refs"); return 1; }
             else if (rest[i] == "--build-stdlib=metadata") mode = Emitter.BuildStdlibMode.Metadata;
             else if (rest[i] == "--build-stdlib=runtime") mode = Emitter.BuildStdlibMode.Runtime;
@@ -95,7 +105,7 @@ static class IlEmit
             var files = bir.Select(LoadInputDocument).ToList();
             var nativeResources = win32ResourcesFrom == null ? null : Win32Resources.FromPE(win32ResourcesFrom);
             var versions = assemblyVersionsFrom == null ? null : AssemblyVersions.FromPE(assemblyVersionsFrom);
-            new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform, nativeResources, versions)
+            new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform, nativeResources, versions, jitDebugging)
                 .EmitAssembly(MergeByFileClass(files));
             return 0;
         }
@@ -193,6 +203,7 @@ sealed partial class Emitter
     readonly string _supportedOsPlatform;
     readonly ResourceSectionBuilder _nativeResources;
     readonly AssemblyVersions _versions;
+    readonly bool? _jitDebugging;
     // #335/#336: the exact compile-reference MetadataLoadContext is the sole source of external metadata identity.
     readonly TargetReferenceUniverse _target;
     Type Bcl(string fullName) => _target.ResolveType(fullName);
@@ -269,7 +280,7 @@ sealed partial class Emitter
     public Emitter(string outDir, string asmName, TargetReferenceUniverse target,
         BuildStdlibMode mode = BuildStdlibMode.App, string targetFrameworkMoniker = null,
         string targetPlatform = null, string supportedOsPlatform = null, ResourceSectionBuilder nativeResources = null,
-        AssemblyVersions versions = null)
+        AssemblyVersions versions = null, bool? jitDebugging = null)
     {
         _outDir = outDir; _asmName = asmName; _target = target;
         _targetFrameworkMoniker = string.IsNullOrWhiteSpace(targetFrameworkMoniker) ? null : targetFrameworkMoniker;
@@ -277,6 +288,7 @@ sealed partial class Emitter
         _supportedOsPlatform = string.IsNullOrWhiteSpace(supportedOsPlatform) ? null : supportedOsPlatform;
         _nativeResources = nativeResources;
         _versions = versions;
+        _jitDebugging = jitDebugging;
         _methodRetType = Bcl("System.Void");
         _stdlibAssembly = mode != BuildStdlibMode.App;       // both the metadata and runtime twins are stdlib artifacts
     }

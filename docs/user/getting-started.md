@@ -101,6 +101,14 @@ It is a normal MSBuild project, so it also builds inside **Visual Studio / Rider
 (F5/Ctrl+B work; `.kt` edits are tracked by the fast up-to-date check). The output assembly is
 plain public IL — a C# project can `<ProjectReference>` it directly.
 
+`Optimize` controls the emitted assembly's JIT optimization policy. The normal SDK defaults are
+`false` for Debug and `true` for Release; explicit overrides such as
+`dotnet build -c Release -p:Optimize=false` are honored. Unoptimized output carries
+`DebuggableAttribute` with JIT tracking and optimization suppression, without advertising Edit and
+Continue. `DebugSymbols` and `DebugType` do not choose the optimization policy.
+This does not yet provide Kotlin source-line breakpoints or stepping: source documents and Portable
+PDB sequence points are the separate [#1257](https://github.com/tmyt/dotkt/issues/1257) work.
+
 ## 5. Working in the DotKt repository itself (contributors)
 
 If you have the source repo rather than the NuGet packages:
