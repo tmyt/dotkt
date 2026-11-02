@@ -11,9 +11,11 @@ package kotlin.clr
 // CLR owner provenance attached by dll2klib to a projected CLR class or top-level declaration. bir2cir remains the
 // sole layer that interprets this owner and chooses a physical call/property/field/operator shape. Exact Kotlin
 // declaration identity is a separate compiler fact carried by KotlinDeclarationIdentity below.
+// sourceView names a Kotlin protocol view for assignability, not extra native members or implementation obligations.
+// The frontend consumes only that source identity; physicalOwner remains a representation fact for bir2cir.
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 @Retention(AnnotationRetention.BINARY)
-public annotation class ClrExternal(val owner: String, val physicalOwner: String)
+public annotation class ClrExternal(val owner: String, val physicalOwner: String, val sourceView: String = "")
 
 // Marks a metadata-only suspend declaration synthesized by dll2klib beside a
 // conforming CLR GetAwaiter pattern. kotc forwards this declaration fact to

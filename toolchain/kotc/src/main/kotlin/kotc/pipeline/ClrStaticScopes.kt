@@ -46,9 +46,17 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtFile
 
 /** CLR class qualifiers expose inherited static declarations without creating derived storage or methods. */
-private class ClrStaticScopeProvider(private val delegate: FirScopeProvider) : FirScopeProvider() {
+private class ClrStaticScopeProvider(private val delegate: FirScopeProvider,
+	private val sourceView: (FirClass) -> String? = { null }) : FirScopeProvider() {
 	override fun getUseSiteMemberScope(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession,
-		memberRequiredPhase: FirResolvePhase?) = delegate.getUseSiteMemberScope(klass, useSiteSession, scopeSession, memberRequiredPhase)
+		memberRequiredPhase: FirResolvePhase?): FirTypeScope {
+		// Building a declaration scope always inherits native contracts, never use-site protocol aliases.
+		val nativeScope = withSourceInterfaceViewLookup(false) {
+			sourceInterfaceViewScope(klass, useSiteSession,
+				delegate.getUseSiteMemberScope(klass, useSiteSession, scopeSession, memberRequiredPhase), sourceView(klass))
+		}
+		return sourceInterfaceLookupScope(klass, useSiteSession, scopeSession, nativeScope, memberRequiredPhase)
+	}
 	override fun getTypealiasConstructorScope(typeAlias: FirTypeAlias, useSiteSession: FirSession, scopeSession: ScopeSession) =
 		delegate.getTypealiasConstructorScope(typeAlias, useSiteSession, scopeSession)
 	override fun getNestedClassifierScope(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession) =
@@ -135,7 +143,8 @@ private class InheritedStaticScope(private val scopes: List<FirContainingNamesAw
 fun installClrStaticDeserialization(session: FirSession) {
 	session.register(FirDeserializationExtension::class, object : FirDeserializationExtension(session) {
 		override fun FirRegularClassBuilder.configureDeserializedClass(classId: ClassId) {
-			scopeProvider = ClrStaticScopeProvider(scopeProvider)
+			// This callback precedes class-annotation loading; consume the completed declaration at scope use instead.
+			scopeProvider = ClrStaticScopeProvider(scopeProvider) { sourceInterfaceView(it.annotations) }
 			declarations.forEach { prepareClrStaticVisibility(it, symbol.toLookupTag()) }
 		}
 	})

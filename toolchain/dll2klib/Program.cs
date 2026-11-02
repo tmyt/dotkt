@@ -114,6 +114,7 @@ internal static class Program
         var delegateCatalog = discovery.Delegates;
         var companionCatalog = discovery.Companions;
         var innerCatalog = discovery.Inners;
+        var sourceViews = discovery.SourceViews;
         using var publicTypeCatalog = discovery.PublicTypes;
         var collisions = work.GroupBy(x => x.Output, StringComparer.OrdinalIgnoreCase)
             .Where(x => x.Select(y => y.Input).Distinct(StringComparer.Ordinal).Skip(1).Any())
@@ -126,7 +127,7 @@ internal static class Program
         Directory.CreateDirectory(outputDirectory);
         var projectionCatalogPath = Path.Combine(outputDirectory, ".dll2klib-projection-catalog.json");
         // Every cross-assembly catalog fact originates in one resolved DLL. Persist only each DLL's identity and
-        // direct TypeRef edges, then compare the old and new graphs so a changed/removed root invalidates exactly its
+        // direct TypeRef and trusted source-view binding edges, then compare the old and new graphs so a changed/removed root invalidates its
         // reverse dependents. Arity naming is the one whole-universe rule: when its collision set changes, the DLLs
         // that define the affected source name become additional roots.
         var projectionInputs = inputMetadata
@@ -139,6 +140,8 @@ internal static class Program
                     .ToArray(),
                 input.ReferencedArityKeys,
                 publicTypeCatalog.DirectDependenciesOf(input.Path)
+                    .Concat(sourceViews.Dependencies(input.Path))
+                    .Distinct(StringComparer.Ordinal)
                     .OrderBy(path => path, StringComparer.Ordinal)
                     .ToArray()))
             .OrderBy(input => input.Path, StringComparer.Ordinal)
@@ -218,7 +221,8 @@ internal static class Program
                             delegateCatalog,
                             companionCatalog,
                             innerCatalog,
-                            publicTypeCatalog);
+                            publicTypeCatalog,
+                            sourceViews);
                     }
                     catch (Exception ex)
                     {
@@ -287,7 +291,8 @@ internal static class Program
         DelegateReferenceCatalog delegateCatalog,
         CompanionReferenceCatalog companionCatalog,
         InnerReferenceCatalog innerCatalog,
-        PublicTypeCatalog publicTypeCatalog)
+        PublicTypeCatalog publicTypeCatalog,
+        SourceInterfaceViews sourceViews)
     {
         using var file = File.OpenRead(input);
         // C# 14 extension grouping declarations are signature-only stubs whose non-callable ldnull/throw body is
@@ -302,7 +307,7 @@ internal static class Program
         var arityNames = ArityNames.Create(md, inheritedArityClashes);
         using var scanner = new AssemblyScanner(
             input, pe, md, arityNames, inheritedArityClashes,
-            delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog);
+            delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog, sourceViews);
         var fragments = scanner.Scan();
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -356,7 +361,8 @@ internal static class Program
         DelegateReferenceCatalog Delegates,
         CompanionReferenceCatalog Companions,
         InnerReferenceCatalog Inners,
-        PublicTypeCatalog PublicTypes);
+        PublicTypeCatalog PublicTypes,
+        SourceInterfaceViews SourceViews);
 
     private static BatchCatalogDiscovery DiscoverBatchCatalogs(string[] resolvedInputs)
     {
@@ -375,13 +381,15 @@ internal static class Program
         var companions = CompanionReferenceCatalog.Discover(metadata.Assemblies);
         var inners = InnerReferenceCatalog.Discover(metadata.Assemblies);
         var publicTypes = PublicTypeCatalog.Discover(metadata.Assemblies);
+        var sourceViews = SourceInterfaceViews.Discover(metadata.Assemblies);
         return new BatchCatalogDiscovery(
             inputs,
             inputMetadata,
             delegates,
             companions,
             inners,
-            publicTypes);
+            publicTypes,
+            sourceViews);
     }
 
     private static InputMetadata[] DiscoverInputMetadata(
@@ -1478,6 +1486,7 @@ internal sealed class AssemblyScanner : IDisposable
     private readonly string _definitionPath;
     private readonly MetadataAttributes _attrs;
     private readonly KotlinTypeAliasMetadata _typeAliases;
+    private readonly SourceInterfaceViews _sourceViews;
     private readonly ArityNames _arityNames;
     private readonly DelegateReferenceCatalog _delegateCatalog;
     private readonly CompanionReferenceCatalog _companionCatalog;
@@ -1508,12 +1517,14 @@ internal sealed class AssemblyScanner : IDisposable
         DelegateReferenceCatalog delegateCatalog,
         CompanionReferenceCatalog companionCatalog,
         InnerReferenceCatalog innerCatalog,
-        PublicTypeCatalog publicTypeCatalog)
+        PublicTypeCatalog publicTypeCatalog,
+        SourceInterfaceViews sourceViews)
     {
         _definitionPath = Path.GetFullPath(definitionPath);
         _md = md;
         _attrs = new MetadataAttributes(md);
         _typeAliases = new KotlinTypeAliasMetadata(md, _attrs);
+        _sourceViews = sourceViews;
         _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinTypeVisibilityAttribute",
             HandleKind.TypeDefinition);
@@ -2189,6 +2200,8 @@ internal sealed class AssemblyScanner : IDisposable
             }
         result.ClassAnnotation.Add(ClrExternalAnnotation(names, handle));
         result.Flags |= 1;
+        if (_sourceViews.View(_definitionPath, ExactMetadataTypeName(handle)) is { } sourceView)
+            result.Supertype.Add(signatures.NamedType(sourceView));
 
         var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
         var retainedTypeParameters = new Dictionary<GenericParameterHandle, TypeParameter>();
@@ -6172,6 +6185,16 @@ internal sealed class AssemblyScanner : IDisposable
                 StringValue = names.String(ExactMetadataTypeName(owner)),
             },
         });
+        if (_sourceViews.View(_definitionPath, ExactMetadataTypeName(owner)) is { } sourceView)
+            annotation.Argument.Add(new Annotation.Types.Argument
+            {
+                NameId = names.String("sourceView"),
+                Value = new Annotation.Types.Argument.Types.Value
+                {
+                    Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
+                    StringValue = names.String(sourceView),
+                },
+            });
         return annotation;
     }
 

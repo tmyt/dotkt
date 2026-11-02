@@ -1854,12 +1854,28 @@ typed view of the SAME CLR runtime type (both erase to `System.Text.StringBuilde
 them distinct:
 
 - Used separately in one program, both just work (`il-dualrep` gates this).
-- **Mixing identities is a frontend type error** with an explicit message
+- **Other than the protocol-view case below, mixing identities is a frontend type error** with an explicit message
   (`actual type is 'System.Text.StringBuilder', but 'kotlin.text.StringBuilder' was expected`). This is the
   intended diagnostic, not a bug.
 - **Escape hatch**: an explicit cast crosses the views — `net as kotlin.text.StringBuilder`
   (plus `@Suppress("CAST_NEVER_SUCCEEDS")`; the frontend can't know they unify, the runtime checkcast is a no-op
   because the CLR type is literally the same).
+
+For an unambiguous public, top-level, non-generic interface binding, dll2klib also records the Kotlin protocol
+view supplied by the compiler binding declaration. A native value implementing that interface can be assigned
+to the Kotlin protocol or passed to its generic bounds without a cast. For example, native `IDisposable`
+instances support unchanged `AutoCloseable.use`, including inherited implementations, nullable receivers and
+ordinary CLR struct boxing. Native reference objects are not wrapped or copied.
+
+This is a typed protocol view, not a second native member contract: raw `Dispose` remains `Dispose`, and a Kotlin
+class implementing the raw interface is not asked to implement an additional `close`. An independently authored
+`close` keeps its own meaning; accessing the Kotlin protocol view dispatches its declared native binding.
+Member lookup, including smart casts and intersected bounds, includes that protocol vocabulary. Among visible,
+applicable candidates a native declaration keeps precedence over a same-signature protocol member; an explicit
+protocol view selects the protocol declaration instead. These lookup aliases do not become inherited implementation obligations.
+Genuine Kotlin `AutoCloseable` implementations still implement their ordinary Kotlin `close` contract.
+Generic, ambiguous, arity-changing and reverse binding associations remain separate design work; this rule does
+not unify the two classifiers or change the CLR inheritance graph.
 
 Why not unify (the Kotlin/JVM `typealias` precedent)? Resolving the import TO the stdlib type would erase the very
 thing the import asks for — the raw .NET member surface — and breaking the .NET view would break real interop code

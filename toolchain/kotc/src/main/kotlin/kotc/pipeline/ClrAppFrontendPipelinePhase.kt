@@ -35,7 +35,6 @@ import org.jetbrains.kotlin.config.targetPlatform
 import org.jetbrains.kotlin.fir.DependencyListForCliModule
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.pipeline.AllModulesFrontendOutput
-import org.jetbrains.kotlin.fir.pipeline.resolveAndCheckFir
 import org.jetbrains.kotlin.fir.pipeline.runPlatformCheckers
 import org.jetbrains.kotlin.fir.session.AbstractFirMetadataSessionFactory
 import org.jetbrains.kotlin.fir.session.FirJsSessionFactory
@@ -192,7 +191,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
 			val firFiles = session.buildClrFirFromKtFiles(files)
-			resolveAndCheckFir(session, firFiles, diagnosticsReporter).also {
+			resolveAndCheckClrFir(session, firFiles, diagnosticsReporter).also {
 				kotc.frontend.SelectedCallDeclarations.capture(it.fir)
 				normalizeClrStaticReceivers(session, it.fir)
 				// Capture the CONTEXT-FUNCTION-TYPE arities while FIR still has them — fir2ir erases the

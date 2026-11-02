@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Project unambiguous non-generic native interface protocol views from compiler binding metadata, allowing native disposable receivers in unchanged Kotlin `use` while preserving CLR member names and implementation requirements.
 - Reuse upstream join and self-reference policy for mutable collection default rendering while preserving the existing CLR element renderer and interface faces.
 - Reuse upstream AbstractList equality/hash and AbstractSet hash policy for mutable skeletal implementations, retaining their CLR interface faces and the existing heterogeneous set-query boundary.
 - Restore upstream mutable collection bulk operations and AbstractMutableList cursor/sublist policy, including best-effort concurrent-modification checks, iterator-owned changes and parent range-removal delegation, while retaining direct CLR interface faces.
