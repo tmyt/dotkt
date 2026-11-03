@@ -741,8 +741,7 @@ internal sealed class InnerReferenceCatalog
             if (_entries.TryGetValue(key, out var existing) &&
                 (existing.CapturedCount != entry.CapturedCount ||
                  !existing.SemanticArgumentOrder.SequenceEqual(entry.SemanticArgumentOrder) ||
-                 !StringComparer.Ordinal.Equals(existing.DefinitionPath, entry.DefinitionPath) ||
-                 !StringComparer.Ordinal.Equals(existing.SemanticClassifier, entry.SemanticClassifier)))
+                 !StringComparer.Ordinal.Equals(existing.DefinitionPath, entry.DefinitionPath)))
                 throw new InvalidOperationException(
                     $"Kotlin inner type '{entry.MetadataName}' is ambiguous for assembly '{entry.AssemblyIdentity}'");
             _entries[key] = entry;
@@ -1059,7 +1058,8 @@ internal sealed class CompanionReferenceCatalog
             if (_entries.TryGetValue(key, out var existing) &&
                 (!StringComparer.Ordinal.Equals(existing.SemanticPackage, entry.SemanticPackage) ||
                  !existing.SemanticClasses.SequenceEqual(entry.SemanticClasses, StringComparer.Ordinal) ||
-                 !StringComparer.Ordinal.Equals(existing.DefinitionPath, entry.DefinitionPath)))
+                 !StringComparer.Ordinal.Equals(existing.DefinitionPath, entry.DefinitionPath) ||
+                 !StringComparer.Ordinal.Equals(existing.SemanticClassifier, entry.SemanticClassifier)))
                 throw new InvalidOperationException(
                     $"companion carrier '{entry.MetadataName}' is ambiguous for assembly '{entry.AssemblyIdentity}'");
             _entries[key] = entry;
