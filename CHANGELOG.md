@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Preserve concrete result projections on direct inherited generic getters that physically return object, including numeric uses and constructor initializers, without eagerly narrowing deferred generic locals.
 - Preserve the selected inner constructor and its allocated existential factory signature through array erasure, including captured generic receivers in inline suspend calls.
 - Materialize CLR event handles as ordinary stored, returned and captured values across DLLs, preserving complete handler types and atomically idempotent subscription removal.
 - Generate SDK-selected assembly versions and native resources without placeholder C# compilation, preserving incremental builds and publish while no longer producing a misleading placeholder PDB.

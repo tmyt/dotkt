@@ -41,6 +41,33 @@ private class ProtectedIntArithmetic : ProtectedGenericCast<Int>() {
     fun negate(raw: Any?): Int = -read(raw)
 }
 
+private open class ProtectedUncheckedProperty<T>(private val raw: Any?) {
+    @Suppress("UNCHECKED_CAST")
+    protected val current: T get() = raw as T
+}
+
+private class ProtectedPropertyInt : ProtectedUncheckedProperty<Int>(40) {
+    val constructed: Int = current + 2
+    fun add(delta: Int): Int = current + delta
+    fun negate(): Int = -current
+}
+
+private class ProtectedPropertyText : ProtectedUncheckedProperty<String>("text") {
+    fun length(): Int = current.length
+}
+
+private class ProtectedPropertyNullable(raw: Int?) : ProtectedUncheckedProperty<Int?>(raw) {
+    fun add(delta: Int): Int = (current ?: 0) + delta
+}
+
+private class ProtectedPropertyDeferred<T>(raw: Any?) : ProtectedUncheckedProperty<T>(raw) {
+    fun consume(used: Boolean): Int {
+        val value = current
+        if (!used) return 7
+        return value.hashCode()
+    }
+}
+
 private open class ProtectedNullableProperty<T>(protected val stored: T?)
 
 private class ProtectedNullableInt(initial: Int?) : ProtectedNullableProperty<Int>(initial) {
@@ -72,6 +99,24 @@ fun <T> throughNestedSam(value: T, raw: Any?, invokeNested: Boolean): T {
 }
 
 class UncheckedGenericCastReturnTests {
+    @TestAttribute
+    fun directInheritedUncheckedPropertyProjectsItsConcreteResult() {
+        val value = ProtectedPropertyInt()
+        assertEquals(42, value.constructed)
+        assertEquals(42, value.add(2))
+        assertEquals(-40, value.negate())
+        assertEquals(4, ProtectedPropertyText().length())
+        assertEquals(42, ProtectedPropertyNullable(40).add(2))
+        assertEquals(2, ProtectedPropertyNullable(null).add(2))
+    }
+
+    @TestAttribute
+    fun directInheritedUncheckedPropertyPreservesDeferredGenericStorage() {
+        assertEquals(7, ProtectedPropertyDeferred<Int>(null).consume(false))
+        assertEquals(42, ProtectedPropertyDeferred<Int>(42).consume(true))
+        assertEquals(0, ProtectedPropertyDeferred<Int>(null).consume(true))
+    }
+
     @TestAttribute
     fun nullableCarrierIsNarrowedAtUseInsteadOfGenericMethodReturn() {
         val reader = DeferredGenericCast<Int>()

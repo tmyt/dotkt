@@ -1119,8 +1119,12 @@ sealed class Pipeline
         // physical result instead of leaving ilemit an impossible `object[] -> string[]` stack edge.
         if (!_options.RefBuild)
             foreach (var stagedFile in staged)
+            {
                 NullableTvErasureCallRealign.ApplyAfterInheritedOwnerBinding(
                     stagedFile.Root, nullableTvDeclRets, isValueFqn, refs);
+                UncheckedGenericCastReturnErasure.ApplyAfterInheritedOwnerBinding(
+                    stagedFile.Root, uncheckedGenericCastRets);
+            }
 
         // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 2 of 2: a member called on a receiver whose static type is a
         // type PARAMETER (`fun <T : Tagged> f(t: T) = t.tag()`) cannot be a plain `callvirt` — the stack holds a
