@@ -37,6 +37,15 @@ if Path(sys.argv[0]).name == "kotc":
 elif args[0] in ("build", "pack"):
     with open(os.environ["TRACE"], "a") as trace:
         trace.write(args[0] + "\n")
+    if args[0] == "build" and "DOTKT_TEST_SOURCE_REVISION" in os.environ:
+        # MSBuild can update SourceLink/PDB bytes after a commit without any C# source mtime changing.
+        output = Path(args[args.index("-o") + 1])
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "SourceLink.pdb").write_text(os.environ["DOTKT_TEST_SOURCE_REVISION"])
+        for dll in output.glob("*.dll"):
+            # A changed deterministic PDB ID also changes the DLL's debug directory, which is part of
+            # the backend DLL fingerprint even though its C# implementation sources are unchanged.
+            dll.write_text(dll.name + " " + os.environ["DOTKT_TEST_SOURCE_REVISION"])
     sys.exit(0)
 elif Path(args[0]).stem == "dll2klib":
     stage, kind = "dll2klib", "refs"
@@ -203,6 +212,42 @@ class StdlibBuildTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse([c for c in self.calls() if ":" in c], self.calls())
         self.assertEqual(self.calls().count("pack"), 5)
+
+    def test_make_refreshes_commit_metadata_before_baking_stdlib(self):
+        self.copy("Makefile")
+        self.write("toolchain/kotc/build.gradle.kts", "// fixture build\n")
+        self.write("settings.gradle.kts", "// fixture settings\n")
+        for tool in ("ilemit", "bir2cir", "dll2klib", "msbuild"):
+            self.write(f"toolchain/{tool}/Fixture.cs", "// unchanged compiler source\n")
+        for name in ("SdkAssemblyOptions", "AssemblyVersions"):
+            self.write(f"toolchain/ilemit/{name}.cs", "// unchanged linked source\n")
+
+        for jobs in (1, 4):
+            with self.subTest(jobs=jobs):
+                # Preserve already-built tools, then simulate a Kotlin-only commit. Compiler-source mtimes
+                # stay unchanged; only the next MSBuild invocation knows its SourceLink metadata is stale.
+                self.env["DOTKT_TEST_SOURCE_REVISION"] = f"previous-{jobs}"
+                result = self.run_bash("bash scripts/pack-nuget.sh")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.trace.unlink()
+                self.write("libraries/stdlib/src/Empty.kt", f"// Kotlin-only edit {jobs}\n")
+                self.env["DOTKT_TEST_SOURCE_REVISION"] = f"current-{jobs}"
+                command = f"make -j{jobs} pack"
+                result = self.run_bash(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                for stage in STAGES:
+                    self.assertEqual(self.calls().count(stage), 1, (stage, self.calls()))
+                self.assertEqual(self.calls().count("pack"), 5)
+                for tool in ("ilemit", "bir2cir", "dll2klib", "msbuild"):
+                    self.assertEqual((self.root / f"build/{tool}-bin/SourceLink.pdb").read_text(),
+                                     f"current-{jobs}")
+
+                stamps = {p: p.stat().st_mtime_ns for p in (self.root / "build").rglob("*.toolstamp")}
+                self.trace.unlink()
+                result = self.run_bash(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertFalse([c for c in self.calls() if ":" in c], self.calls())
+                self.assertEqual({p: p.stat().st_mtime_ns for p in stamps}, stamps)
 
     def test_framework_and_projector_changes_invalidate_the_dependent_artifacts(self):
         command = "bash scripts/pack-nuget.sh"

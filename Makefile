@@ -59,14 +59,19 @@ $(KOTC): $(KOTC_SRC)
 
 # One rule per .NET tool: build/<t>-bin/<t>.dll from toolchain/<t>/** (plus a phony alias `make <t>`;
 # these show up in `make help` via the static line there, not per-target ## comments).
+# Git/SourceLink metadata can change without a source mtime changing. Let MSBuild check its full inputs
+# before any dependent stdlib fingerprint is taken; standalone pack performs the same incremental builds.
+.PHONY: force-dotnet-build
+force-dotnet-build:
+
 define TOOL_RULE
 $(1): build/$(1)-bin/$(1).dll
-build/$(1)-bin/$(1).dll: $$(call tool_src,$(1))
+build/$(1)-bin/$(1).dll: force-dotnet-build $$(call tool_src,$(1))
 	dotnet build toolchain/$(1) -c Release -o build/$(1)-bin -v q --nologo
 endef
 $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 
-build/msbuild-bin/DotKt.Build.dll: $(call tool_src,msbuild) toolchain/ilemit/SdkAssemblyOptions.cs toolchain/ilemit/AssemblyVersions.cs
+build/msbuild-bin/DotKt.Build.dll: force-dotnet-build $(call tool_src,msbuild) toolchain/ilemit/SdkAssemblyOptions.cs toolchain/ilemit/AssemblyVersions.cs
 	dotnet build toolchain/msbuild -c Release -o build/msbuild-bin -v q --nologo
 
 # ---- stdlib (klib + ref + rt); see CLAUDE.md "Building the CLR stdlib" -----------------------------
