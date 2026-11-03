@@ -799,6 +799,13 @@ class V:
 
     def walk(self, f, o, path, is_type_decl=False, role=None):
         if isinstance(o, dict):
+            if "encoding" in o:
+                if (not path.endswith(("/value", "/constant")) or set(o) != {"encoding", "units"}
+                        or o["encoding"] != "utf16" or not isinstance(o.get("units"), list)):
+                    self.err(f, path, "malformed UTF-16 literal payload")
+                elif any(type(unit) is not int or not 0 <= unit <= 65535 for unit in o["units"]):
+                    self.err(f, path, "UTF-16 literal units must be integers in 0..65535")
+                return
             if "lateinitDeclarationId" in o:
                 if f.endswith(".cir.json"):
                     self.err(f, path, "lateinitDeclarationId must be consumed before CIR")

@@ -21,6 +21,7 @@
     <Compile Include="../bir-common/MemberRefNode.cs" Link="MemberRefNode.cs" />
     <!-- Shared JSON depth bound for BIR/CIR read/write (#147: default MaxDepth 64 crashes on deeply-nested lambdas). -->
     <Compile Include="../bir-common/BirJson.cs" Link="BirJson.cs" />
+    <Compile Include="../bir-common/LiteralText.cs" Link="LiteralText.cs" />
     <!-- Shared layer-agnostic IR SANITY invariants (#84 P4 / #112 P4). Run by BOTH bir2cir (on its CIR output) and
          ilemit (at the head of EmitAssembly); scripts/verify-sanity.py mirrors them offline. -->
     <Compile Include="../bir-common/IrSanity.cs" Link="IrSanity.cs" />

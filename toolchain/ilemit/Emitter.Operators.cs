@@ -17,7 +17,7 @@ sealed partial class Emitter
         {
             case "string":
                 if (v.ValueKind == JsonValueKind.Null) { _il.Emit(OpCodes.Ldnull); return Bcl("System.String"); }
-                _il.Emit(OpCodes.Ldstr, v.GetString()); return Bcl("System.String");
+                _il.Emit(OpCodes.Ldstr, DotKt.Bir.LiteralText.Read(v)); return Bcl("System.String");
             case "int": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.Int32");
             case "long": _il.Emit(OpCodes.Ldc_I8, v.GetInt64()); return Bcl("System.Int64");
             // Unsigned consts carry the SIGNED bit-pattern (e.g. 4000000000u stored as -294967296); the same
@@ -34,7 +34,7 @@ sealed partial class Emitter
             case "double": _il.Emit(OpCodes.Ldc_R8, v.ValueKind == JsonValueKind.String ? double.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetDouble()); return Bcl("System.Double");
             case "float": _il.Emit(OpCodes.Ldc_R4, v.ValueKind == JsonValueKind.String ? float.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetSingle()); return Bcl("System.Single");
             case "bool": _il.Emit(v.GetBoolean() ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); return Bcl("System.Boolean");
-            case "char": _il.Emit(OpCodes.Ldc_I4, (int)v.GetString()[0]); return Bcl("System.Char");
+            case "char": _il.Emit(OpCodes.Ldc_I4, (int)v.GetUInt16()); return Bcl("System.Char");
             default: _il.Emit(OpCodes.Ldnull); return Bcl("System.Object");
         }
     }

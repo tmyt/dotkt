@@ -18,6 +18,23 @@
 
   "$defs": {
 
+    "literalValue": {
+      "oneOf": [
+        { "type": ["string", "number", "boolean", "null"] },
+        { "$ref": "#/$defs/utf16Literal" }
+      ]
+    },
+    "utf16Literal": {
+      "type": "object",
+      "properties": {
+        "encoding": { "const": "utf16" },
+        "units": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 65535 } }
+      },
+      "required": ["encoding", "units"],
+      "additionalProperties": false,
+      "$comment": "Lossless string literal payload, not an expression node. Preserves arbitrary UTF-16 code units through UTF-8 JSON and embedded inline/default metadata."
+    },
+
     "//== TYPE (§1) — the universal type representation ==//": null,
     "type": {
       "description": "A Type is ALWAYS an object with a `t` discriminator. There is NO bare-string type. Readers dispatch(t); they never split/scan a string. Ten variants; `star` is BIR-only and bir2cir must eliminate it before CIR. `ptr`, `mod` and tArray.rank are CIR-only physical carriers; `mod` and ranked arrays are confined to resolved signatures, while `ptr` also materializes BIR's semantic kotlin.clr.ClrPointer<T> in ordinary CIR slots.",
@@ -640,7 +657,7 @@
         "kotlinStatic": { "type": "boolean", "$comment": "BIR-only companion-block declaration fact; consumed by GenericStaticOwnerBinding and absent from CIR." },
         "init": { "$ref": "#/$defs/node", "$comment": "the initializer expression of a STATIC field, emitted into the type initializer. An instance field is initialized by its constructor instead and carries no `init`." },
         "const": { "type": "boolean", "$comment": "BIR-only Kotlin declaration fact. bir2cir requires a static compile-time-constant initializer and consumes both into the CIR `constant` value." },
-        "constant": { "type": ["string", "number", "boolean", "null"], "$comment": "CIR physical field constant. ilemit emits a CLR static literal field and ECMA-335 Constant row; there is no executable initializer." },
+        "constant": { "$ref": "#/$defs/literalValue", "$comment": "CIR physical field constant. ilemit emits a CLR static literal field and ECMA-335 Constant row; there is no executable initializer." },
         "lateinit": { "type": "boolean", "$comment": "Kotlin round-trip declaration fact. bir2cir authors private object storage with typed checked accessors and trusted [KotlinLateinit] metadata. The checked object read is explicit `lateinitGet`; its CIR form carries the fully bound UninitializedPropertyAccessException construction in `exception`." },
         "lateinitDeclarationId": { "type": "string", "$comment": "BIR-only exact Kotlin getter declaration identity of the property owning this lateinit storage. bir2cir binds lexical initialization queries by this identity and consumes it before CIR." },
         "readOnly": { "type": "boolean", "$comment": "Kotlin round-trip metadata: a val, or a var whose setter is more restricted than the property, is restored as val on the projected property surface. bir2cir folds it into [KotlinReadOnly]; distinct from the physical `initOnly` below." },
@@ -708,7 +725,7 @@
       "oneOf": [
         { "properties": { "k": { "const": "lateinitIsInitialized" }, "lateinitDeclarationId": { "type": "string" }, "ownerType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/node" } }, "required": ["lateinitDeclarationId"], "$comment": "BIR-only lexical initialization query. Receiver expression and constructed Kotlin declaration owner are retained when present; bir2cir independently binds the selected declaration's physical state, without invoking its checked getter." },
         { "properties": { "k": { "const": "local" }, "name": { "type": "string" } }, "required": ["name"] },
-        { "properties": { "k": { "const": "const" }, "type": { "$ref": "#/$defs/type" }, "value": {} }, "required": ["type"] },
+        { "properties": { "k": { "const": "const" }, "type": { "$ref": "#/$defs/type" }, "value": { "$ref": "#/$defs/literalValue" } }, "required": ["type"] },
         { "properties": { "k": { "const": "this" } } },
         { "properties": { "k": { "const": "var" }, "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "init": { "$ref": "#/$defs/node" }, "joinNullBranch": { "const": true, "$comment": "BIR-ONLY frontend fact (#86 \u00a73): the frontend resolved this value-position JOIN to a NON-nullable type while some branch yields a literal null. Stamped by kotc on the declaration it MINTS for the join (a try-expression temp, each cond of a when chain); consumed and REMOVED by bir2cir ValueJoinNullWidening, which widens a VALUE join to Nullable<V> and leaves a reference join alone. Never reaches CIR." } }, "required": ["name", "type"] },
         { "properties": { "k": { "const": "setLocal" }, "name": { "type": "string" }, "value": { "$ref": "#/$defs/node" } }, "required": ["name", "value"] },
