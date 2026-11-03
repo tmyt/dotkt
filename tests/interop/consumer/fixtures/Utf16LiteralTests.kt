@@ -1,6 +1,14 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import Utf16LiteralInterop.Api
+import Utf16LiteralInterop.CharPayloadAttribute
+import Utf16LiteralInterop.StringPayloadAttribute
+
+@CharPayloadAttribute('\ud800', charArrayOf('\ud800', 'X', '\udfff'), Named = '\udfff', NamedArray = charArrayOf('\udfff', '\ud800'))
+private class AttributedUtf16Literal
+
+@StringPayloadAttribute("\ud800")
+private class AttributedUtf16StringLiteral
 
 class NativeUtf16LiteralTests {
     @TestAttribute
@@ -14,5 +22,11 @@ class NativeUtf16LiteralTests {
         assertEquals(0xdfff, text[2].code)
         assertEquals(0xdbff, Api.DefaultChar().code)
         assertEquals(0xdc00, Api.DefaultText()[0].code)
+        val pair = Api.DefaultPair()
+        assertEquals(2, pair.length)
+        assertEquals(0xd83d, pair[0].code)
+        assertEquals(0xde00, pair[1].code)
+        assertEquals("55296|55296,88,57343|57343|57343,55296", Api.AttributeUnits(AttributedUtf16Literal()))
+        assertEquals(Api.CSharpStringAttributeUnit(), Api.StringAttributeUnit(AttributedUtf16StringLiteral()))
     }
 }

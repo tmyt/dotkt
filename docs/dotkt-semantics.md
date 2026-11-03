@@ -683,6 +683,12 @@ Kotlin-generated APIs can therefore expose `object` to C# where their source dec
 `System.Attribute` signatures remain exact. Like the other declaration-owned union classifiers below, this does
 not implement full Kotlin reflection: `Annotation::class` names its physical alias, `System.Object`.
 
+String arguments serialized into CLR custom-attribute metadata use native SerString (UTF-8).
+An unpaired UTF-16 surrogate is observed as U+FFFD, matching a same-target C# attribute application.
+This metadata limitation does not apply to ordinary runtime strings, UTF-16 literal field constants,
+or scalar/array Char attribute arguments. Compiler inline/default carriers retain explicit literal
+code units inside their structured payload instead of embedding an unpaired surrogate in SerString.
+
 ## 5-number. `Number` values keep native CLR boxing; authored subclasses use nominal slots
 
 Kotlin `Byte`, `Short`, `Int`, `Long`, `Float`, and `Double` are Number subtypes, but their native CLR value types

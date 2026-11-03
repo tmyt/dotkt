@@ -31,10 +31,4 @@ public static class LiteralText
         return new string(value.GetProperty("units").EnumerateArray().Select(u => (char)u.GetUInt16()).ToArray());
     }
 
-    public static string Read(JsonNode value)
-    {
-        if (value is JsonValue scalar) return scalar.GetValue<string>();
-        if (value["encoding"]!.GetValue<string>() != "utf16") throw new JsonException("Unknown literal text encoding");
-        return new string(((JsonArray)value["units"]!).Select(u => checked((char)u!.GetValue<int>())).ToArray());
-    }
 }
