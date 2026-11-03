@@ -213,7 +213,7 @@ class StdlibBuildTests(unittest.TestCase):
         self.assertFalse([c for c in self.calls() if ":" in c], self.calls())
         self.assertEqual(self.calls().count("pack"), 5)
 
-    def test_make_refreshes_commit_metadata_before_baking_stdlib(self):
+    def prepare_make(self):
         self.copy("Makefile")
         self.write("toolchain/kotc/build.gradle.kts", "// fixture build\n")
         self.write("settings.gradle.kts", "// fixture settings\n")
@@ -222,6 +222,8 @@ class StdlibBuildTests(unittest.TestCase):
         for name in ("SdkAssemblyOptions", "AssemblyVersions"):
             self.write(f"toolchain/ilemit/{name}.cs", "// unchanged linked source\n")
 
+    def test_make_refreshes_commit_metadata_before_baking_stdlib(self):
+        self.prepare_make()
         for jobs in (1, 4):
             with self.subTest(jobs=jobs):
                 # Preserve already-built tools, then simulate a Kotlin-only commit. Compiler-source mtimes
@@ -248,6 +250,43 @@ class StdlibBuildTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertFalse([c for c in self.calls() if ":" in c], self.calls())
                 self.assertEqual({p: p.stat().st_mtime_ns for p in stamps}, stamps)
+
+    def test_standalone_make_checks_content_without_normal_prerequisite_changes(self):
+        self.prepare_make()
+        cases = ((1, "stdlib", ("klib", "ref", "rt")),
+                 (4, "stdlib", ("klib", "ref", "rt")),
+                 (1, "stdlib-ref", ("ref",)),
+                 (1, "stdlib-klib", ("klib",)),
+                 (4, "build/" + BUILDS["rt"][2], ("ref", "rt")))
+        for index, (jobs, goal, kinds) in enumerate(cases):
+            with self.subTest(jobs=jobs, goal=goal):
+                self.env["DOTKT_TEST_SOURCE_REVISION"] = f"previous-{index}"
+                # Start with coherent artifacts and settle all timestamp prerequisites, including the launcher.
+                result = self.run_bash("bash scripts/pack-nuget.sh && make stdlib")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.trace.unlink()
+                # No Make-listed source changes. MSBuild alone discovers the changed metadata input.
+                self.env["DOTKT_TEST_SOURCE_REVISION"] = f"current-{index}"
+                command = f"make -j{jobs} {goal}"
+                result = self.run_bash(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                for stage in STAGES:
+                    self.assertEqual(self.calls().count(stage), int(stage.split(":")[0] in kinds),
+                                     (stage, self.calls()))
+                self.assertNotIn("pack", self.calls())
+                for kind in kinds:
+                    result = self.run_bash('source scripts/lib.sh; _stamp_fresh '
+                                           f'"$ROOT/build/{BUILDS[kind][2]}" "$(_toolstamp_{kind})"')
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+                paths = [self.root / "build" / b[2] for b in BUILDS.values()]
+                paths.extend((self.root / "build").rglob("*.toolstamp"))
+                times = {p: p.stat().st_mtime_ns for p in paths}
+                self.trace.unlink()
+                result = self.run_bash(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertFalse([c for c in self.calls() if ":" in c], self.calls())
+                self.assertEqual({p: p.stat().st_mtime_ns for p in times}, times)
 
     def test_framework_and_projector_changes_invalidate_the_dependent_artifacts(self):
         command = "bash scripts/pack-nuget.sh"
