@@ -318,11 +318,11 @@ static class PhysicalValueCoercion
             {"name":"nativeResult","params":[],"ret":{"t":"fqn","name":"NativeView"},"body":[]},
             {"name":"opaqueResult","params":[],"ret":{"t":"fqn","name":"System.Object"},"body":[]},
             {"name":"probe","params":[],"ret":{"t":"fqn","name":"void"},"body":[
-              {"k":"exprStmt","expr":{"k":"callStatic","owner":{"t":"fqn","name":"OpaqueResults"},
+              {"k":"var","name":"nativeAsObject","type":{"t":"fqn","name":"System.Object"},"init":{"k":"callStatic","owner":{"t":"fqn","name":"OpaqueResults"},
                 "method":"nativeResult","sig":[],"args":[],"ret":{"t":"fqn","name":"System.Object"}}},
-              {"k":"exprStmt","expr":{"k":"callStatic","owner":{"t":"fqn","name":"OpaqueResults"},
+              {"k":"var","name":"opaqueAsNative","type":{"t":"fqn","name":"NativeView"},"init":{"k":"callStatic","owner":{"t":"fqn","name":"OpaqueResults"},
                 "method":"opaqueResult","sig":[],"args":[],"ret":{"t":"fqn","name":"NativeView"}}},
-              {"k":"exprStmt","expr":{"k":"clrPropGet","type":{"t":"fqn","name":"NativeOwner"},
+              {"k":"var","name":"propertyAsObject","type":{"t":"fqn","name":"System.Object"},"init":{"k":"clrPropGet","type":{"t":"fqn","name":"NativeOwner"},
                 "name":"Value","static":false,"recv":{"k":"const","type":{"t":"fqn","name":"NativeOwner"},"value":null},
                 "ret":{"t":"fqn","name":"System.Object"},"memberRef":{"kind":"propertyAccessor",
                   "declaringType":{"t":"fqn","name":"NativeOwner"},"name":"get_Value",
@@ -332,8 +332,8 @@ static class PhysicalValueCoercion
         var opaqueEdges = opaqueResults["methods"][2]["body"].AsArray();
         foreach (var (edge, expected) in opaqueEdges.Select((edge, index) => (edge,
                      index == 1 ? "System.Object" : "NativeView")))
-            if (Str(edge["expr"]["k"]) != "cast"
-                || TypeJson.Read(edge["expr"]["e"]["ret"]) != new TypeNode.Fqn(expected))
+            if (Str(edge["init"]["k"]) != "cast"
+                || TypeJson.Read(edge["init"]["e"]["ret"]) != new TypeNode.Fqn(expected))
                 throw new InvalidOperationException("Opaque reference projection lost an exact local/native result contract");
         var valueResults = JsonNode.Parse("""
           {"fileClass":"ValueResults","methods":[
@@ -358,7 +358,8 @@ static class PhysicalValueCoercion
                 || TypeJson.Read(valueBody[position]["init"]["type"]) != (position == 0 ? integer : nullableInteger)
                 || TypeJson.Read(valueBody[position]["init"]["e"]["dynRet"]) != new TypeNode.Fqn("object"))
                 throw new InvalidOperationException("Consumed erased invocation lost its concrete value projection");
-        if (Str(valueBody[2]["init"]["k"]) != "callStatic" || Str(valueBody[3]["expr"]["k"]) != "callStatic")
+        if (Str(valueBody[2]["init"]["k"]) != "callStatic" || Str(valueBody[3]["expr"]["k"]) != "callStatic"
+            || TypeJson.Read(valueBody[3]["expr"]["dynRet"]) != new TypeNode.Fqn("object"))
             throw new InvalidOperationException("Object storage or discarded invocation acquired a premature extraction");
         ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
             isExistentialOwner: owner => owner.Name is "Carrier" or "DerivedCarrier",
@@ -1020,6 +1021,16 @@ static class PhysicalValueCoercion
         var declared = TypeJson.Read(expression["ret"]) ?? TypeJson.Read(expression["dynRet"]);
         if (declared == null) return expression;
         var actual = PhysicalResult(expression, scope, index);
+        // Discarding an invocation consumes only its effects, not its Kotlin value projection. Keep the physical
+        // result explicit so emission pops it without an unnecessary cast/unbox; an explicit source cast remains
+        // a separate expression and still executes even when its result is discarded.
+        if (!resultUsed && actual != null
+            && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall")
+        {
+            foreach (var key in new[] { "sty", "ret", "dynRet" })
+                if (expression[key] != null) expression[key] = TypeJson.Write(actual);
+            return expression;
+        }
         // A field read and its address denote the declared location. Keep that
         // exact scalar result here; its consuming value edge supplies any storage
         // conversion. Wrapping the location would make a ref argument a value.

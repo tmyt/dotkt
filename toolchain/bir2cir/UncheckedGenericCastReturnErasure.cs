@@ -237,8 +237,10 @@ static class UncheckedGenericCastReturnErasure
         foreach (var method in array.OfType<JsonObject>())
         {
             var deferred = new Dictionary<string, TypeNode.Tv>(StringComparer.Ordinal);
-            RewriteDeferredLocals(method["body"], index, deferred);
-            if (deferred.Count > 0) RenarrowTypedUses(method["body"], deferred);
+            var regions = new[] { method["preStmts"], method["thisArgs"] ?? method["baseArgs"], method["body"] };
+            foreach (var region in regions) RewriteDeferredLocals(region, index, deferred);
+            if (deferred.Count > 0)
+                foreach (var region in regions) RenarrowTypedUses(region, deferred);
         }
     }
 
