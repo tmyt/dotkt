@@ -44,7 +44,10 @@
 +"method":"takeReadonly","sig":[{"t":"fqn","name":"System.Object"}],"args":[{"k":"local","name":"mutable"}]
 +"method":"takeMutable","sig":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}],"args":[{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"readonly"}}]
 
-# Result edges retain explicit caller-facing Object/native projections and exact inner declaration results.
+# Consumed result edges retain explicit caller-facing projections and exact inner declaration results.
+# Discarded invocations keep their physical result, so use real storage edges rather than exprStmt here.
++"k":"var","name":"readonlyResult","type":{"t":"fqn","name":"System.Object"},"init":{"k":"cast"
++"k":"var","name":"mutableResult","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"init":{"k":"cast"
 +"k":"cast","type":{"t":"fqn","name":"System.Object"},"e":{"k":"callStatic","owner":{"t":"fqn","name":"CollectionViewValueFlowProbeKt"},"method":"mutableSource","sig":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}],"ret":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}
 +"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"callStatic","owner":{"t":"fqn","name":"CollectionViewValueFlowProbeKt"},"method":"readonlySource","sig":[{"t":"fqn","name":"System.Object"}],"ret":{"t":"fqn","name":"System.Object"}
 
