@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Expose the common `System.Array` base and inherited members of Kotlin primitive, unsigned and generic arrays to CLR interop type checking, without copying or changing their native storage. Native members take precedence over same-named extensions.
 - Check complete stdlib input fingerprints for standalone Make targets, rebuilding stale artifacts while preserving valid artifact timestamps on no-op checks.
 - Refresh compiler-tool build metadata before stdlib fingerprinting so commit-only SourceLink changes do not cause duplicate stdlib builds during `make pack` or `make verify`.
 - Preserve named and default companion classifier identity in imported extension receivers and other semantic type slots, including generic/nested owners and extensions declared in a separate DLL.
