@@ -2484,7 +2484,7 @@ Consequences:
   collections assignable to `System.Array`, or change Kotlin array element variance or storage rules.
   Its public instance members and inherited statics are available too: for example `xs.Length`, `xs.Clone()`
   and `CharArray.Clear(xs, 0, xs.size)`. As for other inherited members, they take precedence over same-named
-  extensions; an existing `IntArray.Length` extension is shadowed by the native member.
+  extensions; a user-defined `IntArray.Length` extension, if present, is shadowed by the native member.
 - **Escape hatch for signed-byte consumers:** `UByteArray.toByteArray()` and `ByteArray.toUByteArray()` reinterpret
   between the two. On the CLR `System.Byte[]` and `System.SByte[]` share identical storage and are freely
   interchangeable at runtime (ECMA reduced-type array compatibility), so these lower to a **reinterpret cast — a VIEW,
