@@ -936,7 +936,8 @@ internal sealed record CompanionCatalogEntry(
     string MetadataName,
     string SemanticPackage,
     string[] SemanticClasses,
-    string DefinitionPath);
+    string DefinitionPath,
+    string SemanticClassifier);
 
 internal static class CompanionMetadataSyntax
 {
@@ -1057,17 +1058,18 @@ internal sealed class CompanionReferenceCatalog
             if (_entries.TryGetValue(key, out var existing) &&
                 (!StringComparer.Ordinal.Equals(existing.SemanticPackage, entry.SemanticPackage) ||
                  !existing.SemanticClasses.SequenceEqual(entry.SemanticClasses, StringComparer.Ordinal) ||
-                 !StringComparer.Ordinal.Equals(existing.DefinitionPath, entry.DefinitionPath)))
+                 !StringComparer.Ordinal.Equals(existing.DefinitionPath, entry.DefinitionPath) ||
+                 !StringComparer.Ordinal.Equals(existing.SemanticClassifier, entry.SemanticClassifier)))
                 throw new InvalidOperationException(
                     $"companion carrier '{entry.MetadataName}' is ambiguous for assembly '{entry.AssemblyIdentity}'");
             _entries[key] = entry;
         }
-        // TypeNode classifiers use the BIR dotted owner path; CLR signatures use '+' for nesting. Both keys
-        // come from the discovered metadata definition, and only the trusted companion carrier supplies its
-        // Kotlin identity. No source name is reconstructed from a compiler-generated spelling.
+        // Index both physical spellings and the source classifier carried by declaration TypeNodes. All names
+        // come from the discovered definition or its trusted companion owner/name facts, never a generated-name guess.
         _classifierEntries = _entries.Values.SelectMany(entry => new[] {
                 (Name: entry.MetadataName, Entry: entry),
-                (Name: entry.MetadataName.Replace('+', '.'), Entry: entry) })
+                (Name: entry.MetadataName.Replace('+', '.'), Entry: entry),
+                (Name: entry.SemanticClassifier, Entry: entry) })
             .GroupBy(item => item.Name, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Select(item => item.Entry).Distinct().ToArray(),
                 StringComparer.Ordinal);
@@ -1126,7 +1128,8 @@ internal sealed class CompanionReferenceCatalog
                     DefinitionName(md, handle),
                     semanticPackage,
                     semanticClassPart.Split('.', StringSplitOptions.RemoveEmptyEntries).Append(carrier.Name).ToArray(),
-                    path));
+                    path,
+                    carrier.Owner + ".<companion:" + carrier.Name + ">"));
             }
         }
 
