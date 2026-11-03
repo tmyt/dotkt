@@ -478,6 +478,8 @@ EOF
 	actual="$(run_project "$d" "$d/run.err")" || rc=$?
 	projected_klib="$(find "$d/obj/Debug/net10.0/klib" -maxdepth 1 -name '*.klib' -print -quit 2>/dev/null)"
 	if (( rc != 0 )); then fail exe "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$d/run.err" 2>/dev/null)")"
+	elif [[ ! -s "$d/obj/Debug/net10.0/bir/App;Response.bir.json" ]]; then
+		fail exe "expected BIR output missing from the debug-dump regression path"
 	elif [[ -e "$d/obj/Debug/net10.0/bir/KIR@Raw.txt" ]]; then
 		fail exe "compiler generated an unused full IR debug dump"
 	elif ! manifest_error="$(compare_klib_manifest_versions \
