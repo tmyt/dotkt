@@ -875,13 +875,16 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	// methods: concrete user methods + abstract member decls + toString + values() + valueOf().
 	// A `companion { }` member rides the same list, marked static from the frontend's own fact.
-	val userMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
+	val declaredMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
 		// A frontend-generated class-delegation forwarder owns a real body and interface slot just like a source method.
 		// Other synthetic enum helpers remain excluded and are emitted explicitly below.
 		.filter { (it.origin.toString() == "DEFINED" || it.origin == IrDeclarationOrigin.DELEGATED_MEMBER) &&
 			it.correspondingPropertySymbol == null && (it.body != null || it.isExternal) }
-		.map { method(it, static = isKotlinStaticFunction(it)) } +
+	val userMethods = declaredMethods.map { method(it, static = isKotlinStaticFunction(it)) } +
 		absMethods.map { method(it, static = false) }
+	val declaresToString = (declaredMethods + absMethods).any {
+		!isKotlinStaticFunction(it) && it.name.asString() == "toString" && isAnySlotMethod(it)
+	}
 	val sf = { e: IrEnumEntry -> """{"k":"staticField","ownerType":${fqnJson(name)},"name":${str(e.name.asString())}}""" }
 	val toStr = """{"name":"toString","static":false,"override":true,"virtual":true,"objectOverride":true,"vis":"public","params":[],"ret":${fqnJson("kotlin.String")},"body":[{"k":"return","value":{"k":"field","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":"__name"}}]}"""
 	val valuesArr = """{"k":"newArray","elem":${fqnJson(name)},"elems":[${entries.joinToString(",") { sf(it) }}]}"""
@@ -915,7 +918,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsStaticSet(p))},"kotlinStatic":true}"""
 	}
 	val allPropsList = listOf(propsList, staticPropsList).filter { it.isNotEmpty() }.joinToString(",")
-	val methods = (userMethods + propAccessors + staticPropAccessors + listOf(toStr, valuesM, valueOfM)).joinToString(",")
+	// The inherited Enum implementation supplies a name only when the enum has no authored override.
+	val defaultToString = if (declaresToString) emptyList() else listOf(toStr)
+	val methods = (userMethods + propAccessors + staticPropAccessors + defaultToString + listOf(valuesM, valueOfM)).joinToString(",")
 	val ifaces = interfaceSuperTypes(ec)
 	// As for an ordinary class, inherited default members are frontend-selected implementations. Preserve that
 	// choice so bir2cir can allocate an exact MethodImpl when an unrelated CLR-shaped method would otherwise capture
