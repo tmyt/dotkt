@@ -155,6 +155,14 @@ static class UncheckedGenericCastReturnErasure
         RewriteReferencedCalls(root, refs);
     }
 
+    // An inherited call initially names its receiver rather than the declaration owner. Only after owner binding
+    // can the selected object-returning declaration be closed in its exact frame. Preserve its Kotlin result as an
+    // explicit use projection before BirTypeLowering consumes sty; PhysicalValueCoercion materializes the cast.
+    public static void ApplyAfterInheritedOwnerBinding(JsonNode root, DeclIndex index)
+    {
+        ApplyCallsOnly(root, index);
+    }
+
     static void RewriteReferencedCalls(JsonNode node, ReferenceMetadataIndex refs)
     {
         switch (node)
@@ -217,6 +225,14 @@ static class UncheckedGenericCastReturnErasure
     {
         if (node is not JsonObject obj) return;
         RewriteMethods(obj["methods"], index);
+        RewriteMethods(obj["ctors"], index);
+        if (obj["fields"] is JsonArray fields)
+            foreach (var field in fields.OfType<JsonObject>())
+            {
+                var deferred = new Dictionary<string, TypeNode.Tv>(StringComparer.Ordinal);
+                RewriteDeferredLocals(field["init"], index, deferred);
+                if (deferred.Count > 0) RenarrowTypedUses(field["init"], deferred);
+            }
         if (obj["types"] is JsonArray types)
             foreach (var type in types)
                 if (type != null) ApplyCallsOnly(type, index);
@@ -228,8 +244,10 @@ static class UncheckedGenericCastReturnErasure
         foreach (var method in array.OfType<JsonObject>())
         {
             var deferred = new Dictionary<string, TypeNode.Tv>(StringComparer.Ordinal);
-            RewriteDeferredLocals(method["body"], index, deferred);
-            if (deferred.Count > 0) RenarrowTypedUses(method["body"], deferred);
+            var regions = new[] { method["preStmts"], method["thisArgs"] ?? method["baseArgs"], method["body"] };
+            foreach (var region in regions) RewriteDeferredLocals(region, index, deferred);
+            if (deferred.Count > 0)
+                foreach (var region in regions) RenarrowTypedUses(region, deferred);
         }
     }
 
@@ -253,6 +271,10 @@ static class UncheckedGenericCastReturnErasure
                     if (call["sty"] != null) call["sty"] = TypeJson.Fqn("object");
                     deferred[localName] = localType;
                 }
+                if (obj["ret"] == null && TypeJson.Read(obj["sty"]) is TypeNode expected
+                    && !IsObject(expected) && !IsUnit(expected)
+                    && TryResolve(obj, index, out var projectedReturn) && projectedReturn.Equals(expected))
+                    obj["ret"] = obj["sty"].DeepClone();
                 foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList())
                     RewriteDeferredLocals(child, index, deferred);
                 break;

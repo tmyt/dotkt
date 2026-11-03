@@ -659,8 +659,14 @@
           }
         },
         {
-          "k": "exprStmt",
-          "expr": {
+          "k": "var",
+          "name": "readonlyResult",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "init": {
             "k": "callStatic",
             "owner": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
             "method": "mutableSource",
@@ -680,8 +686,14 @@
           }
         },
         {
-          "k": "exprStmt",
-          "expr": {
+          "k": "var",
+          "name": "mutableResult",
+          "type": {
+            "t": "fqn",
+            "name": "System.Collections.Generic.IList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "init": {
             "k": "callStatic",
             "owner": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
             "method": "readonlySource",

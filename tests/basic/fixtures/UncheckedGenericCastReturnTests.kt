@@ -41,6 +41,76 @@ private class ProtectedIntArithmetic : ProtectedGenericCast<Int>() {
     fun negate(raw: Any?): Int = -read(raw)
 }
 
+private open class ProtectedUncheckedProperty<T>(private val raw: Any?) {
+    @Suppress("UNCHECKED_CAST")
+    protected val current: T get() = raw as T
+}
+
+private class ProtectedPropertyInt : ProtectedUncheckedProperty<Int>(40) {
+    val constructed: Int = current + 2
+    fun add(delta: Int): Int = current + delta
+    fun negate(): Int = -current
+}
+
+private class ProtectedPropertyText : ProtectedUncheckedProperty<String>("text") {
+    fun length(): Int = current.length
+}
+
+private class ProtectedPropertyNullable(raw: Int?) : ProtectedUncheckedProperty<Int?>(raw) {
+    fun add(delta: Int): Int = (current ?: 0) + delta
+}
+
+private class ProtectedPropertyDeferred<T>(raw: Any?) : ProtectedUncheckedProperty<T>(raw) {
+    val initialized: Int
+    init {
+        val initial = current
+        initialized = if (raw == null) 7 else initial.hashCode()
+    }
+
+    fun consume(used: Boolean): Int {
+        val value = current
+        if (!used) return 7
+        return value.hashCode()
+    }
+}
+
+private class ProtectedPropertyIgnored : ProtectedUncheckedProperty<Int>(null) {
+    fun read(): Int {
+        current
+        return 7
+    }
+}
+
+private class ProtectedPropertyIgnoredText : ProtectedUncheckedProperty<String>(42) {
+    fun read(): Int {
+        current
+        return 7
+    }
+}
+
+private open class ProtectedPropertySink(val result: Int)
+
+private class ProtectedPropertyOuter : ProtectedUncheckedProperty<Int>(40) {
+    inner class Built : ProtectedPropertySink(current + 2)
+}
+
+private class ProtectedPropertyCopy(raw: Any?) : ProtectedUncheckedProperty<Int>(raw) {
+    constructor(other: ProtectedPropertyCopy, delta: Int) : this(other.current + delta)
+    fun read(): Int = current
+}
+
+private class ProtectedPropertyStatic(raw: Any?) : ProtectedUncheckedProperty<Int>(raw) {
+    companion object { val total: Int = ProtectedPropertyStatic(40).current + 2 }
+}
+
+private open class PublicUncheckedProperty<T>(private val raw: Any?) {
+    @Suppress("UNCHECKED_CAST")
+    val current: T get() = raw as T
+}
+
+private class PublicPropertyInt : PublicUncheckedProperty<Int>(40)
+private val publicPropertyTotal: Int = PublicPropertyInt().current + 2
+
 private open class ProtectedNullableProperty<T>(protected val stored: T?)
 
 private class ProtectedNullableInt(initial: Int?) : ProtectedNullableProperty<Int>(initial) {
@@ -72,6 +142,33 @@ fun <T> throughNestedSam(value: T, raw: Any?, invokeNested: Boolean): T {
 }
 
 class UncheckedGenericCastReturnTests {
+    @TestAttribute
+    fun directInheritedUncheckedPropertyProjectsItsConcreteResult() {
+        val value = ProtectedPropertyInt()
+        assertEquals(42, value.constructed)
+        assertEquals(42, value.add(2))
+        assertEquals(-40, value.negate())
+        assertEquals(4, ProtectedPropertyText().length())
+        assertEquals(42, ProtectedPropertyNullable(40).add(2))
+        assertEquals(2, ProtectedPropertyNullable(null).add(2))
+        assertEquals(42, ProtectedPropertyOuter().Built().result)
+        assertEquals(42, ProtectedPropertyCopy(ProtectedPropertyCopy(40), 2).read())
+        assertEquals(42, ProtectedPropertyStatic.total)
+        assertEquals(42, PublicPropertyInt().current + 2)
+        assertEquals(42, publicPropertyTotal)
+    }
+
+    @TestAttribute
+    fun directInheritedUncheckedPropertyPreservesDeferredGenericStorage() {
+        assertEquals(7, ProtectedPropertyDeferred<Int>(null).initialized)
+        assertEquals(42, ProtectedPropertyDeferred<Int>(42).initialized)
+        assertEquals(7, ProtectedPropertyDeferred<Int>(null).consume(false))
+        assertEquals(42, ProtectedPropertyDeferred<Int>(42).consume(true))
+        assertEquals(0, ProtectedPropertyDeferred<Int>(null).consume(true))
+        assertEquals(7, ProtectedPropertyIgnored().read())
+        assertEquals(7, ProtectedPropertyIgnoredText().read())
+    }
+
     @TestAttribute
     fun nullableCarrierIsNarrowedAtUseInsteadOfGenericMethodReturn() {
         val reader = DeferredGenericCast<Int>()
