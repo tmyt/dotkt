@@ -9,7 +9,6 @@ import org.jetbrains.kotlin.cli.pipeline.PipelinePhase
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.JVMConfigurationKeys
 import org.jetbrains.kotlin.fir.pipeline.Fir2IrActualizedResult
-import org.jetbrains.kotlin.ir.util.dump
 import java.io.File
 
 /** Final artifact of the CLR pipeline. Carries the process exit code. */
@@ -26,7 +25,7 @@ class ClrBackendArtifact(
  * The one phase we own. Everything before it (Configuration / Frontend / Fir2Ir) is the stock
  * JVM pipeline, so by the time we get here [input] already holds fully-resolved Kotlin IR.
  *
- * It dumps the resolved IR (a debugging foothold) and walks each file to emit BIR — the portable backend IR
+ * It walks each file to emit BIR — the portable backend IR
  * consumed by bir2cir before ilemit emits CIL. See docs/architecture.md.
  */
 object ClrBackendPhase : PipelinePhase<kotc.pipeline.ClrFir2IrPipelineArtifact, ClrBackendArtifact>(
@@ -46,8 +45,6 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 			?: configuration?.get(CLIConfigurationKeys.METADATA_DESTINATION_DIRECTORY)
 			?: File("build/clr-out").also { it.mkdirs() }
 		outputDir.mkdirs()
-
-		File(outputDir, "KIR@Raw.txt").writeText(moduleFragment.dump())
 
 		val messageCollector = configuration?.get(
 			org.jetbrains.kotlin.config.CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
