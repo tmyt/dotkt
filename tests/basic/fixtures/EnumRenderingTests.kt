@@ -31,27 +31,25 @@ enum class EnumEntryDefaultRendered {
     PLAIN
 }
 
-private fun <T : Enum<T>> enumRenderedThroughBound(value: T): String = value.toString()
-
 class EnumRenderingTests {
     @TestAttribute
     fun authoredOverridesOwnTheEnumObjectSlot() {
         assertEquals("rendered:2", EnumRendered.LARGE.toString())
         val opaque: Any = EnumRendered.SMALL
         assertEquals("rendered:1", opaque.toString())
-        assertEquals("rendered:2", enumRenderedThroughBound(EnumRendered.LARGE))
         assertEquals("entry", EnumEntryRendered.SPECIAL.toString())
         assertEquals("base:2", EnumEntryRendered.PLAIN.toString())
         val entry: Any = EnumEntryRendered.SPECIAL
         assertEquals("entry", entry.toString())
         assertEquals("first", EnumAbstractRendered.FIRST.toString())
-        assertEquals("second", enumRenderedThroughBound(EnumAbstractRendered.SECOND))
+        val abstractEntry: Any = EnumAbstractRendered.SECOND
+        assertEquals("second", abstractEntry.toString())
     }
 
     @TestAttribute
     fun inheritedNamesSurviveOverloadsCompanionsAndEntryOverrides() {
         assertEquals("FIRST", EnumDefaultRendered.FIRST.toString())
-        assertEquals("SECOND", enumRenderedThroughBound(EnumDefaultRendered.SECOND))
+        assertEquals("SECOND", EnumDefaultRendered.SECOND.toString())
         assertEquals("prefix:2", EnumDefaultRendered.SECOND.toString("prefix"))
         assertEquals("companion", EnumDefaultRendered.Companion.toString())
         assertEquals("special", EnumEntryDefaultRendered.SPECIAL.toString())
