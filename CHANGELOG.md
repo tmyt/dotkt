@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.19 (2026-11-03)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.19`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Restore upstream stdlib collection, array, text, numeric and utility implementations
+  where the compiler now supports them, while retaining the necessary CLR interop boundaries.
+- Support stored, returned and captured CLR event handles, native disposable protocol views,
+  and awaiter resolution across the supplied CLR reference set.
+- Generate assembly versions and native resources without placeholder C# compilation,
+  and honor the SDK's optimization setting in JIT debugging attributes.
+- Preserve coroutine generic frames, selected inner constructors and getter result projections,
+  retaining the existing coroutines behavior without downstream common-source changes.
+
 ### Changed
 
 - Preserve concrete result projections on direct inherited generic getters that physically return object, including numeric uses and constructor initializers, without eagerly narrowing deferred generic locals.
