@@ -226,6 +226,13 @@ static class UncheckedGenericCastReturnErasure
         if (node is not JsonObject obj) return;
         RewriteMethods(obj["methods"], index);
         RewriteMethods(obj["ctors"], index);
+        if (obj["fields"] is JsonArray fields)
+            foreach (var field in fields.OfType<JsonObject>())
+            {
+                var deferred = new Dictionary<string, TypeNode.Tv>(StringComparer.Ordinal);
+                RewriteDeferredLocals(field["init"], index, deferred);
+                if (deferred.Count > 0) RenarrowTypedUses(field["init"], deferred);
+            }
         if (obj["types"] is JsonArray types)
             foreach (var type in types)
                 if (type != null) ApplyCallsOnly(type, index);

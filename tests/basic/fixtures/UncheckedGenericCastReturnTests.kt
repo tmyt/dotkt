@@ -103,6 +103,14 @@ private class ProtectedPropertyStatic(raw: Any?) : ProtectedUncheckedProperty<In
     companion object { val total: Int = ProtectedPropertyStatic(40).current + 2 }
 }
 
+private open class PublicUncheckedProperty<T>(private val raw: Any?) {
+    @Suppress("UNCHECKED_CAST")
+    val current: T get() = raw as T
+}
+
+private class PublicPropertyInt : PublicUncheckedProperty<Int>(40)
+private val publicPropertyTotal: Int = PublicPropertyInt().current + 2
+
 private open class ProtectedNullableProperty<T>(protected val stored: T?)
 
 private class ProtectedNullableInt(initial: Int?) : ProtectedNullableProperty<Int>(initial) {
@@ -146,6 +154,8 @@ class UncheckedGenericCastReturnTests {
         assertEquals(42, ProtectedPropertyOuter().Built().result)
         assertEquals(42, ProtectedPropertyCopy(ProtectedPropertyCopy(40), 2).read())
         assertEquals(42, ProtectedPropertyStatic.total)
+        assertEquals(42, PublicPropertyInt().current + 2)
+        assertEquals(42, publicPropertyTotal)
     }
 
     @TestAttribute
