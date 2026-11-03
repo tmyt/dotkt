@@ -11,9 +11,10 @@ import org.jetbrains.kotlin.name.StandardClassIds
 
 private val nativeArrayBase = ClassId.topLevel(FqName("System.Array"))
 
-/** The CLR platform exposes one common array base, including unsigned and open generic arrays.
+/** Frontend stdlib array classifiers expose one common base, including unsigned and open generic arrays.
  * Install the source assignability edge before FIR overload resolution; do not rewrite a selected
- * parameter, insert an argument conversion, or change any array storage/emission rule. */
+ * parameter, insert an argument conversion, or change any array storage/emission rule.
+ * Physical array representation remains owned by bir2cir's BirTypeLowering. */
 internal fun FirRegularClassBuilder.addClrArrayBase(classId: ClassId) {
     if (classId != StandardClassIds.Array && classId !in StandardClassIds.elementTypeByPrimitiveArrayType
         && classId !in StandardClassIds.elementTypeByUnsignedArrayType) return

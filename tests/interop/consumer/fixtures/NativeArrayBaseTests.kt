@@ -15,12 +15,20 @@ class NativeArrayBaseTests {
     @TestAttribute
     fun primitiveArraysReachTheExactNativeBaseWithoutCopying() {
         val chars = charArrayOf('a')
+        check(chars.Length == 1 && chars.Rank == 1)
+        val clone = chars.Clone() as CharArray
+        check(clone !== chars && clone[0] == 'a')
+        clone[0] = 'z'
+        check(chars[0] == 'a')
         System.Array.Clear(chars, 0, 1)
         check(chars[0] == '\u0000')
         val native: System.Array = chars
         check(native === chars && Api.Echo(chars) === chars)
         check(Api.Select(chars) == "array" && Api.Select(42) == "object")
         chars[0] = 'b'
+        CharArray.Clear(chars, 0, 1)
+        check(chars[0] == '\u0000')
+        chars[0] = 'c'
         clearNativeArray(chars)
         check(chars[0] == '\u0000')
         val bytes = byteArrayOf(7)
@@ -47,6 +55,7 @@ class NativeArrayBaseTests {
         val shorts = ushortArrayOf(65535u)
         val ints = uintArrayOf(UInt.MAX_VALUE)
         val longs = ulongArrayOf(ULong.MAX_VALUE)
+        check(ints.Length == 1 && ints.GetValue(0).toString() == "4294967295")
         Api.Clear(bytes, bytes, "System.Byte")
         Api.Clear(shorts, shorts, "System.UInt16")
         Api.Clear(ints, ints, "System.UInt32")
