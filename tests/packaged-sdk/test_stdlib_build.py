@@ -43,7 +43,9 @@ elif args[0] in ("build", "pack"):
         output.mkdir(parents=True, exist_ok=True)
         (output / "SourceLink.pdb").write_text(os.environ["DOTKT_TEST_SOURCE_REVISION"])
         for dll in output.glob("*.dll"):
-            dll.touch()
+            # A changed deterministic PDB ID also changes the DLL's debug directory, which is part of
+            # the backend DLL fingerprint even though its C# implementation sources are unchanged.
+            dll.write_text(dll.name + " " + os.environ["DOTKT_TEST_SOURCE_REVISION"])
     sys.exit(0)
 elif Path(args[0]).stem == "dll2klib":
     stage, kind = "dll2klib", "refs"
