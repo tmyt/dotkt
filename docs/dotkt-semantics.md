@@ -2476,6 +2476,11 @@ Consequences:
   signed array's iterator. The frontend retains these declarations, and `ilemit` consumes the exact helper calls.
   Native-array `equals`, `hashCode` and `toString` use the CLR array's Object slots, including unsigned arrays;
   the erased unsigned value-class wrapper does not supply separate Object-method bodies.
+- All Kotlin array classifiers expose `System.Array` as their CLR-platform base during frontend type checking.
+  Primitive, unsigned and generic arrays can be assigned or passed to that base, including through a generic
+  upper bound. Overload resolution sees the same relation; no copy or argument adapter is introduced. The selected
+  CLR declaration still owns its exact parameter type. This does not make unrelated values such as strings or
+  collections assignable to `System.Array`, or change Kotlin array element variance or storage rules.
 - **Escape hatch for signed-byte consumers:** `UByteArray.toByteArray()` and `ByteArray.toUByteArray()` reinterpret
   between the two. On the CLR `System.Byte[]` and `System.SByte[]` share identical storage and are freely
   interchangeable at runtime (ECMA reduced-type array compatibility), so these lower to a **reinterpret cast — a VIEW,

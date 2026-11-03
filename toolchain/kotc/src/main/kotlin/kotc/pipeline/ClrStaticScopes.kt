@@ -143,6 +143,7 @@ private class InheritedStaticScope(private val scopes: List<FirContainingNamesAw
 fun installClrStaticDeserialization(session: FirSession) {
 	session.register(FirDeserializationExtension::class, object : FirDeserializationExtension(session) {
 		override fun FirRegularClassBuilder.configureDeserializedClass(classId: ClassId) {
+			addClrArrayBase(classId)
 			// This callback precedes class-annotation loading; consume the completed declaration at scope use instead.
 			scopeProvider = ClrStaticScopeProvider(scopeProvider) { sourceInterfaceView(it.annotations) }
 			declarations.forEach { prepareClrStaticVisibility(it, symbol.toLookupTag()) }
