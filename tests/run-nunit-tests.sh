@@ -57,7 +57,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=1045
 	["tests/coroutines"]=272
-	["tests/roundtrip/consumer"]=749
+	["tests/roundtrip/consumer"]=751
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=2
 	["tests/roundtrip/bidirectional/consumer"]=56
 	["tests/interop/consumer"]=507
@@ -77,7 +77,7 @@ done
 # its bin; verify each producer as well as the consumer (§5 order).
 declare -A EXTRA_EMIT=(
 	["tests/coroutines"]="DotKt.Tests.CoroutineSupport.dll"
-	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll UpstreamStdlibProducer.dll"
+	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll UpstreamStdlibProducer.dll RoundtripCompanionExtensions.dll"
 	["tests/roundtrip/charsequence-polymorphic-consumer"]="UpstreamStdlibProducer.dll"
 	["tests/roundtrip/bidirectional/consumer"]="BidirectionalKotlin.dll"
 	["tests/interop/consumer"]="DotKt.Tests.EventSupport.dll"

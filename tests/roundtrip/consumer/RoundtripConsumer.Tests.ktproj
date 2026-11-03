@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../producer/RoundtripProducer.ktproj" />
+    <ProjectReference Include="../companion-extension-producer/RoundtripCompanionExtensions.ktproj" />
     <!-- Keep the custom CharSequence producer separate: it exercises the synthetic
          interface representation without changing the shared producer's representation. -->
     <ProjectReference Include="../upstream-stdlib-producer/UpstreamStdlibProducer.ktproj" />
