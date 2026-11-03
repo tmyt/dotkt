@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+
+- Preserve authored enum `toString` overrides without generating a duplicate default implementation, including abstract overrides and per-entry dispatch.
+
 ## 0.9.19 (2026-11-03)
 
 ### Release highlights
