@@ -253,20 +253,27 @@ class StdlibBuildTests(unittest.TestCase):
 
     def test_standalone_make_checks_content_without_normal_prerequisite_changes(self):
         self.prepare_make()
-        cases = ((1, "stdlib", ("klib", "ref", "rt")),
-                 (4, "stdlib", ("klib", "ref", "rt")),
-                 (1, "stdlib-ref", ("ref",)),
-                 (1, "stdlib-klib", ("klib",)),
-                 (4, "build/" + BUILDS["rt"][2], ("ref", "rt")))
-        for index, (jobs, goal, kinds) in enumerate(cases):
-            with self.subTest(jobs=jobs, goal=goal):
+        cases = ((1, "stdlib", ("klib", "ref", "rt"), "tools"),
+                 (4, "stdlib", ("klib", "ref", "rt"), "tools"),
+                 (1, "stdlib-ref", ("ref",), "tools"),
+                 (1, "stdlib-klib", ("klib",), "tools"),
+                 (4, "build/" + BUILDS["rt"][2], ("ref", "rt"), "tools"),
+                 (4, "build/" + BUILDS["rt"][2], ("rt",), "reference"))
+        for index, (jobs, goal, kinds, changed) in enumerate(cases):
+            with self.subTest(jobs=jobs, goal=goal, changed=changed):
                 self.env["DOTKT_TEST_SOURCE_REVISION"] = f"previous-{index}"
                 # Start with coherent artifacts and settle all timestamp prerequisites, including the launcher.
                 result = self.run_bash("bash scripts/pack-nuget.sh && make stdlib")
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.trace.unlink()
-                # No Make-listed source changes. MSBuild alone discovers the changed metadata input.
-                self.env["DOTKT_TEST_SOURCE_REVISION"] = f"current-{index}"
+                # Neither tool metadata nor reference bytes must rely on a source/output mtime signal.
+                if changed == "tools":
+                    self.env["DOTKT_TEST_SOURCE_REVISION"] = f"current-{index}"
+                else:
+                    reference = self.root / "build" / BUILDS["ref"][2]
+                    previous = reference.stat()
+                    reference.write_text("changed reference content\n")
+                    os.utime(reference, ns=(previous.st_atime_ns, previous.st_mtime_ns))
                 command = f"make -j{jobs} {goal}"
                 result = self.run_bash(command)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
