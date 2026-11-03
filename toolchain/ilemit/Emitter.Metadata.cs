@@ -48,10 +48,9 @@ sealed partial class Emitter
     object LiteralConstant(JsonElement value, Type type)
     {
         if (value.ValueKind == JsonValueKind.Null) return null;
-        if (type == Bcl("System.String")) return value.GetString();
+        if (type == Bcl("System.String")) return DotKt.Bir.LiteralText.Read(value);
         if (type == Bcl("System.Boolean")) return value.GetBoolean();
-        if (type == Bcl("System.Char")) return value.ValueKind == JsonValueKind.String
-            ? value.GetString()[0] : (char)value.GetInt32();
+        if (type == Bcl("System.Char")) return (char)value.GetUInt16();
         if (type == Bcl("System.SByte")) return (sbyte)value.GetInt32();
         if (type == Bcl("System.Byte")) return (byte)value.GetInt32();
         if (type == Bcl("System.Int16")) return (short)value.GetInt32();
@@ -392,25 +391,23 @@ sealed partial class Emitter
         // Annotation arguments are always compile-time constants (const nodes).
         if (!e.TryGetProperty("value", out var v)) return null;
         var ty = e.TryGetProperty("type", out var tEl) ? PrimShorthandName(SlotName(tEl)) : null;
+        if (ty == "string" && v.ValueKind != JsonValueKind.Null) return DotKt.Bir.LiteralText.Read(v);
         switch (v.ValueKind)
         {
-            // A `char` default may arrive as its single-char STRING form (`' '` -> "  ") — SetConstant needs a real
-            // `char`, not a string, or a cross-module caller stamps `ldstr " "` for a char param (InvalidProgram).
             case JsonValueKind.String:
-                var sv = v.GetString();
-                return (ty == "char" && sv.Length > 0) ? (object)sv[0] : sv;
+                return v.GetString();
             case JsonValueKind.True: return true;
             case JsonValueKind.False: return false;
             case JsonValueKind.Number:
                 return ty switch
                 {
+                    "char" => (char)v.GetUInt16(),
                     "long" => (object)v.GetInt64(),
                     "double" => v.GetDouble(),
                     "float" => (float)v.GetDouble(),
                     "short" => (short)v.GetInt32(),
                     "sbyte" => (sbyte)v.GetInt32(),
                     "byte" => (byte)v.GetInt32(),   // an unsigned byte arg (NullableAttribute/NullableContextAttribute)
-                    "char" => (char)v.GetInt32(),   // a char default given as its numeric code point
                     _ => v.GetInt32(),
                 };
             default: return null;

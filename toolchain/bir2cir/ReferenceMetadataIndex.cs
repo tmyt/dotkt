@@ -1972,7 +1972,8 @@ sealed partial class ReferenceMetadataIndex
             JsonValue.Create(value.ToString("R", CultureInfo.InvariantCulture)),
         uint value => JsonValue.Create(unchecked((int)value)),
         ulong value => JsonValue.Create(unchecked((long)value)),
-        char value => JsonValue.Create(value.ToString()),
+        char value => JsonValue.Create((int)value),
+        string value => LiteralText.Encode(value),
         _ => JsonSerializer.SerializeToNode(raw, raw.GetType()),
     };
 
@@ -7502,8 +7503,8 @@ sealed partial class ReferenceMetadataIndex
         {
             null => null,
             bool v => JsonValue.Create(v),
-            char v => JsonValue.Create(v.ToString()),
-            string v => JsonValue.Create(v),
+            char v => JsonValue.Create((int)v),
+            string v => LiteralText.Encode(v),
             sbyte v => JsonValue.Create((int)v),
             byte v => JsonValue.Create((int)v),
             short v => JsonValue.Create((int)v),

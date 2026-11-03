@@ -361,9 +361,9 @@ internal fun BirEmitter.fqnJson(name: String): String = TypeNode.Fqn(name).toJso
 internal fun BirEmitter.argElemNullable(at: IrType): TypeNode = birType(at)
 
 internal fun BirEmitter.constJson(c: IrConst): String = when (val v = c.value) {
-	is String -> str(v)
+	is String -> stringLiteral(v)
 	is Boolean -> v.toString()
-	is Char -> str(v.toString())
+	is Char -> v.code.toString()
 	null -> "null"
 	// NaN / ±Infinity are not valid JSON number tokens (`{"value":NaN}` breaks the parser) — emit them as a string
 	// the ilemit const handler decodes to the special double/float (`Double.NaN` etc. appear in stdlib `average()`).
@@ -576,6 +576,16 @@ internal fun BirEmitter.isExternalNetType(decl: org.jetbrains.kotlin.ir.declarat
 /** JSON for a structured type in a node template — `str(typeNode)` emits the `{t:…}` object (no quotes).
  *  An overload of `str(String)` so every `"type":${str(x)}` site works whether x is a name or a Type. */
 internal fun BirEmitter.str(t: TypeNode): String = t.toJson()
+
+/** JSON strings encode Unicode scalar values, while Kotlin strings retain arbitrary UTF-16 code units. */
+internal fun BirEmitter.stringLiteral(s: String): String {
+	val unpaired = s.indices.any { i ->
+		(s[i].isHighSurrogate() && (i + 1 == s.length || !s[i + 1].isLowSurrogate())) ||
+			(s[i].isLowSurrogate() && (i == 0 || !s[i - 1].isHighSurrogate()))
+	}
+	return if (unpaired) s.map { it.code }.joinToString(",", """{"encoding":"utf16","units":[""", "]}")
+	else str(s)
+}
 
 internal fun BirEmitter.str(s: String): String {
 	val escaped = buildString(s.length + 2) {

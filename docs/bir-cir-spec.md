@@ -225,6 +225,23 @@ Notes:
 
 ## 2. Node kinds — the `{"k":…}` expression/statement/decl vocabulary
 
+### Literal code units
+
+A `const` Char has an integer `value` in 0..65535, not a one-character JSON string.
+String literal values use either a JSON string or the explicit payload
+`{"encoding":"utf16","units":[55296,65,57343]}`. The latter carries ordered unsigned
+16-bit code units without Unicode normalization or replacement. Producers use it
+when the string contains an unpaired surrogate; ordinary Unicode, including valid
+surrogate pairs, remains a JSON string. JSON `\uXXXX` escaping alone cannot preserve
+unpaired surrogates through the document readers/writers.
+
+The same literal-value vocabulary applies to CIR field `constant` values and to
+constant arguments/defaults. Inline and default-expression carriers preserve the
+structured literal payload. This object is literal data, not a `{k}` expression or
+a Type. bir2cir transports it without inventing Unicode semantics, and ilemit
+decodes its stated code units when emitting the exact physical literal. Older
+compiler artifacts are not translated or recovered.
+
 `lateinitIsInitialized` is a BIR-only lexical Kotlin initialization query. Its
 `lateinitDeclarationId` names the exact frontend-selected property getter declaration;
 the property's BIR storage carries the same identity. `ownerType` and `recv`, when
