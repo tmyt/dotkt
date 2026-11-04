@@ -50,12 +50,8 @@ static class EnumMemberBinding
 
     // ObjectSlotRename has already normalized the spelling, but only kotc's Any-slot fact proves the slot.
     // An explicit super call is not virtual and must not be redirected to the receiver's override.
-    internal static bool IsVirtualEnumToString(JsonObject call) =>
-        call["k"]?.GetValue<string>() == "callInstance"
-        && call["method"]?.GetValue<string>() == "ToString"
-        && call["anySlot"]?.GetValue<bool>() == true
-        && call["super"]?.GetValue<bool>() != true
-        && TypeJson.OwnerName(call["ownerType"]) == "kotlin.Enum";
+    static bool IsVirtualEnumToString(JsonObject call, string owner) =>
+        owner == "kotlin.Enum" && AnySlotRebind.IsVirtualToString(call);
 
     static void Walk(JsonNode node, HashSet<string> basicEnums)
     {
@@ -78,7 +74,7 @@ static class EnumMemberBinding
         if (obj["recv"] is not JsonNode recv) return;
         var owner = TypeJson.OwnerName(obj["ownerType"]);
 
-        if (IsVirtualEnumToString(obj))
+        if (IsVirtualEnumToString(obj, owner))
         {
             obj.Remove("anySlot");
             ToObjMethod(obj, recv, "ToString", arg: null);

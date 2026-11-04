@@ -21,6 +21,8 @@ class BasicEnumOrdinalRoundtripTests {
         assertEquals(1, enumValues<BasicEntry>()[1].ordinal)
         assertEquals(BasicEntry.SECOND, BasicEntry.valueOf("SECOND"))
         assertEquals(BasicEntry.SECOND, enumValueOf<BasicEntry>("SECOND"))
+        val render: (BasicEntry) -> String = BasicEntry::toString
+        assertEquals("SECOND", render(BasicEntry.SECOND))
         val numericName = try {
             BasicEntry.valueOf("1")
             false
