@@ -39,10 +39,11 @@ static class MaterializedBirPayload
         };
 
         Normalize(payload);
+        Normalize(payload);
         var call = payload["body"]?[0] as JsonObject;
         var lifted = payload["lifted"]?[0] as JsonObject;
         if (call?["method"]?.GetValue<string>() != "ToString"
-            || call.ContainsKey("anySlot")
+            || call["anySlot"]?.GetValue<bool>() != true
             || lifted?["name"]?.GetValue<string>() != "GetHashCode")
             throw new InvalidOperationException("materialized BIR payload normalization self-test failed");
     }

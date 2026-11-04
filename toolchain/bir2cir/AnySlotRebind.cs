@@ -84,11 +84,12 @@ static class AnySlotRebind
         return map;
     }
 
+    // Unbound method-reference lifts carry the selected Any slot without a virtual flag.
     internal static bool IsVirtualToString(JsonObject call) =>
         call["k"]?.GetValue<string>() == "callInstance"
         && call["method"]?.GetValue<string>() == "ToString"
         && call["anySlot"]?.GetValue<bool>() == true
-        && call["virtual"]?.GetValue<bool>() == true
+        && call["virtual"]?.GetValue<bool>() != false
         && call["super"]?.GetValue<bool>() != true;
 
     public static void Apply(JsonNode root, Dictionary<string, TypeInfo> types, ReferenceMetadataIndex refs) =>
