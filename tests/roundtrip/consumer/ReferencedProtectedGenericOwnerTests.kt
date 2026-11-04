@@ -6,6 +6,14 @@ import roundtrip.protectedgenericowner.ReferencedProtectedErasedProperty
 
 private class ReferencedProtectedErasedInt : ReferencedProtectedErasedProperty<Int>(40) {
     fun add(delta: Int): Int = current + delta
+
+    private fun invoke(block: () -> Unit) = block()
+
+    fun capturedAdd(delta: Int): Int {
+        var result = 0
+        invoke { result = current + delta }
+        return result
+    }
 }
 
 private class ReferencedProtectedErasedText : ReferencedProtectedErasedProperty<String>("value") {
@@ -77,7 +85,12 @@ class ReferencedProtectedGenericOwnerTests {
         val result = ReferencedProtectedGenericOwnerInt().capturedSnapshot(values)
         assertSame(values, result)
         assertEquals(null, result[1])
+    }
+
+    @TestAttribute
+    fun importedObjectErasedGetterUsesInstantiatedKotlinResult() {
         assertEquals(42, ReferencedProtectedErasedInt().add(2))
+        assertEquals(43, ReferencedProtectedErasedInt().capturedAdd(3))
         assertEquals(5, ReferencedProtectedErasedText().length())
         assertEquals(null, ReferencedProtectedErasedNullable().read())
     }
