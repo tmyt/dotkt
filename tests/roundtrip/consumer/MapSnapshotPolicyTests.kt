@@ -1,8 +1,6 @@
 import NUnit.Framework.TestAttribute
 import roundtrip.mapsnapshot.*
 
-private fun <K, V> localReadonlySnapshotEntries(map: Map<K, V>): Set<Map.Entry<K, V>> = map.entries
-
 class CrossModuleMapSnapshotPolicyTests {
     @TestAttribute
     fun snapshotsRetainInheritedSetPolicyAcrossDllBoundaries() {
@@ -25,7 +23,7 @@ class CrossModuleMapSnapshotPolicyTests {
     fun snapshotsRetainNullableValueFramesAndIteratorProtocolAcrossDlls() {
         val map = rawSnapshotMap<Int, Int?>()
         map[1] = null
-        val entries = localReadonlySnapshotEntries(map)
+        val entries = importedSnapshotEntries(map)
         check(importedSnapshotText(entries) == "[1=null]")
         check(entries == mapOf(1 to null).entries)
         map[1] = 0
