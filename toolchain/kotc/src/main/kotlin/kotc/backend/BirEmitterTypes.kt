@@ -249,6 +249,9 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	}
 	// Enums -> the real .NET enum type reference (package-qualified, like other user types).
 	if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return TypeNode.Fqn(typeName(klass))
+	// Entry-specific bodies have their own already-projected Kotlin classifier. Preserve it in value slots
+	// as well as member owners; capturing the entry's `this` must not erase its type to Any.
+	if (klass?.kind == ClassKind.ENUM_ENTRY) anonNames[klass]?.let { return TypeNode.Fqn(it) }
 	// A user-declared class/interface/object/annotation becomes a reference to that BIR type; a constructed user generic carries
 	// concrete args. Object singleton types remain distinct classifiers at use sites (`value is Active` must not
 	// collapse to `value is Any`), while anonymous objects resolve through `typeName`.

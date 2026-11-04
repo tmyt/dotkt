@@ -129,10 +129,19 @@ fun enumColorName(c: EnumWhenColor): String = when (c) {
 
 // ---- il-enumbody : per-entry bodies overriding an abstract member --------------------------------------------
 enum class EnumOp(val sym: String) {
-    PLUS("+")  { override fun apply(a: Int, b: Int) = a + b },
-    MINUS("-") { override fun apply(a: Int, b: Int) = a - b },
+    PLUS("+") { override fun apply(a: Int, b: Int) = a + b },
+    MINUS("-") {
+        override fun apply(a: Int, b: Int) = a - b
+        override fun entryTag(): String {
+            val entryName = this::name
+            val entryOrdinal = ::ordinal
+            return name + ordinal + compareTo(PLUS) + "|" + entryName.get() + entryOrdinal.get()
+        }
+        override fun toString() = "subtraction"
+    },
     TIMES("*") { override fun apply(a: Int, b: Int) = a * b };
     abstract fun apply(a: Int, b: Int): Int
+    open fun entryTag(): String = name
 }
 
 enum class EnumMixedEntryBody {
@@ -435,6 +444,8 @@ class EnumTests {
         for (op in EnumOp.values()) log.add(op.sym + ": " + op.apply(6, 2))
         assertEquals("+: 8|-: 4|*: 12", log.joinToString("|"))    // +: 8 / -: 4 / *: 12
         assertEquals("PLUS", EnumOp.PLUS.name)                    // PLUS
+        assertEquals("MINUS11|MINUS1", EnumOp.MINUS.entryTag())
+        assertEquals("subtraction", EnumOp.MINUS.toString())
         assertEquals(9, EnumOp.valueOf("TIMES").apply(3, 3))      // 9
     }
 

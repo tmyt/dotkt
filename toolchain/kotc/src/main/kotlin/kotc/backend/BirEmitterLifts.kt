@@ -1574,10 +1574,15 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 		val args = listOfNotNull(extraArg).joinToString(",")
 		val kind = if (isSetter) "set" else "get"
-		val declarationIdentityTag = declarationIdField(fn)
+		// A lifted access must retain the same selected declaration and instantiated override edges as a direct
+		// access. The fake override's dispatch owner alone does not identify the declaration's storage or slot.
+		val declarationIdentityTag = declarationIdField(fn).ifEmpty {
+			if (fn.isFakeOverride) fn.resolveFakeOverride()?.let(::declarationIdField).orEmpty() else ""
+		}
+		val inherited = if (fn.isFakeOverride) overridesJson(fn) else ""
 		val externalCompanionTag = companionCaptureClass?.takeIf { clrExternalOwner(it) != null }
 			?.let { ""","companionCall":true""" } ?: ""
-		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":${str(name)},"prop":${str(kind)}${overloadSigField(fn)},"args":[$args]$externalCompanionTag$declarationIdentityTag}"""
+		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":${str(name)},"prop":${str(kind)}${overloadSigField(fn)},"args":[$args]$externalCompanionTag$declarationIdentityTag$inherited}"""
 	}
 	// A field-backed member property (`@ClrField`) reads/writes its backing field directly — the SAME
 	// `field`/`setFieldExpr` shapes the ordinary member-access path emits — over the lift's receiver
