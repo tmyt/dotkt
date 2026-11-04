@@ -283,8 +283,10 @@ KEPT distinct (NOT synonyms — different semantics): `staticField`≠`clrStatic
 
 Companion vocabulary (#275) also stays phase-owned. kotc emits `companionValue` as a BIR-only semantic singleton
 access and records `kotlinCompanion:{owner,name,visibility}` on the semantic companion declaration. bir2cir alone
-chooses the ordinary nested CLR carrier, gives that CIR declaration `nestedIn` plus declaration-name
-`capturedTypeParams`, and eliminates every `companionValue`. A CLR-static callable reference is the distinct
+chooses a nested or hoisted non-generic CLR carrier and eliminates every `companionValue`. A classifier declared
+inside the companion keeps its Kotlin source path and explicit BIR owner. It is emitted under the selected
+carrier; dll2klib uses the carrier's Kotlin owner/name metadata to restore that source path.
+A CLR-static callable reference is the distinct
 `newClrStaticDelegate` node after external binding; ilemit consumes that already-resolved physical decision. The
 temporary `companionCaptureOwner`/`externalCompanionOwner` strings are declaration-association keys for lifted and
 suspend captures, not Type slots, and must be consumed before CIR. The schema gate enforces those phase boundaries:

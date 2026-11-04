@@ -37,14 +37,28 @@ static class CompanionRepresentationLowering
             .ToList();
         var byName = types.ToDictionary(t => Str(t["name"]), StringComparer.Ordinal);
         var associations = new List<Association>();
-        foreach (var companion in types.Where(t => t["kotlinCompanion"] is JsonObject fact &&
-                     Str(t["name"]) != Str(fact["owner"])).ToArray())
+        var unplaced = types.Where(t => t["kotlinCompanion"] is JsonObject fact &&
+                Str(t["name"]) != Str(fact["owner"]))
+            .ToDictionary(t => Str(t["name"]), StringComparer.Ordinal);
+        var placing = new HashSet<string>(StringComparer.Ordinal);
+
+        JsonObject ResolveOwner(string name)
         {
+            if (unplaced.TryGetValue(name, out var companion))
+                Place(name, companion);
+            return byName.GetValueOrDefault(name);
+        }
+
+        // A companion can itself belong to a class inside another companion. Place that enclosing
+        // carrier first so the inner association records its final CLR owner, even when hoisted.
+        void Place(string semanticName, JsonObject companion)
+        {
+            if (!placing.Add(semanticName))
+                throw new InvalidOperationException($"cyclic Kotlin companion ownership for '{semanticName}'");
             var fact = (JsonObject)companion["kotlinCompanion"]!;
             var ownerName = Required(fact, "owner");
             var sourceName = Required(fact, "name");
             var visibility = Required(fact, "visibility");
-            var semanticName = Required(companion, "name");
             const string semanticSuffix = ".<companion:";
             var suffixStart = semanticName.LastIndexOf(semanticSuffix, StringComparison.Ordinal);
             if (suffixStart < 0)
@@ -61,7 +75,7 @@ static class CompanionRepresentationLowering
             // including the independently allocated star-projection existential. The reserved `$companion$` marker
             // keeps compiler type families disjoint from a companion's ordinary source name: no Kotlin owner name
             // can end in `$companion`, so no source can produce a colliding pair.
-            var physicalOwner = PhysicalMetadataName(owner, byName);
+            var physicalOwner = PhysicalMetadataName(owner, ResolveOwner);
             // The owner's CLR arity counts the slots it captured from an enclosing generic type as well as its own:
             // that is the arity a consumer reflects off the emitted TypeDef, and the arity the carrier metadata is
             // resolved against.
@@ -69,16 +83,20 @@ static class CompanionRepresentationLowering
             var physicalName = physicalOwnerArity > 0
                 ? physicalOwner.Replace('+', '$') + HoistedMarker + sourceName
                 : declarationOwnerName + ".$" + sourceName;
-            if (types.Any(t => !ReferenceEquals(t, companion) && Str(t["name"]) == physicalName))
+            if (!byName.TryAdd(physicalName, companion))
                 throw new InvalidOperationException(
                     $"reserved physical companion type identity '{physicalName}' is already declared");
-            associations.Add(new(owner, companion, declarationOwnerName, ownerName, semanticName,
-                sourceName, visibility, physicalName, physicalOwner, physicalOwnerArity));
+            var association = new Association(owner, companion, declarationOwnerName, ownerName, semanticName,
+                sourceName, visibility, physicalName, physicalOwner, physicalOwnerArity);
             owner.Remove("kotlinCompanion");
+            Materialize(association);
+            associations.Add(association);
+            unplaced.Remove(semanticName);
+            placing.Remove(semanticName);
         }
 
-        foreach (var association in associations)
-            Materialize(association);
+        foreach (var semanticName in unplaced.Keys.ToArray())
+            ResolveOwner(semanticName);
         foreach (var root in rootObjects)
             RewriteUses(root, associations);
         return new LocalIndex(associations);
@@ -379,7 +397,7 @@ static class CompanionRepresentationLowering
         ["physicalOwnerArity"] = a.PhysicalOwnerArity,
     };
 
-    static string PhysicalMetadataName(JsonObject type, IReadOnlyDictionary<string, JsonObject> byName)
+    static string PhysicalMetadataName(JsonObject type, Func<string, JsonObject> resolveOwner)
     {
         var name = Str(type["name"]) ?? throw new InvalidOperationException("companion owner has no physical name");
         // Companion representation runs before the general ownership pass, so an ordinary Kotlin child still carries
@@ -388,8 +406,8 @@ static class CompanionRepresentationLowering
         // type declaration in `byName`, but is nevertheless the final physical parent and therefore a valid root.
         var parentName = Str(type["nestedIn"]) ?? Str(type["semanticOwner"]);
         if (parentName is null) return name;
-        var physicalParent = byName.TryGetValue(parentName, out var parent)
-            ? PhysicalMetadataName(parent, byName)
+        var physicalParent = resolveOwner(parentName) is { } parent
+            ? PhysicalMetadataName(parent, resolveOwner)
             : parentName;
         return physicalParent + "+" + name[(name.LastIndexOf('.') + 1)..];
     }
@@ -403,6 +421,8 @@ static class CompanionRepresentationLowering
                 var physicalType = PhysicalType(association);
                 if (obj["t"] is JsonValue && Str(obj["name"]) == association.SemanticName)
                     Replace(obj, physicalType);
+                if (Str(obj["semanticOwner"]) == association.SemanticName)
+                    obj["semanticOwner"] = association.PhysicalName;
 
                 var kind = Str(obj["k"]);
                 var memberOwner = Str((obj["ownerType"] as JsonObject)?["name"]);

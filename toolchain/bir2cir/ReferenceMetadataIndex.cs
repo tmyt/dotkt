@@ -5169,12 +5169,13 @@ sealed partial class ReferenceMetadataIndex
                         StripGenericArity(DottedFqn(authoredType.FullName ?? authoredType.Name)));
 
             var singletonCompanionCarriers = new Dictionary<string, string>(StringComparer.Ordinal);
+            var companionSourcePaths = new Dictionary<Type, string>();
             var companionRepresentations = dotKtAuthored
                 ? ValidateCompanionCarriers(types, asm, out singletonCompanionCarriers,
                     metadata.CompanionCarrierByPhysicalOwner,
                     metadata.CompanionSourceNameByPhysicalOwner,
                     metadata.CompanionPhysicalOwnerBySemanticType,
-                    metadata.CompanionSemanticOwnerByCarrier)
+                    metadata.CompanionSemanticOwnerByCarrier, companionSourcePaths)
                 : new Dictionary<Type, bool>();
             foreach (var companion in singletonCompanionCarriers)
                 metadata.SingletonCompanionCarrierBySemanticOwner.Add(companion.Key, companion.Value);
@@ -5188,6 +5189,7 @@ sealed partial class ReferenceMetadataIndex
 
             string StaticNestedSourceName(Type type)
             {
+                if (companionSourcePaths.TryGetValue(type, out var companionPath)) return companionPath;
                 var physical = StripGenericArity(DottedFqn(type.FullName ?? type.Name));
                 if (semanticOwnerByStaticCarrier.TryGetValue(physical, out var semantic)) return semantic;
                 return type.DeclaringType == null ? physical
@@ -6029,7 +6031,8 @@ sealed partial class ReferenceMetadataIndex
         Dictionary<string, string> companionCarriersByPhysicalOwner,
         Dictionary<string, string> companionSourceNamesByPhysicalOwner,
         Dictionary<string, string> companionPhysicalOwnerBySemanticType,
-        Dictionary<string, string> companionSemanticOwnerByCarrier)
+        Dictionary<string, string> companionSemanticOwnerByCarrier,
+        Dictionary<Type, string> companionSourcePaths)
     {
         var physicalTypes = types
             .GroupBy(t => (Name: PhysicalMetadataName(t), Arity: DeclaredGenericArity(t)))
@@ -6170,6 +6173,7 @@ sealed partial class ReferenceMetadataIndex
             companionSemanticOwnerByCarrier.Add(
                 StripGenericArity(DottedFqn(carrierType.FullName ?? carrierType.Name)),
                 StripGenericArity(owner));
+            companionSourcePaths.Add(carrierType, owner + "." + name);
 
             // Private/internal companions do not participate in downstream call binding. Public and protected
             // companions do; the carrier remains public enough for lifted helper types while the payload restores

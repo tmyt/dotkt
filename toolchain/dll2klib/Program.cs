@@ -1124,17 +1124,11 @@ internal sealed class CompanionReferenceCatalog
                     !IsVisibleType(md, owner) || !IsVisibleType(md, handle))
                     continue;
                 var semanticPackage = TopLevelNamespace(md, owner);
-                var semanticClassPart = string.IsNullOrEmpty(semanticPackage)
-                    ? carrier.Owner
-                    : carrier.Owner.StartsWith(semanticPackage + ".", StringComparison.Ordinal)
-                        ? carrier.Owner[(semanticPackage.Length + 1)..]
-                        : throw new InvalidDataException(
-                            $"semantic companion owner '{carrier.Owner}' is outside physical package '{semanticPackage}'");
                 definitions.Add(new CompanionCatalogEntry(
                     AssemblyIdentity(md),
                     DefinitionName(md, handle),
                     semanticPackage,
-                    semanticClassPart.Split('.', StringSplitOptions.RemoveEmptyEntries).Append(carrier.Name).ToArray(),
+                    SourceClasses(carrier, semanticPackage),
                     path,
                     carrier.Owner + ".<companion:" + carrier.Name + ">"));
             }
@@ -1198,6 +1192,32 @@ internal sealed class CompanionReferenceCatalog
 
     private static string Key(string assemblyIdentity, string metadataName) =>
         assemblyIdentity + "\0" + metadataName;
+
+    private static string[] SourceClasses(Carrier carrier, string package)
+    {
+        var relativeOwner = package.Length == 0
+            ? carrier.Owner
+            : carrier.Owner.StartsWith(package + ".", StringComparison.Ordinal)
+                ? carrier.Owner[(package.Length + 1)..]
+                : throw new InvalidDataException(
+                    $"semantic companion owner '{carrier.Owner}' is outside physical package '{package}'");
+        return relativeOwner.Split('.').Append(carrier.Name).ToArray();
+    }
+
+    internal static Dictionary<TypeDefinitionHandle, (string Package, string[] Classes)> DefinitionPaths(
+        MetadataReader reader)
+    {
+        var paths = new Dictionary<TypeDefinitionHandle, (string Package, string[] Classes)>();
+        var attrs = SignatureDecoderSeeds.Attributes(reader);
+        if (!attrs.IsDotKtAssembly) return paths;
+        foreach (var handle in reader.TypeDefinitions)
+        {
+            if (ReadCarrier(attrs, handle) is not { } carrier) continue;
+            var package = TopLevelNamespace(reader, handle);
+            paths.Add(handle, (package, SourceClasses(carrier, package)));
+        }
+        return paths;
+    }
 
     private static Carrier? ReadCarrier(MetadataAttributes attrs, TypeDefinitionHandle handle)
     {
@@ -7618,6 +7638,8 @@ internal sealed record SignatureDecoderSeeds(
 {
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MetadataReader,
         Dictionary<TypeDefinitionHandle, TypeDefinitionHandle>> StaticTypeOwners = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MetadataReader,
+        Dictionary<TypeDefinitionHandle, (string Package, string[] Classes)>> CompanionPaths = new();
     // These indexes are immutable per assembly. Do not rescan the full metadata universe per projected signature.
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MetadataReader,
         MetadataAttributes> ReaderAttributes = new();
@@ -7665,6 +7687,9 @@ internal sealed record SignatureDecoderSeeds(
         string SourceName(TypeDefinitionHandle handle)
         {
             if (carriers.TryGetValue(handle, out var owner)) return owner;
+            if (CompanionPaths.GetValue(reader, CompanionReferenceCatalog.DefinitionPaths)
+                .TryGetValue(handle, out var companion))
+                return string.Join('.', companion.Classes.Prepend(companion.Package).Where(part => part.Length != 0));
             var definition = reader.GetTypeDefinition(handle);
             var name = reader.GetString(definition.Name).Split('`')[0];
             var parent = definition.GetDeclaringType();
@@ -7728,6 +7753,7 @@ internal sealed record SignatureDecoderSeeds(
         var rawScope = package;
         var names = new List<string>();
         var staticOwners = StaticTypeOwners.GetValue(reader, DiscoverStaticTypeOwners);
+        var companions = CompanionPaths.GetValue(reader, CompanionReferenceCatalog.DefinitionPaths);
         foreach (var current in handles)
         {
             var metadataName = reader.GetString(reader.GetTypeDefinition(current).Name);
@@ -7736,6 +7762,13 @@ internal sealed record SignatureDecoderSeeds(
                 var sourceOwner = DefinitionKotlinPath(reader, arityNames, owner);
                 package = sourceOwner.Package;
                 names = sourceOwner.Names.ToList();
+            }
+            else if (companions.TryGetValue(current, out var companion))
+            {
+                // The carrier's trusted association owns its source name, regardless of whether
+                // it is nested in its CLR owner or hoisted beside it.
+                package = companion.Package;
+                names = companion.Classes.ToList();
             }
             else names.Add(arityNames.Simple(rawScope, metadataName));
             rawScope = string.IsNullOrEmpty(rawScope) ? metadataName : rawScope + "." + metadataName;

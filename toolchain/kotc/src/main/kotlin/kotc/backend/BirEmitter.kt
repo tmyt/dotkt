@@ -632,22 +632,19 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			typeName(k.parent as IrClass) + ".<companion:" + k.name.asString() + ">"
 		else if (k.parent is IrClass) {
 			val p = k.parent as IrClass
-			val owner = if (p.isCompanion) p.parent as? IrClass else p
-			// BIR names the Kotlin classifier. Whether this semantic child becomes a CLR nested TypeDef is a bir2cir
-			// decision; genericity of the owner must not change the Kotlin identity emitted by the frontend.
-			(owner?.let { typeName(it) + "." } ?: "") + k.name.asString()
+			// A companion declaration has a separate value-owner identity. Its classifier children still
+			// belong to its source ClassId (A.Named.D, not A.D or A.<companion:Named>.D).
+			val owner = if (p.isCompanion && p.parent is IrClass)
+				typeName(p.parent as IrClass) + "." + p.name.asString()
+			else typeName(p)
+			owner + "." + k.name.asString()
 		}
 		else (k.fqNameWhenAvailable?.asString() ?: k.name.asString())
-
-	internal fun emittedNestedParent(k: IrClass): IrClass? {
-		val p = k.parent as? IrClass ?: return null
-		return if (p.isCompanion) p.parent as? IrClass else p
-	}
 
 	/** Kotlin lexical owner of a type declaration, without selecting a CLR representation. */
 	internal fun semanticTypeOwner(k: IrClass): String? {
 		if (k.isCompanion) return null // kotlinCompanion is the complete semantic association for this declaration.
-		emittedNestedParent(k)?.let { parent ->
+		(k.parent as? IrClass)?.let { parent ->
 			if (!isExternalNetType(parent)) return typeName(parent)
 		}
 		// Anonymous objects and function-local classes are declarations nested in a callable/block rather than direct
