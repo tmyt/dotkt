@@ -1,6 +1,6 @@
 // ilemit — emit a runnable .NET assembly directly as CIL from Backend IR (BIR) JSON. No C#, no csc.
 //
-//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] <file1.cir.json>...
+//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] [--reference-assembly <dll>] <file1.cir.json>...
 //
 // All BIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
 // D1.2 = M0 subset; D1.4 = user classes (fields, ctors, methods, inheritance, virtual/override).

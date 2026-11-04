@@ -50,10 +50,14 @@ import refprobe.Bound
 import refprobe.Box
 import refprobe.supplied
 
-fun main() {
+fun result(): Int {
     val box = Box(Bound(41))
-    check(supplied { box.echo().number } == 42)
+    // Without the inline carrier on the reference image, this return is illegal.
+    supplied { return box.echo().number + 1 }
+    return 0
 }
+
+fun main() { check(result() == 42) }
 EOF
 cat > "$ws/csharp/Program.cs" <<'EOF'
 using System;
@@ -109,13 +113,16 @@ build opt-out "$lib/Producer.ktproj" -p:ProduceReferenceAssembly=false
 [[ -f "$impl" && ! -e "$ref" && ! -e "$refint" ]]
 build kotlin "$ws/kotlin/Consumer.ktproj" -p:CscToolExe=dotkt-csc-must-not-run -p:UseSharedCompilation=false
 cmp "$ref" "$refint"
-! cmp -s "$ref" "$impl"
+if cmp -s "$ref" "$impl"; then
+    echo 'The reference and implementation images are identical.' >&2
+    exit 1
+fi
 grep -Fxq "$ref" "$ws/kotlin/obj/Debug/net10.0/dotkt-reference-klibs.rsp"
 dotnet "$ws/kotlin/bin/Debug/net10.0/Consumer.dll"
 
 # The compiler command must reference the ref image, while both consumers copy the implementation.
 build csharp "$ws/csharp/Consumer.csproj" -p:UseSharedCompilation=false
-grep -F '/reference:' "$ws/csharp.log" | grep -Fq "$ref"
+grep -F '/reference:' "$ws/csharp.log" | grep -F "$ref" >/dev/null
 dotnet "$ws/csharp/bin/Debug/net10.0/Consumer.dll" "$ref"
 for consumer in kotlin csharp; do cmp "$impl" "$ws/$consumer/bin/Debug/net10.0/Producer.dll"; done
 
