@@ -128,7 +128,10 @@ static class UncheckedGenericCastReturnErasure
         foreach (var decl in index.ByIdentity.Values)
         {
             if (!OwnedBy(decl.Method, root) || TypeJson.Read(decl.Method["ret"]) is not TypeNode.Tv) continue;
-            decl.Method["retKotlinType"] = TypeNode.ToJson(decl.Return);
+            // The index is collected after nullable representation materialization. Its Tv addresses the
+            // physical body and can be a storage companion; the earlier declaration snapshot owns Kotlin's Tv.
+            decl.Method["retKotlinType"] ??= Str(decl.Method["nullableGenericRet"])
+                ?? TypeNode.ToJson(decl.Return);
             decl.Method["ret"] = TypeJson.Fqn("object");
             RetypeReturnedCasts(decl.Method["body"], decl.Return);
         }
@@ -171,6 +174,20 @@ static class UncheckedGenericCastReturnErasure
             {
                 var kind = Str(call["k"]);
                 if (kind is "callStatic" or "callInstance"
+                    && KotlinPropertyAccessors.TryCallIdentity(call, out _, out var propertyRole)
+                    && propertyRole == "get"
+                    && TypeJson.Read(call["sty"]) is TypeNode propertyUse
+                    && !IsObject(propertyUse) && !IsUnit(propertyUse)
+                    && TryReferencedOwner(call, kind == "callStatic", out var propertyOwner, out _)
+                    && refs.IsUncheckedGenericObjectGetter(Str(call[DeclarationIdentityBinding.Key]), propertyOwner,
+                        kind == "callStatic", (call["args"] as JsonArray)?.Count ?? 0,
+                        ReadTypes(call["typeArgs"]).Length))
+                {
+                    // The selected getter supplies the Object ABI; kotc already instantiated the Kotlin result
+                    // in the caller's frame. The declaration-relative ret on a property call is not that result.
+                    call["ret"] = call["sty"].DeepClone();
+                }
+                else if (kind is "callStatic" or "callInstance"
                     && call["ret"] == null
                     && TypeJson.Read(call["sty"]) is TypeNode expected
                     // A Unit-valued expression statement deliberately ignores the physical Object result.  Turning
