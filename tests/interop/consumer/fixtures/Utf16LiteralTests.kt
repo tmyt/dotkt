@@ -10,6 +10,8 @@ private class AttributedUtf16Literal
 @StringPayloadAttribute("\ud800")
 private class AttributedUtf16StringLiteral
 
+private const val NATIVE_IMPORTED_TEXT = Api.Text + "!"
+
 class NativeUtf16LiteralTests {
     @TestAttribute
     fun nativeCharConstantsAndOptionalValuesPreserveCodeUnits() {
@@ -20,6 +22,12 @@ class NativeUtf16LiteralTests {
         assertEquals(0xd800, text[0].code)
         assertEquals(88, text[1].code)
         assertEquals(0xdfff, text[2].code)
+        val imported = Api.Text
+        assertEquals(3, imported.length)
+        assertEquals(0xd800, imported[0].code)
+        assertEquals(0xdfff, imported[2].code)
+        assertEquals("\ud800X\udfff!", NATIVE_IMPORTED_TEXT)
+        assertEquals("A\ud83d\ude00\ufffd", Api.ScalarText)
         assertEquals(0xdbff, Api.DefaultChar().code)
         assertEquals(0xdc00, Api.DefaultText()[0].code)
         val pair = Api.DefaultPair()

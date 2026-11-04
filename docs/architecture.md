@@ -26,6 +26,19 @@ identity. Runtime references only disambiguate contract/runtime twins and supply
 compile-time member availability.
 See [Target-reference emission universe](design-target-reference-emission.md).
 
+## Imported String constants
+
+The standard KLIB UTF-8 string table cannot store unpaired UTF-16 surrogates. For such a CLR literal
+String, `dll2klib` retains the property's ordinary `const` flags and writes its code units as an array
+of character values in the compile-time constant payload, with `dotkt_utf16_constants=1` in the
+reference KLIB manifest. All scalar-valid Strings continue to use the standard string table.
+`kotc` restores an ordinary FIR String literal before evaluation. Class members use the KLIB
+constant deserialization extension; top-level declarations use their already-deserialized const
+symbol in the exact owning KLIB, because Kotlin's package loader does not use that extension.
+The `dotkt_utf16_package_constants=1` manifest entry limits package scanning to KLIBs that
+actually contain encoded top-level constants.
+No source-visible annotation, runtime getter or DLL reread is involved.
+
 ## Standard-library artifacts
 
 The CLR stdlib has three deliberately separate views:

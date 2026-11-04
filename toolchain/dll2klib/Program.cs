@@ -309,6 +309,9 @@ internal static class Program
             input, pe, md, arityNames, inheritedArityClashes,
             delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog, sourceViews);
         var fragments = scanner.Scan();
+        var hasUtf16PackageConstants = scanner.HasUtf16StringConstants &&
+            fragments.Any(fragment => fragment.Message.Package?.Property.Any(property =>
+                property.CompileTimeValue?.Type == Annotation.Types.Argument.Types.Value.Types.Type.Array) == true);
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         var temp = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -317,7 +320,8 @@ internal static class Program
             using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
             {
-                Write(zip, "default/manifest", Manifest(uniqueName));
+                Write(zip, "default/manifest",
+                    Manifest(uniqueName, scanner.HasUtf16StringConstants, hasUtf16PackageConstants));
                 // The manifest owns the ordinary unique name. KlibMetadataProtoBuf.Header carries Kotlin's Name
                 // spelling instead, and the standard loader requires a special name (`<...>`) for a module.
                 var header = new Header { ModuleName = $"<{uniqueName}>" };
@@ -341,12 +345,15 @@ internal static class Program
         Console.WriteLine($"{Path.GetFileName(input)} -> {Path.GetFileName(output)}: {fragments.Sum(x => x.Message.Class.Count)} public class(es)");
     }
 
-    private static byte[] Manifest(string uniqueName) => System.Text.Encoding.UTF8.GetBytes(
-        "abi_version=2.4.0\n" +
-        "compiler_version=2.4.21\n" +
-        "ir_signature_versions=1,2\n" +
-        "metadata_version=2.4.0\n" +
-        $"unique_name={uniqueName}\n");
+    private static byte[] Manifest(string uniqueName, bool hasUtf16StringConstants, bool hasUtf16PackageConstants) =>
+        System.Text.Encoding.UTF8.GetBytes(
+            "abi_version=2.4.0\n" +
+            "compiler_version=2.4.21\n" +
+            "ir_signature_versions=1,2\n" +
+            "metadata_version=2.4.0\n" +
+            $"unique_name={uniqueName}\n" +
+            (hasUtf16StringConstants ? "dotkt_utf16_constants=1\n" : "") +
+            (hasUtf16PackageConstants ? "dotkt_utf16_package_constants=1\n" : ""));
 
     private sealed record InputMetadata(
         string Path,
@@ -1427,6 +1434,8 @@ internal sealed class ArityNames
 
 internal sealed class AssemblyScanner : IDisposable
 {
+    public bool HasUtf16StringConstants { get; private set; }
+
     private sealed record CompanionCarrier(
         string Kind,
         string Owner,
@@ -5551,13 +5560,41 @@ internal sealed class AssemblyScanner : IDisposable
                 value.DoubleValue = blob.ReadDouble();
                 break;
             case ConstantTypeCode.String:
+            {
+                var text = blob.ReadUTF16(blob.RemainingBytes);
+                if (HasUnpairedSurrogate(text))
+                {
+                    // A standard UTF-8 StringTable cannot represent these code units. The manifest
+                    // selects the DotKt reader for this otherwise impossible const-value shape.
+                    HasUtf16StringConstants = true;
+                    value.Type = Annotation.Types.Argument.Types.Value.Types.Type.Array;
+                    foreach (var unit in text)
+                        value.ArrayElement.Add(new Annotation.Types.Argument.Types.Value
+                        {
+                            Type = Annotation.Types.Argument.Types.Value.Types.Type.Char,
+                            IntValue = unit,
+                        });
+                    break;
+                }
                 value.Type = Annotation.Types.Argument.Types.Value.Types.Type.String;
-                value.StringValue = names.String(blob.ReadUTF16(blob.RemainingBytes));
+                value.StringValue = names.String(text);
                 break;
+            }
             default:
                 return null;
         }
         return value;
+    }
+
+    private static bool HasUnpairedSurrogate(string text)
+    {
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (!char.IsSurrogate(text[i])) continue;
+            if (!char.IsSurrogatePair(text, i)) return true;
+            i++; // Skip the low surrogate of a valid pair.
+        }
+        return false;
     }
 
     private void ApplyAccessorFlags(
