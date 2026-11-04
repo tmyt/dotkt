@@ -56,6 +56,9 @@ annotation syntax is not introduced by this build change.
 `ApplicationIcon` is encoded as native icon/group resources. An explicit `Win32Resource` RES file
 replaces generated resources, rather than being merged with a default manifest or VERSIONINFO.
 COFF object inputs are not supported; point `Win32Resource` at the original `.res` file instead.
+Explicit `.res` files must be readable by the selected SDK's Roslyn. If that SDK rejects a
+resource identifier containing supplementary Unicode characters, use a numeric identifier or a
+name without those characters. This does not restrict the resource payload.
 Switching or clearing native resource options refreshes the final PE without recompiling Kotlin.
 Direct `ilemit` callers have no implicit resources: the project driver supplies `--assembly-options <JSON>`
 when needed. Its values are physical build inputs, not Kotlin semantics or a previous application's metadata.
