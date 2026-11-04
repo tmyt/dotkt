@@ -116,8 +116,8 @@ static class IlEmit
             var declarations = MergeByFileClass(files);
             new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform, nativeResources, versions, jitDebugging)
                 .EmitAssembly(declarations);
-            // Project references expose the same physical declarations and Kotlin metadata, not the
-            // stdlib binding assembly's alternate representation. Only the executable bodies differ.
+            // Use the same CLR declarations and Kotlin metadata, not the stdlib binding representation.
+            // The reference image stubs executable bodies, adds the reference marker and omits runtime-only data.
             if (referenceAssemblyPath != null)
                 new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
                     versions: versions, referenceAssemblyPath: referenceAssemblyPath).EmitAssembly(declarations);

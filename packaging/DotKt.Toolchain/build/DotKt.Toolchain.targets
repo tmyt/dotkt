@@ -321,16 +321,17 @@
     </ItemGroup>
     <DotKt.Build.WriteAssemblyOptions OutputFile="$(DotKtEmitOptionsManifest)" OutputFileName="$(TargetName)$(TargetExt)"
         OutputType="$(OutputType)" Deterministic="$(_DotKtDeterministic)" JitDebugging="$(_DotKtJitDebugging)"
+        ReferenceAssembly="@(_DotKtIntermediateRefAssembly->'%(FullPath)')"
         NoWin32Manifest="$(_DotKtNoWin32Manifest)" Win32Manifest="$(_DotKtSelectedManifest)"
         Win32Resource="$(Win32Resource)" ApplicationIcon="$(ApplicationIcon)" Attributes="@(_DotKtAssemblyAttribute)" />
   </Target>
 
-  <!-- The emitter owns the implementation and optional SDK reference image. The completion stamp is written only after success.
-       Include the output as an input too, so external replacement or a failing post-emit hook cannot be mistaken
-       for completed emission. SDK options are content-stable; switching/removing a file selection is observable. -->
+  <!-- Both images are inputs to the completion check: a missing or newer image invalidates the stamp.
+       Comparing them only with the stamp, written after emission and its hook, avoids treating the earlier
+       implementation write as stale relative to the later reference write. -->
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets;DotKtComputeEmitOptions"
-          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);$(DotKtBuildTasks);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);$(DotKtEmitOptionsManifest);@(_DotKtNativeResourceInput)"
-          Outputs="$(_DotKtIlEmitStamp);$(IntermediateOutputPath)$(TargetName)$(TargetExt);@(_DotKtIntermediateRefAssembly)">
+          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);$(DotKtBuildTasks);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);@(_DotKtIntermediateRefAssembly);$(DotKtEmitOptionsManifest);@(_DotKtNativeResourceInput)"
+          Outputs="$(_DotKtIlEmitStamp)">
     <Error Condition="'$(ProduceReferenceAssembly)' == 'true' and '@(_DotKtIntermediateRefAssembly->Count())' != '1'"
            Text="DotKt: reference assembly emission requires one SDK IntermediateRefAssembly path." />
     <ItemGroup>

@@ -133,5 +133,10 @@ build no-op "$lib/Producer.ktproj"
 mv "$refint" "$ws/deleted-refint.dll"
 build recover "$lib/Producer.ktproj"
 cmp "$ref" "$refint"
+mv "$refint" "$ws/replaced-refint.dll"
+cp "$impl" "$refint"
+build replaced-reference "$lib/Producer.ktproj"
+cmp "$ref" "$refint"
+dotnet "$ws/csharp/bin/Debug/net10.0/Consumer.dll" "$ref"
 dotnet clean "$lib/Producer.ktproj" --nologo > "$ws/clean.log" 2>&1
 [[ ! -e "$ref" && ! -e "$refint" ]]
