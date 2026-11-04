@@ -21,13 +21,14 @@ using System.Text.Json.Nodes;
 // `ownerType` is instead RETARGETED to `kotlin.Any` — the universal-owner token the frontend already emits for
 // `(p as Any)::hashCode` — and the standard substitution binds System.Object's slot.
 //
-// It fires ONLY where ilemit would throw: the owner is a locally-declared reference type whose own declaration AND
+// The local path fires where ilemit would throw: the owner is a locally-declared reference type whose own declaration AND
 // resolvable base chain (a local base that declares it, or ANY external/.NET base whose inherited slot ilemit reflects)
 // provide no such slot. A type declaring its own override (`Box.toString`) keeps its working direct call/reference; a
 // `super.M()` remains nonvirtual; a retained Kotlin Any-slot fact also lets an inherited fake declaration bind to
 // its actual Object root. For an interface receiver whose slot ilemit COULD resolve via a super-interface's
 // abstract redeclaration (FindInInterfaces), the rebind is a benign no-op-equivalent: both `callvirt <iface>::Slot` and
-// `callvirt object::Slot` are virtual dispatch to the runtime type.
+// `callvirt object::Slot` are virtual dispatch to the runtime type. An imported existential carrier likewise does
+// not own the Object virtual slot: use the carried Any fact and the reference ABI, not the carrier's name or members.
 static class AnySlotRebind
 {
     // BCL Object-slot spellings (ObjectSlotRename renames a call's `method` to these before this pass runs).
@@ -83,23 +84,31 @@ static class AnySlotRebind
         return map;
     }
 
-    public static void Apply(JsonNode root, Dictionary<string, TypeInfo> types) => Walk(root, types);
+    internal static bool IsVirtualToString(JsonObject call) =>
+        call["k"]?.GetValue<string>() == "callInstance"
+        && call["method"]?.GetValue<string>() == "ToString"
+        && call["anySlot"]?.GetValue<bool>() == true
+        && call["virtual"]?.GetValue<bool>() == true
+        && call["super"]?.GetValue<bool>() != true;
 
-    static void Walk(JsonNode node, Dictionary<string, TypeInfo> types)
+    public static void Apply(JsonNode root, Dictionary<string, TypeInfo> types, ReferenceMetadataIndex refs) =>
+        Walk(root, types, refs);
+
+    static void Walk(JsonNode node, Dictionary<string, TypeInfo> types, ReferenceMetadataIndex refs)
     {
         switch (node)
         {
             case JsonObject obj:
-                Rebind(obj, types);
-                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, types);
+                Rebind(obj, types, refs);
+                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, types, refs);
                 break;
             case JsonArray arr:
-                foreach (var it in arr) if (it != null) Walk(it, types);
+                foreach (var it in arr) if (it != null) Walk(it, types, refs);
                 break;
         }
     }
 
-    static void Rebind(JsonObject obj, Dictionary<string, TypeInfo> types)
+    static void Rebind(JsonObject obj, Dictionary<string, TypeInfo> types, ReferenceMetadataIndex refs)
     {
         if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) != true) return;
         var isCall = k == "callInstance";
@@ -109,6 +118,21 @@ static class AnySlotRebind
         var isSuper = (obj["super"] as JsonValue)?.TryGetValue<bool>(out var sup) == true && sup;
         if (isSuper && obj["anySlot"]?.GetValue<bool>() != true) return;
         var owner = TypeJson.OwnerName(obj["ownerType"]);
+        if (IsVirtualToString(obj))
+        {
+            // An imported existential carrier describes the Kotlin receiver but is not the declaration
+            // of the inherited Object slot. Bind the semantic slot before replacing the receiver's type.
+            // The Object virtual call reaches authored overrides on the actual implementation as well.
+            if (owner != null && !types.ContainsKey(owner)
+                && refs.TryExistentialPhysicalOwner(owner, out _)
+                && obj["recv"] is JsonNode importedReceiver)
+            {
+                ToObjMethod(obj, importedReceiver, method, arg: null);
+                return;
+            }
+            if (!AliasHelperHoist.UsesNativeArrayObjectSlot(owner, true))
+                obj.Remove("anySlot");
+        }
         if (owner == null || !types.ContainsKey(owner)) return;     // non-local owner -> resolved by another binder
         if (ResolvesSlot(types, owner, method)) return;             // declared here or on a resolvable base
 

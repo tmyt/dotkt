@@ -673,12 +673,9 @@ sealed class Pipeline
             // Bind Enum members before alias/helper substitution. In particular an Any.toString slot selected
             // through Enum<T> must dispatch on the actual native or rich enum receiver.
             if (!_options.RefBuild) EnumMemberBinding.Apply(bir.Root, localBasicEnums);
-            // INHERITED kotlin.Any universal-method rebind for REFERENCE types (#96): the reference-type sibling of
-            // EnumMemberBinding. A `callInstance <UserType>.GetHashCode/ToString/Equals` on a class/interface that neither
-            // declares the slot nor has a resolvable base (its base is the implicit kotlin.Any) dead-ends in ilemit ->
-            // rebind to an `objMethod` (virtual dispatch to the runtime slot). Fires ONLY where FindMethod would throw, so
-            // a type declaring its own override is untouched. Runs AFTER ObjectSlotRename (call `method` is BCL here).
-            if (!_options.RefBuild) AnySlotRebind.Apply(bir.Root, localRefTypes);
+            // Bind reference-type Object slots before physical receiver substitution. Local inherited slots
+            // and virtual ToString on imported existential carriers dispatch on the actual receiver.
+            if (!_options.RefBuild) AnySlotRebind.Apply(bir.Root, localRefTypes, refs);
             if (!_options.RefBuild) KotlinEqualityLowering.Apply(bir.Root);
             // NULLABLE-GENERIC erasure — THE DECLARATION AXIS of #86's erasure invariant (ALL builds, so ref.dll +
             // rt.dll + the app's view of a signature agree). `Nullable(Tv)` (a nullable UNCONSTRAINED type variable
