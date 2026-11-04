@@ -17,7 +17,7 @@ actual="$(dotnet "$CONSUMER")"
     || { echo "C# 14 static extension consumer returned '$actual'"; exit 1; }
 
 dotnet run --project "$ROOT/tests/special/csharp14-static-extensions/inspector/StaticExtensionInspector.csproj" \
-    -c Release -- "$PRODUCER" "$CONSUMER"
+    -c Release -- --native "$PRODUCER" "$CONSUMER"
 bash "$ROOT/tests/run-ilverify.sh" "$PRODUCER" "$CONSUMER"
 
 negative_log="$OUT/same-container-collision.log"

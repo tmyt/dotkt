@@ -7,16 +7,16 @@ using System.Reflection.Emit;
 using System.Runtime.Loader;
 using System.Text.RegularExpressions;
 
-if (args.Length is < 2 or > 3)
+if (args.Length != 3 || args[0] is not ("--native" or "--dotkt"))
     throw new ArgumentException(
-        "usage: StaticExtensionInspector <producer.dll> <csharp-consumer.dll> [dotkt-consumer.dll]");
+        "usage: StaticExtensionInspector (--native|--dotkt) <producer.dll> <consumer.dll>");
 
-var producerPath = Path.GetFullPath(args[0]);
-var consumerPath = Path.GetFullPath(args[1]);
-var dotKtConsumerPath = args.Length == 3 ? Path.GetFullPath(args[2]) : null;
-if (dotKtConsumerPath is not null)
+var dotKt = args[0] == "--dotkt";
+var producerPath = Path.GetFullPath(args[1]);
+var consumerPath = Path.GetFullPath(args[2]);
+if (dotKt)
 {
-    var dependencyDirectory = Path.GetDirectoryName(dotKtConsumerPath)!;
+    var dependencyDirectory = Path.GetDirectoryName(consumerPath)!;
     AssemblyLoadContext.Default.Resolving += (context, name) =>
     {
         var candidate = Path.Combine(dependencyDirectory, name.Name + ".dll");
@@ -33,33 +33,8 @@ var markerPattern = new Regex("^<M>\\$[0-9A-F]{32}$", RegexOptions.CultureInvari
 var oneByteOpCodes = BuildOpCodes(twoByte: false);
 var twoByteOpCodes = BuildOpCodes(twoByte: true);
 
-var alpha = RequireContainer("CSharp14StaticExtensions.AlphaExtensions", "CSharp14StaticExtensions.Alpha");
-var beta = RequireContainer("CSharp14StaticExtensions.BetaExtensions", "CSharp14StaticExtensions.Beta");
-var generic = RequireContainer(
-    "CSharp14StaticExtensions.GenericTargetExtensions",
-    "CSharp14StaticExtensions.GenericTarget`1");
-
-RequireImplementations(alpha.Container, "Answer", "get_Label", "get_Mutable", "set_Mutable", "Select");
-RequireImplementations(beta.Container, "Answer");
-RequireImplementations(generic.Container, "TypeName");
-
-RequireProperty(alpha.Group, "Label", canWrite: false);
-RequireProperty(alpha.Group, "Mutable", canWrite: true);
-Require(alpha.Container.GetProperties(BindingFlags.Public | BindingFlags.Static).Length == 0,
-    "implementation container unexpectedly owns Property rows");
-Require(alpha.Group.GetMethods(BindingFlags.Public | BindingFlags.Static).Count(m => m.Name == "Select") == 2,
-    "extension overload declarations were not preserved");
-
-var implementationGeneric = generic.Container.GetMethod("TypeName", BindingFlags.Public | BindingFlags.Static)
-    ?? throw new InvalidDataException("missing generic implementation method");
-Require(implementationGeneric.IsGenericMethodDefinition, "generic extension implementation lost its method parameter");
-var implementationT = implementationGeneric.GetGenericArguments().Single();
-Require((implementationT.GenericParameterAttributes & GenericParameterAttributes.ReferenceTypeConstraint) != 0,
-    "generic extension implementation lost its class constraint");
-Require(implementationT.GetGenericParameterConstraints().Single().GetGenericTypeDefinition() == typeof(IComparable<>),
-    "generic extension implementation lost IComparable<T> constraint");
-Require(generic.Group.GetGenericArguments().Length == 1,
-    "generic extension grouping type did not capture the extension block parameter");
+if (!dotKt) VerifyNativeProducer();
+var alphaContainer = producer.GetType("CSharp14StaticExtensions.AlphaExtensions", throwOnError: true)!;
 
 var producerCalls = ReadCallTargets(consumer)
     .Where(m => m.DeclaringType?.Assembly == producer)
@@ -77,28 +52,46 @@ var expectedCalls = new[]
 foreach (var expected in expectedCalls)
     Require(producerCalls.Any(m => $"{m.DeclaringType!.Name}.{m.Name}" == expected),
         $"consumer IL does not call implementation {expected}");
-Require(producerCalls.Count(m => m.DeclaringType == alpha.Container && m.Name == "Select") == 2,
+Require(producerCalls.Count(m => m.DeclaringType == alphaContainer && m.Name == "Select") == 2,
     "consumer IL did not bind both Select overloads to their implementation methods");
 Require(producerCalls.All(m => m.DeclaringType is { IsNested: false }),
     "consumer IL calls a signature-only extension grouping member");
 
-if (dotKtConsumerPath is not null)
-{
-    var dotKtConsumer = AssemblyLoadContext.Default.LoadFromAssemblyPath(dotKtConsumerPath);
-    var dotKtCalls = ReadCallTargets(dotKtConsumer)
-        .Where(m => m.DeclaringType?.Assembly == producer)
-        .ToArray();
-    foreach (var expected in expectedCalls)
-        Require(dotKtCalls.Any(m => $"{m.DeclaringType!.Name}.{m.Name}" == expected),
-            $"DotKt consumer IL does not call implementation {expected}");
-    Require(dotKtCalls.Count(m => m.DeclaringType == alpha.Container && m.Name == "Select") == 2,
-        "DotKt consumer IL did not bind both Select overloads to their implementation methods");
-    Require(dotKtCalls.All(m => m.DeclaringType is { IsNested: false }),
-        "DotKt consumer IL calls a signature-only extension grouping member");
-}
-
-Console.WriteLine("C# 14 static extension ABI metadata and call targets OK");
+Console.WriteLine(dotKt
+    ? "DotKt static extension call targets OK"
+    : "C# 14 static extension ABI metadata and call targets OK");
 return;
+
+void VerifyNativeProducer()
+{
+    var alpha = RequireContainer("CSharp14StaticExtensions.AlphaExtensions", "CSharp14StaticExtensions.Alpha");
+    var beta = RequireContainer("CSharp14StaticExtensions.BetaExtensions", "CSharp14StaticExtensions.Beta");
+    var generic = RequireContainer(
+        "CSharp14StaticExtensions.GenericTargetExtensions",
+        "CSharp14StaticExtensions.GenericTarget`1");
+
+    RequireImplementations(alpha.Container, "Answer", "get_Label", "get_Mutable", "set_Mutable", "Select");
+    RequireImplementations(beta.Container, "Answer");
+    RequireImplementations(generic.Container, "TypeName");
+
+    RequireProperty(alpha.Group, "Label", canWrite: false);
+    RequireProperty(alpha.Group, "Mutable", canWrite: true);
+    Require(alpha.Container.GetProperties(BindingFlags.Public | BindingFlags.Static).Length == 0,
+        "implementation container unexpectedly owns Property rows");
+    Require(alpha.Group.GetMethods(BindingFlags.Public | BindingFlags.Static).Count(m => m.Name == "Select") == 2,
+        "extension overload declarations were not preserved");
+
+    var implementationGeneric = generic.Container.GetMethod("TypeName", BindingFlags.Public | BindingFlags.Static)
+        ?? throw new InvalidDataException("missing generic implementation method");
+    Require(implementationGeneric.IsGenericMethodDefinition, "generic extension implementation lost its method parameter");
+    var implementationT = implementationGeneric.GetGenericArguments().Single();
+    Require((implementationT.GenericParameterAttributes & GenericParameterAttributes.ReferenceTypeConstraint) != 0,
+        "generic extension implementation lost its class constraint");
+    Require(implementationT.GetGenericParameterConstraints().Single().GetGenericTypeDefinition() == typeof(IComparable<>),
+        "generic extension implementation lost IComparable<T> constraint");
+    Require(generic.Group.GetGenericArguments().Length == 1,
+        "generic extension grouping type did not capture the extension block parameter");
+}
 
 (Type Container, Type Group, Type Marker) RequireContainer(string containerName, string receiverName)
 {
