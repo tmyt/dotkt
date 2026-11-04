@@ -14,6 +14,7 @@ sealed class SdkAssemblyOptions
     public string Win32Resource { get; set; }
     public string ApplicationIcon { get; set; }
     public string NativeResource { get; set; }
+    public string NativeResourceSdkAssembly { get; set; }
     public List<AttributeValue> Attributes { get; set; } = [];
     public sealed record AttributeValue(string Type, string Value, string IsLiteral, string TypeName);
 

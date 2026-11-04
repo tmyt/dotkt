@@ -166,13 +166,20 @@ pair custom-resource "-p:Win32Resource=$manifests/first.res"
 inspect --absent "$kt/$out/App.dll" "$kt/$out/App.exe"
 inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
 inspect --write-coff "$cs/$out/App.dll" "$manifests/resource.obj"
-pair coff-resource "-p:Win32Resource=$manifests/resource.obj"
-inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
+before="$(state)"
+if build "$kt/App.ktproj" coff-resource "${defaults[@]}" "-p:Win32Resource=$manifests/resource.obj"; then
+  echo 'COFF resource unexpectedly accepted' >&2; exit 1
+fi
+grep -Fq 'Set Win32Resource to the original .res file.' "$ws/coff-resource.log"
+[[ "$before" == "$(state)" ]] || { echo 'invalid COFF input changed existing outputs' >&2; exit 1; }
 pair switched-resource "-p:Win32Resource=$manifests/second.res"
 inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
 inspect --write-res-reversed-languages "$manifests/second.res" changed-payload
 pair changed-resource "-p:Win32Resource=$manifests/second.res"
 inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
+inspect --write-res-high-ids "$manifests/high-id.res" high-id-payload
+build "$kt/App.ktproj" high-id-resource "${defaults[@]}" "-p:Win32Resource=$manifests/high-id.res"
+inspect --resource-payload '#60000/#50000/#1033' high-id-payload "$kt/$out/App.dll" "$kt/$out/App.exe"
 pair cleared-resource -p:Win32Resource=
 inspect --default "$kt/$out/App.dll" "$kt/$out/App.exe"
 inspect --version 3.4.5.6 7.8.9-preview "$kt/$out/App.dll" "$kt/$out/App.exe"

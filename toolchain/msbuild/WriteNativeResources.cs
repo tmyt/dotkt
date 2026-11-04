@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Build.Framework;
@@ -19,6 +20,7 @@ public sealed class WriteNativeResources : Microsoft.Build.Utilities.Task
         try
         {
             var options = SdkAssemblyOptions.Read(InputFile);
+            options.NativeResourceSdkAssembly = typeof(Compilation).Assembly.Location;
             var versions = options.Versions();
             // Resolve wildcard identity once, shared by managed metadata and Roslyn's resource generation.
             options.Attributes.RemoveAll(a => SdkAssemblyOptions.IsAttribute(a.Type, "AssemblyVersion"));
@@ -27,7 +29,17 @@ public sealed class WriteNativeResources : Microsoft.Build.Utilities.Task
             {
                 if (!string.IsNullOrEmpty(options.Win32Manifest) || !string.IsNullOrEmpty(options.ApplicationIcon))
                     throw new InvalidDataException("Win32Resource cannot be combined with ApplicationManifest or ApplicationIcon");
-                options.NativeResource = Path.GetFullPath(options.Win32Resource);
+                var path = Path.GetFullPath(options.Win32Resource);
+                switch (ResourceForm(path))
+                {
+                    case "RES":
+                        options.NativeResource = path;
+                        break;
+                    case "COFF":
+                        throw new InvalidDataException($"COFF Win32Resource '{path}' is not supported. Set Win32Resource to the original .res file.");
+                    default:
+                        throw new InvalidDataException($"Unrecognized Win32 resource file '{path}'. Set Win32Resource to a compiled .res file.");
+                }
             }
             else
             {
@@ -60,6 +72,20 @@ public sealed class WriteNativeResources : Microsoft.Build.Utilities.Task
         {
             Log.LogErrorFromException(ex, showStackTrace: false);
             return false;
+        }
+    }
+
+    static string? ResourceForm(string path)
+    {
+        // Keep format detection on the SDK side, rather than interpreting a file signature in ilemit.
+        var detect = typeof(Compilation).GetMethod("DetectWin32ResourceForm",
+            BindingFlags.Static | BindingFlags.NonPublic, [typeof(Stream)])
+            ?? throw new InvalidOperationException("The selected .NET SDK does not expose Win32 resource format detection.");
+        using var input = File.OpenRead(path);
+        try { return detect.Invoke(null, [input])?.ToString(); }
+        catch (TargetInvocationException ex) when (ex.InnerException is { } cause)
+        {
+            throw new InvalidDataException($"Cannot detect Win32 resource format for '{path}': {cause.Message}", cause);
         }
     }
 }
