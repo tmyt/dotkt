@@ -890,17 +890,14 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.volatile.log"; rc=1
 		fi
 		csharp14_producer="$ROOT/tests/special/csharp14-static-extensions/producer/bin/$CONFIGURATION/net10.0/StaticExtensionProducer.dll"
-		csharp14_consumer_project="$ROOT/tests/special/csharp14-static-extensions/consumer/StaticExtensionConsumer.csproj"
-		csharp14_consumer="$ROOT/tests/special/csharp14-static-extensions/consumer/bin/$CONFIGURATION/net10.0/StaticExtensionConsumer.dll"
-		if dotnet build "$csharp14_consumer_project" -c "$CONFIGURATION" --no-incremental -v:q --nologo \
-			>"$ROOT/build/nunit-$name.csharp14-build.log" 2>&1 && \
-			dotnet run --project "$ROOT/tests/special/csharp14-static-extensions/inspector/StaticExtensionInspector.csproj" \
-				-- "$csharp14_producer" "$csharp14_consumer" "$interop_dll" \
+		# The project reference already built the native producer. The standalone
+		# C# oracle owns native metadata/runtime checks and its C# consumer build.
+		if dotnet run --project "$ROOT/tests/special/csharp14-static-extensions/inspector/StaticExtensionInspector.csproj" \
+				-- --dotkt "$csharp14_producer" "$interop_dll" \
 			>"$ROOT/build/nunit-$name.csharp14.log" 2>&1; then
 			echo "  C# 14 static extension KLIB projection + implementation call targets OK"
 		else
 			echo "  C# 14 STATIC EXTENSION METADATA FAIL — see build/nunit-$name.csharp14.log"
-			tail -25 "$ROOT/build/nunit-$name.csharp14-build.log" 2>/dev/null || true
 			tail -25 "$ROOT/build/nunit-$name.csharp14.log" 2>/dev/null || true
 			rc=1
 		fi

@@ -110,153 +110,139 @@ fi
 refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
 refs="$(refset_join "$refs" "$exact_intrinsic_ref/DotKt.Tests.ExactIntrinsicOverloads.dll")"
 
+detected_jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1')"
+(( detected_jobs > 4 )) && detected_jobs=4
+lowering_jobs="${DOTKT_LOWERING_JOBS:-$detected_jobs}"
+[[ "$lowering_jobs" =~ ^[1-9][0-9]*$ ]] || die "DOTKT_LOWERING_JOBS must be a positive integer (got '$lowering_jobs')"
+
+run_fixture() {
+	local fixture="$1" out="$2" name="$3" stem expected log text line bad=0 checks=0
+	local -a inputs=() mode=()
+	if [[ "$fixture" == *.inputs ]]; then
+		stem="${fixture%.inputs}"
+		mapfile -t inputs < <(sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$fixture")
+		if (( ${#inputs[@]} < 2 )); then
+			echo "  LOWERING FAIL  $name: multi-root manifest needs at least two inputs"
+			return 1
+		fi
+	else
+		stem="${fixture%.bir.json}"
+		inputs=("$fixture")
+	fi
+
+	mkdir -p "$out"
+	if [[ "$name" == reject-* ]]; then
+		expected="$stem.expected"
+		if [[ ! -f "$expected" ]] || ! grep -q '[^[:space:]]' "$expected"; then
+			echo "  LOWERING FAIL  $name: no non-empty .expected file"
+			return 1
+		fi
+		if log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "${inputs[@]}" 2>&1)"; then
+			echo "  LOWERING FAIL  $name: bir2cir ACCEPTED a document it must refuse"
+			printf '%s\n' "$log" | sed 's/^/                 /'
+			return 1
+		fi
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			[[ "$line" =~ ^[[:space:]]*$ || "$line" == '#'* ]] && continue
+			(( ++checks ))
+			if [[ "$log" != *"$line"* ]]; then
+				echo "  LOWERING FAIL  $name: the refusal is MISSING $line"
+				bad=1
+			fi
+		done < "$expected"
+		if (( checks == 0 )); then
+			echo "  LOWERING FAIL  $name: no effective diagnostic assertion"
+			bad=1
+		fi
+		if (( bad )); then
+			printf '%s\n' "$log" | sed 's/^/                 /'
+			return 1
+		fi
+		echo "  LOWERING ok    $name (refused)"
+		return 0
+	fi
+
+	expected="$stem.assert"
+	if [[ ! -f "$expected" ]] || ! grep -qE '^[+-].' "$expected"; then
+		echo "  LOWERING FAIL  $name: no effective .assert file"
+		return 1
+	fi
+	if [[ "$fixture" == *.bir.json && -f "$stem.args" ]]; then
+		mapfile -t mode < <(sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$stem.args")
+	fi
+	if ! log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "${mode[@]}" "${inputs[@]}" 2>&1)"; then
+		echo "  LOWERING FAIL  $name: bir2cir refused the document"
+		printf '%s\n' "$log" | sed 's/^/                 /'
+		return 1
+	fi
+	if ! text="$(cat "$out"/*.cir.json | tr -d ' \n\t')" || [[ -z "$text" ]]; then
+		echo "  LOWERING FAIL  $name: bir2cir did not emit CIR"
+		return 1
+	fi
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+			''|'#'*) continue ;;
+			'+'*) if [[ "$text" != *"${line:1}"* ]]; then
+				echo "  LOWERING FAIL  $name: the CIR is MISSING ${line:1}"; bad=1
+			fi ;;
+			'-'*) if [[ "$text" == *"${line:1}"* ]]; then
+				echo "  LOWERING FAIL  $name: the CIR CONTAINS ${line:1}"; bad=1
+			fi ;;
+			*) echo "  LOWERING FAIL  $name: malformed assertion line: $line"; bad=1 ;;
+		esac
+	done < "$expected"
+	if (( bad )); then
+		printf '%s\n' "$text" | sed 's/^/                 /'
+		return 1
+	fi
+	echo "  LOWERING ok    $name"
+}
+
+# Keep each compiler invocation isolated. Reap and print in fixture order, not
+# completion order, so concurrent compiler output cannot interleave diagnostics.
+declare -a pids=() logs=() names=()
 rc=0
 cases=0
 rejects=0
-echo "== verify-lowering: synthetic BIR -> bir2cir -> CIR assertions =="
+reap_fixture() {
+	local status=0
+	wait "${pids[0]}" || status=$?
+	if (( status != 0 )); then
+		rc=1
+		if (( status != 1 )) || [[ ! -s "${logs[0]}" ]]; then
+			echo "  LOWERING FAIL  ${names[0]}: worker exited with status $status"
+		fi
+	fi
+	cat "${logs[0]}"
+	pids=("${pids[@]:1}")
+	logs=("${logs[@]:1}")
+	names=("${names[@]:1}")
+}
 
-# --- REJECT half: bir2cir MUST refuse the document, with the expected wording ------------------------------------
-for bir in tests/ir/lowering/reject-*.bir.json; do
-	[[ -e "$bir" ]] || continue
-	rejects=$((rejects + 1))
-	name="$(basename "$bir" .bir.json)"
-	expected="${bir%.bir.json}.expected"
-	if [[ ! -f "$expected" ]] || ! grep -q '[^[:space:]]' "$expected"; then
-		echo "  LOWERING FAIL  $name: no non-empty .expected file — a refusal fixture that pins no wording asserts nothing"
-		rc=1; continue
-	fi
-	out="$work/$name"; mkdir -p "$out"
-	if log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "$bir" 2>&1)"; then
-		echo "  LOWERING FAIL  $name: bir2cir ACCEPTED a document it must refuse"
-		printf '%s\n' "$log" | sed 's/^/                 /'
-		rc=1; continue
-	fi
-	bad=0
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		case "$line" in
-			''|'#'*) continue ;;
-			*) if ! printf '%s' "$log" | grep -qF -- "$line"; then
-					echo "  LOWERING FAIL  $name: the refusal is MISSING $line"; bad=1
-				fi ;;
-		esac
-	done < "$expected"
-	if [[ $bad -ne 0 ]]; then rc=1; printf '%s\n' "$log" | sed 's/^/                 /'; else echo "  LOWERING ok    $name (refused)"; fi
-done
+queue_fixture() {
+	local fixture="$1" name out
+	[[ -e "$fixture" ]] || return 0
+	name="${fixture##*/}"
+	if [[ "$fixture" == *.inputs ]]; then name="${name%.inputs}"; else name="${name%.bir.json}"; fi
+	if [[ "$name" == reject-* ]]; then (( ++rejects )); else (( ++cases )); fi
+	out="$work/case-$((cases + rejects))"
+	run_fixture "$fixture" "$out" "$name" > "$out.log" 2>&1 &
+	pids+=("$!")
+	logs+=("$out.log")
+	names+=("$name")
+	if (( ${#pids[@]} >= lowering_jobs )); then reap_fixture; fi
+}
 
-# A module-wide invariant cannot be witnessed by one document: all BIR roots contribute TypeDefs to one CLR module.
-for manifest in tests/ir/lowering/reject-multi-*.inputs; do
-	[[ -e "$manifest" ]] || continue
-	rejects=$((rejects + 1))
-	name="$(basename "$manifest" .inputs)"
-	expected="${manifest%.inputs}.expected"
-	mapfile -t inputs < <(sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$manifest")
-	if [[ ${#inputs[@]} -lt 2 ]]; then
-		echo "  LOWERING FAIL  $name: multi-root manifest needs at least two inputs"; rc=1; continue
-	fi
-	if [[ ! -f "$expected" ]] || ! grep -q '[^[:space:]]' "$expected"; then
-		echo "  LOWERING FAIL  $name: no non-empty .expected file"; rc=1; continue
-	fi
-	out="$work/$name"; mkdir -p "$out"
-	if log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "${inputs[@]}" 2>&1)"; then
-		echo "  LOWERING FAIL  $name: bir2cir ACCEPTED a multi-root module it must refuse"
-		printf '%s\n' "$log" | sed 's/^/                 /'
-		rc=1; continue
-	fi
-	bad=0
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		case "$line" in
-			''|'#'*) continue ;;
-			*) if ! printf '%s' "$log" | grep -qF -- "$line"; then
-					echo "  LOWERING FAIL  $name: the refusal is MISSING $line"; bad=1
-				fi ;;
-		esac
-	done < "$expected"
-	if [[ $bad -ne 0 ]]; then rc=1; printf '%s\n' "$log" | sed 's/^/                 /'; else echo "  LOWERING ok    $name (refused)"; fi
+echo "== verify-lowering: synthetic BIR -> bir2cir -> CIR assertions (jobs=$lowering_jobs) =="
+for fixture in tests/ir/lowering/reject-*.bir.json tests/ir/lowering/reject-multi-*.inputs tests/ir/lowering/accept-multi-*.inputs; do
+	queue_fixture "$fixture"
 done
+for fixture in tests/ir/lowering/*.bir.json; do
+	[[ "${fixture##*/}" == reject-* ]] && continue
+	queue_fixture "$fixture"
+done
+while (( ${#pids[@]} )); do reap_fixture; done
 
-# A module-wide accept rule can likewise depend on more than one source root (for example, a frontend-resolved
-# file-facade owner must distinguish otherwise identical top-level declarations). Its manifest and assertion syntax
-# mirror the reject-multi lane, but successful lowering is required.
-for manifest in tests/ir/lowering/accept-multi-*.inputs; do
-	[[ -e "$manifest" ]] || continue
-	cases=$((cases + 1))
-	name="$(basename "$manifest" .inputs)"
-	assert="${manifest%.inputs}.assert"
-	mapfile -t inputs < <(sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$manifest")
-	if [[ ${#inputs[@]} -lt 2 ]]; then
-		echo "  LOWERING FAIL  $name: multi-root manifest needs at least two inputs"; rc=1; continue
-	fi
-	if [[ ! -f "$assert" ]] || ! grep -qE '^[+-].' "$assert"; then
-		echo "  LOWERING FAIL  $name: no effective .assert file"; rc=1; continue
-	fi
-	out="$work/$name"; mkdir -p "$out"
-	if ! log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "${inputs[@]}" 2>&1)"; then
-		echo "  LOWERING FAIL  $name: bir2cir refused the multi-root document"
-		printf '%s\n' "$log" | sed 's/^/                 /'
-		rc=1; continue
-	fi
-	cir="$(cat "$out"/*.cir.json | tr -d ' \n\t')"
-	bad=0
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		case "$line" in
-			''|'#'*) continue ;;
-			'+'*) if ! printf '%s' "$cir" | grep -qF -- "${line:1}"; then
-					echo "  LOWERING FAIL  $name: the CIR is MISSING ${line:1}"; bad=1
-				fi ;;
-			'-'*) if printf '%s' "$cir" | grep -qF -- "${line:1}"; then
-					echo "  LOWERING FAIL  $name: the CIR CONTAINS ${line:1}"; bad=1
-				fi ;;
-			*) echo "  LOWERING FAIL  $name: malformed assertion line: $line"; bad=1 ;;
-		esac
-	done < "$assert"
-	if [[ $bad -ne 0 ]]; then rc=1; printf '%s\n' "$cir" | sed 's/^/                 /'; else echo "  LOWERING ok    $name"; fi
-done
-
-# --- ACCEPT half: bir2cir lowers the document and the CIR satisfies the +/- assertions ---------------------------
-for bir in tests/ir/lowering/*.bir.json; do
-	[[ -e "$bir" ]] || continue
-	case "$(basename "$bir")" in reject-*) continue ;; esac
-	cases=$((cases + 1))
-	name="$(basename "$bir" .bir.json)"
-	assert="${bir%.bir.json}.assert"
-	# ANTI-VACUITY, the same guards the schema self-tests carry: a lane that silently checks nothing looks exactly
-	# like a lane that passes. A fixture with no assertion file, or one holding no effective +/- line, is RED —
-	# never "ok" — and a lane with no fixture at all is RED at the end.
-	if [[ ! -f "$assert" ]]; then
-		echo "  LOWERING FAIL  $name: no .assert file — a fixture that asserts nothing cannot pass"
-		rc=1; continue
-	fi
-	if ! grep -qE '^[+-].' "$assert"; then
-		echo "  LOWERING FAIL  $name: .assert holds no effective +/- assertion"
-		rc=1; continue
-	fi
-	out="$work/$name"; mkdir -p "$out"
-	mode=()
-	args_file="${bir%.bir.json}.args"
-	if [[ -f "$args_file" ]]; then
-		mapfile -t mode < <(sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$args_file")
-	fi
-	if ! log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "${mode[@]}" "$bir" 2>&1)"; then
-		echo "  LOWERING FAIL  $name: bir2cir refused the document"
-		printf '%s\n' "$log" | sed 's/^/                 /'
-		rc=1; continue
-	fi
-	cir="$(cat "$out"/*.cir.json | tr -d ' \n\t')"
-	bad=0
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		case "$line" in
-			''|'#'*) continue ;;
-			'+'*) if ! printf '%s' "$cir" | grep -qF -- "${line:1}"; then
-					echo "  LOWERING FAIL  $name: the CIR is MISSING ${line:1}"; bad=1
-				fi ;;
-			'-'*) if printf '%s' "$cir" | grep -qF -- "${line:1}"; then
-					echo "  LOWERING FAIL  $name: the CIR CONTAINS ${line:1}"; bad=1
-				fi ;;
-			*) echo "  LOWERING FAIL  $name: malformed assertion line: $line"; bad=1 ;;
-		esac
-	done < "$assert"
-	if [[ $bad -ne 0 ]]; then rc=1; printf '%s\n' "$cir" | sed 's/^/                 /'; else echo "  LOWERING ok    $name"; fi
-done
 if [[ $cases -eq 0 || $rejects -eq 0 ]]; then
 	echo "  LOWERING FAIL  found $cases accept / $rejects reject fixture(s) under tests/ir/lowering/ — the lane needs at least one of EACH or a half asserts nothing"
 	rc=1
