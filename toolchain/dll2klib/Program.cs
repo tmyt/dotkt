@@ -1052,6 +1052,9 @@ internal sealed class CompanionReferenceCatalog
         string Visibility,
         string PhysicalOwner,
         int PhysicalOwnerArity);
+    private sealed record Association(Carrier Carrier, TypeDefinitionHandle Owner);
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MetadataReader,
+        Dictionary<TypeDefinitionHandle, Association>> Associations = new();
 
     private readonly Dictionary<string, CompanionCatalogEntry> _entries;
     private readonly IReadOnlyDictionary<string, CompanionCatalogEntry[]> _classifierEntries;
@@ -1090,51 +1093,18 @@ internal sealed class CompanionReferenceCatalog
         {
             var path = assembly.Path;
             var md = assembly.Reader;
-            var attrs = new MetadataAttributes(md);
-            // A trusted companion carrier can occur only in a DotKt-produced assembly. Avoid indexing and probing
-            // every TypeDef in ordinary framework and third-party assemblies merely to prove the carrier is absent.
-            if (!attrs.IsDotKtAssembly) continue;
-            var physicalTypes = md.TypeDefinitions
-                .Select(handle => (
-                    Handle: handle,
-                    Name: PhysicalName(md, handle),
-                    Arity: md.GetTypeDefinition(handle).GetGenericParameters().Count))
-                .GroupBy(x => (x.Name, x.Arity))
-                .ToDictionary(g => g.Key, g => g.Select(x => x.Handle).ToArray());
-            var claimedOwners = new HashSet<TypeDefinitionHandle>();
-            var semanticOwners = new Dictionary<string, TypeDefinitionHandle>(StringComparer.Ordinal);
-            foreach (var handle in md.TypeDefinitions)
+            foreach (var (handle, association) in Associations.GetValue(md, DiscoverAssociations))
             {
-                if (ReadCarrier(attrs, handle) is not { } carrier) continue;
-                if (!physicalTypes.TryGetValue((carrier.PhysicalOwner, carrier.PhysicalOwnerArity), out var owners) ||
-                    owners.Length != 1)
-                    throw new InvalidDataException(
-                        $"Kotlin companion owner '{carrier.PhysicalOwner}' arity {carrier.PhysicalOwnerArity} " +
-                        $"resolved to {(owners is null ? 0 : owners.Length)} physical types");
-                var owner = owners[0];
-                CompanionCarrierShape.Validate(
-                    md, attrs, handle, owner, carrier.Kind, carrier.PhysicalOwnerArity,
-                    DefinitionName(md, handle), DefinitionName(md, owner), carrier.PhysicalOwner);
-                if (!claimedOwners.Add(owner))
-                    throw new InvalidDataException($"multiple Kotlin companion carriers name owner '{carrier.Owner}'");
-                if (!semanticOwners.TryAdd(carrier.Owner, owner) && semanticOwners[carrier.Owner] != owner)
-                    throw new InvalidDataException(
-                        $"multiple physical types claim Kotlin companion owner '{carrier.Owner}'");
+                var (carrier, owner) = association;
                 if (carrier.Visibility is not ("public" or "protected") ||
                     !IsVisibleType(md, owner) || !IsVisibleType(md, handle))
                     continue;
-                var semanticPackage = TopLevelNamespace(md, owner);
-                var semanticClassPart = string.IsNullOrEmpty(semanticPackage)
-                    ? carrier.Owner
-                    : carrier.Owner.StartsWith(semanticPackage + ".", StringComparison.Ordinal)
-                        ? carrier.Owner[(semanticPackage.Length + 1)..]
-                        : throw new InvalidDataException(
-                            $"semantic companion owner '{carrier.Owner}' is outside physical package '{semanticPackage}'");
+                var semanticPackage = SignatureDecoderSeeds.DefinitionKotlinPackage(md, owner);
                 definitions.Add(new CompanionCatalogEntry(
                     AssemblyIdentity(md),
                     DefinitionName(md, handle),
                     semanticPackage,
-                    semanticClassPart.Split('.', StringSplitOptions.RemoveEmptyEntries).Append(carrier.Name).ToArray(),
+                    SourceClasses(carrier, semanticPackage),
                     path,
                     carrier.Owner + ".<companion:" + carrier.Name + ">"));
             }
@@ -1199,6 +1169,64 @@ internal sealed class CompanionReferenceCatalog
     private static string Key(string assemblyIdentity, string metadataName) =>
         assemblyIdentity + "\0" + metadataName;
 
+    private static string[] SourceClasses(Carrier carrier, string package)
+    {
+        var relativeOwner = package.Length == 0
+            ? carrier.Owner
+            : carrier.Owner.StartsWith(package + ".", StringComparison.Ordinal)
+                ? carrier.Owner[(package.Length + 1)..]
+                : throw new InvalidDataException(
+                    $"semantic companion owner '{carrier.Owner}' is outside Kotlin package '{package}'");
+        return relativeOwner.Split('.').Append(carrier.Name).ToArray();
+    }
+
+    private static Dictionary<TypeDefinitionHandle, Association> DiscoverAssociations(MetadataReader md)
+    {
+        var associations = new Dictionary<TypeDefinitionHandle, Association>();
+        var attrs = SignatureDecoderSeeds.Attributes(md);
+        // Foreign assemblies cannot carry this metadata. Do not index their TypeDefs.
+        if (!attrs.IsDotKtAssembly) return associations;
+        var physicalTypes = md.TypeDefinitions
+            .GroupBy(handle => (PhysicalName(md, handle), md.GetTypeDefinition(handle).GetGenericParameters().Count))
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        var claimedOwners = new HashSet<TypeDefinitionHandle>();
+        var semanticOwners = new Dictionary<string, TypeDefinitionHandle>(StringComparer.Ordinal);
+        foreach (var handle in md.TypeDefinitions)
+        {
+            if (ReadCarrier(attrs, handle) is not { } carrier) continue;
+            if (!physicalTypes.TryGetValue((carrier.PhysicalOwner, carrier.PhysicalOwnerArity), out var owners) ||
+                owners.Length != 1)
+                throw new InvalidDataException(
+                    $"Kotlin companion owner '{carrier.PhysicalOwner}' arity {carrier.PhysicalOwnerArity} " +
+                    $"resolved to {(owners is null ? 0 : owners.Length)} physical types");
+            var owner = owners[0];
+            CompanionCarrierShape.Validate(
+                md, attrs, handle, owner, carrier.Kind, carrier.PhysicalOwnerArity,
+                DefinitionName(md, handle), DefinitionName(md, owner), carrier.PhysicalOwner);
+            if (!claimedOwners.Add(owner))
+                throw new InvalidDataException($"multiple Kotlin companion carriers name owner '{carrier.Owner}'");
+            if (!semanticOwners.TryAdd(carrier.Owner, owner) && semanticOwners[carrier.Owner] != owner)
+                throw new InvalidDataException(
+                    $"multiple physical types claim Kotlin companion owner '{carrier.Owner}'");
+            associations.Add(handle, new Association(carrier, owner));
+        }
+        return associations;
+    }
+
+    internal static string? DefinitionSourceName(MetadataReader md, TypeDefinitionHandle handle) =>
+        Associations.GetValue(md, DiscoverAssociations).TryGetValue(handle, out var association)
+            ? association.Carrier.Owner + "." + association.Carrier.Name : null;
+
+    internal static TypeDefinitionHandle DefinitionSourceOwner(MetadataReader md, TypeDefinitionHandle handle) =>
+        Associations.GetValue(md, DiscoverAssociations).GetValueOrDefault(handle)?.Owner ?? default;
+
+    internal static (string Package, string[] Classes)? DefinitionSourcePath(MetadataReader md, TypeDefinitionHandle handle)
+    {
+        if (!Associations.GetValue(md, DiscoverAssociations).TryGetValue(handle, out var association)) return null;
+        var package = SignatureDecoderSeeds.DefinitionKotlinPackage(md, association.Owner);
+        return (package, SourceClasses(association.Carrier, package));
+    }
+
     private static Carrier? ReadCarrier(MetadataAttributes attrs, TypeDefinitionHandle handle)
     {
         using var doc = attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinCompanionAttribute");
@@ -1260,18 +1288,6 @@ internal sealed class CompanionReferenceCatalog
         if (!parent.IsNil) return PhysicalName(md, parent) + "+" + simple;
         var ns = md.GetString(def.Namespace);
         return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
-    }
-
-    private static string TopLevelNamespace(MetadataReader md, TypeDefinitionHandle handle)
-    {
-        var current = handle;
-        while (true)
-        {
-            var def = md.GetTypeDefinition(current);
-            var parent = def.GetDeclaringType();
-            if (parent.IsNil) return md.GetString(def.Namespace);
-            current = parent;
-        }
     }
 
     private static string StripArity(string name)
@@ -7002,16 +7018,13 @@ internal sealed class AssemblyScanner : IDisposable
     {
         if (_semanticOwnerNames.TryGetValue(handle, out var semanticOwner))
         {
-            var def = _md.GetTypeDefinition(handle);
-            while (!def.GetDeclaringType().IsNil)
-                def = _md.GetTypeDefinition(def.GetDeclaringType());
-            var semanticPackage = _md.GetString(def.Namespace);
+            var semanticPackage = SignatureDecoderSeeds.DefinitionKotlinPackage(_md, handle);
             var classPart = string.IsNullOrEmpty(semanticPackage)
                 ? semanticOwner
                 : semanticOwner.StartsWith(semanticPackage + ".", StringComparison.Ordinal)
                     ? semanticOwner[(semanticPackage.Length + 1)..]
                     : throw new InvalidDataException(
-                        $"semantic companion owner '{semanticOwner}' is outside physical package '{semanticPackage}'");
+                        $"semantic companion owner '{semanticOwner}' is outside Kotlin package '{semanticPackage}'");
             return names.Class(
                 semanticPackage,
                 classPart.Split('.', StringSplitOptions.None).Append(sourceName));
@@ -7028,21 +7041,13 @@ internal sealed class AssemblyScanner : IDisposable
 
     private int SemanticClassName(TypeDefinitionHandle handle, NameTable names, string semanticName)
     {
-        var current = handle;
-        string package = "";
-        while (!current.IsNil)
-        {
-            var def = _md.GetTypeDefinition(current);
-            var parent = def.GetDeclaringType();
-            if (parent.IsNil) package = _md.GetString(def.Namespace);
-            current = parent;
-        }
+        var package = SignatureDecoderSeeds.DefinitionKotlinPackage(_md, handle);
         var classPart = string.IsNullOrEmpty(package)
             ? semanticName
             : semanticName.StartsWith(package + ".", StringComparison.Ordinal)
                 ? semanticName[(package.Length + 1)..]
                 : throw new InvalidDataException(
-                    $"semantic companion owner '{semanticName}' is outside physical package '{package}'");
+                    $"semantic companion owner '{semanticName}' is outside Kotlin package '{package}'");
         var chain = classPart.Split('.', StringSplitOptions.None);
         if (chain.Length == 0)
             throw new InvalidDataException($"semantic companion owner '{semanticName}' has no class name");
@@ -7665,6 +7670,8 @@ internal sealed record SignatureDecoderSeeds(
         string SourceName(TypeDefinitionHandle handle)
         {
             if (carriers.TryGetValue(handle, out var owner)) return owner;
+            if (CompanionReferenceCatalog.DefinitionSourceName(reader, handle) is string companion)
+                return companion;
             var definition = reader.GetTypeDefinition(handle);
             var name = reader.GetString(definition.Name).Split('`')[0];
             var parent = definition.GetDeclaringType();
@@ -7713,6 +7720,33 @@ internal sealed record SignatureDecoderSeeds(
         return new SignatureDecoderSeeds(delegates.ToImmutable(), valueTypes.ToImmutable());
     }
 
+    // Generic-static and companion carriers can move a source declaration into a different CLR namespace.
+    // Follow their exact owner TypeDefs to the original top-level declaration before splitting the source name.
+    internal static string DefinitionKotlinPackage(MetadataReader reader, TypeDefinitionHandle handle)
+    {
+        var staticOwners = StaticTypeOwners.GetValue(reader, DiscoverStaticTypeOwners);
+        var visited = new HashSet<TypeDefinitionHandle>();
+        while (visited.Add(handle))
+        {
+            if (staticOwners.TryGetValue(handle, out var owner))
+            {
+                handle = owner;
+                continue;
+            }
+            var companionOwner = CompanionReferenceCatalog.DefinitionSourceOwner(reader, handle);
+            if (!companionOwner.IsNil)
+            {
+                handle = companionOwner;
+                continue;
+            }
+            var definition = reader.GetTypeDefinition(handle);
+            var parent = definition.GetDeclaringType();
+            if (parent.IsNil) return reader.GetString(definition.Namespace);
+            handle = parent;
+        }
+        throw new InvalidDataException("cyclic Kotlin classifier ownership");
+    }
+
     internal static (string Package, IReadOnlyList<string> Names) DefinitionKotlinPath(
         MetadataReader reader,
         ArityNames arityNames,
@@ -7736,6 +7770,13 @@ internal sealed record SignatureDecoderSeeds(
                 var sourceOwner = DefinitionKotlinPath(reader, arityNames, owner);
                 package = sourceOwner.Package;
                 names = sourceOwner.Names.ToList();
+            }
+            else if (CompanionReferenceCatalog.DefinitionSourcePath(reader, current) is { } companion)
+            {
+                // The carrier's trusted association owns its source name, regardless of whether
+                // it is nested in its CLR owner or hoisted beside it.
+                package = companion.Package;
+                names = companion.Classes.ToList();
             }
             else names.Add(arityNames.Simple(rawScope, metadataName));
             rawScope = string.IsNullOrEmpty(rawScope) ? metadataName : rawScope + "." + metadataName;
