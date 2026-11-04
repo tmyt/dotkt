@@ -26,6 +26,12 @@ sealed partial class Emitter
         // MetadataLoadContext. The compiler host still supplies Reflection.Emit's implementation, never an emitted
         // identity. Mixing a host Type with this graph is invalid even when its FullName matches a target Type.
         var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName) { Version = _versions?.Identity }, _target.CoreAssembly);
+        if (_referenceAssemblyPath != null)
+        {
+            // member-lookup-residual: CLR reference image marker, not a Kotlin program operation
+            var marker = Bcl("System.Runtime.CompilerServices.ReferenceAssemblyAttribute").GetConstructor(Type.EmptyTypes);
+            SetAttribute(ab.SetCustomAttribute, marker, Type.EmptyTypes);
+        }
         if (_versions != null)
         {
             foreach (var attribute in _versions.Attributes)
@@ -814,12 +820,14 @@ sealed partial class Emitter
             // only fields with a NON-null init value get a type-initializer store.
             var inits = fs.EnumerateArray().Where(f => f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null && f.TryGetProperty("static", out var s) && s.GetBoolean()).ToList();
             if (inits.Count == 0) continue;
+            var initializer = ti.TB.DefineTypeInitializer().GetILGenerator();
+            if (EmitReferenceStub(initializer)) continue;
             // A synthesized .cctor is a type method with no method-generic scope. Carry the declaring type's generic
             // parameters and clear whatever method scope pass 4 last visited; otherwise a generic nested singleton
             // initializer can encode `new ...<!!0>` and produce a BadImageFormatException at type initialization.
             _curTypeParams = EffectiveTps(ti);
             _curMethodParams = null;
-            _il = ti.TB.DefineTypeInitializer().GetILGenerator();
+            _il = initializer;
             _args.Clear(); _argTypes.Clear(); _locals.Clear(); _methodRetType = Bcl("System.Void");
             // A field initializer can contain CFG control flow (a `while`/`when` lowered to label/goto), so its labels
             // must be pre-defined just like a method body — otherwise MarkLabel/Br throws "key not in _cfgLabels".
@@ -847,6 +855,7 @@ sealed partial class Emitter
             {
                 entry = ti.TB.DefineMethod("Main", MethodAttributes.Public | MethodAttributes.Static, Bcl("System.Void"), new[] { Bcl("System.String").MakeArrayType() });
                 var il = entry.GetILGenerator();
+                if (EmitReferenceStub(il)) continue;
                 var mainMb = ti.Methods["main"];
                 // `fun main(args: Array<String>)` -> forward the CLR args; `fun main()` -> call with none.
                 if (_mparams.TryGetValue(mainMb, out var mp) && mp.Length > 0) il.Emit(OpCodes.Ldarg_0);
@@ -1384,16 +1393,17 @@ sealed partial class Emitter
             peHeader, new MetadataRootBuilder(metadata), ilStream,
             mappedFieldData: fieldData,
             nativeResources: _nativeResources,
-            entryPoint: entry != null ? MetadataTokens.MethodDefinitionHandle(entry.MetadataToken) : default);
+            entryPoint: entry != null && _referenceAssemblyPath == null
+                ? MetadataTokens.MethodDefinitionHandle(entry.MetadataToken) : default);
         var blob = new BlobBuilder();
         peBuilder.Serialize(blob);
         // #52 — write ATOMICALLY (temp + rename): FileMode.Create truncates-then-writes in place, so a concurrent
         // reader (dll2klib/bir2cir loading this same dll) can observe a partial image and fail with a
         // spurious "Format of the executable is invalid" / BadImageFormatException. A same-directory rename is atomic,
         // so a reader always sees either the whole old file or the whole new one — never a torn write.
-        var dllPath = Path.Combine(_outDir, _asmName + ".dll");
+        var dllPath = _referenceAssemblyPath ?? Path.Combine(_outDir, _asmName + ".dll");
         AtomicFile.Write(dllPath, fs => blob.WriteContentTo(fs));
-        Console.WriteLine($"emitted {_asmName}.dll");
+        Console.WriteLine(_referenceAssemblyPath == null ? $"emitted {_asmName}.dll" : $"emitted reference assembly {dllPath}");
     }
 
 }

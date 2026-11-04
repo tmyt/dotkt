@@ -314,21 +314,26 @@
     <ItemGroup>
       <_DotKtNativeResourceInput Remove="@(_DotKtNativeResourceInput)" />
       <_DotKtNativeResourceInput Include="$(_DotKtSelectedManifest);$(Win32Resource);$(ApplicationIcon)" />
+      <_DotKtIntermediateRefAssembly Remove="@(_DotKtIntermediateRefAssembly)" />
+      <_DotKtIntermediateRefAssembly Include="@(IntermediateRefAssembly)" Condition="'$(ProduceReferenceAssembly)' == 'true'" />
       <_DotKtAssemblyAttribute Remove="@(_DotKtAssemblyAttribute)" />
       <_DotKtAssemblyAttribute Include="@(AssemblyAttribute)" Condition="'$(GenerateAssemblyInfo)' == 'true'" />
     </ItemGroup>
     <DotKt.Build.WriteAssemblyOptions OutputFile="$(DotKtEmitOptionsManifest)" OutputFileName="$(TargetName)$(TargetExt)"
         OutputType="$(OutputType)" Deterministic="$(_DotKtDeterministic)" JitDebugging="$(_DotKtJitDebugging)"
+        ReferenceAssembly="@(_DotKtIntermediateRefAssembly->'%(FullPath)')"
         NoWin32Manifest="$(_DotKtNoWin32Manifest)" Win32Manifest="$(_DotKtSelectedManifest)"
         Win32Resource="$(Win32Resource)" ApplicationIcon="$(ApplicationIcon)" Attributes="@(_DotKtAssemblyAttribute)" />
   </Target>
 
-  <!-- The emitter owns the only project assembly. The independent completion stamp is written only after success.
-       Include the output as an input too, so external replacement or a failing post-emit hook cannot be mistaken
-       for completed emission. SDK options are content-stable; switching/removing a file selection is observable. -->
+  <!-- Both images are inputs to the completion check: a missing or newer image invalidates the stamp.
+       Comparing them only with the stamp, written after emission and its hook, avoids treating the earlier
+       implementation write as stale relative to the later reference write. -->
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets;DotKtComputeEmitOptions"
-          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);$(DotKtBuildTasks);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);$(DotKtEmitOptionsManifest);@(_DotKtNativeResourceInput)"
-          Outputs="$(_DotKtIlEmitStamp);$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
+          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);$(DotKtBuildTasks);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);@(_DotKtIntermediateRefAssembly);$(DotKtEmitOptionsManifest);@(_DotKtNativeResourceInput)"
+          Outputs="$(_DotKtIlEmitStamp)">
+    <Error Condition="'$(ProduceReferenceAssembly)' == 'true' and '@(_DotKtIntermediateRefAssembly->Count())' != '1'"
+           Text="DotKt: reference assembly emission requires one SDK IntermediateRefAssembly path." />
     <ItemGroup>
       <_DotKtCir Include="$(DotKtIntermediateCirPath)/*.cir.json" />
       <!-- ilemit's runtime refs are the implementation assemblies from the copy-local set: the runtime stdlib
@@ -356,6 +361,8 @@
     <PropertyGroup>
       <_DotKtIlEmitOutputPath>$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))</_DotKtIlEmitOutputPath>
       <_DotKtEscapedIlEmitOutputPath>$(_DotKtIlEmitOutputPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedIlEmitOutputPath>
+      <_DotKtReferenceAssemblyPath>@(_DotKtIntermediateRefAssembly->'%(FullPath)')</_DotKtReferenceAssemblyPath>
+      <_DotKtEscapedReferenceAssemblyPath>$(_DotKtReferenceAssemblyPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedReferenceAssemblyPath>
       <_DotKtEscapedAssemblyOptions>$([System.IO.Path]::GetFullPath('$(_DotKtResolvedEmitOptions)').Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedAssemblyOptions>
       <_DotKtEscapedTargetName>$(TargetName.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedTargetName>
       <_DotKtEscapedCompileReferences>$(_DotKtCompileReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCompileReferences>
@@ -379,6 +386,8 @@
       <_DotKtEscapedCir Include="@(_DotKtCir->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
       <_DotKtIlEmitResponseArgument Include="_output"><Value>&quot;$(_DotKtEscapedIlEmitOutputPath)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly"><Value>&quot;$(_DotKtEscapedTargetName)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_reference_assembly_option" Condition="'$(_DotKtReferenceAssemblyPath)' != ''"><Value>--reference-assembly</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_reference_assembly" Condition="'$(_DotKtReferenceAssemblyPath)' != ''"><Value>&quot;$(_DotKtEscapedReferenceAssemblyPath)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly_options_option"><Value>--assembly-options</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly_options"><Value>&quot;$(_DotKtEscapedAssemblyOptions)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_jit_debugging_option"><Value>--jit-debugging</Value></_DotKtIlEmitResponseArgument>

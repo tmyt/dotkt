@@ -21,8 +21,7 @@
          a language from the project file. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
     <LanguageTargets Condition="'$(LanguageTargets)' == ''">$(MSBuildThisFileDirectory)DotKt.Language.targets</LanguageTargets>
-    <!-- ilemit currently emits one implementation assembly. Consumers must reference that assembly, not an SDK
-         reference assembly produced by a different language compiler. -->
+    <!-- A declaration-only Kotlin reference assembly is opt-in. By default emit only the implementation. -->
     <ProduceReferenceAssembly Condition="'$(ProduceReferenceAssembly)' == ''">false</ProduceReferenceAssembly>
   </PropertyGroup>
 

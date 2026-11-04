@@ -13,6 +13,7 @@
 #   incremental-emission — C#-only recompilation retains Kotlin execution/metadata and separate consumers;
 #              true no-op rebuilds preserve DLL timestamps and skip downstream C# compilation.
 #   application-manifest — Windows apphost native manifest parity with C#, build/publish and incremental inputs.
+#   reference-assembly — opt-in SDK reference image used by both Kotlin and C# ProjectReferences.
 #   multi-target-klib-references — one parallel two-TFM producer plus matching C# and DotKt consumers: preserve
 #              target-specific references/sources/KLIB ownership, metadata, runtime/IL validity and independent
 #              no-op/deletion behavior; also pin the unsupported-TFM restore diagnostic.
@@ -1490,12 +1491,22 @@ case_jit_debugging() {
 	fi
 }
 
+case_reference_assembly() {
+	if bash "$ROOT/tests/packaged-sdk/reference-assembly/run.sh" "$FEED" "$VER" "$WS/reference-assembly" \
+			>"$WS/reference-assembly.log" 2>&1; then
+		pass reference-assembly
+	else
+		fail reference-assembly "SDK reference assembly regression" "$(tail -40 "$WS/reference-assembly.log")"
+	fi
+}
+
 case_toolchain_assembly_identity
 case_exe
 case_incremental_emission
 case_application_manifest
 case_managed_versions
 case_jit_debugging
+case_reference_assembly
 case_multitarget_klib_references
 case_library
 case_csharp_consumer

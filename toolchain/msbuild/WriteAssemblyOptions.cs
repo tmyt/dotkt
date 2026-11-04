@@ -15,6 +15,7 @@ public sealed class WriteAssemblyOptions : Microsoft.Build.Utilities.Task
     [Required] public string OutputType { get; set; } = "";
     public bool Deterministic { get; set; }
     public bool JitDebugging { get; set; }
+    public string ReferenceAssembly { get; set; } = "";
     public bool NoWin32Manifest { get; set; }
     public string Win32Manifest { get; set; } = "";
     public string Win32Resource { get; set; } = "";
@@ -28,6 +29,7 @@ public sealed class WriteAssemblyOptions : Microsoft.Build.Utilities.Task
             var json = JsonSerializer.Serialize(new
             {
                 outputFileName = OutputFileName, outputType = OutputType, deterministic = Deterministic, jitDebugging = JitDebugging,
+                referenceAssembly = ReferenceAssembly,
                 noWin32Manifest = NoWin32Manifest,
                 // Track the generators actually loaded by this MSBuild host, not a potentially absent compiler path.
                 resourceGenerator = new { core = typeof(Compilation).Module.ModuleVersionId,
