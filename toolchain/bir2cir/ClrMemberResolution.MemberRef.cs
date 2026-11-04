@@ -171,8 +171,8 @@ static partial class ClrMemberResolution
     {
         member = OpenDeclarationOf(member);
         // The SHIPPED declaration when the member's assembly has a separate one; otherwise the member itself.
-        // Only the signature is taken from it — the declaring head, its instantiation and the physical assembly
-        // are already decided from the resolved member and must not be re-derived here.
+        // Both the name and signature belong to that MethodDef. The declaring head, its instantiation and
+        // the physical assembly are already decided from the resolved member.
         var shipped = _refs.PhysicalTwinOf(member, DeclaringDefOf(member)) ?? member;
         var ctor = member as ConstructorInfo;
         var method = shipped as MethodInfo ?? member as MethodInfo;
@@ -182,7 +182,7 @@ static partial class ClrMemberResolution
             Kind: kind,
             Assembly: PhysicalAssemblyOf(member),
             DeclaringType: DeclaringTypeRef(member, openOwner, ownerArgs, ownerArgumentsAreMethodSlots),
-            Name: ctor != null ? MemberRefNode.CtorName : member.Name,
+            Name: ctor != null ? MemberRefNode.CtorName : shipped.Name,
             GenericArity: member.IsGenericMethod ? member.GetGenericArguments().Length : 0,
             ReturnType: ctor != null
                 ? MemberRefNode.Void
