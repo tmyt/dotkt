@@ -49,12 +49,16 @@ static class EnumValueLowering
             if (kind == "callInstance" && obj["prop"]?.GetValue<string>() == "get"
                 && obj["method"]?.GetValue<string>() is "name" or "ordinal"
                 && obj["args"] is JsonArray { Count: 0 }
-                && obj["recv"] is JsonNode propertyReceiver && obj["ownerType"] is JsonNode propertyOwner
-                && TypeJson.OwnerName(propertyOwner) is string propertyEnum
-                && TryRichInstanceFields(propertyEnum, refs, localRichFields, out var propertyNameField, out var propertyOrdinalField))
-                RewriteRichField(obj, propertyReceiver, propertyOwner,
-                    obj["method"].GetValue<string>() == "name" ? propertyNameField : propertyOrdinalField,
-                    obj["method"].GetValue<string>() == "name" ? "kotlin.String" : "kotlin.Int");
+                && obj["recv"] is JsonNode propertyReceiver && obj["ownerType"] is JsonNode propertyOwner)
+            {
+                var member = obj["method"].GetValue<string>();
+                var fieldOwner = DeclaringEnumForProperty(obj, member) ?? propertyOwner;
+                if (TypeJson.OwnerName(fieldOwner) is string propertyEnum
+                    && TryRichInstanceFields(propertyEnum, refs, localRichFields, out var propertyNameField, out var propertyOrdinalField))
+                    RewriteRichField(obj, propertyReceiver, fieldOwner,
+                        member == "name" ? propertyNameField : propertyOrdinalField,
+                        member == "name" ? "kotlin.String" : "kotlin.Int");
+            }
             if (kind == "enumValue"
                 && obj["entry"]?.GetValue<string>() is string entry
                 && obj["type"] is JsonNode type
@@ -192,6 +196,22 @@ static class EnumValueLowering
         else if (node is JsonArray arr)
             foreach (var item in arr)
                 if (item != null) Walk(item, refs, localRichFields, localBasicEnums, localExplicitEnums, localParseEnums, ref runtimeLookup);
+    }
+
+    static JsonNode DeclaringEnumForProperty(JsonObject call, string member)
+    {
+        // A fake override can name an entry-specific class as its dispatch owner. Its selected declaration ID
+        // is also on the instantiated Enum<E> override edge: E owns the rich storage, not the entry class.
+        if (call[DeclarationIdentityBinding.Key]?.GetValue<string>() is not { } selected
+            || call["overrides"] is not JsonArray overrides)
+            return null;
+        var declaration = overrides.OfType<JsonObject>()
+            .Where(edge => edge[DeclarationIdentityBinding.Key]?.GetValue<string>() == selected
+                && edge["member"]?.GetValue<string>() == member && edge["kind"]?.GetValue<string>() == "getter")
+            .Select(edge => TypeJson.Read(edge["owner"]))
+            .OfType<TypeNode.Fqn>()
+            .SingleOrDefault(owner => owner is { Name: "kotlin.Enum", Args: [TypeNode.Fqn] });
+        return declaration == null ? null : TypeJson.Write(declaration.Args[0]);
     }
 
     static bool TryRichInstanceFields(string owner, ReferenceMetadataIndex refs,
