@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Preserve nested Kotlin classifier paths such as `Map.Entry` in type signatures re-imported across DLLs.
 - Preserve the Kotlin type and typed reads of imported generic properties with object-erased getters.
 - Preserve virtual `toString()` dispatch on imported Kotlin generic types, including inherited and authored overrides.
 - Dispatch `toString()` through the actual enum value in `T : Enum<T>` code, including enum and entry overrides.

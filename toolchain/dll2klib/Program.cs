@@ -8443,12 +8443,15 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
 
     private KType FromFqn(TypeNode.Fqn f)
     {
-        var name = NormalizeKotlinName(f.Name);
-        var type = NamedCarrierClassifier(name);
+        var type = NamedCarrierClassifier(f);
         if (f.Args is not null)
             type.Argument.Add(f.Args.Select(FromTypeArgument));
         return type;
     }
+
+    private KType NamedCarrierClassifier(TypeNode.Fqn type) => type.Classifier is { } source
+        ? Named(_names.Class(source.PackageName, source.OwnerPath.Append(source.Name)))
+        : NamedCarrierClassifier(NormalizeKotlinName(type.Name));
 
     private KType.Types.Argument FromTypeArgument(TypeNode argument) => argument switch
     {
@@ -8589,7 +8592,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     {
         // A CONSTRUCTED value type holds a byte but is never annotated by it, so the bare carrier classifier here is
         // the right question for BOTH: can this node's `?` ride the byte at all.
-        TypeNode.Fqn f => ConsumesNullability(NamedCarrierClassifier(NormalizeKotlinName(f.Name))),
+        TypeNode.Fqn f => ConsumesNullability(NamedCarrierClassifier(f)),
         TypeNode.ByRef => false,
         _ => true,
     };

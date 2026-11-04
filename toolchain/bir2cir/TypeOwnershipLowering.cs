@@ -49,10 +49,10 @@ static class TypeOwnershipLowering
                     if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name)
                     {
                         var sourceName = SourceName(name);
-                        if (sourceName != name) obj["name"] = sourceName;
-                        // Only Kotlin inner applications need a referenced source-order snapshot. CLR nested
-                        // classifiers retain their physical signature projection (including arity-clash names).
-                        hasNestedClassifier |= sourceName != name
+                        if (obj["classifier"] == null && sourceName != name) obj["name"] = sourceName;
+                        // A CLR-exact nested reference does not need a KotlinType carrier unless its
+                        // source arguments or the signature's physical representation require one.
+                        hasNestedClassifier |= (obj["classifier"] != null && !name.Contains('+')) || sourceName != name
                             || (refs?.TryInnerCapturedCount(name, out var captured) == true && captured > 0);
                     }
                     foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
@@ -125,7 +125,7 @@ static class TypeOwnershipLowering
         {
             TypeNode.Tv tv when tv.Scope == "type" && tv.I >= 0 && tv.I < oldToNew.Length =>
                 new TypeNode.Tv("type", oldToNew[tv.I]),
-            TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(a => RemapTvs(a, oldToNew)).ToArray()),
+            TypeNode.Fqn f => f with { Args = f.Args?.Select(a => RemapTvs(a, oldToNew)).ToArray() },
             TypeNode.Nullable n => new TypeNode.Nullable(RemapTvs(n.Of, oldToNew)),
             TypeNode.Oblivious o => new TypeNode.Oblivious(RemapTvs(o.Of, oldToNew)),
             TypeNode.Projection p => new TypeNode.Projection(p.Variance, RemapTvs(p.Of, oldToNew)),
@@ -293,13 +293,13 @@ static class TypeOwnershipLowering
             if (f.Args == null) return f;
             var args = f.Args.Select(RewriteApplications).ToArray();
             if (!permutations.TryGetValue(f.Name, out var permutation))
-                return new TypeNode.Fqn(f.Name, args);
+                return f with { Args = args };
             if (args.Length != permutation.NewToOld.Length)
                 throw new InvalidOperationException(
                     $"Kotlin lifted type application '{f.Name}' has {args.Length} arguments " +
                     $"[{string.Join(", ", args.Select(a => TypeJson.Write(a).ToJsonString()))}] but its declaration has " +
                     $"{permutation.NewToOld.Length}");
-            return new TypeNode.Fqn(f.Name, permutation.NewToOld.Select(i => args[i]).ToArray());
+            return f with { Args = permutation.NewToOld.Select(i => args[i]).ToArray() };
         }
         foreach (var root in roots) RewriteTypes(root, RewriteApplications);
     }
@@ -335,8 +335,9 @@ static class TypeOwnershipLowering
         {
             TypeNode.Tv tv when tv.Scope == "type" && tv.I >= 0 && tv.I < oldToNew.Length =>
                 new TypeNode.Tv("type", oldToNew[tv.I]),
-            TypeNode.Fqn f => new TypeNode.Fqn(f.Name,
-                f.Args?.Select(arg => RemapSyntheticTypeSlots(arg, oldToNew)).ToArray()),
+            TypeNode.Fqn f => f with {
+                Args = f.Args?.Select(arg => RemapSyntheticTypeSlots(arg, oldToNew)).ToArray(),
+            },
             TypeNode.Nullable n => new TypeNode.Nullable(RemapSyntheticTypeSlots(n.Of, oldToNew)),
             TypeNode.Oblivious o => new TypeNode.Oblivious(RemapSyntheticTypeSlots(o.Of, oldToNew)),
             TypeNode.Projection p => new TypeNode.Projection(p.Variance, RemapSyntheticTypeSlots(p.Of, oldToNew)),
@@ -545,8 +546,10 @@ static class TypeOwnershipLowering
         {
             if (f.Args == null) return f;
             var args = f.Args.Select(Project).ToArray();
-            return new TypeNode.Fqn(f.Name,
-                applicationOrder.DeclarationArguments(new TypeNode.Fqn(f.Name, args)));
+            var ordered = applicationOrder.DeclarationArguments(f with { Args = args });
+            // Reordered inner arguments now describe the CLR frame; the source application was
+            // recorded before this pass. Other classifiers still describe the same source head.
+            return ReferenceEquals(args, ordered) ? f with { Args = args } : new TypeNode.Fqn(f.Name, ordered);
         }
 
         void Rewrite(JsonNode node)

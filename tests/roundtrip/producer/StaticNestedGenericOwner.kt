@@ -4,6 +4,8 @@ interface OwnerBound
 class OwnerValue : OwnerBound
 
 open class StaticNestedOwner<T : OwnerBound>(private val value: T) {
+    class Token<U>
+
     private class PrivateValue(val value: Int)
     protected class ProtectedValue(val value: Int)
     fun privateNestedValue(): Int = PrivateValue(45).value

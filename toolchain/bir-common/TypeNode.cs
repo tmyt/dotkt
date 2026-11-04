@@ -31,9 +31,13 @@ public abstract record TypeNode
     /// <summary>`fqn`: a named type — a PURE Kotlin/CLR FQN identity; <c>Args</c> = generic application.</summary>
     public sealed record Fqn(string Name, TypeNode[]? Args = null) : TypeNode
     {
+        // A Kotlin metadata fact, not part of the backend's representation key.
+        public SourceClassifier? Classifier { get; init; }
         public bool Equals(Fqn? o) => o is not null && Name == o.Name && SeqEq(Args, o.Args);
         public override int GetHashCode() => System.HashCode.Combine(Name, Args?.Length ?? -1);
     }
+
+    public sealed record SourceClassifier(string PackageName, string[] OwnerPath, string Name);
 
     /// <summary>
     /// `tv`: a type variable. <c>Scope</c> ∈ {"type","method"} selects the CLR generic-parameter space
@@ -163,7 +167,14 @@ public abstract record TypeNode
             case "fqn":
                 return new Fqn(
                     e.GetProperty("name").GetString() ?? throw new FormatException("fqn missing name"),
-                    e.TryGetProperty("args", out var args) ? ReadArray(args) : null);
+                    e.TryGetProperty("args", out var args) ? ReadArray(args) : null)
+                {
+                    Classifier = e.TryGetProperty("classifier", out var source)
+                        ? new SourceClassifier(source.GetProperty("packageName").GetString()!,
+                            source.GetProperty("ownerPath").EnumerateArray().Select(p => p.GetString()!).ToArray(),
+                            source.GetProperty("name").GetString()!)
+                        : null,
+                };
             case "tv":
                 return new Tv(
                     e.GetProperty("scope").GetString() ?? throw new FormatException("tv missing scope"),
@@ -230,6 +241,12 @@ public abstract record TypeNode
             {
                 var o = new JsonObject { ["t"] = "fqn", ["name"] = f.Name };
                 if (f.Args is not null) o["args"] = WriteArray(f.Args);
+                if (f.Classifier is { } source)
+                    o["classifier"] = new JsonObject {
+                        ["packageName"] = source.PackageName,
+                        ["ownerPath"] = new JsonArray(source.OwnerPath.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()),
+                        ["name"] = source.Name,
+                    };
                 return o;
             }
             case Tv v:
@@ -343,6 +360,9 @@ public static class TypeNodeSelfTest
         {
             (new TypeNode.Fqn("kotlin.Int"),
                 "{\"t\":\"fqn\",\"name\":\"kotlin.Int\"}"),
+            (new TypeNode.Fqn("example.Outer.Nested") {
+                    Classifier = new TypeNode.SourceClassifier("example", ["Outer"], "Nested") },
+                "{\"t\":\"fqn\",\"name\":\"example.Outer.Nested\",\"classifier\":{\"packageName\":\"example\",\"ownerPath\":[\"Outer\"],\"name\":\"Nested\"}}"),
             (new TypeNode.Fqn("kotlin.collections.List", new TypeNode[] { new TypeNode.Fqn("kotlin.Int") }),
                 "{\"t\":\"fqn\",\"name\":\"kotlin.collections.List\",\"args\":[{\"t\":\"fqn\",\"name\":\"kotlin.Int\"}]}"),
             (new TypeNode.Fqn("Bounded", new TypeNode[] { new TypeNode.Star() }),
@@ -396,7 +416,7 @@ public static class TypeNodeSelfTest
                 throw new Exception($"[C# TypeNode] Write mismatch:\n  expected {json}\n  got      {got}");
             // Read(fixture) must reconstruct the node.
             var parsed = TypeNode.Parse(json);
-            if (parsed != node)
+            if (parsed != node || TypeNode.ToJson(parsed) != json)
                 throw new Exception($"[C# TypeNode] Read mismatch for {json}: got {parsed}");
             // Read(Write(node)) == node (the core round-trip property).
             if (TypeNode.Parse(TypeNode.ToJson(node)) != node)
