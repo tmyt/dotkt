@@ -97,6 +97,18 @@ static class CompanionRepresentationLowering
 
         foreach (var semanticName in unplaced.Keys.ToArray())
             ResolveOwner(semanticName);
+        var movedOwners = associations.Select(a => a.SemanticName).ToHashSet(StringComparer.Ordinal);
+        foreach (var type in types)
+        {
+            if (Str(type["semanticOwner"]) is not string owner || !movedOwners.Contains(owner))
+                continue;
+            var visibility = Str(type["vis"]);
+            if (visibility is not ("private" or "protected")) continue;
+            // Kotlin allows the containing class to use these companion declarations. The
+            // new CLR parent puts them in the carrier's private or family scope instead.
+            RoundtripMetadata.PreserveTypeVisibility(type);
+            type["vis"] = visibility == "private" ? "internal" : "protectedInternal";
+        }
         foreach (var root in rootObjects)
             RewriteUses(root, associations);
         return new LocalIndex(associations);
@@ -403,7 +415,7 @@ static class CompanionRepresentationLowering
         // Companion representation runs before the general ownership pass, so an ordinary Kotlin child still carries
         // BIR `semanticOwner` here; an already-materialized physical helper may carry CIR `nestedIn`. Follow either
         // fact to author the exact `+`-separated metadata owner recorded in [KotlinCompanion]. A file facade is not a
-        // type declaration in `byName`, but is nevertheless the final physical parent and therefore a valid root.
+        // type declaration in the owner index, but is nevertheless the final physical parent and a valid root.
         var parentName = Str(type["nestedIn"]) ?? Str(type["semanticOwner"]);
         if (parentName is null) return name;
         var physicalParent = resolveOwner(parentName) is { } parent
