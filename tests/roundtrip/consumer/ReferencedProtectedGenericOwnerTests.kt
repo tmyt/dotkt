@@ -2,6 +2,19 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.AreSame as assertSame
 import roundtrip.protectedgenericowner.ReferencedProtectedGenericOwnerBase
+import roundtrip.protectedgenericowner.ReferencedProtectedErasedProperty
+
+private class ReferencedProtectedErasedInt : ReferencedProtectedErasedProperty<Int>(40) {
+    fun add(delta: Int): Int = current + delta
+}
+
+private class ReferencedProtectedErasedText : ReferencedProtectedErasedProperty<String>("value") {
+    fun length(): Int = current.length
+}
+
+private class ReferencedProtectedErasedNullable : ReferencedProtectedErasedProperty<Int?>(null) {
+    fun read(): Int? = current
+}
 
 private class ReferencedProtectedGenericOwnerText : ReferencedProtectedGenericOwnerBase<String>() {
     private fun invoke(block: () -> Unit) = block()
@@ -64,5 +77,8 @@ class ReferencedProtectedGenericOwnerTests {
         val result = ReferencedProtectedGenericOwnerInt().capturedSnapshot(values)
         assertSame(values, result)
         assertEquals(null, result[1])
+        assertEquals(42, ReferencedProtectedErasedInt().add(2))
+        assertEquals(5, ReferencedProtectedErasedText().length())
+        assertEquals(null, ReferencedProtectedErasedNullable().read())
     }
 }

@@ -4168,6 +4168,16 @@ sealed partial class ReferenceMetadataIndex
     static bool IsObjectType(TypeNode type) =>
         type is TypeNode.Fqn f && f.Name is "System.Object" or "object" or "kotlin.Any";
 
+    static bool IsUncheckedGenericObjectGetter(MemberBinding member) =>
+        member.AccessorKind == "get" && !member.IsPropertyBridge
+        && IsObjectType(member.ReturnTypeNode) && member.KotlinReturnType is TypeNode.Tv;
+
+    internal bool IsUncheckedGenericObjectGetter(string id, string owner, bool isStatic, int argCount, int methodArity) =>
+        id != null && _declarationById.TryGetValue(id, out var member)
+        && BareOwnerFqn(member.DeclarationPhysicalOwner ?? member.Owner) == BareOwnerFqn(owner)
+        && member.IsStatic == isStatic && member.ParamCount == argCount && member.MethodArity == methodArity
+        && IsUncheckedGenericObjectGetter(member);
+
     // #86 D1 — the PRE-erasure declaration of a referenced member's slots: its return and its parameter vector, as the
     // consuming module needs them to type a USE as `Subst(Erase(declaredKotlinType(slot)), typeArgs)`.
     //
@@ -4350,7 +4360,11 @@ sealed partial class ReferenceMetadataIndex
                     || _ownerNullableFrames.ContainsKey(lookupOwner);
                 // A selected suspend projection is already a physical hot/cold MethodDef. Its logical Kotlin
                 // result carrier belongs to the source declaration, not to the Task-returning MethodImpl row.
-                declaredRet = explicitNullableFrame
+                // The exact unchecked-cast getter has an independent consumer projection. Reporting the closed
+                // Object slot as a nullable erasure would overwrite the instantiated Kotlin expression type.
+                declaredRet = propertyName != null && !includeClosedPropertyReturn && IsUncheckedGenericObjectGetter(member)
+                    ? default
+                    : explicitNullableFrame
                     ? FramedSlot(member.NullableGenericRet, member.ReturnTypeNode,
                         selectedPhysicalMember == null, includeUnchangedMethodReturn)
                     : selectedPhysicalMember != null

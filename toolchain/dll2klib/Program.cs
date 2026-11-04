@@ -2612,6 +2612,11 @@ internal sealed class AssemblyScanner : IDisposable
                     : null,
             };
             ApplyAccessorFlags(projected, accessors.Getter, accessors.Setter);
+            var getterIdentity = accessors.Getter.IsNil ? null : KotlinDeclarationIdentityCarrier(accessors.Getter)?.Id;
+            var setterIdentity = accessors.Setter.IsNil ? null : KotlinDeclarationIdentityCarrier(accessors.Setter)?.Id;
+            if (getterIdentity is not null || setterIdentity is not null)
+                projected.PropertyAnnotation.Add(KotlinDeclarationIdentityAnnotation(
+                    names, getterIdentity ?? "", setterIdentity ?? ""));
             result.Property.Add(projected);
             propertyNames.Add(name);
         }
