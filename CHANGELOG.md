@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Dispatch `toString()` through the actual enum value in `T : Enum<T>` code, including enum and entry overrides.
 - Preserve inherited enum `name` and `ordinal` in entry-specific bodies, independently of an overridden `toString()`.
 - Preserve exact UTF-16 in String compile-time constants imported from CLR assemblies, including isolated surrogates, without changing their Kotlin `const` semantics.
 - Resolve inherited Kotlin calls across DLLs to the exact CLR method, even when the reference and runtime stdlib name the generated slot differently.

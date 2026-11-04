@@ -31,6 +31,8 @@ enum class EnumEntryDefaultRendered {
     PLAIN
 }
 
+private fun <T : Enum<T>> enumBoundRendering(value: T): String = value.toString()
+
 class EnumRenderingTests {
     @TestAttribute
     fun authoredOverridesOwnTheEnumObjectSlot() {
@@ -44,6 +46,10 @@ class EnumRenderingTests {
         assertEquals("first", EnumAbstractRendered.FIRST.toString())
         val abstractEntry: Any = EnumAbstractRendered.SECOND
         assertEquals("second", abstractEntry.toString())
+        assertEquals("rendered:2", enumBoundRendering(EnumRendered.LARGE))
+        assertEquals("entry", enumBoundRendering(EnumEntryRendered.SPECIAL))
+        assertEquals("base:2", enumBoundRendering(EnumEntryRendered.PLAIN))
+        assertEquals("second", enumBoundRendering(EnumAbstractRendered.SECOND))
     }
 
     @TestAttribute
@@ -56,5 +62,9 @@ class EnumRenderingTests {
         assertEquals("PLAIN", EnumEntryDefaultRendered.PLAIN.toString())
         val plain: Any = EnumEntryDefaultRendered.PLAIN
         assertEquals("PLAIN", plain.toString())
+        assertEquals("SECOND", enumBoundRendering(EnumDefaultRendered.SECOND))
+        assertEquals("special", enumBoundRendering(EnumEntryDefaultRendered.SPECIAL))
+        assertEquals("PLAIN", enumBoundRendering(EnumEntryDefaultRendered.PLAIN))
+        assertEquals("A", enumBoundRendering(EnumBasic.A))
     }
 }

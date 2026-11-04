@@ -16,11 +16,9 @@ using System.Text.Json.Nodes;
 //      -> `objMethod ToString` and `.ordinal` -> `enumOrdinal`, and `compareTo`/`==` to ordinal arithmetic, so those
 //      concrete accesses never hit this gap.)
 //
-//  (2) GENERIC receiver (`e: T`, `T : Enum<T>`): kotc cannot see the enum-ness, so it emits a plain
-//      `callInstance ownerType=kotlin.Enum method=get_name` on the stdlib base class `kotlin.Enum` — which the app
-//      never emits (it lives in the stdlib) -> `TypeLoadException: kotlin.Enum\`1`. `kotlin.Enum` is NOT
-//      @ClrTypeAlias'd, yet on the CLR every enum value IS a `System.Enum`. Rebind `name`/`toString` ->
-//      `System.Enum.ToString()` (the declared constant name), mirroring the concrete-receiver lowering.
+//  (2) GENERIC receiver (`e: T`, `T : Enum<T>`): kotc names the semantic base `kotlin.Enum<T>`, which does not
+//      name a concrete CLR receiver or a MethodDef. A semantic Any.toString call uses the CLR Object virtual
+//      slot, regardless of whether its receiver is a native enum or a rich enum with an authored override.
 //
 // Non-ref builds only (the ref/rt stdlib keeps `kotlin.Enum`'s own pure-Kotlin member bodies untouched). Scoped to the
 // `kotlin.Enum` owner and to locally-declared value-type enum owners, so no other call is affected.
@@ -50,6 +48,15 @@ static class EnumMemberBinding
 
     public static void Apply(JsonNode root, HashSet<string> basicEnums) => Walk(root, basicEnums);
 
+    // ObjectSlotRename has already normalized the spelling, but only kotc's Any-slot fact proves the slot.
+    // An explicit super call is not virtual and must not be redirected to the receiver's override.
+    internal static bool IsVirtualEnumToString(JsonObject call) =>
+        call["k"]?.GetValue<string>() == "callInstance"
+        && call["method"]?.GetValue<string>() == "ToString"
+        && call["anySlot"]?.GetValue<bool>() == true
+        && call["super"]?.GetValue<bool>() != true
+        && TypeJson.OwnerName(call["ownerType"]) == "kotlin.Enum";
+
     static void Walk(JsonNode node, HashSet<string> basicEnums)
     {
         switch (node)
@@ -71,9 +78,16 @@ static class EnumMemberBinding
         if (obj["recv"] is not JsonNode recv) return;
         var owner = TypeJson.OwnerName(obj["ownerType"]);
 
-        // (2) GENERIC receiver: `kotlin.Enum.name`/`.toString` -> objMethod ToString (= the declared constant name).
+        if (IsVirtualEnumToString(obj))
+        {
+            obj.Remove("anySlot");
+            ToObjMethod(obj, recv, "ToString", arg: null);
+            return;
+        }
+
+        // Existing Enum-bound name access is a property, not an Any virtual slot.
         var propertyAccess = (obj["prop"] as JsonValue)?.TryGetValue<string>(out var access) == true ? access : null;
-        if (owner == "kotlin.Enum" && ((method == "name" && propertyAccess == "get") || method == "toString"))
+        if (owner == "kotlin.Enum" && method == "name" && propertyAccess == "get")
         {
             ToObjMethod(obj, recv, "ToString", arg: null);
             return;
