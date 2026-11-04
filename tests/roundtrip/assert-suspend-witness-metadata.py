@@ -29,6 +29,9 @@ for method in declarations(document):
         arguments = attribute["args"]
         assert arguments[0]["value"] == "bir-json/1"
         identity = json.loads(base64.b64decode(arguments[1]["bytes"]))
+        if "|clr-physical-only|existential-slot:" in identity["id"]:
+            assert set(identity) == {"id", "name"}, "Generated existential slots must not publish another source declaration"
+            continue
         if identity["id"].endswith("|cold"):
             assert set(identity) == {"id", "name"}, "Cold entries must not publish another source declaration"
             continue
