@@ -180,6 +180,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 				)
 			},
 		)
+		prepareClrKlibConstants(klibs, libraryList.moduleDataProvider)
 
 		// One pipeline execution = one set of frontend-only facts. Both tables are objects, so their maps would
 		// otherwise outlive the compilation inside a HOSTED kotc and a later run could read a stale entry.

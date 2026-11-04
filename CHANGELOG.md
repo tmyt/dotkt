@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Preserve exact UTF-16 in String compile-time constants imported from CLR assemblies, including isolated surrogates, without changing their Kotlin `const` semantics.
 - Resolve inherited Kotlin calls across DLLs to the exact CLR method, even when the reference and runtime stdlib name the generated slot differently.
 - Stop generating the unused full Kotlin IR debug dump on every compilation, avoiding its string allocation and file output.
 - Preserve exact UTF-16 code units, including unpaired surrogates, when transporting Kotlin Char and String literals through BIR/CIR and embedded inline/default expressions.

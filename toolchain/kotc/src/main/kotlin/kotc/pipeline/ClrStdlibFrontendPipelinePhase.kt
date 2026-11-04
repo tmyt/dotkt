@@ -79,6 +79,7 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 			isCommonSourceForPsi,
 			fileBelongsToModuleForPsi,
 		)
+		prepareClrKlibConstants(klibs, libraryList.moduleDataProvider)
 		// Same CONTEXT-FUNCTION-TYPE capture the app phase performs, and for a reachable reason: the stdlib itself
 		// declares six of them — `kotlin.context(with, block: context(T) () -> R)` and its 2..6-context siblings — and
 		// fir2ir erases which leading arguments were contexts. Without capturing here those public slots carry no
