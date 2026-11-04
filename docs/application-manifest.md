@@ -53,14 +53,19 @@ fragments supplied through `_Parameter1_IsLiteral=true` are not supported: the r
 evaluated string values, not arbitrary C# attribute expressions. Kotlin source-level assembly
 annotation syntax is not introduced by this build change.
 
-`ApplicationIcon` is encoded as native icon/group resources. An explicit `Win32Resource` (RES or COFF)
+`ApplicationIcon` is encoded as native icon/group resources. An explicit `Win32Resource` RES file
 replaces generated resources, rather than being merged with a default manifest or VERSIONINFO.
+COFF object inputs are not supported; point `Win32Resource` at the original `.res` file instead.
+Explicit `.res` files must be readable by the selected SDK's Roslyn. If that SDK rejects a
+resource identifier containing supplementary Unicode characters, use a numeric identifier or a
+name without those characters. This does not restrict the resource payload.
 Switching or clearing native resource options refreshes the final PE without recompiling Kotlin.
 Direct `ilemit` callers have no implicit resources: the project driver supplies `--assembly-options <JSON>`
 when needed. Its values are physical build inputs, not Kotlin semantics or a previous application's metadata.
-The selected SDK's Roslyn API owns VERSIONINFO, default manifests and icon conversion; AsmResolver
-serializes the native resource directory, and .NET's `ManagedPEBuilder` writes the final PE. DotKt's
-adapter transports resource records and relocations rather than independently implementing their synthesis.
+The selected SDK's Roslyn owns VERSIONINFO, default manifests, icon conversion and RES parsing.
+DotKt adapts the SDK's parsed records to AsmResolver, which serializes the resource directory and
+its placement. .NET's `ManagedPEBuilder` writes the final Kotlin PE. There is no C# compilation
+output or temporary PE to replace it.
 
 The removed placeholder's PDB was not a Kotlin source PDB. The SDK no longer generates or copies that
 misleading file; actual Kotlin source debugging information remains separate compiler work.

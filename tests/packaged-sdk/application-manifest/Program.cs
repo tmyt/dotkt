@@ -58,7 +58,7 @@ try
         writer.Write(new byte[16]);
         writer.Write(uint.Parse(args[2])); writer.Write(0); // BGRA pixel + padded AND mask
     }
-    else if (args[0] is "--write-res" or "--write-res-reversed-languages")
+    else if (args[0] is "--write-res" or "--write-res-reversed-languages" or "--write-res-high-ids")
     {
         // Deliberately unordered RES records: named/numeric types and names, plus languages out of order.
         // Both compiler controls consume the same bytes; the PE oracle checks ordering as well as payloads.
@@ -68,9 +68,11 @@ try
         writer.Write(new byte[16]); // mandatory null resource header
         var data = Encoding.UTF8.GetBytes(args[2]);
         var reversedLanguages = args[0] == "--write-res-reversed-languages";
-        foreach (var (type, name, language) in new (object, object, ushort)[] {
+        var resources = args[0] == "--write-res-high-ids" ? new (object, object, ushort)[] { (60000, 50000, 1033) }
+            : new (object, object, ushort)[] {
             ("NativeTest", "Payload", 1033), (10, 7, reversedLanguages ? (ushort)1041 : (ushort)1033), ("Zulu", "item", 1033), ("Alpha", "item", 1033),
-            (10, "zeta", 1033), (10, "alpha", 1033), (10, 7, reversedLanguages ? (ushort)1033 : (ushort)1041), (10, 3, 1033) })
+            (10, "zeta", 1033), (10, "alpha", 1033), (10, 7, reversedLanguages ? (ushort)1033 : (ushort)1041), (10, 3, 1033) };
+        foreach (var (type, name, language) in resources)
         {
             using var identifiers = new MemoryStream();
             using var namesWriter = new BinaryWriter(identifiers, Encoding.Unicode, leaveOpen: true);
@@ -138,6 +140,15 @@ try
             writer.Write((short)3); writer.Write((ushort)0); writer.Write((byte)2); writer.Write((byte)0);
         }
         writer.Write(4); // empty COFF string table
+    }
+    else if (args[0] == "--resource-payload")
+    {
+        foreach (var file in args.Skip(3))
+        {
+            var entry = Resources(file).GetValueOrDefault(args[1]);
+            if (entry == null || !entry.Data.AsSpan().SequenceEqual(Encoding.UTF8.GetBytes(args[2])))
+                throw new InvalidDataException($"Wrong native resource {args[1]} payload: {file}");
+        }
     }
     else if (args[0] == "--resources")
     {
