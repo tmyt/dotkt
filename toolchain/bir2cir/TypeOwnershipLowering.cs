@@ -49,10 +49,11 @@ static class TypeOwnershipLowering
                     if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name)
                     {
                         var sourceName = SourceName(name);
-                        if (sourceName != name) obj["name"] = sourceName;
-                        // Only Kotlin inner applications need a referenced source-order snapshot. CLR nested
-                        // classifiers retain their physical signature projection (including arity-clash names).
-                        hasNestedClassifier |= sourceName != name
+                        if (obj["classifier"] == null && sourceName != name) obj["name"] = sourceName;
+                        // A CLR-exact nested reference already has a signature projection. Its authored
+                        // classifier still rides in any source snapshot required by erasure, but does not
+                        // force a redundant KotlinType carrier onto the unchanged native signature.
+                        hasNestedClassifier |= (obj["classifier"] != null && !name.Contains('+')) || sourceName != name
                             || (refs?.TryInnerCapturedCount(name, out var captured) == true && captured > 0);
                     }
                     foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())

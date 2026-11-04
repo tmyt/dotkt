@@ -12,7 +12,7 @@ class CrossModuleMapSnapshotPolicyTests {
         check(importedSnapshotText(keys) == "[a]" && (keys as Any).toString() == "[a]")
         check(keys == setOf("a") && keys.hashCode() == setOf("a").hashCode())
         check(!keys.equals(setOf(1)) && !keys.equals(setOf<String?>(null)))
-        val entries = localReadonlySnapshotEntries(map)
+        val entries = importedSnapshotEntries(map)
         check(!entries.equals(setOf("unrelated")))
         check(importedSnapshotText(entries) == "[a=1]" && entries == mapOf("a" to 1).entries)
         map["a"] = 2

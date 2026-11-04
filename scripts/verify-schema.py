@@ -491,6 +491,18 @@ class V:
         for r in req:
             if r not in o:
                 self.err(f, path, f"type {t!r} missing required field {r!r}")
+        if "classifier" in o:
+            classifier = o["classifier"]
+            if (t != "fqn" or not isinstance(classifier, dict)
+                    or set(classifier) != {"packageName", "ownerPath", "name"}
+                    or not isinstance(classifier.get("packageName"), str)
+                    or not isinstance(classifier.get("ownerPath"), list)
+                    or not classifier["ownerPath"]
+                    or not all(isinstance(part, str) and part for part in classifier["ownerPath"])
+                    or not isinstance(classifier.get("name"), str) or not classifier["name"]):
+                self.err(f, path, "fqn.classifier must state a Kotlin package, enclosing classes and class name")
+            if declaration_signature or in_member_ref(path):
+                self.err(f, path, "fqn.classifier has no place in a physical member signature")
         if t == "tv":
             if o.get("scope") not in ("type", "method"):
                 self.err(f, path, f"tv.scope={o.get('scope')!r} not in ['type','method']")
@@ -1321,6 +1333,8 @@ class V:
             clr_owner = o.get("k") in CLR_OWNER_KINDS
             for key, val in o.items():
                 p = path + "/" + key
+                if key == "classifier" and o.get("t") == "fqn":
+                    continue  # type_node validated the complete Kotlin ClassId object
                 if key == "typeAliases":
                     if path != "" or not f.endswith(".bir.json"):
                         self.err(f, p, "typeAliases are a BIR root declaration fact and must be consumed before CIR")
