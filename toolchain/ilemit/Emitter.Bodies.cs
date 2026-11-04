@@ -9,12 +9,24 @@ using System.Text.Json;
 // Method/ctor body emission: control-flow prescan, arg/return coercion, array elem access, addr-of.
 sealed partial class Emitter
 {
+    // A concrete MethodDef in a reference assembly has a throwing stub, including constructors.
+    // Abstract, runtime-implemented and P/Invoke declarations never enter body emission.
+    bool EmitReferenceStub(ILGenerator il)
+    {
+        if (_referenceAssemblyPath == null) return false;
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Throw);
+        return true;
+    }
+
     void EmitCtorBody(TypeInfo ti, ConstructorBuilder cb, JsonElement c)
     {
         _ctxType = ti.TB?.Name; _ctxMethod = ".ctor"; _ctxNode = null; _ctxPos = PosOf(c);   // #84 breadcrumb + #112 P2 source pos
+        var il = cb.GetILGenerator();
+        if (EmitReferenceStub(il)) return;
         _methodRetType = Bcl("System.Void");
         _curTypeParams = EffectiveTps(ti); _curMethodParams = null;
-        BeginMethod(cb.GetILGenerator(), c, isStatic: false);
+        BeginMethod(il, c, isStatic: false);
         // Exactly the trees this method EMITS: `preStmts` runs before the delegation and may carry CFG labels of its
         // own (a `cond`/`try` inside a bound value), and the delegation args are emitted here too. Scanning the whole
         // declaration would also define labels for subtrees that are never emitted (`params[].default`, `attrs`), and
@@ -124,10 +136,12 @@ sealed partial class Emitter
                     + $"abstract but its CIR def {(hasBody ? "carries a body" : "lacks the abstract flag")}; skipping body emission because of an upstream bir2cir/kotc defect.");
             return;
         }
+        var il = mb.GetILGenerator();
+        if (EmitReferenceStub(il)) return;
         _methodRetType = mb.ReturnType;
         _curTypeParams = EffectiveTps(ti);
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
-        BeginMethod(mb.GetILGenerator(), m, isStatic: mb.IsStatic);
+        BeginMethod(il, m, isStatic: mb.IsStatic);
         PrescanCfgLabels(m.GetProperty("body"));
         foreach (var s in m.GetProperty("body").EnumerateArray()) EmitStmt(s);
         // CIR may prove that a body terminates without fall-through (for example, an exact metadata throw stub).

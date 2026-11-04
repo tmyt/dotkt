@@ -25,7 +25,7 @@ static class IlEmit
             Console.Error.WriteLine($"ilemit: {ex.Message}");
             return 1;
         }
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] <file.cir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] [--reference-assembly <dll>] <file.cir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);
@@ -51,6 +51,7 @@ static class IlEmit
         string targetPlatform = null;
         string supportedOsPlatform = null;
         string assemblyOptionsPath = null;
+        string referenceAssemblyPath = null;
         bool? jitDebugging = null;
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
@@ -73,6 +74,8 @@ static class IlEmit
             else if (rest[i] == "--supported-os-platform") { Console.Error.WriteLine("ilemit: --supported-os-platform requires a platform name"); return 1; }
             else if (rest[i] == "--assembly-options" && i + 1 < rest.Count) assemblyOptionsPath = rest[++i];
             else if (rest[i] == "--assembly-options") { Console.Error.WriteLine("ilemit: --assembly-options requires a JSON file path"); return 1; }
+            else if (rest[i] == "--reference-assembly" && i + 1 < rest.Count) referenceAssemblyPath = rest[++i];
+            else if (rest[i] == "--reference-assembly") { Console.Error.WriteLine("ilemit: --reference-assembly requires a DLL path"); return 1; }
             else if (rest[i] == "--jit-debugging")
             {
                 if (i + 1 >= rest.Count || !bool.TryParse(rest[++i], out var enabled))
@@ -98,13 +101,26 @@ static class IlEmit
         // full stack for debugging (rethrow), matching the existing crash-localizer flag (Emitter.Trace).
         try
         {
+            if (referenceAssemblyPath != null)
+            {
+                referenceAssemblyPath = Path.GetFullPath(referenceAssemblyPath);
+                if (string.Equals(referenceAssemblyPath, Path.GetFullPath(Path.Combine(outDir, asmName + ".dll")),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                    throw new InvalidOperationException("Reference assembly must have a distinct output path.");
+            }
             using var target = new TargetReferenceUniverse(compileRefs, runtimeRefs, targetRid, ridGraphPath);
             var files = bir.Select(LoadInputDocument).ToList();
             var assemblyOptions = assemblyOptionsPath == null ? null : SdkAssemblyOptions.Read(assemblyOptionsPath);
             var versions = assemblyOptions?.Versions();
             var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions);
+            var declarations = MergeByFileClass(files);
             new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform, nativeResources, versions, jitDebugging)
-                .EmitAssembly(MergeByFileClass(files));
+                .EmitAssembly(declarations);
+            // Project references expose the same physical declarations and Kotlin metadata, not the
+            // stdlib binding assembly's alternate representation. Only the executable bodies differ.
+            if (referenceAssemblyPath != null)
+                new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
+                    versions: versions, referenceAssemblyPath: referenceAssemblyPath).EmitAssembly(declarations);
             return 0;
         }
         catch (Exception ex)
@@ -202,6 +218,7 @@ sealed partial class Emitter
     readonly ResourceSectionBuilder _nativeResources;
     readonly AssemblyVersions _versions;
     readonly bool? _jitDebugging;
+    readonly string _referenceAssemblyPath;
     // #335/#336: the exact compile-reference MetadataLoadContext is the sole source of external metadata identity.
     readonly TargetReferenceUniverse _target;
     Type Bcl(string fullName) => _target.ResolveType(fullName);
@@ -278,7 +295,7 @@ sealed partial class Emitter
     public Emitter(string outDir, string asmName, TargetReferenceUniverse target,
         BuildStdlibMode mode = BuildStdlibMode.App, string targetFrameworkMoniker = null,
         string targetPlatform = null, string supportedOsPlatform = null, ResourceSectionBuilder nativeResources = null,
-        AssemblyVersions versions = null, bool? jitDebugging = null)
+        AssemblyVersions versions = null, bool? jitDebugging = null, string referenceAssemblyPath = null)
     {
         _outDir = outDir; _asmName = asmName; _target = target;
         _targetFrameworkMoniker = string.IsNullOrWhiteSpace(targetFrameworkMoniker) ? null : targetFrameworkMoniker;
@@ -287,6 +304,7 @@ sealed partial class Emitter
         _nativeResources = nativeResources;
         _versions = versions;
         _jitDebugging = jitDebugging;
+        _referenceAssemblyPath = referenceAssemblyPath;
         _methodRetType = Bcl("System.Void");
         _stdlibAssembly = mode != BuildStdlibMode.App;       // both the metadata and runtime twins are stdlib artifacts
     }
