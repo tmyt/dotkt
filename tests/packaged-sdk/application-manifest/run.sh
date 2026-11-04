@@ -172,6 +172,12 @@ if build "$kt/App.ktproj" coff-resource "${defaults[@]}" "-p:Win32Resource=$mani
 fi
 grep -Fq 'Set Win32Resource to the original .res file.' "$ws/coff-resource.log"
 [[ "$before" == "$(state)" ]] || { echo 'invalid COFF input changed existing outputs' >&2; exit 1; }
+head -c -8 "$manifests/second.res" > "$manifests/truncated.res"
+if build "$kt/App.ktproj" truncated-resource "${defaults[@]}" "-p:Win32Resource=$manifests/truncated.res"; then
+  echo 'truncated RES unexpectedly accepted' >&2; exit 1
+fi
+grep -Fq 'Cannot read Win32 RES' "$ws/truncated-resource.log"
+[[ "$before" == "$(state)" ]] || { echo 'truncated RES changed existing outputs' >&2; exit 1; }
 pair switched-resource "-p:Win32Resource=$manifests/second.res"
 inspect --resources "$cs/$out/App.exe" "$kt/$out/App.exe"
 inspect --write-res-reversed-languages "$manifests/second.res" changed-payload

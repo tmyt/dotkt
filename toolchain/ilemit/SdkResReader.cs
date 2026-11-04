@@ -16,6 +16,8 @@ static class SdkResReader
             var root = new ResourceDirectory(0u);
             using var completeReads = new CompleteReadStream(input);
             var records = (IEnumerable)api.Read.Invoke(null, [completeReads]);
+            // Roslyn rounds the final record position up to a DWORD boundary. A larger
+            // overrun means it accepted a skip past the end of the input, not padding.
             if (input.Position > input.Length && input.Position - input.Length > 3)
                 throw new EndOfStreamException();
             foreach (var record in records)
