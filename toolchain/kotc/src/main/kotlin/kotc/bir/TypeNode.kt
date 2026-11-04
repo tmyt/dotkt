@@ -12,7 +12,9 @@ package kotc.bir
  */
 sealed class TypeNode {
     /** `fqn`: a named type — a PURE Kotlin/CLR FQN identity; [args] = generic application. */
-    data class Fqn(val name: String, val args: List<TypeNode>? = null) : TypeNode()
+    data class Fqn(val name: String, val args: List<TypeNode>? = null, val classifier: SourceClassifier? = null) : TypeNode()
+
+    data class SourceClassifier(val packageName: String, val ownerPath: List<String>, val name: String)
 
     /**
      * `tv`: a type variable. [scope] ∈ {"type","method"} selects the CLR generic-parameter space
@@ -77,6 +79,15 @@ sealed class TypeNode {
                 if (args != null) {
                     sb.append(",\"args\":")
                     writeArray(sb, args)
+                }
+                classifier?.let { source ->
+                    sb.append(",\"classifier\":{\"packageName\":").append(esc(source.packageName))
+                    sb.append(",\"ownerPath\":[")
+                    source.ownerPath.forEachIndexed { index, owner ->
+                        if (index != 0) sb.append(',')
+                        sb.append(esc(owner))
+                    }
+                    sb.append("],\"name\":").append(esc(source.name)).append('}')
                 }
                 sb.append('}')
             }

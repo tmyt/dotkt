@@ -42,7 +42,12 @@ for path in sys.argv[1:]:
                      if node.get("k") == "field" and node.get("name") == field]
         assert len(reads) == 1, (path, method_name, reads)
         actual = reads[0]["type" if semantic else "ownerType"]
-        assert actual == {"t": "fqn", "name": owner}, (path, method_name, actual)
+        expected_type = {"t": "fqn", "name": owner}
+        if semantic and owner == "privateenumprobe.NestedEnumOwner.State":
+            expected_type["classifier"] = {
+                "packageName": "privateenumprobe", "ownerPath": ["NestedEnumOwner"], "name": "State",
+            }
+        assert actual == expected_type, (path, method_name, actual)
         if semantic:
             assert not any(node.get("k") == "field" for node in objects(methods[0]["body"])), (path, method_name)
     comparison = [node for node in objects(root) if node.get("name") == "publicCompare" and "body" in node]

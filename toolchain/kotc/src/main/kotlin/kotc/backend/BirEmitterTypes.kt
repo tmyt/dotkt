@@ -239,16 +239,17 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 			if (simple.hasRawType()) TypeNode.Star
 			else birTypeProjection(arg)
 		}
+		val classifier = klass?.let { nestedSourceClassifier(it) }
 		return when {
-			!args.isNullOrEmpty() -> TypeNode.Fqn(netName, args)
+			!args.isNullOrEmpty() -> TypeNode.Fqn(netName, args, classifier)
 			// A generic external classifier referenced raw still needs its semantic arity. This is Kotlin's
 			// existential `G<*>`, not a reified `G<Any>`; bir2cir chooses the CLR representation.
-			!clrTypeParams.isNullOrEmpty() -> TypeNode.Fqn(netName, clrTypeParams.map { TypeNode.Star })
-			else -> TypeNode.Fqn(netName)
+			!clrTypeParams.isNullOrEmpty() -> TypeNode.Fqn(netName, clrTypeParams.map { TypeNode.Star }, classifier)
+			else -> TypeNode.Fqn(netName, classifier = classifier)
 		}
 	}
 	// Enums -> the real .NET enum type reference (package-qualified, like other user types).
-	if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return TypeNode.Fqn(typeName(klass))
+	if (klass != null && klass.kind == ClassKind.ENUM_CLASS) return sourceClassifierType(klass)
 	// Entry-specific bodies have their own already-projected Kotlin classifier. Preserve it in value slots
 	// as well as member owners; capturing the entry's `this` must not erase its type to Any.
 	if (klass?.kind == ClassKind.ENUM_ENTRY) anonNames[klass]?.let { return TypeNode.Fqn(it) }
@@ -281,14 +282,27 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 				// captured declaration segment emitted by typeDef. Use that declaration's recorded correspondence.
 				val semanticArity = klass.typeParameters.size + if (klass.isInner) enclArgs.size else 0
 				val all = if (liftedCaps.isEmpty()) args else args.take(semanticArity) + liftedCaps
-				return TypeNode.Fqn(typeName(klass), all)
+				return sourceClassifierType(klass, all)
 			}
 		}
 		val head = enclArgs + liftedCaps
-		if (head.isNotEmpty()) return TypeNode.Fqn(typeName(klass), head)
-		return TypeNode.Fqn(typeName(klass))
+		return sourceClassifierType(klass, head.takeIf { it.isNotEmpty() })
 	}
 	return OBJ
+}
+
+private fun BirEmitter.sourceClassifierType(klass: IrClass, args: List<TypeNode>? = null): TypeNode.Fqn {
+	val name = typeName(klass)
+	return TypeNode.Fqn(name, args, nestedSourceClassifier(klass, name))
+}
+
+private fun nestedSourceClassifier(klass: IrClass, sourceBindingName: String? = null): TypeNode.SourceClassifier? {
+	// The IR ClassId owns the package/class boundary. Keep it separate from the spelling
+	// used by the backend to bind the class; synthetic owners do not denote this ClassId.
+	val id = klass.classId?.takeIf { !it.isLocal && it.isNestedClass &&
+		(sourceBindingName == null || it.asSingleFqName().asString() == sourceBindingName) } ?: return null
+	val path = id.relativeClassName.pathSegments().map { it.asString() }
+	return TypeNode.SourceClassifier(id.packageFqName.asString(), path.dropLast(1), path.last())
 }
 
 /** birType of a type-argument at index [i], or null if absent/non-projection. */

@@ -176,14 +176,16 @@ sealed class NullableRepresentationTypes
         _types.TryGetValue(source.Name, out var frame);
         TypeNode MapArgument(TypeNode type, NullableRepresentationFrame.Role role) =>
             ArgumentForRole(type, _policy?.ApplicationRole(source.Name, role) ?? role);
-        var mapped = new TypeNode.Fqn(source.Name, arguments == null ? null
-            : frame != null
-                ? frame.Close(arguments,
-                    type => MapArgument(type, NullableRepresentationFrame.Role.Ordinary),
-                    type => MapArgument(type, NullableRepresentationFrame.Role.Nullable),
-                    type => MapArgument(type, NullableRepresentationFrame.Role.Storage),
-                    type => MapArgument(type, NullableRepresentationFrame.Role.NullableStorage))
-                : arguments.Select(type => MapArgument(type, NullableRepresentationFrame.Role.Ordinary)).ToArray());
+        var mapped = source with {
+            Args = arguments == null ? null
+                : frame != null
+                    ? frame.Close(arguments,
+                        type => MapArgument(type, NullableRepresentationFrame.Role.Ordinary),
+                        type => MapArgument(type, NullableRepresentationFrame.Role.Nullable),
+                        type => MapArgument(type, NullableRepresentationFrame.Role.Storage),
+                        type => MapArgument(type, NullableRepresentationFrame.Role.NullableStorage))
+                    : arguments.Select(type => MapArgument(type, NullableRepresentationFrame.Role.Ordinary)).ToArray(),
+        };
         if (position != NullableGenericErasure.Pos.Argument) return mapped;
         // The declaring binding supplies its concrete head projection. A frame can map open variables on its
         // own, but cannot derive storage heads from the spelling/layout of an already-lowered ordinary type.
@@ -212,6 +214,10 @@ sealed class NullableRepresentationTypes
         var integer = new TypeNode.Fqn("kotlin.Int");
         var obj = new TypeNode.Fqn("object");
         TypeNode Box(TypeNode type) => new TypeNode.Fqn("Box", new[] { type });
+        var classifier = new TypeNode.SourceClassifier("sample", new[] { "Owner" }, "Box");
+        var named = new TypeNode.Fqn("sample.Owner.Box", new[] { text }) { Classifier = classifier };
+        if (((TypeNode.Fqn)mapping.Argument(named)).Classifier != classifier)
+            throw new InvalidOperationException("Nullable representation type self-test: source classifier");
         Equal(mapping.Slot(Box(new TypeNode.Nullable(tv))), Box(tn), "owner nullable argument");
         Equal(mapping.Slot(Box(new TypeNode.Nullable(mv))), Box(mn), "method nullable argument");
         Equal(mapping.Slot(Box(new TypeNode.Nullable(text))), Box(new TypeNode.Nullable(text)), "native reference argument");

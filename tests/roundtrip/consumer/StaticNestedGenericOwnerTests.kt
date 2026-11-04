@@ -31,6 +31,9 @@ class StaticNestedGenericOwnerTests {
         ClassicAssert.IsTrue(roundtrip.staticnested.echoStaticEntry(entry) === entry)
         val relayed: StaticNestedOwner.Closed = mpp.app.staticNestedField
         ClassicAssert.AreEqual(42, relayed.marker())
+        val tokens = listOf(StaticNestedOwner.Token<String>())
+        val relayedTokens: List<StaticNestedOwner.Token<String>> = mpp.app.relayStaticTokens(tokens)
+        check(relayedTokens === tokens)
         ClassicAssert.AreEqual(49, DerivedFailed().marker())
     }
 }

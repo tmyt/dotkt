@@ -99,7 +99,7 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 
 | `t` | fields | Kotlin meaning | replaces (old string token) |
 |-----|--------|----------------|-----------------------------|
-| `fqn` | `name:string`, `args?:[T…]` | a named type `kotlin.collections.List<…>` — a PURE Kotlin/CLR FQN identity, generic args optional | plain FQN, `clr:`, `clrg:Name[..]`, `@Name`/`@Name[..]`, primitive shorthand (`int`/`string`/`void`/`object`/…) |
+| `fqn` | `name:string`, `args?:[T…]`, `classifier?:{packageName,ownerPath,name}` | a named type, optionally carrying the Kotlin source classifier path | plain FQN, `clr:`, `clrg:Name[..]`, `@Name`/`@Name[..]`, primitive shorthand (`int`/`string`/`void`/`object`/…) |
 | `tv` | `scope:"type"\|"method"`, `i:int` | a type variable — `scope` is the CLR generic-param SPACE, `i` the owner-local positional index | `gp:X` (name-keyed, space-blind) |
 | `star` | — | a Kotlin `*` projection; preserved in BIR so bir2cir can choose a provenance-backed CLR existential representation | no CIR form |
 | `projection` | `variance:"in"\|"out"`, `of:T` | a Kotlin use-site `in T` / `out T` projection; preserved in BIR so bir2cir can choose a CLR-safe representation | no CIR form |
@@ -112,6 +112,10 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `mod` | `req:bool`, `m:T`, `of:T` | **CIR-only**: an ECMA custom modifier (II.7.1.1) at its signature position — `req` selects modreq from modopt | no Kotlin form |
 
 Notes:
+- **Nested Kotlin classifier identity.** The BIR `fqn.classifier` is the exact Kotlin package name, ordered enclosing
+  class names, and simple class name from the frontend's ClassId. Kotlin type carriers preserve it even when CLR
+  representation changes or erases the type. It is not a physical type or member signature and does not change
+  the lowering lookup key `fqn.name`. dll2klib uses the classifier's stated package/class boundary directly.
 - **The three CIR-only ECMA signature carriers** (`ptr`, `mod`, `array.rank`) allow CIR to spell physical shapes
   that kotc does not own. A §2.2.2 `memberRef` must describe any signature the *target metadata* can declare;
   `ptr` additionally represents ordinary values whose BIR type is the semantic `kotlin.clr.ClrPointer<T>` carrier.
