@@ -30,6 +30,7 @@ import org.jetbrains.kotlin.serialization.deserialization.descriptors.Deserializ
 import org.jetbrains.kotlin.types.ConstantValueKind
 
 private const val UTF16_CONSTANTS = "dotkt_utf16_constants"
+private const val UTF16_PACKAGE_CONSTANTS = "dotkt_utf16_package_constants"
 
 internal fun prepareClrKlibConstants(libraries: List<KotlinLibrary>, moduleDataProvider: ModuleDataProvider) {
 	val encodedLibraries = libraries.filter { it.manifestProperties.containsKey(UTF16_CONSTANTS) }
@@ -43,6 +44,8 @@ internal fun prepareClrKlibConstants(libraries: List<KotlinLibrary>, moduleDataP
 	val protocol = KlibMetadataSerializerProtocol
 	for (library in encodedLibraries) {
 		requireUtf16Version(library)
+		val packageVersion = library.manifestProperties.getProperty(UTF16_PACKAGE_CONSTANTS) ?: continue
+		require(packageVersion == "1") { "Unknown DotKt KLIB UTF-16 package constant version: $packageVersion" }
 		val metadata = library.metadata
 		for (packageName in parseModuleHeader(metadata.moduleHeaderData).packageFragmentNameList) {
 			val packageFqName = FqName(packageName)
@@ -57,7 +60,8 @@ internal fun prepareClrKlibConstants(libraries: List<KotlinLibrary>, moduleDataP
 					val literal = decodeUtf16Constant(property, id, names, encoded)
 					val declarations = librarySessions.flatMap { it.symbolProvider.getTopLevelPropertySymbols(packageFqName, name) }
 						.distinct().map { it.fir }.filter {
-							(it.containerSource as? KlibDeserializedContainerSource)?.klib == library
+							it.status.isConst && it.receiverParameter == null && it.contextParameters.isEmpty() &&
+								(it.containerSource as? KlibDeserializedContainerSource)?.klib == library
 						}
 					require(declarations.size == 1) { "UTF-16 constant $id selects ${declarations.size} declarations in its KLIB" }
 					declarations.single().replaceInitializer(literal)

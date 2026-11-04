@@ -2,6 +2,7 @@ package roundtrip.utf16literals
 
 const val HIGH_CHAR: Char = '\ud800'
 const val LOW_TEXT: String = "\udfff"
+val String.LOW_TEXT: Int get() = length
 
 class Utf16ConstantOwner {
     companion object {

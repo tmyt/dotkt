@@ -16,6 +16,7 @@ class Utf16LiteralTests {
     fun dllLiteralBodiesAndDefaultsPreserveCodeUnits() {
         assertEquals(0xd800, HIGH_CHAR.code)
         assertImportedUnits(LOW_TEXT, 0xdfff)
+        assertEquals(3, "abc".LOW_TEXT)
         assertImportedUnits(Utf16ConstantOwner.TEXT, 0xd800, 0, 0xdfff, 0xd83d, 0xde00)
         assertImportedUnits(IMPORTED_TEXT, 0xdfff, 0xd800, 0, 0xdfff, 0xd83d, 0xde00)
         assertImportedUnits(readConstantText(), 0xdfff)
