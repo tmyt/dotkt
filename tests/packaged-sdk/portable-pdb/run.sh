@@ -41,7 +41,7 @@ obj="$app/obj/Debug/net10.0"; bin="$app/bin/Debug/net10.0"
 impl="$bin/Probe.dll"; pdb="$bin/Probe.pdb"
 verify_symbols() {
     cmp "$pdb" "$obj/Probe.pdb"
-    inspect "$impl" "$pdb" "$app/Sample.kt" "$app/Inline.kt"
+    inspect "$impl" "$pdb" "$app/Sample.kt" "$app/Inline.kt" "$app/SourceCases.kt"
     inspect "$obj/ref/Probe.dll"
     [[ "$(dotnet "$impl")" == 42 ]]
 }

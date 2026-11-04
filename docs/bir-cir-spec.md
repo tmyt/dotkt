@@ -234,8 +234,9 @@ Notes:
 line and column, and one-based exclusive end. An absent span marks generated
 instructions as hidden. Lowerings transport the marker with its statements,
 including when splicing code from a different document. It has no stack, type,
-or control-flow effects. ilemit maps it to the current IL offset when emitting
-Portable PDB symbols; it never reconstructs source locations.
+or control-flow effects. When emitting Portable PDB symbols, ilemit maps it to
+the current IL offset, using a no-op anchor if two distinct authored points
+would otherwise share that offset. It never reconstructs source locations.
 
 ### Literal code units
 

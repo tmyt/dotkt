@@ -148,7 +148,9 @@ internal fun BirEmitter.staticPropertyFields(klass: IrClass): List<String> =
 			activeSemanticOwner = semanticOwnerName(p)
 			activeSemanticOwnerDeclaration = p
 			val init = try {
-				(bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
+				(bf.initializer as? IrExpressionBody)?.expression?.let {
+					if (p.isConst) expr(it) else sourceMarkedValue(it)
+				} ?: "null"
 			} finally {
 				activeSemanticOwner = savedSemanticOwner
 				activeSemanticOwnerDeclaration = savedSemanticDeclaration
@@ -1029,6 +1031,7 @@ internal fun BirEmitter.instanceInitializerStatements(klass: IrClass): List<Stri
 			is IrProperty -> if (clrEventDelegateCall(d) == null && !hasStaticPropertyStorage(klass, d)) {
 				d.backingField?.let { field -> field.initializer?.let { initializer ->
 					val expression = (initializer as IrExpressionBody).expression
+					sourcePointJson(expression)?.let(statements::add)
 					statements.add(withClonedLocalFunctionIds(expression) {
 						"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(field.name.asString())},"value":${expr(expression)}}"""
 					})
@@ -1036,6 +1039,7 @@ internal fun BirEmitter.instanceInitializerStatements(klass: IrClass): List<Stri
 			}
 			is IrField -> if (d.correspondingPropertySymbol == null && !d.isStatic) d.initializer?.let { initializer ->
 				val expression = (initializer as IrExpressionBody).expression
+				sourcePointJson(expression)?.let(statements::add)
 				statements.add(withClonedLocalFunctionIds(expression) {
 					"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(d.name.asString())},"value":${expr(expression)}}"""
 				})

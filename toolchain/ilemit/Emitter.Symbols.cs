@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
@@ -37,11 +38,18 @@ sealed partial class Emitter
             _sourcePoints.Add(_sourceMethod, points = []);
         if (points.Count > 0 && points[^1].Offset == point.Offset)
         {
-            // A no-op marker does not occupy an IL range. A visible point wins over a hidden point;
-            // when two visible boundaries coincide, use the most recent (innermost) one.
-            if (!point.Hidden || points[^1].Hidden) points[^1] = point;
+            if (point == points[^1] || point.Hidden) return;
+            if (points[^1].Hidden)
+            {
+                points[^1] = point;
+                return;
+            }
+            // Two different authored boundaries can coincide (e.g. an invocation followed immediately
+            // by its inlined body). Give the earlier one a real breakpoint target without changing the stack.
+            _il.Emit(OpCodes.Nop);
+            point = point with { Offset = _il.ILOffset };
         }
-        else points.Add(point);
+        points.Add(point);
     }
 
     void WritePortablePdb(BlobBuilder pe, ImmutableArray<int> rows, MethodDefinitionHandle entryPoint, BlobContentId id)

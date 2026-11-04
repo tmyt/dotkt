@@ -1050,7 +1050,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// CLR Literal field and dll2klib can project the public declaration for another Kotlin module.
 		val statFields = topProps.mapNotNull { p ->
 			val bf = p.backingField ?: return@mapNotNull null
-			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
+			val init = (bf.initializer as? IrExpressionBody)?.expression?.let {
+				if (p.isConst) expr(it) else sourceMarkedValue(it)
+			} ?: "null"
 			val const = if (p.isConst) ""","const":true""" else ""
 			val companionProperty = if (companionReceiverJson(p) != null) {
 				val setterVisibility = p.setter?.let { visOf(it) } ?: visOf(p)

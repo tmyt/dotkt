@@ -114,7 +114,7 @@ debugger. Set `DebugType=none` to omit the PDB; `DebugType=portable` also works 
 
 Basic breakpoint binding and step-over were tested with NetCoreDbg 3.2.0-1092 on Linux and
 .NET 10.0.12. Optimized code may step differently. Inlined code retains its original document,
-but a debugger may not step across document changes inside one physical method. This does not
+but breakpoint binding and stepping around multi-document methods depend on the debugger. This does not
 provide Kotlin local-variable inspection or expression evaluation, coroutine logical stepping,
 SourceLink, or Edit and Continue.
 
