@@ -138,8 +138,10 @@ internal fun BirEmitter.cfgWhile(node: IrWhileLoop): String {
 	cfgLoopStack.removeAt(cfgLoopStack.size - 1)
 	val parts = ArrayList<String>()
 	parts.add("""{"k":"label","id":$start}""")
+	sourcePointJson(node.condition)?.let { parts.add(it) }
 	parts.add("""{"k":"brIf","id":$end,"on":false,"cond":${expr(node.condition)}}""")
 	body.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
+	parts.add(hiddenSourcePoint)
 	parts.add("""{"k":"goto","id":$start}""")
 	parts.add("""{"k":"label","id":$end}""")
 	return """{"k":"block","body":[${parts.joinToString(",")}]}"""
@@ -155,6 +157,7 @@ internal fun BirEmitter.cfgDoWhile(node: IrDoWhileLoop): String {
 	parts.add("""{"k":"label","id":$start}""")
 	body.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
 	parts.add("""{"k":"label","id":$cont}""")
+	sourcePointJson(node.condition)?.let { parts.add(it) }
 	parts.add("""{"k":"brIf","id":$start,"on":true,"cond":${expr(node.condition)}}""")
 	parts.add("""{"k":"label","id":$end}""")
 	return """{"k":"block","body":[${parts.joinToString(",")}]}"""
@@ -309,8 +312,10 @@ internal fun BirEmitter.cfgWhen(node: IrWhen): String {
 			stmt(br.result).takeIf { it.isNotEmpty() }?.let { parts.add(it) }
 		} else {
 			val next = cfgFresh()
+			sourcePointJson(br.condition)?.let { parts.add(it) }
 			parts.add("""{"k":"brIf","id":$next,"on":false,"cond":${expr(br.condition)}}""")
 			stmt(br.result).takeIf { it.isNotEmpty() }?.let { parts.add(it) }
+			parts.add(hiddenSourcePoint)
 			parts.add("""{"k":"goto","id":$end}""")
 			parts.add("""{"k":"label","id":$next}""")
 		}

@@ -4,6 +4,8 @@ import kotc.bir.TypeNode
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
+import org.jetbrains.kotlin.ir.declarations.IrDeclaration
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
 import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
@@ -30,6 +32,7 @@ import org.jetbrains.kotlin.ir.expressions.IrGetField
 import org.jetbrains.kotlin.ir.expressions.IrGetObjectValue
 import org.jetbrains.kotlin.ir.expressions.IrGetValue
 import org.jetbrains.kotlin.ir.expressions.IrInstanceInitializerCall
+import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.expressions.IrReturn
 import org.jetbrains.kotlin.ir.expressions.IrReturnableBlock
 import org.jetbrains.kotlin.ir.expressions.IrSetField
@@ -76,8 +79,25 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
+internal const val hiddenSourcePoint = """{"k":"sourcePoint"}"""
+
 // BIR statement rendering: an IR statement element -> BIR JSON (extension on BirEmitter).
-internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = when (node) {
+internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String {
+	val rendered = stmtCore(node)
+	if (rendered.isEmpty()) return rendered
+	val boundary = when (node) {
+		// Branch/loop conditions are anchored after their labels by the CFG builders.
+		is IrWhen, is IrWhileLoop, is IrDoWhileLoop, is IrComposite, is IrDeclaration,
+		is IrInstanceInitializerCall -> false
+		is IrBlock -> node.origin == IrStatementOrigin.FOR_LOOP
+		is IrTypeOperatorCall -> node.operator != IrTypeOperator.IMPLICIT_COERCION_TO_UNIT
+		else -> true
+	}
+	val userVariable = node is IrVariable && node.origin == IrDeclarationOrigin.DEFINED
+	return if (boundary || userVariable) sourcePointJson(node)?.let { "$it,$rendered" } ?: rendered else rendered
+}
+
+private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String = when (node) {
 	// A `ClrRef<T>` delegate local (`var x by byref(m())`) -> a `ref T` local holding the live managed pointer
 	// (byrefOf keeps the ref-return's pointer instead of deref'ing it). getValue/setValue inline to ldobj/stobj.
 	is IrVariable -> if (birType(node.type) is TypeNode.ByRef) {

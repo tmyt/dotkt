@@ -26,7 +26,7 @@ sealed partial class Emitter
         if (EmitReferenceStub(il)) return;
         _methodRetType = Bcl("System.Void");
         _curTypeParams = EffectiveTps(ti); _curMethodParams = null;
-        BeginMethod(il, c, isStatic: false);
+        BeginMethod(cb, il, c, isStatic: false);
         // Exactly the trees this method EMITS: `preStmts` runs before the delegation and may carry CFG labels of its
         // own (a `cond`/`try` inside a bound value), and the delegation args are emitted here too. Scanning the whole
         // declaration would also define labels for subtrees that are never emitted (`params[].default`, `attrs`), and
@@ -141,7 +141,7 @@ sealed partial class Emitter
         _methodRetType = mb.ReturnType;
         _curTypeParams = EffectiveTps(ti);
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
-        BeginMethod(il, m, isStatic: mb.IsStatic);
+        BeginMethod(mb, il, m, isStatic: mb.IsStatic);
         PrescanCfgLabels(m.GetProperty("body"));
         foreach (var s in m.GetProperty("body").EnumerateArray()) EmitStmt(s);
         // CIR may prove that a body terminates without fall-through (for example, an exact metadata throw stub).
@@ -208,8 +208,9 @@ sealed partial class Emitter
         else _il.Emit(OpCodes.Ldc_I4, n);
     }
 
-    void BeginMethod(ILGenerator il, JsonElement m, bool isStatic)
+    void BeginMethod(MethodBase method, ILGenerator il, JsonElement m, bool isStatic)
     {
+        _sourceMethod = method;
         _il = il; _args.Clear(); _argTypes.Clear(); _locals.Clear();
         int i = isStatic ? 0 : 1; // arg0 = this for instance methods
         foreach (var p in m.GetProperty("params").EnumerateArray())

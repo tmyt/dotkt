@@ -1,6 +1,6 @@
 // ilemit — emit a runnable .NET assembly directly as CIL from Backend IR (BIR) JSON. No C#, no csc.
 //
-//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] [--reference-assembly <dll>] <file1.cir.json>...
+//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] [--reference-assembly <dll>] [--portable-pdb <pdb>] <file1.cir.json>...
 //
 // All BIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
 // D1.2 = M0 subset; D1.4 = user classes (fields, ctors, methods, inheritance, virtual/override).
@@ -25,7 +25,7 @@ static class IlEmit
             Console.Error.WriteLine($"ilemit: {ex.Message}");
             return 1;
         }
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] [--reference-assembly <dll>] <file.cir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] [--reference-assembly <dll>] [--portable-pdb <pdb>] <file.cir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);
@@ -52,6 +52,7 @@ static class IlEmit
         string supportedOsPlatform = null;
         string assemblyOptionsPath = null;
         string referenceAssemblyPath = null;
+        string portablePdbPath = null;
         bool? jitDebugging = null;
         var rest = args.Skip(2).ToList();
         for (int i = 0; i < rest.Count; i++)
@@ -76,6 +77,8 @@ static class IlEmit
             else if (rest[i] == "--assembly-options") { Console.Error.WriteLine("ilemit: --assembly-options requires a JSON file path"); return 1; }
             else if (rest[i] == "--reference-assembly" && i + 1 < rest.Count) referenceAssemblyPath = rest[++i];
             else if (rest[i] == "--reference-assembly") { Console.Error.WriteLine("ilemit: --reference-assembly requires a DLL path"); return 1; }
+            else if (rest[i] == "--portable-pdb" && i + 1 < rest.Count) portablePdbPath = rest[++i];
+            else if (rest[i] == "--portable-pdb") { Console.Error.WriteLine("ilemit: --portable-pdb requires a PDB path"); return 1; }
             else if (rest[i] == "--jit-debugging")
             {
                 if (i + 1 >= rest.Count || !bool.TryParse(rest[++i], out var enabled))
@@ -101,12 +104,20 @@ static class IlEmit
         // full stack for debugging (rethrow), matching the existing crash-localizer flag (Emitter.Trace).
         try
         {
+            var implementationPath = Path.GetFullPath(Path.Combine(outDir, asmName + ".dll"));
+            var pathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             if (referenceAssemblyPath != null)
             {
                 referenceAssemblyPath = Path.GetFullPath(referenceAssemblyPath);
-                if (string.Equals(referenceAssemblyPath, Path.GetFullPath(Path.Combine(outDir, asmName + ".dll")),
-                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                if (string.Equals(referenceAssemblyPath, implementationPath, pathComparison))
                     throw new InvalidOperationException("Reference assembly must have a distinct output path.");
+            }
+            if (portablePdbPath != null)
+            {
+                portablePdbPath = Path.GetFullPath(portablePdbPath);
+                if (string.Equals(portablePdbPath, implementationPath, pathComparison) ||
+                    string.Equals(portablePdbPath, referenceAssemblyPath, pathComparison))
+                    throw new InvalidOperationException("Portable PDB must have a distinct output path.");
             }
             using var target = new TargetReferenceUniverse(compileRefs, runtimeRefs, targetRid, ridGraphPath);
             var files = bir.Select(LoadInputDocument).ToList();
@@ -114,7 +125,8 @@ static class IlEmit
             var versions = assemblyOptions?.Versions();
             var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions);
             var declarations = MergeByFileClass(files);
-            new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform, nativeResources, versions, jitDebugging)
+            new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
+                nativeResources, versions, jitDebugging, portablePdbPath: portablePdbPath)
                 .EmitAssembly(declarations);
             // Use the same CLR declarations and Kotlin metadata, not the stdlib binding representation.
             // The reference image stubs executable bodies, adds the reference marker and omits runtime-only data.
@@ -295,7 +307,8 @@ sealed partial class Emitter
     public Emitter(string outDir, string asmName, TargetReferenceUniverse target,
         BuildStdlibMode mode = BuildStdlibMode.App, string targetFrameworkMoniker = null,
         string targetPlatform = null, string supportedOsPlatform = null, ResourceSectionBuilder nativeResources = null,
-        AssemblyVersions versions = null, bool? jitDebugging = null, string referenceAssemblyPath = null)
+        AssemblyVersions versions = null, bool? jitDebugging = null, string referenceAssemblyPath = null,
+        string portablePdbPath = null)
     {
         _outDir = outDir; _asmName = asmName; _target = target;
         _targetFrameworkMoniker = string.IsNullOrWhiteSpace(targetFrameworkMoniker) ? null : targetFrameworkMoniker;
@@ -305,6 +318,7 @@ sealed partial class Emitter
         _versions = versions;
         _jitDebugging = jitDebugging;
         _referenceAssemblyPath = referenceAssemblyPath;
+        _portablePdbPath = portablePdbPath;
         _methodRetType = Bcl("System.Void");
         _stdlibAssembly = mode != BuildStdlibMode.App;       // both the metadata and runtime twins are stdlib artifacts
     }

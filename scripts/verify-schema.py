@@ -223,8 +223,7 @@ STR_OK = {
     "module", "entryPoint", "charSet",          # CIR pinvoke: native module/symbol names and normalized charset
                                                 # enum. The complete descriptor is schema-validated; these are not Types.
     "fileClass", "fileClassFQN", "pkg",         # file-class / package identifiers
-    "f",                                        # #112 P2: the decl-level source-position FILE path (pos.{f,l,c});
-                                                # `l`/`c` are ints. A diagnostics-only breadcrumb, NOT a type slot.
+    "f",                                        # Source document path for declaration diagnostics and source-point spans.
     "var",                                      # loop-variable name (for*)
     "firstM", "lastM", "stepM",                 # forRange progression-accessor method-name island (§2.2.1); the paired
                                                 # `accessOwner` is now a structured `{t:fqn}` node (#48 S4), not a string
@@ -335,7 +334,7 @@ KINDS = {
     # of one. bir2cir's CallEvalLowering lowers both (to `var`+`valueBlock`, or to a ctor's `preStmts`) before CIR.
     "callEval", "bindRef",
     "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
-    "localFun", "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
+    "localFun", "block", "valueBlock", "sourcePoint", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
     "if", "cond2", "while", "label", "goto", "brIf", "break", "continue",
     "for", "forRange", "forArray", "forEachInline", "forIn", "repeatInline", "callInline", "inlineLambda", "try",
     # field-write family — the setField/setFieldExpr/staticFieldSet merge (§2.5) is "[finalize in impl]", so all

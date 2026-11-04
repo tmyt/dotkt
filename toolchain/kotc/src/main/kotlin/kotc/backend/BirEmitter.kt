@@ -290,6 +290,19 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			else ""","pos":{"f":${str(loc.path)}}"""
 	}
 
+	// Statement provenance is independent of declaration diagnostics and survives moving the BIR body.
+	internal fun sourcePointJson(node: IrElement): String? {
+		val source = fileEntry?.takeIf { it.supportsDebugInfo } ?: return null
+		val start = node.startOffset
+		val end = node.endOffset
+		if (start < 0 || end <= start || end > source.maxOffset) return null
+		val a = source.getLineAndColumnNumbers(start)
+		val b = source.getLineAndColumnNumbers(end)
+		if (a.line < 0 || a.column < 0 || b.line < a.line || b.column < 0 ||
+			(b.line == a.line && b.column <= a.column)) return null
+		return """{"k":"sourcePoint","span":{"f":${str(source.name)},"l":${a.line + 1},"c":${a.column + 1},"el":${b.line + 1},"ec":${b.column + 1}}}"""
+	}
+
 	/**
 	 * Report an unsupported Kotlin construct as a clear, source-located compile error and return a placeholder
 	 * BIR node. The build fails (hadError), so this placeholder never reaches ilemit. `what` names the construct;
