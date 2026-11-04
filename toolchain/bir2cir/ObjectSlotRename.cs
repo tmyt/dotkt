@@ -51,10 +51,10 @@ static class ObjectSlotRename
                 // representation). Its source MethodDef identity is consumed here.
                 obj.Remove(DeclarationIdentityBinding.Key);
                 // Equality and hashing keep their semantic facts until KotlinEqualityLowering consumes them.
-                // Native-array calls also need this fact at the helper-allocation boundary:
-                // Object slots use native storage, not a hoisted value-class body. MemberCallSubstitution
-                // consumes it when producing objMethod; reference-build bodies are squashed instead.
+                // Enum and native-array calls retain the fact until their dispatch binders produce objMethod
+                // rather than selecting a hoisted helper. Reference-build bodies are squashed.
                 if (obj["method"]?.GetValue<string>() is not ("Equals" or "GetHashCode")
+                    && !EnumMemberBinding.IsVirtualEnumToString(obj)
                     && ((obj["k"] as JsonValue)?.GetValue<string>() != "callInstance"
                     || !AliasHelperHoist.UsesNativeArrayObjectSlot(TypeJson.OwnerName(obj["ownerType"]), true)))
                     obj.Remove("anySlot");

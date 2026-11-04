@@ -670,9 +670,8 @@ sealed class Pipeline
             // type operand (every CLR reference is nullable, so the lowered type cannot carry the signal), and AFTER
             // InlineSplice so a spliced inline body's own is-tests are marked too.
             NullableIsInstMatch.Apply(bir.Root);
-            // GENERIC-ENUM member binding (C2): `e.name` on a `T : Enum<T>` receiver -> `System.Enum.ToString()`
-            // (kotc lowers a CONCRETE enum receiver directly, but a generic `gp:T` receiver falls through to a
-            // `callInstance kotlin.Enum.get_name` that TypeLoadExceptions — `kotlin.Enum` lives only in the stdlib).
+            // Bind Enum members before alias/helper substitution. In particular an Any.toString slot selected
+            // through Enum<T> must dispatch on the actual native or rich enum receiver.
             if (!_options.RefBuild) EnumMemberBinding.Apply(bir.Root, localBasicEnums);
             // INHERITED kotlin.Any universal-method rebind for REFERENCE types (#96): the reference-type sibling of
             // EnumMemberBinding. A `callInstance <UserType>.GetHashCode/ToString/Equals` on a class/interface that neither
