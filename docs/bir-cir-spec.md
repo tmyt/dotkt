@@ -421,6 +421,11 @@ MethodImpl rows when an inherited default must fill an ancestor slot despite an 
 This association survives body stripping; neither consumer derives it from an erased signature, capitalization,
 a method-name table, or a body.
 
+The generated existential slot also retains its own derived physical-only ID in
+`KotlinDeclarationIdentity` in both stdlib twins. After selecting the reference slot, bir2cir uses that ID
+to select the shipped MethodDef and writes its exact name and signature to the external CIR MemberRef.
+The physical-only ID does not introduce an additional Kotlin declaration.
+
 A CLR Property signature has no method-generic parameter owner, so a method-generic extension accessor cannot be
 attached to a valid Property row when its receiver or context mentions `!!T`. bir2cir omits that unrepresentable row.
 Such an accessor carries the exact source name, role, and opaque association in the trusted

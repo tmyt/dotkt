@@ -2208,9 +2208,10 @@ sealed partial class ReferenceMetadataIndex
     /// collapses, and a value type's nullability, which the surface cannot express at all because `kotlin.Float`
     /// is a class there and `Nullable&lt;class&gt;` is not a type. Each of those was found by a build failing on it.
     ///
-    /// So read the shipped declaration instead of reconstructing it. Authored declarations retain their trusted
-    /// IDs in both twins: exactly one runtime MethodDef must carry the selected ID, regardless of erased slots or
-    /// signature modifiers. A BCL declaration has no separate owner and remains its own physical form.
+    /// So read the shipped declaration instead of reconstructing it. Authored declarations and generated
+    /// existential slots retain their trusted IDs in both twins: exactly one runtime MethodDef must carry the
+    /// selected ID, regardless of its name or signature. A BCL declaration has no separate owner and remains its
+    /// own physical form.
     /// </remarks>
     readonly Dictionary<MemberInfo, MemberInfo> _shippedCache = new();
 

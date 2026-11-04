@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Resolve inherited Kotlin calls across DLLs to the exact CLR method, even when the reference and runtime stdlib name the generated slot differently.
 - Stop generating the unused full Kotlin IR debug dump on every compilation, avoiding its string allocation and file output.
 - Preserve exact UTF-16 code units, including unpaired surrogates, when transporting Kotlin Char and String literals through BIR/CIR and embedded inline/default expressions.
 - Expose the common `System.Array` base and inherited members of Kotlin primitive, unsigned and generic arrays to CLR interop type checking, without copying or changing their native storage. Native members take precedence over same-named extensions.

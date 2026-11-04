@@ -21,6 +21,7 @@ static class DeclarationIdentityBinding
     internal const string ReferencedIntrinsicKey = "declarationReferencedIntrinsic";
     internal const string ReferencedFactoryKey = "declarationReferencedFactory";
     internal const string PhysicalOnlySuffix = "|clr-physical-only";
+    internal const string ExistentialSlotMarker = PhysicalOnlySuffix + "|existential-slot:";
     internal const string IndependentAliasSlotKey = "independentAliasSlot";
 
     internal static string PhysicalOnlyId(string declarationId, string role) =>
@@ -393,9 +394,8 @@ static class DeclarationIdentityBinding
         // A non-owner-dependent existential slot is the same CLR contract as its source MethodDef, not a second
         // independently named implementation. Propagate an explicit source name to that slot; an unresolved collision
         // is rejected below instead of receiving an automatic declaration-id hash.
-        var existentialMarker = PhysicalOnlySuffix + "|existential-slot:";
         foreach (var slot in declarations.Where(declaration =>
-                     declaration.Id.Contains(existentialMarker, StringComparison.Ordinal)
+                     declaration.Id.Contains(ExistentialSlotMarker, StringComparison.Ordinal)
                      && declaration.Name == declaration.SourceName))
         {
             var sourceId = AllocationIdentity(slot.Id);
@@ -603,9 +603,14 @@ static class DeclarationIdentityBinding
             {
                 declaration.Remove(NullableRepresentationTypes.MethodFrameKey);
                 declaration.Remove(NullableGenericErasure.MethodTypeParameterBoundsPre);
-                declaration.Remove(Key);
                 declaration.Remove(SemanticSignatureKey);
-                declaration.Remove("declarationSourceName");
+                // Existential slots are link targets in both stdlib twins. Keep their physical identity
+                // so a reference can select the shipped MethodDef even if its allocated name differs.
+                if (!id.Contains(ExistentialSlotMarker, StringComparison.Ordinal))
+                {
+                    declaration.Remove(Key);
+                    declaration.Remove("declarationSourceName");
+                }
                 continue;
             }
             // Cold entries and alias helpers project an existing source declaration onto a separate physical entry.

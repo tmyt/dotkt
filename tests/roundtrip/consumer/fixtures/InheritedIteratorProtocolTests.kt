@@ -2,6 +2,7 @@ package roundtriptests.iteratorprotocol
 
 import NUnit.Framework.TestAttribute
 import roundtrip.iteratorprotocol.*
+import roundtrip.mutablepolicy.PortableMutableList
 
 private class GenericIteratorMethod {
     var calls = 0
@@ -33,8 +34,9 @@ private fun <T> checkInheritedIterator(first: T, second: T) {
     check(otherIterator.next() == first)
     otherIterator.remove()
     check(otherValues.size == 1 && otherValues[0] == second)
-    val otherCollection: MutableCollection<T> = other
-    otherCollection.clear()
+    check(other.remove(second) && otherValues.isEmpty())
+    check(other.add(first))
+    other.clear()
     check(otherValues.isEmpty())
 
     val readonly = readonlyIteratorOwner(listOf(first, second))
@@ -70,6 +72,11 @@ class InheritedIteratorProtocolTests {
         checkInheritedIterator("first", "second")
         checkInheritedIterator(7, 9)
         checkInheritedIterator<Int?>(null, 5)
+        val storage = mutableListOf(1, 2)
+        val list = PortableMutableList(storage)
+        check(list.add(3) && storage == listOf(1, 2, 3))
+        list.clear()
+        check(storage.isEmpty())
         val mutable = RenamedMutableIteratorMethod(listOf(3).iterator())
         check(mutable.iterator.next() == 3)
         check(mutable.iterator().next() == 7 && mutable.calls == 1)
