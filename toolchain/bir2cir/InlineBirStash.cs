@@ -163,6 +163,9 @@ sealed class InlineBirIndex
             olst.Add((JsonObject)payload.DeepClone());
         }
 
+        // Same-module lookups above own the original source spans. Only the outgoing DLL carrier hides
+        // them: the consumer doesn't own those documents, and the producer's paths aren't part of its ABI.
+        MaterializedBirPayload.HideSourceSpans(payload);
         byte[] enc = BirCarrier.EncodeBody(BirCarrier.JsonV1, payload);
         mo["inlineBir"] = Convert.ToBase64String(enc);
     }

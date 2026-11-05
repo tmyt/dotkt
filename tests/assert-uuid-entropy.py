@@ -95,6 +95,10 @@ assert create not in list(walk(protected)), "factory failure must not dispose an
 allowed_kinds = {"var", "setLocal", "local", "cast", "valueBlock", "cond", "throwExpr",
                  "try", "exprStmt", "callStatic", "clrStatic", "clrInstance"}
 for node in nodes:
+    # Debugger metadata is not an entropy operation; still reject any attached executable payload.
+    if node.get("k") == "sourcePoint":
+        assert node.keys() <= {"k", "span"}, "unexpected source point payload"
+        continue
     assert "k" not in node or node["k"] in allowed_kinds, "unexpected entropy operation"
     if node.get("k") in ("callStatic", "clrStatic", "clrInstance"):
         assert node in (create, fill, dispose) or is_view(node), "unexpected entropy provider or copy operation"

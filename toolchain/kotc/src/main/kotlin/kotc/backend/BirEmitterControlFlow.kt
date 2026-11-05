@@ -138,8 +138,10 @@ internal fun BirEmitter.cfgWhile(node: IrWhileLoop): String {
 	cfgLoopStack.removeAt(cfgLoopStack.size - 1)
 	val parts = ArrayList<String>()
 	parts.add("""{"k":"label","id":$start}""")
+	sourcePointJson(node.condition)?.let { parts.add(it) }
 	parts.add("""{"k":"brIf","id":$end,"on":false,"cond":${expr(node.condition)}}""")
 	body.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
+	parts.add(hiddenSourcePoint)
 	parts.add("""{"k":"goto","id":$start}""")
 	parts.add("""{"k":"label","id":$end}""")
 	return """{"k":"block","body":[${parts.joinToString(",")}]}"""
@@ -155,6 +157,7 @@ internal fun BirEmitter.cfgDoWhile(node: IrDoWhileLoop): String {
 	parts.add("""{"k":"label","id":$start}""")
 	body.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
 	parts.add("""{"k":"label","id":$cont}""")
+	sourcePointJson(node.condition)?.let { parts.add(it) }
 	parts.add("""{"k":"brIf","id":$start,"on":true,"cond":${expr(node.condition)}}""")
 	parts.add("""{"k":"label","id":$end}""")
 	return """{"k":"block","body":[${parts.joinToString(",")}]}"""
@@ -264,6 +267,12 @@ internal fun BirEmitter.valueBlockJson(
 	return """{"k":"valueBlock",$fact$ty"stmts":[$stmts],"result":$result}"""
 }
 
+/** Evaluate an authored value at a source boundary without changing the type or evaluation order. */
+internal fun BirEmitter.sourceMarkedValue(node: IrExpression): String {
+	val value = expr(node)
+	return sourcePointJson(node)?.let { valueBlockJson(type = null, stmts = it, result = value) } ?: value
+}
+
 /** Like [bodyStmts], but the branch's final value-expression is assigned to `tv` (a value already throws/returns
  *  -> emitted as-is). For try-as-expression: each branch leaves its result in the temp. Returns the emitted
  *  statements paired with whether this branch MAY LEAVE THE JOIN NULL — decided on the EMITTED result, because that
@@ -309,8 +318,10 @@ internal fun BirEmitter.cfgWhen(node: IrWhen): String {
 			stmt(br.result).takeIf { it.isNotEmpty() }?.let { parts.add(it) }
 		} else {
 			val next = cfgFresh()
+			sourcePointJson(br.condition)?.let { parts.add(it) }
 			parts.add("""{"k":"brIf","id":$next,"on":false,"cond":${expr(br.condition)}}""")
 			stmt(br.result).takeIf { it.isNotEmpty() }?.let { parts.add(it) }
+			parts.add(hiddenSourcePoint)
 			parts.add("""{"k":"goto","id":$end}""")
 			parts.add("""{"k":"label","id":$next}""")
 		}
@@ -504,7 +515,11 @@ internal fun BirEmitter.ternary(node: IrWhen): String {
 	// keeps its type, since a reference holds null already). The verdict is taken on the EMITTED result, because
 	// that is where a nested join's own verdict and this emitter's own `valueBlock` wrapping are visible —
 	// [emittedYieldsNull] states exactly which emitted shapes count. Each branch result is emitted exactly once.
-	val branches = node.branches.map { b -> Triple((b.condition as? IrConst)?.value == true, b.condition, expr(b.result)) }
+	val authored = node.origin == IrStatementOrigin.IF || node.origin == IrStatementOrigin.WHEN
+	val branches = node.branches.map { b ->
+		Triple((b.condition as? IrConst)?.value == true, b.condition,
+			if (authored) sourceMarkedValue(b.result) else expr(b.result))
+	}
 	val nullBranch = branches.any { emittedYieldsNull(it.third) }
 	val bt = birType(node.type)
 	val ty = bt.toJson()

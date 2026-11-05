@@ -43,13 +43,16 @@ build "$task_kt/App.ktproj" optimized-noop -c Debug -p:Optimize=true
 [[ "$task_noop" == "$(state Debug)" ]] || { echo 'Unchanged optimized build regenerated output' >&2; exit 1; }
 pair release-unoptimized Release true -p:Optimize=false
 [[ "$task_release_front" == "$(frontend Release)" ]] || { echo 'Optimize changed the Kotlin frontend or lowering' >&2; exit 1; }
-pair debug-unoptimized-nosymbols Debug true -p:Optimize=false -p:DebugSymbols=false
-pair release-optimized-nosymbols Release false -p:Optimize=true -p:DebugType=None
+task_no_symbols=(-p:DebugSymbols=false -p:DebugType=none)
+task_release_no_symbols=(-p:Optimize=false "${task_no_symbols[@]}")
+pair debug-unoptimized-nosymbols Debug true -p:Optimize=false "${task_no_symbols[@]}"
+pair release-optimized-nosymbols Release false -p:Optimize=true "${task_no_symbols[@]}"
 pair debug-optimized-symbols Debug false -p:Optimize=true -p:DebugSymbols=true -p:DebugType=portable
-pair release-unoptimized-nosymbols Release true -p:Optimize=false -p:DebugSymbols=false
+pair release-unoptimized-nosymbols Release true "${task_release_no_symbols[@]}"
 pair custom-configuration Staging true
 task_before_publish=$(state Release)
-dotnet publish "$task_kt/App.ktproj" -c Release --no-build -v:q --nologo -p:Optimize=false -p:DebugSymbols=true -p:DebugType=portable > "$task_work/publish-no-build.log" 2>&1
+# No-build publish must consume the existing Release outputs with the same symbol settings.
+dotnet publish "$task_kt/App.ktproj" -c Release --no-build -v:q --nologo "${task_release_no_symbols[@]}" > "$task_work/publish-no-build.log" 2>&1
 [[ "$task_before_publish" == "$(state Release)" ]] || { echo 'No-build publish regenerated output' >&2; exit 1; }
 dotnet "$task_inspector" true "$task_kt/bin/Release/net10.0/publish/DebugPolicy.dll"
 [[ $(dotnet "$task_kt/bin/Release/net10.0/publish/DebugPolicy.dll") == 42 ]]

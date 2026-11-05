@@ -726,8 +726,15 @@ internal fun BirEmitter.spliceBody(
 	if (unit) { stmts.forEach { pre.add(stmt(it)) }; return """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""" }
 	stmts.dropLast(1).forEach { pre.add(stmt(it)) }
 	return when (val last = stmts.lastOrNull()) {
-		is IrReturn -> if (last.returnTargetSymbol == ownReturnTarget) expr(last.value) else expr(last)
-		is IrExpression -> expr(last)
+		is IrReturn -> {
+			val value = if (last.returnTargetSymbol == ownReturnTarget) last.value else last
+			sourcePointJson(value)?.let(pre::add)
+			expr(value)
+		}
+		is IrExpression -> {
+			sourcePointJson(last)?.let(pre::add)
+			expr(last)
+		}
 		else -> { last?.let { pre.add(stmt(it)) }; """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""" }
 	}
 }

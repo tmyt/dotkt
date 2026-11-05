@@ -316,24 +316,29 @@
       <_DotKtNativeResourceInput Include="$(_DotKtSelectedManifest);$(Win32Resource);$(ApplicationIcon)" />
       <_DotKtIntermediateRefAssembly Remove="@(_DotKtIntermediateRefAssembly)" />
       <_DotKtIntermediateRefAssembly Include="@(IntermediateRefAssembly)" Condition="'$(ProduceReferenceAssembly)' == 'true'" />
+      <_DotKtPortablePdb Remove="@(_DotKtPortablePdb)" />
+      <_DotKtPortablePdb Include="@(_DebugSymbolsIntermediatePath)" Condition="'$(_DebugSymbolsProduced)' == 'true'" />
       <_DotKtAssemblyAttribute Remove="@(_DotKtAssemblyAttribute)" />
       <_DotKtAssemblyAttribute Include="@(AssemblyAttribute)" Condition="'$(GenerateAssemblyInfo)' == 'true'" />
     </ItemGroup>
     <DotKt.Build.WriteAssemblyOptions OutputFile="$(DotKtEmitOptionsManifest)" OutputFileName="$(TargetName)$(TargetExt)"
         OutputType="$(OutputType)" Deterministic="$(_DotKtDeterministic)" JitDebugging="$(_DotKtJitDebugging)"
         ReferenceAssembly="@(_DotKtIntermediateRefAssembly->'%(FullPath)')"
+        PortablePdb="@(_DotKtPortablePdb->'%(FullPath)')"
         NoWin32Manifest="$(_DotKtNoWin32Manifest)" Win32Manifest="$(_DotKtSelectedManifest)"
         Win32Resource="$(Win32Resource)" ApplicationIcon="$(ApplicationIcon)" Attributes="@(_DotKtAssemblyAttribute)" />
   </Target>
 
-  <!-- Both images are inputs to the completion check: a missing or newer image invalidates the stamp.
+  <!-- Both images and the optional PDB are inputs to the completion check: a missing or newer artifact invalidates the stamp.
        Comparing them only with the stamp, written after emission and its hook, avoids treating the earlier
        implementation write as stale relative to the later reference write. -->
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets;DotKtComputeEmitOptions"
-          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);$(DotKtBuildTasks);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);@(_DotKtIntermediateRefAssembly);$(DotKtEmitOptionsManifest);@(_DotKtNativeResourceInput)"
+          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);$(DotKtBuildTasks);@(_DotKtCompileReference);@(_DotKtRuntimeReference);$(IntermediateOutputPath)$(TargetName)$(TargetExt);@(_DotKtIntermediateRefAssembly);@(_DotKtPortablePdb);$(DotKtEmitOptionsManifest);@(_DotKtNativeResourceInput)"
           Outputs="$(_DotKtIlEmitStamp)">
     <Error Condition="'$(ProduceReferenceAssembly)' == 'true' and '@(_DotKtIntermediateRefAssembly->Count())' != '1'"
            Text="DotKt: reference assembly emission requires one SDK IntermediateRefAssembly path." />
+    <Error Condition="'$(_DebugSymbolsProduced)' == 'true' and '@(_DotKtPortablePdb->Count())' != '1'"
+           Text="DotKt: Portable PDB emission requires one SDK intermediate symbol path." />
     <ItemGroup>
       <_DotKtCir Include="$(DotKtIntermediateCirPath)/*.cir.json" />
       <!-- ilemit's runtime refs are the implementation assemblies from the copy-local set: the runtime stdlib
@@ -363,6 +368,8 @@
       <_DotKtEscapedIlEmitOutputPath>$(_DotKtIlEmitOutputPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedIlEmitOutputPath>
       <_DotKtReferenceAssemblyPath>@(_DotKtIntermediateRefAssembly->'%(FullPath)')</_DotKtReferenceAssemblyPath>
       <_DotKtEscapedReferenceAssemblyPath>$(_DotKtReferenceAssemblyPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedReferenceAssemblyPath>
+      <_DotKtPortablePdbPath>@(_DotKtPortablePdb->'%(FullPath)')</_DotKtPortablePdbPath>
+      <_DotKtEscapedPortablePdbPath>$(_DotKtPortablePdbPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedPortablePdbPath>
       <_DotKtEscapedAssemblyOptions>$([System.IO.Path]::GetFullPath('$(_DotKtResolvedEmitOptions)').Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedAssemblyOptions>
       <_DotKtEscapedTargetName>$(TargetName.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedTargetName>
       <_DotKtEscapedCompileReferences>$(_DotKtCompileReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCompileReferences>
@@ -388,6 +395,8 @@
       <_DotKtIlEmitResponseArgument Include="_assembly"><Value>&quot;$(_DotKtEscapedTargetName)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_reference_assembly_option" Condition="'$(_DotKtReferenceAssemblyPath)' != ''"><Value>--reference-assembly</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_reference_assembly" Condition="'$(_DotKtReferenceAssemblyPath)' != ''"><Value>&quot;$(_DotKtEscapedReferenceAssemblyPath)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_portable_pdb_option" Condition="'$(_DotKtPortablePdbPath)' != ''"><Value>--portable-pdb</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_portable_pdb" Condition="'$(_DotKtPortablePdbPath)' != ''"><Value>&quot;$(_DotKtEscapedPortablePdbPath)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly_options_option"><Value>--assembly-options</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_assembly_options"><Value>&quot;$(_DotKtEscapedAssemblyOptions)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_jit_debugging_option"><Value>--jit-debugging</Value></_DotKtIlEmitResponseArgument>

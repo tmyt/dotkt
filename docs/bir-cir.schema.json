@@ -550,6 +550,19 @@
       "required": ["f"],
       "additionalProperties": false
     },
+    "sourceSpan": {
+      "type": "object",
+      "description": "An authored Kotlin source document and a one-based, end-exclusive source range.",
+      "properties": {
+        "f": { "type": "string", "minLength": 1 },
+        "l": { "type": "integer", "minimum": 1 },
+        "c": { "type": "integer", "minimum": 1 },
+        "el": { "type": "integer", "minimum": 1 },
+        "ec": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["f", "l", "c", "el", "ec"],
+      "additionalProperties": false
+    },
     "decl": {
       "oneOf": [ { "$ref": "#/$defs/funDecl" }, { "$ref": "#/$defs/propDecl" }, { "$ref": "#/$defs/fieldDecl" } ]
     },
@@ -710,7 +723,7 @@
         "newClrStaticDelegate", "companionValue",
         "enumValue", "enumBits", "enumName", "enumOrdinal", "enumValues", "enumParse", "default", "defaultArg", "callEval", "bindRef",
         "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
-        "localFun", "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
+        "localFun", "block", "valueBlock", "sourcePoint", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
         "if", "cond2", "label", "goto", "brIf", "break", "continue",
         "forRange", "forArray", "forEachInline", "forIn", "try"
       ],
@@ -764,6 +777,7 @@
         { "properties": { "k": { "const": "nullableWrap" }, "e": { "$ref": "#/$defs/node" }, "elem": { "$ref": "#/$defs/type" } }, "required": ["e", "elem"], "$comment": "value-type nullable wrap; operand `e`, element type `elem` (shared with nullableValue/nullableHasValue/nullableNull)" },
         { "properties": { "k": { "const": "localFun" }, "id": { "type": "string" }, "decl": { "type": "object" } }, "required": ["id", "decl"], "$comment": "BIR-only lexical Kotlin local-function declaration. The nested declaration is the semantic ownership fact; bir2cir consumes it into a physical MethodDef." },
         { "properties": { "k": { "const": "block" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["body"] },
+        { "properties": { "k": { "const": "sourcePoint" }, "span": { "$ref": "#/$defs/sourceSpan" } }, "$comment": "Source boundary, no executable operation. An absent span marks a hidden generated range. Lowering preserves the original source document and range." },
         { "properties": { "k": { "const": "valueBlock" }, "stmts": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "result": { "$ref": "#/$defs/node" }, "type": { "$ref": "#/$defs/type" }, "joinNullBranch": { "const": true, "$comment": "BIR-only frontend fact: this block passes through a null-yielding result. ValueJoinNullWidening consumes and removes it before CIR, as for var/cond joins." } }, "required": ["stmts", "result"] },
         { "properties": { "k": { "const": "exprStmt" }, "expr": { "$ref": "#/$defs/node" } }, "required": ["expr"] },
         { "properties": { "k": { "const": "return" }, "value": { "$ref": "#/$defs/node" } } },

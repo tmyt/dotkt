@@ -618,6 +618,7 @@ sealed class AliasConstructorDelegationExpansion
                                 ["arguments"] = adapter.Arguments.DeepClone(),
                                 ["terminalSignature"] = TypeArray(adapter.TerminalSignature),
                             };
+                            MaterializedBirPayload.HideSourceSpans(payload);
                             ctor["aliasCtorAdapter"] = Convert.ToBase64String(
                                 BirCarrier.EncodeBody(BirCarrier.JsonV1, payload));
                         }

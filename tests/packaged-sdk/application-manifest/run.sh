@@ -125,12 +125,12 @@ before="$(state)"; front_before="$(frontend_state)"
 [[ "$(dotnet "$kt/$out/App.dll")" == 'Kotlin manifest app' ]] || { echo 'Kotlin entry point did not run' >&2; exit 1; }
 build "$kt/App.ktproj" defaults-no-op "${defaults[@]}"
 [[ "$before" == "$(state)" ]] || { echo 'default resources no-op changed outputs' >&2; exit 1; }
-# Re-emission depends on CIR and selected resource inputs, not a previous provider DLL or a placeholder PDB.
+# Re-emission depends on CIR and selected resource inputs, not a previous provider DLL. The
+# CscToolExe tripwire above still forbids a C# compilation; Kotlin PDBs have their own scenario.
 before="$(state)"
 touch "$kt/$obj/cir/.stamp"
 build "$kt/App.ktproj" reemit "${defaults[@]}" -v:n
 [[ "$before" != "$(state)" ]] || { echo 'reemit did not update outputs' >&2; exit 1; }
-[[ ! -e "$kt/$obj/App.pdb" ]] || { echo 'placeholder PDB was generated' >&2; exit 1; }
 inspect --resources "$cs/$out/App.dll" "$kt/$out/App.dll"
 inspect --kotlin "$kt/$out/App.dll"
 front_before="$(frontend_state)"

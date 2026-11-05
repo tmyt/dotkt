@@ -229,6 +229,15 @@ Notes:
 
 ## 2. Node kinds — the `{"k":…}` expression/statement/decl vocabulary
 
+`sourcePoint` is a non-executable statement marker in BIR and CIR. Its optional
+`span: { f, l, c, el, ec }` records the Kotlin source document, one-based start
+line and column, and one-based exclusive end. An absent span marks generated
+instructions as hidden. Lowerings transport the marker with its statements,
+including when splicing code from a different document. It has no stack, type,
+or control-flow effects. When emitting Portable PDB symbols, ilemit maps it to
+the current IL offset, using a no-op anchor if two distinct authored points
+would otherwise share that offset. It never reconstructs source locations.
+
 ### Literal code units
 
 A `const` Char has an integer `value` in 0..65535, not a one-character JSON string.

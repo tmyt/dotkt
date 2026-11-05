@@ -820,14 +820,16 @@ sealed partial class Emitter
             // only fields with a NON-null init value get a type-initializer store.
             var inits = fs.EnumerateArray().Where(f => f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null && f.TryGetProperty("static", out var s) && s.GetBoolean()).ToList();
             if (inits.Count == 0) continue;
-            var initializer = ti.TB.DefineTypeInitializer().GetILGenerator();
-            if (EmitReferenceStub(initializer)) continue;
+            var initializer = ti.TB.DefineTypeInitializer();
+            var il = initializer.GetILGenerator();
+            if (EmitReferenceStub(il)) continue;
             // A synthesized .cctor is a type method with no method-generic scope. Carry the declaring type's generic
             // parameters and clear whatever method scope pass 4 last visited; otherwise a generic nested singleton
             // initializer can encode `new ...<!!0>` and produce a BadImageFormatException at type initialization.
             _curTypeParams = EffectiveTps(ti);
             _curMethodParams = null;
-            _il = initializer;
+            _sourceMethod = initializer;
+            _il = il;
             _args.Clear(); _argTypes.Clear(); _locals.Clear(); _methodRetType = Bcl("System.Void");
             // A field initializer can contain CFG control flow (a `while`/`when` lowered to label/goto), so its labels
             // must be pre-defined just like a method body — otherwise MarkLabel/Br throws "key not in _cfgLabels".
@@ -1389,14 +1391,21 @@ sealed partial class Emitter
             metadata.AddCustomAttribute(MetadataTokens.EntityHandle(0x20000001),
                 MetadataTokens.EntityHandle(attribute.Constructor.MetadataToken), metadata.GetOrAddBlob(attribute.Blob));
         var peHeader = new PEHeaderBuilder(imageCharacteristics: Characteristics.ExecutableImage | Characteristics.Dll);
+        var entryPoint = entry != null && _referenceAssemblyPath == null
+            ? MetadataTokens.MethodDefinitionHandle(entry.MetadataToken) : default;
+        var symbolsId = _portablePdbPath == null ? default : BlobContentId.GetTimeBasedProvider()(Array.Empty<Blob>());
+        var debugDirectory = _portablePdbPath == null ? null : new DebugDirectoryBuilder();
+        debugDirectory?.AddCodeViewEntry(Path.GetFileName(_portablePdbPath), symbolsId, PortablePdbFormatVersion);
         var peBuilder = new ManagedPEBuilder(
             peHeader, new MetadataRootBuilder(metadata), ilStream,
             mappedFieldData: fieldData,
             nativeResources: _nativeResources,
-            entryPoint: entry != null && _referenceAssemblyPath == null
-                ? MetadataTokens.MethodDefinitionHandle(entry.MetadataToken) : default);
+            debugDirectoryBuilder: debugDirectory,
+            entryPoint: entryPoint);
         var blob = new BlobBuilder();
         peBuilder.Serialize(blob);
+        if (_portablePdbPath != null)
+            WritePortablePdb(blob, metadata.GetRowCounts(), entryPoint, symbolsId);
         // #52 — write ATOMICALLY (temp + rename): FileMode.Create truncates-then-writes in place, so a concurrent
         // reader (dll2klib/bir2cir loading this same dll) can observe a partial image and fail with a
         // spurious "Format of the executable is invalid" / BadImageFormatException. A same-directory rename is atomic,

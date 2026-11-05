@@ -14,6 +14,7 @@
 #              true no-op rebuilds preserve DLL timestamps and skip downstream C# compilation.
 #   application-manifest — Windows apphost native manifest parity with C#, build/publish and incremental inputs.
 #   reference-assembly — opt-in SDK reference image used by both Kotlin and C# ProjectReferences.
+#   portable-pdb — Kotlin source maps and matching PE/PDB identity through build, publish, and clean.
 #   multi-target-klib-references — one parallel two-TFM producer plus matching C# and DotKt consumers: preserve
 #              target-specific references/sources/KLIB ownership, metadata, runtime/IL validity and independent
 #              no-op/deletion behavior; also pin the unsupported-TFM restore diagnostic.
@@ -1500,6 +1501,15 @@ case_reference_assembly() {
 	fi
 }
 
+case_portable_pdb() {
+	if bash "$ROOT/tests/packaged-sdk/portable-pdb/run.sh" "$FEED" "$VER" "$WS/portable-pdb" \
+			>"$WS/portable-pdb.log" 2>&1; then
+		pass portable-pdb
+	else
+		fail portable-pdb "Kotlin Portable PDB regression" "$(tail -40 "$WS/portable-pdb.log")"
+	fi
+}
+
 case_toolchain_assembly_identity
 case_exe
 case_incremental_emission
@@ -1507,6 +1517,7 @@ case_application_manifest
 case_managed_versions
 case_jit_debugging
 case_reference_assembly
+case_portable_pdb
 case_multitarget_klib_references
 case_library
 case_csharp_consumer

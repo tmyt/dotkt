@@ -19,6 +19,10 @@ def unit_read(node):
             and node.get("ownerType") == {"t": "fqn", "name": "kotlin.Unit"})
 
 
+def executable(stmts):
+    return [stmt for stmt in stmts if stmt.get("k") != "sourcePoint"]
+
+
 lane, path = sys.argv[1:]
 with open(path, encoding="utf-8") as stream:
     cir = json.load(stream)
@@ -30,8 +34,9 @@ blocks = [node for node in objects(cir)
 assert blocks, "no Unit result materialization exercised"
 for block in blocks:
     assert block["type"] == {"t": "fqn", "name": "kotlin.Unit"}, block
-    assert len(block["stmts"]) == 1 and block["stmts"][0]["k"] == "exprStmt", block
-    call = block["stmts"][0]["expr"]
+    statements = executable(block["stmts"])
+    assert len(statements) == 1 and statements[0]["k"] == "exprStmt", block
+    call = statements[0]["expr"]
     if call["k"] == "delegateInvoke":
         result = call["funcType"]["ret"]
     else:
@@ -43,7 +48,7 @@ for block in blocks:
     assert field["declaringType"] == field["returnType"] == {"t": "fqn", "name": "kotlin.Unit"}, field
 
 if lane == "basic":
-    returned = methods["unitReturnedValue"]["body"][0]["value"]
+    returned = executable(methods["unitReturnedValue"]["body"])[0]["value"]
     assert returned in blocks, returned
     discarded = methods["unitDiscardedCall"]["body"]
     assert not any(unit_read(node) for node in objects(discarded)), discarded
@@ -58,9 +63,9 @@ if lane == "basic":
                    if node.get("k") == "cast" and node.get("e") is calls[0]]
     assert len(projections) == 1 and projections[0]["type"] == {"t": "fqn", "name": "kotlin.Unit"}, projections
 elif lane == "consumer":
-    returned = methods["referencedUnitReturn"]["body"][0]["value"]
+    returned = executable(methods["referencedUnitReturn"]["body"])[0]["value"]
     assert returned in blocks, returned
-    assert returned["stmts"][0]["expr"]["memberRef"]["returnType"]["name"] in ("void", "System.Void")
+    assert executable(returned["stmts"])[0]["expr"]["memberRef"]["returnType"]["name"] in ("void", "System.Void")
 else:
     raise AssertionError(f"unknown fixture lane: {lane}")
 print(f"{lane}: consumed Unit values use exact void calls and resolved singleton reads")

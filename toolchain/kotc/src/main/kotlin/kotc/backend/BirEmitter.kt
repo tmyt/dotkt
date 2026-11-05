@@ -7,6 +7,7 @@ import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
 import org.jetbrains.kotlin.ir.declarations.IrDeclaration
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
@@ -288,6 +289,33 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		val line = loc.line
 		return if (line >= 0) ""","pos":{"f":${str(loc.path)},"l":${line + 1},"c":${loc.column + 1}}"""
 			else ""","pos":{"f":${str(loc.path)}}"""
+	}
+
+	// Statement provenance is independent of declaration diagnostics and survives moving the BIR body.
+	internal var suppressSourcePoints = false
+
+	internal inline fun <T> withoutSourcePoints(render: () -> T): T {
+		val saved = suppressSourcePoints
+		suppressSourcePoints = true
+		return try { render() } finally { suppressSourcePoints = saved }
+	}
+
+	internal fun sourcePointJson(node: IrElement): String? {
+		if (suppressSourcePoints) return null
+		when (activeSemanticOwnerDeclaration?.origin) {
+			IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER,
+			IrDeclarationOrigin.GENERATED_INLINE_CLASS_MEMBER,
+			IrDeclarationOrigin.GENERATED_FULL_VALUE_CLASS_MEMBER -> return null
+		}
+		val source = fileEntry?.takeIf { it.supportsDebugInfo } ?: return null
+		val start = node.startOffset
+		val end = node.endOffset
+		if (start < 0 || end <= start || end > source.maxOffset) return null
+		val a = source.getLineAndColumnNumbers(start)
+		val b = source.getLineAndColumnNumbers(end)
+		if (a.line < 0 || a.column < 0 || b.line < a.line || b.column < 0 ||
+			(b.line == a.line && b.column <= a.column)) return null
+		return """{"k":"sourcePoint","span":{"f":${str(source.name)},"l":${a.line + 1},"c":${a.column + 1},"el":${b.line + 1},"ec":${b.column + 1}}}"""
 	}
 
 	/**
@@ -1037,7 +1065,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// CLR Literal field and dll2klib can project the public declaration for another Kotlin module.
 		val statFields = topProps.mapNotNull { p ->
 			val bf = p.backingField ?: return@mapNotNull null
-			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
+			val init = (bf.initializer as? IrExpressionBody)?.expression?.let {
+				if (p.isConst) expr(it) else sourceMarkedValue(it)
+			} ?: "null"
 			val const = if (p.isConst) ""","const":true""" else ""
 			val companionProperty = if (companionReceiverJson(p) != null) {
 				val setterVisibility = p.setter?.let { visOf(it) } ?: visOf(p)

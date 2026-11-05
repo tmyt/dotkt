@@ -24,10 +24,15 @@ assert conditional["k"] == "cond", conditional
 unit = {"t": "fqn", "name": "kotlin.Unit"}
 for side, kinds, tags in [("then", ["exprStmt", "var"], ["a", "d"]), ("else", ["var"], ["e"])]:
     block = conditional[side]
+    # A source boundary can wrap a value, but it cannot supply a type or an executable statement.
+    while (block["k"] == "valueBlock" and "type" not in block and block["stmts"]
+           and all(statement["k"] == "sourcePoint" for statement in block["stmts"])):
+        assert not block.get("joinNullBranch", False), block
+        block = block["result"]
     assert block["k"] == "valueBlock" and block["type"] == unit, block
     assert not block.get("joinNullBranch", False), block
     assert block["result"] == {"k": "const", "type": unit, "value": None}, block
-    assert [statement["k"] for statement in block["stmts"]] == kinds, block
+    assert [statement["k"] for statement in block["stmts"] if statement["k"] != "sourcePoint"] == kinds, block
     calls = [node for node in objects(block["stmts"]) if node.get("method") == "unitBlockEffect"]
     assert [call["args"][0]["value"] for call in calls] == tags, calls
 print("Unit-valued blocks retain leading effects, declaration initializers and an explicit Kotlin Unit result")

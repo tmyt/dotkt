@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Emit matching Portable PDBs with Kotlin source-line breakpoints and basic stepping in .NET debuggers.
 - Support SDK opt-in reference assemblies for Kotlin projects, preserving CLR declarations and Kotlin inline and default-argument metadata.
 - Preserve classes declared in companion objects when re-importing Kotlin DLLs, including when the containing class has another nested type with the same name.
 - Delegate Windows resource parsing and placement to the SDK and PE library. For explicit `Win32Resource` inputs, use the original `.res` file rather than a COFF object.

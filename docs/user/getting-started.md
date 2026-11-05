@@ -106,8 +106,18 @@ plain public IL — a C# project can `<ProjectReference>` it directly.
 `dotnet build -c Release -p:Optimize=false` are honored. Unoptimized output carries
 `DebuggableAttribute` with JIT tracking and optimization suppression, without advertising Edit and
 Continue. `DebugSymbols` and `DebugType` do not choose the optimization policy.
-This does not yet provide Kotlin source-line breakpoints or stepping: source documents and Portable
-PDB sequence points are the separate [#1257](https://github.com/tmyt/dotkt/issues/1257) work.
+
+The SDK normally emits a Portable PDB next to the Kotlin DLL. Use the matching pair and the
+original `.kt` files to set a line breakpoint on an executable Kotlin statement in a .NET
+debugger. Set `DebugType=none` to omit the PDB; `DebugType=portable` also works with
+`Optimize=true`. The SDK supports external Portable PDBs, not embedded PDBs.
+
+Basic breakpoint binding and step-over were tested with NetCoreDbg 3.2.0-1092 on Linux and
+.NET 10.0.12. Optimized code may step differently. Inlined code within one build retains its
+original document, but breakpoint binding and stepping around multi-document methods depend on
+the debugger. Code inlined from another assembly does not carry the producer's source paths into
+the consumer's PDB. This does not provide Kotlin local-variable inspection or expression evaluation, coroutine logical stepping,
+SourceLink, or Edit and Continue.
 
 ## 5. Working in the DotKt repository itself (contributors)
 

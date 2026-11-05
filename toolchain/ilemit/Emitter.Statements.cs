@@ -13,6 +13,7 @@ sealed partial class Emitter
     {
         switch (_ctxNode = s.GetProperty("k").GetString())   // #84: refine the diagnostic breadcrumb to the node kind
         {
+            case "sourcePoint": RecordSourcePoint(s); break;
             case "clrEventAccessorImpl": EmitClrEventAccessorImpl(s); break;
             case "var":
             {

@@ -67,8 +67,8 @@ DotKt adapts the SDK's parsed records to AsmResolver, which serializes the resou
 its placement. .NET's `ManagedPEBuilder` writes the final Kotlin PE. There is no C# compilation
 output or temporary PE to replace it.
 
-The removed placeholder's PDB was not a Kotlin source PDB. The SDK no longer generates or copies that
-misleading file; actual Kotlin source debugging information remains separate compiler work.
+The removed placeholder's PDB was not a Kotlin source PDB. When enabled,
+[Kotlin source symbols](user/getting-started.md#4-build-and-run) are produced alongside the final image.
 Likewise, `GenerateDocumentationFile` does not produce a placeholder C# XML document: Kotlin XML documentation
 generation is not implemented, and build/publish/pack do not advertise a nonexistent documentation output.
 

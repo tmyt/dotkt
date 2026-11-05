@@ -4247,8 +4247,9 @@ static partial class FBoundStarProjectionErasure
 
     static bool IsCanonicalFieldGetter(JsonObject getter, string owner, string fieldName, bool allowVirtual = false)
     {
-        if ((!allowVirtual && Bool(getter["virtual"])) || getter["body"] is not JsonArray { Count: 1 } body
-            || body[0] is not JsonObject statement || Str(statement["k"]) != "return"
+        if ((!allowVirtual && Bool(getter["virtual"])) || getter["body"] is not JsonArray body
+            || body.Where(node => Str((node as JsonObject)?["k"]) != "sourcePoint").Take(2).ToArray()
+                is not [JsonObject statement] || Str(statement["k"]) != "return"
             || CanonicalGetterField(statement["value"]) is not JsonObject value
             || Str(value["name"]) != fieldName
             || TypeJson.Read(value["ownerType"]) is not TypeNode.Fqn fieldOwner
