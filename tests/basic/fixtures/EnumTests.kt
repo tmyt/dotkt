@@ -654,5 +654,6 @@ class EnumTests {
         assertEquals(-2, EnumBasic.A.compareTo(EnumBasic.C))    // -2
         assertEquals("super:ITEM", EnumSuperRendered.ITEM.toString())
         assertEquals("entry:super:ENTRY", EnumSuperRendered.ENTRY.toString())
+        assertEquals(1, enumGenericOrdinal(EnumSuperRendered.ENTRY))
     }
 }

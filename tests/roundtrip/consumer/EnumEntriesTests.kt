@@ -16,6 +16,8 @@ import roundtrip.entries.richCompare
 import roundtrip.entries.sharedEntries
 import roundtrip.entries.relayEntries
 
+private fun <E : Enum<E>> importedEntryOrdinal(value: E): Int = value.ordinal
+
 class EnumEntriesRoundtripTests {
     @TestAttribute
     fun importedBasicEntriesAreValuesAcrossDllBoundaries() {
@@ -58,5 +60,6 @@ class EnumEntriesRoundtripTests {
         assertEquals("first:FIRST", SuperRenderedEntry.FIRST.toString())
         val render: (SuperRenderedEntry) -> String = SuperRenderedEntry::toString
         assertEquals("entry:second:SECOND", render(SuperRenderedEntry.SECOND))
+        assertEquals(1, importedEntryOrdinal(SuperRenderedEntry.SECOND))
     }
 }
