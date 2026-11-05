@@ -259,8 +259,8 @@ static class InlineSplice
         if (declarationId != null || owner == null) owner = Str(payload["owner"]);
 
         // The selected body is opaque frontend BIR, including for a same-module stash captured before phase 1. Enter
-        // the shared materialization contract before payload-specific inspection, substitution, or re-hoisting. This
-        // replaces the former second ObjectSlotRename walk over the entire consumer file.
+        // the shared materialization contract before payload-specific inspection, substitution, or re-hoisting;
+        // the enclosing consumer file is not normalized again.
         MaterializedBirPayload.Normalize(payload);
 
         // GUARD SCAN -> FAIL LOUD (#95/§4.5 splice-all): kotc emits a callInline for EVERY inline call with a lambda arg,

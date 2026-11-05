@@ -364,6 +364,18 @@ for proj in "${PROJECTS[@]}"; do
 	# standard KLIB companion_object_name + nested class graph. Inspect both artifacts so a mutually-compatible
 	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		if jq -e --slurpfile cir "$dir/obj/$CONFIGURATION/net10.0/cir/PortableMutableRenderingTests.cir.json" '
+			([.. | objects | select(.k? == "callInline" and
+				.callee.name? == "roundtrip.mutablepolicy.renderMutableInline")] | length >= 2) and
+			($cir[0] | [.. | objects | select(.method? == "renderMutableInline" and
+				(.k? == "callStatic" or .k? == "callInstance"))] | length == 0)
+		' "$dir/obj/$CONFIGURATION/net10.0/bir/PortableMutableRenderingTests.bir.json" \
+			>"$ROOT/build/nunit-$name.object-slot-inline.log" 2>&1; then
+			echo "  Object-slot tests materialize imported inline payloads rather than calling wrappers"
+		else
+			echo "  OBJECT SLOT INLINE COVERAGE FAIL"
+			tail -25 "$ROOT/build/nunit-$name.object-slot-inline.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/roundtrip/assert-coroutine-lexical-inline.py" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/CoroutineLexicalSelfFrames.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/CoroutineLexicalSelfFrameTests.bir.json" \
