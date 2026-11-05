@@ -45,16 +45,18 @@ static class MaterializedBirPayload
 
     public static void SelfTest()
     {
+        JsonObject AnyCall(string name, bool superCall = false) => new()
+        {
+            ["k"] = "callInstance", ["method"] = name, ["anySlot"] = true, ["super"] = superCall,
+            ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "value" },
+            ["args"] = name == "equals"
+                ? new JsonArray(new JsonObject { ["k"] = "local", ["name"] = "other" }) : new JsonArray(),
+        };
         var payload = new JsonObject
         {
             ["body"] = new JsonArray
             {
-                new JsonObject
-                {
-                    ["k"] = "callInstance",
-                    ["method"] = "toString",
-                    ["anySlot"] = true,
-                },
+                AnyCall("toString"), AnyCall("equals"), AnyCall("hashCode"), AnyCall("equals", superCall: true),
             },
             ["lifted"] = new JsonArray
             {
@@ -69,9 +71,20 @@ static class MaterializedBirPayload
         Normalize(payload);
         var call = payload["body"]?[0] as JsonObject;
         var lifted = payload["lifted"]?[0] as JsonObject;
+        bool IsEqualityHelper(int index, string method)
+        {
+            var result = payload["body"]?[index];
+            return result?["k"]?.GetValue<string>() == "callStatic"
+                && TypeJson.OwnerName(result["owner"]) == "DotKt.Runtime.CompilerServices.KotlinEqualityKt"
+                && result["method"]?.GetValue<string>() == method && result["anySlot"] == null;
+        }
+        var superCall = payload["body"]?[3];
         if (call?["method"]?.GetValue<string>() != "ToString"
             || call["anySlot"]?.GetValue<bool>() != true
-            || lifted?["name"]?.GetValue<string>() != "GetHashCode")
+            || lifted?["name"]?.GetValue<string>() != "GetHashCode"
+            || !IsEqualityHelper(1, "kotlinInstanceEquals") || !IsEqualityHelper(2, "kotlinInstanceHashCode")
+            || superCall?["k"]?.GetValue<string>() != "callInstance" || superCall["method"]?.GetValue<string>() != "Equals"
+            || superCall["anySlot"]?.GetValue<bool>() != true || superCall["super"]?.GetValue<bool>() != true)
             throw new InvalidOperationException("materialized BIR payload normalization self-test failed");
 
         var first = payload.DeepClone();

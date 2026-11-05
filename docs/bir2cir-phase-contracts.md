@@ -8,7 +8,7 @@ must not repair the containing file by repeating an idempotent whole-tree pass.
 
 | Producer / transition | Newly invalid capability | Admission path before publication |
 |---|---|---|
-| Source BIR | Kotlin `Any` slot names are not CLR slot names | `ObjectSlotRename` at the per-file representation entry |
+| Source BIR | Kotlin `Any` slot names are not CLR slot names | `ObjectSlotRename` at module entry, before source helper recognition |
 | `InlineSplice`, `DefaultArgSplice` / `KotlinInline`, `KotlinDefault` | The deserialized raw payload has not entered representation lowering | `MaterializedBirPayload.Normalize` before inspection, substitution, or re-hoisting |
 | `ClrEventSubscriptionBinding` | New fixed receiver/handler slots and a new closure ingredient graph | exact returned roots through `NullableTvErasureCallRealign.ApplyMaterialized`, then `ClosureSynthesis.ApplyMaterialized` |
 | `StringCharSequenceBridge` | New delegate-adapter closure ingredient graph | exact returned roots through `ClosureSynthesis.ApplyMaterialized` |

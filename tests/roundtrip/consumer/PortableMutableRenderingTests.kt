@@ -50,10 +50,10 @@ class CrossModulePortableMutableRenderingTests {
         checkPortableMutableRendering(authored, "authored")
         check(renderMutableThroughAny(authored) == "authored")
         check(renderMutableGeneric(authored) == "authored")
-        check(renderMutableInline(authored) == "authored")
+        check(renderMutableInline(authored) { it } == "authored")
         check(renderMutableDefault(authored) == "authored")
         val inherited = PortableSuperRenderList(mutableListOf(1, 2))
-        check(renderMutableInline(inherited) == "super:[1, 2]")
+        check(renderMutableInline(inherited) { it } == "super:[1, 2]")
         check(renderMutableDefault(inherited) == "super:[1, 2]")
     }
 

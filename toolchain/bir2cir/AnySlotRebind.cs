@@ -34,8 +34,8 @@ static class AnySlotRebind
     // BCL Object-slot spellings (ObjectSlotRename renames a call's `method` to these before this pass runs).
     static readonly HashSet<string> ObjectSlots = new(System.StringComparer.Ordinal) { "ToString", "GetHashCode", "Equals" };
 
-    // Kotlin universal-method name -> its BCL Object slot, so CollectLocalTypes reads a declaration whether or not
-    // ObjectSlotRename has renamed it yet (the module-wide collection runs before the per-file rename loop).
+    // The explicit Kotlin override fact selects its CLR Object slot. An already-canonical declaration name
+    // passes through unchanged when collecting the slots the emitted type declares.
     static readonly Dictionary<string, string> KotlinToSlot = new(System.StringComparer.Ordinal)
     {
         ["toString"] = "ToString", ["hashCode"] = "GetHashCode", ["equals"] = "Equals",
