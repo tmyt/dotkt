@@ -5,8 +5,7 @@
 
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 
-// Step-1 CLR stub mirroring the JVM `actual`; bodies are `TODO` pending the `@Clr`/BCL
-// binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
+// CLR platform implementation of the common Enum contract.
 
 package kotlin
 
@@ -45,5 +44,5 @@ public actual abstract class Enum<E : Enum<E>> actual constructor(name: String, 
 
     public actual override final fun hashCode(): Int = TODO("clr binding should be implemented")
 
-    public actual override fun toString(): String = TODO("clr binding should be implemented")
+    public actual override fun toString(): String = DotKt.Runtime.CompilerServices.kotlinEnumName(this)
 }

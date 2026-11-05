@@ -7,6 +7,7 @@ import kotlin.enums.EnumEntries
 import kotlin.enums.enumEntries
 import roundtrip.entries.BasicEntry
 import roundtrip.entries.RichEntry
+import roundtrip.entries.SuperRenderedEntry
 import roundtrip.entries.basicEntries
 import roundtrip.entries.richEntries
 import roundtrip.entries.richName
@@ -54,5 +55,8 @@ class EnumEntriesRoundtripTests {
         assertEquals("SECOND", name(RichEntry.SECOND))
         assertEquals(1, ordinal(RichEntry.SECOND))
         assertEquals(-1, compare(RichEntry.FIRST, RichEntry.SECOND))
+        assertEquals("first:FIRST", SuperRenderedEntry.FIRST.toString())
+        val render: (SuperRenderedEntry) -> String = SuperRenderedEntry::toString
+        assertEquals("entry:second:SECOND", render(SuperRenderedEntry.SECOND))
     }
 }
