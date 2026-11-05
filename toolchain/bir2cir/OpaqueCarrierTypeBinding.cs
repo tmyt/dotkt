@@ -93,6 +93,9 @@ static class OpaqueCarrierTypeBinding
     {
         if (node is JsonObject obj)
         {
+            // Defaults still used by the source compilation keep their original positions until the
+            // outgoing carrier is finalized. Do not change the frontend's executable declaration graph.
+            MaterializedBirPayload.HideDefaultSourceSpans(obj);
             foreach (var key in new[] {
                 KotlinSupertypesRecord.PreKey,
                 NullableGenericErasure.MethodTypeParameterBoundsPre,

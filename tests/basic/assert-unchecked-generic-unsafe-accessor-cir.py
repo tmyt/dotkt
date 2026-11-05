@@ -53,7 +53,7 @@ for method in methods.values():
             f"{method['name']} must project the direct call's physical object return before its operator: "
             f"{matches!r}"
         )
-    operator = method["body"][0]["value"]
+    operator = next(stmt for stmt in method["body"] if stmt.get("k") != "sourcePoint")["value"]
     operand = operator.get("lhs") if method["name"] == "add" else operator.get("e")
     if operand is not casts[0]:
         raise SystemExit(f"{method['name']} extracts the concrete value after rather than before its operator")

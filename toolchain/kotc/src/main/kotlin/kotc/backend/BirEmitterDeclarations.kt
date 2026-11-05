@@ -2523,8 +2523,7 @@ internal fun BirEmitter.defaultCarrierBir(
 	val savedCopyDefault = activeDataClassCopyDefault
 	activeDataClassCopyDefault = dataClassCopyDefault
 	val bir = try {
-		// An assembly carrier is executable BIR, not a distribution mechanism for source paths.
-		withoutSourcePoints { withClonedLocalFunctionIds(def) { expr(def) } }
+		withClonedLocalFunctionIds(def) { expr(def) }
 	} finally {
 		activeDataClassCopyDefault = savedCopyDefault
 	}
