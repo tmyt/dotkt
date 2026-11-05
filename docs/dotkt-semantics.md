@@ -1253,6 +1253,8 @@ all three `append` members). The range overload additionally marks its exclusive
   entries and synthesized members without turning the emitted singleton class into a CLR enum.
   An authored `toString()` override retains virtual dispatch, including through `T : Enum<T>`;
   it does not change `name` or `ordinal`.
+  An explicit `super.toString()` executes the selected base implementation; the `Enum` base returns the stored
+  declaration name without redispatching to the authored override, including for entry-specific subclasses.
 - A projected **.NET** enum retains its nominal CLR enum identity and exact native literal values.
   Unlike distinct Kotlin-authored entries, native aliases with the same underlying value compare equal
   and cannot be distinguished by equality or separate `when` branches. The CLR can also supply

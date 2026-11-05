@@ -360,6 +360,13 @@ enum class EnumSecondaryState(val value: Int, val label: String = "number:$value
     open fun marker(): String = "$value:$label"
 }
 
+enum class EnumSuperRendered {
+    ITEM,
+    ENTRY { override fun toString(): String = "entry:" + super.toString() };
+
+    override fun toString(): String = "super:" + super.toString()
+}
+
 class EnumTests {
     @TestAttribute
     fun explicitClrValuesPreserveKotlinOrder() {
@@ -645,5 +652,8 @@ class EnumTests {
         assertFalse(EnumBasic.A == EnumBasic.B)                 // False
         assertTrue(EnumBasic.A.equals(EnumBasic.A))            // True
         assertEquals(-2, EnumBasic.A.compareTo(EnumBasic.C))    // -2
+        assertEquals("super:ITEM", EnumSuperRendered.ITEM.toString())
+        assertEquals("entry:super:ENTRY", EnumSuperRendered.ENTRY.toString())
+        assertEquals(1, enumGenericOrdinal(EnumSuperRendered.ENTRY))
     }
 }

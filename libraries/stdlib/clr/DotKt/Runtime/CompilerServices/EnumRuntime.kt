@@ -192,25 +192,34 @@ internal fun kotlinEnumCompareTo(receiver: Any, other: Any): Int {
 }
 
 @PublishedApi
+internal fun kotlinEnumName(value: Any): String =
+    if (value is KotlinEnumComparison)
+        value.enumRuntimeType().richEnumInstanceField("name").getValue(value) as String
+    else value.toString()
+
+// Entry bodies are subclasses; the declaring enum's carrier owns the physical storage identity.
+private fun EnumRuntimeType.richEnumInstanceField(api: String): EnumRuntimeField {
+    var declaringType = this
+    while (true) {
+        val attributes = declaringType.getCustomAttributesData()
+        for (index in 0 until attributes.count) {
+            val attribute = attributes[index]
+            if (!attribute.isCompilerCarrier(RICH_ENUM, declaringType.assembly) ||
+                !declaringType.assembly.isCompilerAssembly()) continue
+            val fieldName = richEnumApi(attribute, api)
+            for (field in declaringType.getFields(EnumRuntimeBindingFlags.DECLARED_INSTANCE_PUBLIC_NON_PUBLIC))
+                if (field.name == fieldName) return field
+            error("Missing enum $api field")
+        }
+        declaringType = declaringType.baseType ?: error("Missing enum declaration metadata")
+    }
+}
+
+@PublishedApi
 internal fun kotlinEnumOrdinal(value: Any): Int {
     val type = value.enumRuntimeType()
-    if (value is KotlinEnumComparison) {
-        // An entry body may be a subclass. Only its declaring enum owns the exact physical field map.
-        var declaringType = type
-        while (true) {
-            val attributes = declaringType.getCustomAttributesData()
-            for (index in 0 until attributes.count) {
-                val attribute = attributes[index]
-                if (!attribute.isCompilerCarrier(RICH_ENUM, declaringType.assembly) ||
-                    !declaringType.assembly.isCompilerAssembly()) continue
-                val ordinalField = richEnumApi(attribute, "ordinal")
-                for (field in declaringType.getFields(EnumRuntimeBindingFlags.DECLARED_INSTANCE_PUBLIC_NON_PUBLIC))
-                    if (field.name == ordinalField) return field.getValue(value) as Int
-                error("Missing enum ordinal field")
-            }
-            declaringType = declaringType.baseType ?: error("Missing enum declaration metadata")
-        }
-    }
+    if (value is KotlinEnumComparison)
+        return type.richEnumInstanceField("ordinal").getValue(value) as Int
     // .NET 7+ returns fields in metadata order, matching the FieldDef sequence used by dll2klib.
     val fields = type.getFields(EnumRuntimeBindingFlags.DECLARED_STATIC_PUBLIC_NON_PUBLIC)
     val explicit = type.hasExplicitOrder()
