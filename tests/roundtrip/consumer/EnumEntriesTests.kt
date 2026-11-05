@@ -17,6 +17,7 @@ import roundtrip.entries.sharedEntries
 import roundtrip.entries.relayEntries
 import roundtrip.entries.producerEntryName
 import roundtrip.entries.producerStarEntryName
+import roundtrip.entries.producerConcreteEntryName
 
 private fun <E : Enum<E>> importedEntryOrdinal(value: E): Int = value.ordinal
 
@@ -76,5 +77,12 @@ class EnumEntriesRoundtripTests {
         assertEquals("SECOND", SuperRenderedEntry.SECOND.declaredName())
         assertEquals("SECOND|SECOND|SECOND|SECOND", importedEntryNameForms(BasicEntry.SECOND))
         assertEquals("SECOND", producerEntryName(BasicEntry.SECOND))
+        val concrete = BasicEntry::name
+        val bound = BasicEntry.SECOND::name
+        assertEquals("FIRST", concrete.get(BasicEntry.FIRST))
+        assertEquals("SECOND", concrete(BasicEntry.SECOND))
+        assertEquals("SECOND", bound.get())
+        assertEquals("SECOND", bound())
+        assertEquals("FIRST", producerConcreteEntryName(BasicEntry.FIRST))
     }
 }

@@ -105,6 +105,7 @@ private fun <E : Enum<E>> enumNameForms(value: E): String {
     val star: (Enum<*>) -> String = Enum<*>::name
     return "${value.name}|${bound.get()}|${unbound(value)}|${erased.name}|${star(value)}"
 }
+private fun <T : EnumBasic> enumBasicBoundName(value: T): String = value.name
 private fun enumNameLength(offset: Int = 0, value: ClrRef<String>): Int = offset + value.value.length
 inline fun <reified T : Enum<T>> enumReifiedOrdinal(value: T): Int = value.ordinal
 
@@ -669,5 +670,14 @@ class EnumTests {
         assertEquals("MINUS|MINUS|MINUS|MINUS|MINUS", enumNameForms(EnumOp.MINUS))
         assertEquals("ENTRY|ENTRY|ENTRY|ENTRY|ENTRY", enumNameForms(EnumSuperRendered.ENTRY))
         assertEquals("ENTRY", EnumSuperRendered.ENTRY.declaredName())
+        val concrete = EnumBasic::name
+        val bound = EnumBasic.B::name
+        assertEquals("A", concrete.get(EnumBasic.A))
+        assertEquals("C", concrete(EnumBasic.C))
+        assertEquals("B", bound.get())
+        assertEquals("B", bound())
+        assertEquals("C", enumBasicBoundName(EnumBasic.C))
+        val explicit: (EnumExplicitInt) -> String = EnumExplicitInt::name
+        assertEquals("NEGATIVE", explicit(EnumExplicitInt.NEGATIVE))
     }
 }

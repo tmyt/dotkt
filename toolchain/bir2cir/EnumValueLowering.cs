@@ -44,16 +44,25 @@ static class EnumValueLowering
         {
             var kind = obj["k"]?.GetValue<string>();
             // Lifted property-reference getters preserve the selected inherited Enum property as an ordinary
-            // property call. A rich enum has no physical name/ordinal getter: its producer supplies the
-            // exact field identities. Consume that same authority as the semantic enumName/enumOrdinal path.
+            // property call. Resolve a selected Enum.name declaration through the same semantic operation as
+            // a direct read, including native enums that have no physical getter. Rich storage is producer-owned.
             if (kind == "callInstance" && obj["prop"]?.GetValue<string>() == "get"
                 && obj["method"]?.GetValue<string>() is "name" or "ordinal"
                 && obj["args"] is JsonArray { Count: 0 }
                 && obj["recv"] is JsonNode propertyReceiver && obj["ownerType"] is JsonNode propertyOwner)
             {
                 var member = obj["method"].GetValue<string>();
-                var fieldOwner = DeclaringEnumForProperty(obj, member) ?? propertyOwner;
-                if (TypeJson.OwnerName(fieldOwner) is string propertyEnum
+                var declaringEnum = DeclaringEnumForProperty(obj, member);
+                var fieldOwner = declaringEnum ?? propertyOwner;
+                if (member == "name" && declaringEnum != null)
+                {
+                    var receiverClone = propertyReceiver.DeepClone();
+                    obj.Clear();
+                    obj["k"] = kind = "enumName";
+                    obj["e"] = receiverClone;
+                    obj["type"] = declaringEnum;
+                }
+                else if (TypeJson.OwnerName(fieldOwner) is string propertyEnum
                     && TryRichInstanceFields(propertyEnum, refs, localRichFields, out var propertyNameField, out var propertyOrdinalField))
                     RewriteRichField(obj, propertyReceiver, fieldOwner,
                         member == "name" ? propertyNameField : propertyOrdinalField,
