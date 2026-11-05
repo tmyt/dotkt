@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve inner class declarations below companions, objects, interfaces, and enums, including enclosing generic frames and separate Kotlin DLL consumers.
+
 ## 0.9.20 (2026-11-05)
 
 ### Release highlights
