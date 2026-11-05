@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Normalize Object slots at source and payload entry without a second per-file sweep, and verify first-pass correctness separately from idempotence.
+
 - Honor deterministic emission for implementation/reference DLLs and matching external Portable PDBs, using content-derived image and symbol identities.
 
 - Preserve inner class declarations below companions, objects, interfaces, and enums, including enclosing generic frames and separate Kotlin DLL consumers.

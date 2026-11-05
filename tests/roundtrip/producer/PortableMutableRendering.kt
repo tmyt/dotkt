@@ -42,3 +42,5 @@ class PortableSuperRenderList<T>(private val values: MutableList<T>) : AbstractM
 
 fun renderMutableThroughAny(value: Any): String = value.toString()
 fun <T> renderMutableGeneric(value: T): String = value.toString()
+inline fun renderMutableInline(value: Any): String = value.toString()
+fun renderMutableDefault(value: Any, text: String = value.toString()): String = text

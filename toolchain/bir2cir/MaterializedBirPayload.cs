@@ -7,7 +7,7 @@ using DotKt.Bir;
 //
 // Keep this chokepoint small and ordered. A new representation-entry invariant belongs here when it must hold for
 // both inline and default payloads; callers must not repair a materialized payload later with an idempotent file-wide
-// sweep. Normal source BIR takes the same first step directly in Program's phase-1 entry.
+// sweep. Normal source BIR takes the same first step before Program's source helper recognition.
 static class MaterializedBirPayload
 {
     // Before storing executable BIR in a DLL, turn producer-owned source positions into hidden boundaries.
@@ -67,12 +67,16 @@ static class MaterializedBirPayload
         };
 
         Normalize(payload);
-        Normalize(payload);
         var call = payload["body"]?[0] as JsonObject;
         var lifted = payload["lifted"]?[0] as JsonObject;
         if (call?["method"]?.GetValue<string>() != "ToString"
             || call["anySlot"]?.GetValue<bool>() != true
             || lifted?["name"]?.GetValue<string>() != "GetHashCode")
             throw new InvalidOperationException("materialized BIR payload normalization self-test failed");
+
+        var first = payload.DeepClone();
+        Normalize(payload);
+        if (!JsonNode.DeepEquals(first, payload))
+            throw new InvalidOperationException("materialized BIR payload normalization is not idempotent");
     }
 }

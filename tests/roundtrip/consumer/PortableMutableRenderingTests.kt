@@ -6,6 +6,9 @@ import roundtrip.mutablepolicy.PortableRenderingElement
 import roundtrip.mutablepolicy.PortableAuthoredRenderList
 import roundtrip.mutablepolicy.renderMutableThroughAny
 import roundtrip.mutablepolicy.renderMutableGeneric
+import roundtrip.mutablepolicy.renderMutableInline
+import roundtrip.mutablepolicy.renderMutableDefault
+import roundtrip.mutablepolicy.PortableSuperRenderList
 
 private fun checkPortableMutableRendering(value: Any, expected: String) {
     val actual = value.toString()
@@ -47,6 +50,11 @@ class CrossModulePortableMutableRenderingTests {
         checkPortableMutableRendering(authored, "authored")
         check(renderMutableThroughAny(authored) == "authored")
         check(renderMutableGeneric(authored) == "authored")
+        check(renderMutableInline(authored) == "authored")
+        check(renderMutableDefault(authored) == "authored")
+        val inherited = PortableSuperRenderList(mutableListOf(1, 2))
+        check(renderMutableInline(inherited) == "super:[1, 2]")
+        check(renderMutableDefault(inherited) == "super:[1, 2]")
     }
 
     @TestAttribute fun directSelfReferencesUseIdentityWithoutRecursion() {
