@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve declared enum names through generic bounds, star projections and property references instead of invoking an authored `toString()` override.
+
 - Implement enum base `toString()` using declaration-owned entry names, preserving explicit-super and entry-body override chains across Kotlin DLLs.
 
 - Normalize Object slots at source and payload entry without a second per-file sweep, and verify first-pass correctness separately from idempotence.

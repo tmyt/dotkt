@@ -12,9 +12,8 @@ using System.Text.Json.Nodes;
 //      (the static receiver type is the concrete enum). ObjectSlotRename renames `toString`->`ToString` but keeps
 //      owner `E` — so ilemit's `FindMethod("E","ToString")` fails ("method E.ToString not found"). Rebind to an
 //      `objMethod` (box the value-type receiver, then the `System.Object` virtual slot) — `System.Enum` overrides
-//      `ToString`/`Equals`/`GetHashCode`, so virtual dispatch yields the correct result. (kotc already lowers `.name`
-//      -> `objMethod ToString` and `.ordinal` -> `enumOrdinal`, and `compareTo`/`==` to ordinal arithmetic, so those
-//      concrete accesses never hit this gap.)
+//      `ToString`/`Equals`/`GetHashCode`, so virtual dispatch yields the correct result. Concrete `.name`/`.ordinal`
+//      reads arrive as semantic enum operations; bir2cir resolves those against declaration-owned storage.
 //
 //  (2) GENERIC receiver (`e: T`, `T : Enum<T>`): kotc names the semantic base `kotlin.Enum<T>`, which does not
 //      name a concrete CLR receiver or a MethodDef. A semantic Any.toString call uses the CLR Object virtual
@@ -81,13 +80,8 @@ static class EnumMemberBinding
             return;
         }
 
-        // Existing Enum-bound name access is a property, not an Any virtual slot.
+        // Name uses the concrete stdlib getter through ordinary CLR-bound property substitution.
         var propertyAccess = (obj["prop"] as JsonValue)?.TryGetValue<string>(out var access) == true ? access : null;
-        if (owner == "kotlin.Enum" && method == "name" && propertyAccess == "get")
-        {
-            ToObjMethod(obj, recv, "ToString", arg: null);
-            return;
-        }
         // `T : Enum<T>`.ordinal has no System.Enum property slot. Preserve Kotlin's declaration-index semantics
         // explicitly: enumOrdinal over the receiver's lexical T asks ilemit only to emit the CIR-authored generic
         // enum reflection sequence. This must happen before generic constrained-member binding; otherwise the bare

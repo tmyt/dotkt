@@ -97,6 +97,14 @@ fun enumExplicitIntLabel(value: EnumExplicitInt): String = when (value) {
 }
 
 fun <T : Enum<T>> enumGenericOrdinal(value: T): Int = value.ordinal
+
+private fun <E : Enum<E>> enumNameForms(value: E): String {
+    val bound = value::name
+    val unbound: (E) -> String = Enum<E>::name
+    val erased: Enum<*> = value
+    val star: (Enum<*>) -> String = Enum<*>::name
+    return "${value.name}|${bound.get()}|${unbound(value)}|${erased.name}|${star(value)}"
+}
 private fun enumNameLength(offset: Int = 0, value: ClrRef<String>): Int = offset + value.value.length
 inline fun <reified T : Enum<T>> enumReifiedOrdinal(value: T): Int = value.ordinal
 
@@ -365,6 +373,7 @@ enum class EnumSuperRendered {
     ENTRY { override fun toString(): String = "entry:" + super.toString() };
 
     override fun toString(): String = "super:" + super.toString()
+    fun declaredName(): String = super.name
 }
 
 class EnumTests {
@@ -655,5 +664,10 @@ class EnumTests {
         assertEquals("super:ITEM", EnumSuperRendered.ITEM.toString())
         assertEquals("entry:super:ENTRY", EnumSuperRendered.ENTRY.toString())
         assertEquals(1, enumGenericOrdinal(EnumSuperRendered.ENTRY))
+        assertEquals("A|A|A|A|A", enumNameForms(EnumBasic.A))
+        assertEquals("NEGATIVE|NEGATIVE|NEGATIVE|NEGATIVE|NEGATIVE", enumNameForms(EnumExplicitInt.NEGATIVE))
+        assertEquals("MINUS|MINUS|MINUS|MINUS|MINUS", enumNameForms(EnumOp.MINUS))
+        assertEquals("ENTRY|ENTRY|ENTRY|ENTRY|ENTRY", enumNameForms(EnumSuperRendered.ENTRY))
+        assertEquals("ENTRY", EnumSuperRendered.ENTRY.declaredName())
     }
 }
