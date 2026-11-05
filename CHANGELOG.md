@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.20 (2026-11-05)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.20`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Emit external Portable PDBs for Kotlin source-line debugging and opt-in reference
+  assemblies that preserve CLR signatures, generic constraints, and Kotlin metadata.
+- Expose Kotlin arrays as `System.Array` without copying and preserve classifier,
+  property, and dispatch identity across DotKt DLL boundaries.
+- Use the selected SDK's Roslyn support for explicit Windows `.res` inputs. Use the
+  original `.res` rather than a COFF object for `Win32Resource`.
+
 ### Changed
 
 - Emit matching Portable PDBs with Kotlin source-line breakpoints and basic stepping in .NET debuggers.
@@ -25,6 +38,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Refresh compiler-tool build metadata before stdlib fingerprinting so commit-only SourceLink changes do not cause duplicate stdlib builds during `make pack` or `make verify`.
 - Preserve named and default companion classifier identity in imported extension receivers and other semantic type slots, including generic/nested owners and extensions declared in a separate DLL.
 - Preserve authored enum `toString` overrides without generating a duplicate default implementation, including abstract overrides and per-entry dispatch.
+- Consolidate overlapping validation work and refresh user, architecture, and test guidance against the release candidate.
 
 ## 0.9.19 (2026-11-03)
 
