@@ -1393,25 +1393,32 @@ sealed partial class Emitter
         var peHeader = new PEHeaderBuilder(imageCharacteristics: Characteristics.ExecutableImage | Characteristics.Dll);
         var entryPoint = entry != null && _referenceAssemblyPath == null
             ? MetadataTokens.MethodDefinitionHandle(entry.MetadataToken) : default;
-        var symbolsId = _portablePdbPath == null ? default : BlobContentId.GetTimeBasedProvider()(Array.Empty<Blob>());
+        var symbolsId = _portablePdbPath == null ? default
+            : _deterministic ? DeterministicSymbolsId(metadata.GetRowCounts(), entryPoint, ilStream)
+            : BlobContentId.GetTimeBasedProvider()(Array.Empty<Blob>());
         var debugDirectory = _portablePdbPath == null ? null : new DebugDirectoryBuilder();
         debugDirectory?.AddCodeViewEntry(Path.GetFileName(_portablePdbPath), symbolsId, PortablePdbFormatVersion);
+        if (_deterministic) debugDirectory?.AddReproducibleEntry();
         var peBuilder = new ManagedPEBuilder(
             peHeader, new MetadataRootBuilder(metadata), ilStream,
             mappedFieldData: fieldData,
             nativeResources: _nativeResources,
             debugDirectoryBuilder: debugDirectory,
-            entryPoint: entryPoint);
+            entryPoint: entryPoint,
+            deterministicIdProvider: _deterministic ? DeterministicPeId : null);
         var blob = new BlobBuilder();
-        peBuilder.Serialize(blob);
+        var imageId = peBuilder.Serialize(blob);
+        var imageBytes = blob.ToArray();
+        if (_deterministic)
+            imageId.Guid.TryWriteBytes(imageBytes.AsSpan(ModuleVersionIdOffset(imageBytes), 16));
         if (_portablePdbPath != null)
-            WritePortablePdb(blob, metadata.GetRowCounts(), entryPoint, symbolsId);
+            WritePortablePdb(imageBytes, metadata.GetRowCounts(), entryPoint, symbolsId);
         // #52 — write ATOMICALLY (temp + rename): FileMode.Create truncates-then-writes in place, so a concurrent
         // reader (dll2klib/bir2cir loading this same dll) can observe a partial image and fail with a
         // spurious "Format of the executable is invalid" / BadImageFormatException. A same-directory rename is atomic,
         // so a reader always sees either the whole old file or the whole new one — never a torn write.
         var dllPath = _referenceAssemblyPath ?? Path.Combine(_outDir, _asmName + ".dll");
-        AtomicFile.Write(dllPath, fs => blob.WriteContentTo(fs));
+        AtomicFile.Write(dllPath, fs => fs.Write(imageBytes));
         Console.WriteLine(_referenceAssemblyPath == null ? $"emitted {_asmName}.dll" : $"emitted reference assembly {dllPath}");
     }
 

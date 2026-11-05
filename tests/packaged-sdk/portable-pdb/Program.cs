@@ -2,8 +2,24 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text;
 
+bool? deterministic = args[^1] switch
+{
+    "--deterministic" => true,
+    "--non-deterministic" => false,
+    _ => null,
+};
+if (deterministic.HasValue) args = args[..^1];
 using var pe = new PEReader(File.OpenRead(args[0]));
 var metadata = pe.GetMetadataReader();
+if (args.Length == 3 && args[1] == "--different-mvid")
+{
+    using var previous = new PEReader(File.OpenRead(args[2]));
+    var previousMetadata = previous.GetMetadataReader();
+    Require(metadata.GetGuid(metadata.GetModuleDefinition().Mvid) !=
+        previousMetadata.GetGuid(previousMetadata.GetModuleDefinition().Mvid),
+        "Different image content retained the same MVID.");
+    return;
+}
 var inlineMethod = metadata.MethodDefinitions.Select(metadata.GetMethodDefinition)
     .Single(method => metadata.GetString(method.Name) == "withSeed");
 var inline = inlineMethod.GetCustomAttributes().Select(metadata.GetCustomAttribute).Single(attribute =>
@@ -31,6 +47,9 @@ Require(defaultPayload.Contains("\"k\":\"sourcePoint\"") && !defaultPayload.Cont
     "The default expression carrier must not contain the producer's source spans.");
 
 var entries = pe.ReadDebugDirectory();
+if (deterministic.HasValue)
+    Require(entries.Any(e => e.Type == DebugDirectoryEntryType.Reproducible) == deterministic.Value,
+        "The reproducible-image marker does not reflect Deterministic.");
 if (args.Length == 1)
 {
     Require(!entries.Any(e => e.Type is DebugDirectoryEntryType.CodeView or DebugDirectoryEntryType.EmbeddedPortablePdb),
