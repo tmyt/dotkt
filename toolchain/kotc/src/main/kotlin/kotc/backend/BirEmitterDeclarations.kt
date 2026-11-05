@@ -1164,12 +1164,12 @@ internal fun BirEmitter.nestedAnnotationClasses(c: IrClass): List<IrClass> {
 	return out
 }
 
-/** `inner class`es nested (recursively) inside a class -> flattened to top-level synthetic types. */
+/** Inner declarations below any named classifier, including classes owned by companions and objects. */
 internal fun BirEmitter.innerClasses(c: IrClass): List<IrClass> {
 	val out = ArrayList<IrClass>()
 	c.declarations.filterIsInstance<IrClass>()
-		.filter { it.kind == ClassKind.CLASS && !it.isCompanion && !isExternalNetType(it) && it.name.asString() != "<no name provided>" }
-		.forEach { if (it.isInner) out.add(it); out.addAll(innerClasses(it)) }
+		.filter { !isExternalNetType(it) && it.name.asString() != "<no name provided>" }
+		.forEach { if (it.kind == ClassKind.CLASS && it.isInner) out.add(it); out.addAll(innerClasses(it)) }
 	return out
 }
 

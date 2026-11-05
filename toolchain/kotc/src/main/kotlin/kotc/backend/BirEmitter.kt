@@ -1143,7 +1143,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		val nestedAnnotations = nestedParents.flatMap { nestedAnnotationClasses(it) }
 		val (nestedRichEnums, nestedBasicEnums) = nestedEnums.partition { isRichEnum(it) }
 		// `inner class`es flatten to top-level types that capture the enclosing instance (`__outer`).
-		val inners = classes.flatMap { innerClasses(it) }
+		val inners = nestedParents.flatMap { innerClasses(it) }
 		// Nested interfaces (recursively, inside classes/interfaces/objects) -> real nested types so a `TimeSource.WithComparableMarks` supertype resolves.
 		val nestedIfaces = nestedParents.flatMap { nestedInterfaces(it) }
 		val typeDefs = (basicEnums + nestedBasicEnums).map { enumDef(it) } + (interfaces + nestedIfaces).map { interfaceDef(it) } +
