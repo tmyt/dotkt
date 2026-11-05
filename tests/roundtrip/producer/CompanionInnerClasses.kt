@@ -45,6 +45,11 @@ object ObjectOwner {
 }
 
 interface InterfaceOwner {
+    class DirectValue(val value: Int) {
+        inner class Capture { fun read(): Int = value }
+        fun read(): Int = Capture().read()
+    }
+
     companion object {
         class Value(val value: Int) {
             inner class Capture { fun read(): Int = value }
@@ -55,6 +60,8 @@ interface InterfaceOwner {
 
 enum class EnumOwner {
     ITEM;
+    inner class Tag { fun label(): String = name + ordinal }
+
     class Value(val value: Int) {
         inner class Capture { fun read(): Int = value }
         fun read(): Int = Capture().read()

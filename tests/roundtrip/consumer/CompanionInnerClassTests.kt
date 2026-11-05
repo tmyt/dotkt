@@ -32,8 +32,11 @@ class CompanionInnerClassTests {
         check(ObjectOwner.Value(37).Capture().read() == 37)
         check(InterfaceOwner.Companion.Value(41).read() == 41)
         check(InterfaceOwner.Companion.Value(43).Capture().read() == 43)
+        check(InterfaceOwner.DirectValue(67).read() == 67)
+        check(InterfaceOwner.DirectValue(71).Capture().read() == 71)
         check(EnumOwner.Value(47).read() == 47)
         check(EnumOwner.Value(53).Capture().read() == 53)
+        check(EnumOwner.ITEM.Tag().label() == "ITEM0")
         check(AnnotationOwner.Value(59).read() == 59)
         check(AnnotationOwner.Value(61).Capture().read() == 61)
     }
