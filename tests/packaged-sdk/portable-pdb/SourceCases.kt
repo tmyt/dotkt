@@ -27,5 +27,20 @@ val topLevel = "42".toInt()
 
 fun exerciseSourceCases() {
     check(documents() == 42 && controlFlow() == 3 && branch(true) == 17 && branch(false) == 23)
-    check(SourceInitializer().value == 42 && topLevel == 42)
+    check(SourceInitializer().value == 42 && topLevel == 42 && loweredEvaluations() == 42)
 }
+
+fun loweredEvaluations(): Int {
+    var result = 0
+    when (readNumber()) {
+        21 -> result = 20
+        else -> result = 1
+    }
+    val (left, right) = makePair()
+    nullableString()?.toString()
+    return result + left + right
+}
+
+private fun readNumber() = 21
+private fun makePair() = Pair(20, 2)
+private fun nullableString(): String? = "value"

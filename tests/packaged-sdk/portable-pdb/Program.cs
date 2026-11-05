@@ -1,7 +1,21 @@
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
+using System.Text;
 
 using var pe = new PEReader(File.OpenRead(args[0]));
+var metadata = pe.GetMetadataReader();
+var inlineMethod = metadata.MethodDefinitions.Select(metadata.GetMethodDefinition)
+    .Single(method => metadata.GetString(method.Name) == "withSeed");
+var inline = inlineMethod.GetCustomAttributes().Select(metadata.GetCustomAttribute).Single(attribute =>
+    attribute.Constructor.Kind == HandleKind.MethodDefinition
+    && metadata.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).GetDeclaringType() is var parent
+    && metadata.GetString(metadata.GetTypeDefinition(parent).Name) == "KotlinInlineAttribute");
+var carrier = metadata.GetBlobReader(inline.Value);
+Require(carrier.ReadUInt16() == 1 && carrier.ReadSerializedString() == "bir-json/1", "Unexpected inline carrier.");
+var payload = Encoding.UTF8.GetString(carrier.ReadBytes(carrier.ReadInt32()));
+Require(payload.Contains("\"k\":\"sourcePoint\"") && !payload.Contains("\"span\":"),
+    "The executable DLL carrier must not contain the producer's source spans.");
+
 var entries = pe.ReadDebugDirectory();
 if (args.Length == 1)
 {
@@ -18,7 +32,6 @@ var cv = pe.ReadCodeViewDebugDirectoryData(codeView);
 Require(cv.Guid == id.Guid && codeView.Stamp == id.Stamp && cv.Age == 1
     && cv.Path == Path.GetFileName(args[1]), "DLL and Portable PDB identities differ.");
 
-var metadata = pe.GetMetadataReader();
 Require(pdb.MethodDebugInformation.Count == metadata.MethodDefinitions.Count, "PDB MethodDef rows are misaligned.");
 string Source(DocumentHandle document) => pdb.GetString(pdb.GetDocument(document).Name);
 var methods = new Dictionary<string, SequencePoint[]>();
@@ -63,6 +76,21 @@ Require(loop.Where(p => !p.IsHidden).Select(p => p.StartLine).Distinct().Sequenc
 Require(HasLine("branch", 18) && HasLine("branch", 20), "Value branch spans were lost.");
 Require(HasLine("SourceInitializer::.ctor", 23) && HasLine("SourceCasesKt::.cctor", 26),
     "Property initializers do not map to the source expressions.");
+var initializer = metadata.TypeDefinitions.Select(metadata.GetTypeDefinition)
+    .Single(type => metadata.GetString(type.Name) == "SourceInitializer");
+var getter = initializer.GetProperties().Select(metadata.GetPropertyDefinition)
+    .Single(property => metadata.GetString(property.Name) == "value").GetAccessors().Getter;
+Require(pdb.GetMethodDebugInformation(getter).GetSequencePoints().All(point => point.IsHidden),
+    "A generated getter claims the property initializer's source line.");
+
+var lines = File.ReadAllLines(args[4]);
+foreach (var expression in new[] { "readNumber()", "makePair()", "nullableString()" })
+{
+    int line = Array.FindIndex(lines, text => text.StartsWith("    ") && text.Contains(expression));
+    Require(line >= 0 && methods["loweredEvaluations"].Any(p => !p.IsHidden && Source(p.Document) == args[4]
+        && p.StartLine == line + 1 && p.StartColumn == lines[line].IndexOf(expression, StringComparison.Ordinal) + 1),
+        $"Evaluation moved into a temporary lost its source position: {expression}.");
+}
 
 bool HasLine(string method, int line) => methods.TryGetValue(method, out var points)
     && points.Any(p => !p.IsHidden && Source(p.Document) == args[4] && p.StartLine == line);

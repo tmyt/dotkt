@@ -9,6 +9,20 @@ using System.Text.Json.Nodes;
 // sweep. Normal source BIR takes the same first step directly in Program's phase-1 entry.
 static class MaterializedBirPayload
 {
+    // Before storing executable BIR in a DLL, turn producer-owned source positions into hidden boundaries.
+    // The local compilation retains its own graph and emits visible positions to its separate PDB.
+    public static void HideSourceSpans(JsonNode payload)
+    {
+        if (payload is JsonObject obj)
+        {
+            if (obj["k"] is JsonValue kind && kind.TryGetValue<string>(out var text) && text == "sourcePoint")
+                obj.Remove("span");
+            foreach (var pair in obj) HideSourceSpans(pair.Value);
+        }
+        else if (payload is JsonArray array)
+            foreach (var item in array) HideSourceSpans(item);
+    }
+
     public static void Normalize(JsonNode payload)
     {
         if (payload == null) return;

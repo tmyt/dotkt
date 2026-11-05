@@ -1457,6 +1457,13 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 	return if (items.isEmpty()) "" else ""","overrides":[${items.joinToString(",")}]"""
 }
 
+private fun BirEmitter.accessorBodyStmts(acc: IrSimpleFunction): String {
+	val render = {
+		withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	}
+	return if (acc.origin == IrDeclarationOrigin.DEFAULT_PROPERTY_ACCESSOR) withoutSourcePoints(render) else render()
+}
+
 /** A top-level property's static accessor declaration in Kotlin vocabulary (extension receiver -> `__self`).
  *  Used for extension properties (`val T.p`) and computed top-level properties (no backing field). */
 internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
@@ -1466,7 +1473,7 @@ internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: 
 	val savedDelegatedAccessor = activeDelegatedAccessor
 	activeDelegatedAccessor = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }
 	// #6 non-null parameter PRECONDITIONS + getter return POSTCONDITION, gated on the accessor's real IR visibility.
-	val bodyStmts = withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	val bodyStmts = accessorBodyStmts(acc)
 	val body = (preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
 	activeDelegatedAccessor = savedDelegatedAccessor
 	if (extRecv != null) selfSubst.remove(extRecv)
@@ -1512,9 +1519,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	// #6 non-null parameter PRECONDITIONS (a setter's `value` param) at entry + a getter's non-null return POSTCONDITION
 	// (a setter returns Unit -> naturally out of scope). An abstract accessor declares only a slot: it has no entry at
 	// which a precondition can run, and its BIR body must remain empty all the way to ilemit.
-	val bodyStmts = if (isAbstract) "" else withReturnPostcondition(acc) {
-		(acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-	}
+	val bodyStmts = if (isAbstract) "" else accessorBodyStmts(acc)
 	val body = if (isAbstract) "" else
 		(preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
 	activeDelegatedAccessor = savedDelegatedAccessor
@@ -2518,7 +2523,8 @@ internal fun BirEmitter.defaultCarrierBir(
 	val savedCopyDefault = activeDataClassCopyDefault
 	activeDataClassCopyDefault = dataClassCopyDefault
 	val bir = try {
-		withClonedLocalFunctionIds(def) { expr(def) }
+		// An assembly carrier is executable BIR, not a distribution mechanism for source paths.
+		withoutSourcePoints { withClonedLocalFunctionIds(def) { expr(def) } }
 	} finally {
 		activeDataClassCopyDefault = savedCopyDefault
 	}

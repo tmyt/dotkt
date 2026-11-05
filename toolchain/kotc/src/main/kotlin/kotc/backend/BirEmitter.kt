@@ -7,6 +7,7 @@ import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
 import org.jetbrains.kotlin.ir.declarations.IrDeclaration
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
@@ -291,7 +292,21 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	}
 
 	// Statement provenance is independent of declaration diagnostics and survives moving the BIR body.
+	internal var suppressSourcePoints = false
+
+	internal inline fun <T> withoutSourcePoints(render: () -> T): T {
+		val saved = suppressSourcePoints
+		suppressSourcePoints = true
+		return try { render() } finally { suppressSourcePoints = saved }
+	}
+
 	internal fun sourcePointJson(node: IrElement): String? {
+		if (suppressSourcePoints) return null
+		when (activeSemanticOwnerDeclaration?.origin) {
+			IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER,
+			IrDeclarationOrigin.GENERATED_INLINE_CLASS_MEMBER,
+			IrDeclarationOrigin.GENERATED_FULL_VALUE_CLASS_MEMBER -> return null
+		}
 		val source = fileEntry?.takeIf { it.supportsDebugInfo } ?: return null
 		val start = node.startOffset
 		val end = node.endOffset

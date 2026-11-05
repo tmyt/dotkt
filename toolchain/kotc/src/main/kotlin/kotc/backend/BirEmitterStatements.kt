@@ -93,8 +93,15 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String {
 		is IrTypeOperatorCall -> node.operator != IrTypeOperator.IMPLICIT_COERCION_TO_UNIT
 		else -> true
 	}
-	val userVariable = node is IrVariable && node.origin == IrDeclarationOrigin.DEFINED
-	return if (boundary || userVariable) sourcePointJson(node)?.let { "$it,$rendered" } ?: rendered else rendered
+	val source = when {
+		boundary -> node
+		node is IrVariable && node.origin == IrDeclarationOrigin.DEFINED -> node
+		// An IR temporary can hold the first real evaluation of a subject/receiver/destructuring.
+		// Attribute that evaluation to its expression, not to the generated local declaration.
+		node is IrVariable && node.origin == IrDeclarationOrigin.IR_TEMPORARY_VARIABLE -> node.initializer
+		else -> null
+	}
+	return source?.let { sourcePointJson(it) }?.let { "$it,$rendered" } ?: rendered
 }
 
 private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String = when (node) {
