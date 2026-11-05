@@ -1,0 +1,15 @@
+{
+  "fileClass": "BodyMapKt", "fields": [], "methods": [],
+  "types": [{"name":"BodyMap", "kind":"interface", "vis":"public", "fields":[], "ctors":[], "properties":[], "interfaces":[],
+    "methods":[
+      {"name":"a", "static":false,"abstract":true,"override":false,"virtual":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"System.Void"},"body":[]},
+      {"name":"b", "static":false,"abstract":false,"override":false,"virtual":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"System.Void"},"body":[
+        {"k":"sourcePoint","span":{"f":"BodyMap.kt","l":2,"c":1,"el":2,"ec":2}},
+        {"k":"var","name":"x","type":{"t":"fqn","name":"System.Int32"},"value":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":1}},
+        {"k":"return"}]},
+      {"name":"c", "static":false,"abstract":false,"override":false,"virtual":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"System.Void"},"body":[
+        {"k":"var","name":"x","type":{"t":"fqn","name":"System.Int32"},"value":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":1}},
+        {"k":"var","name":"y","type":{"t":"fqn","name":"System.Int32"},"value":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":2}},
+        {"k":"return"}]}
+    ]}]
+}

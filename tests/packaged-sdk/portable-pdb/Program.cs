@@ -1,9 +1,58 @@
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text;
+using System.Text.Json.Nodes;
 
+if (args[0] == "--shift-body-map")
+{
+    var input = JsonNode.Parse(File.ReadAllText(args[1]))!;
+    var declarations = input["types"]![0]!["methods"]!;
+    var point = declarations[1]!["body"]![0]!.DeepClone();
+    declarations[0]!["body"] = declarations[1]!["body"]!.DeepClone();
+    ((JsonArray)declarations[0]!["body"]!).RemoveAt(0);
+    declarations[0]!["abstract"] = false;
+    declarations[1]!["body"] = declarations[2]!["body"]!.DeepClone();
+    ((JsonArray)declarations[1]!["body"]!).Insert(0, point);
+    declarations[2]!["body"] = new JsonArray();
+    declarations[2]!["abstract"] = true;
+    File.WriteAllText(args[2], input.ToJsonString());
+    return;
+}
+if (args[0] == "--different-pdb")
+{
+    (BlobContentId Id, StandaloneSignatureHandle Locals) ReadIdentity(string path)
+    {
+        using var provider = MetadataReaderProvider.FromPortablePdbStream(File.OpenRead(path));
+        var reader = provider.GetMetadataReader();
+        var method = reader.MethodDebugInformation.Select(reader.GetMethodDebugInformation).Single(info =>
+            !info.Document.IsNil && reader.GetString(reader.GetDocument(info.Document).Name) == "BodyMap.kt");
+        return (new BlobContentId(reader.DebugMetadataHeader!.Id), method.LocalSignature);
+    }
+    var first = ReadIdentity(args[1]);
+    var second = ReadIdentity(args[2]);
+    Require(first.Locals != second.Locals, "The witness did not change the source method's local signature.");
+    Require(first.Id != second.Id, "Different PDB content retained the same identity.");
+    return;
+}
+
+bool? deterministic = args[^1] switch
+{
+    "--deterministic" => true,
+    "--non-deterministic" => false,
+    _ => null,
+};
+if (deterministic.HasValue) args = args[..^1];
 using var pe = new PEReader(File.OpenRead(args[0]));
 var metadata = pe.GetMetadataReader();
+if (args.Length == 3 && args[1] == "--different-mvid")
+{
+    using var previous = new PEReader(File.OpenRead(args[2]));
+    var previousMetadata = previous.GetMetadataReader();
+    Require(metadata.GetGuid(metadata.GetModuleDefinition().Mvid) !=
+        previousMetadata.GetGuid(previousMetadata.GetModuleDefinition().Mvid),
+        "Different image content retained the same MVID.");
+    return;
+}
 var inlineMethod = metadata.MethodDefinitions.Select(metadata.GetMethodDefinition)
     .Single(method => metadata.GetString(method.Name) == "withSeed");
 var inline = inlineMethod.GetCustomAttributes().Select(metadata.GetCustomAttribute).Single(attribute =>
@@ -31,6 +80,9 @@ Require(defaultPayload.Contains("\"k\":\"sourcePoint\"") && !defaultPayload.Cont
     "The default expression carrier must not contain the producer's source spans.");
 
 var entries = pe.ReadDebugDirectory();
+if (deterministic.HasValue)
+    Require(entries.Any(e => e.Type == DebugDirectoryEntryType.Reproducible) == deterministic.Value,
+        "The reproducible-image marker does not reflect Deterministic.");
 if (args.Length == 1)
 {
     Require(!entries.Any(e => e.Type is DebugDirectoryEntryType.CodeView or DebugDirectoryEntryType.EmbeddedPortablePdb),

@@ -52,7 +52,7 @@ sealed partial class Emitter
         points.Add(point);
     }
 
-    void WritePortablePdb(BlobBuilder pe, ImmutableArray<int> rows, MethodDefinitionHandle entryPoint, BlobContentId id)
+    void WritePortablePdb(byte[] pe, ImmutableArray<int> rows, MethodDefinitionHandle entryPoint, BlobContentId id)
     {
         var symbols = new MetadataBuilder();
         var documents = new Dictionary<string, DocumentHandle>(StringComparer.Ordinal);
@@ -66,7 +66,7 @@ sealed partial class Emitter
         // The public persisted emitter groups MarkSequencePoint by document and loses IL ordering when a
         // method moves back and forth between source files. Encode the ordered source points independently;
         // the finalized image supplies the actual MethodDef rows and local signatures without re-emitting IL.
-        using var image = new PEReader(pe.ToImmutableArray());
+        using var image = new PEReader(new MemoryStream(pe, writable: false));
         var assembly = image.GetMetadataReader();
         var byToken = _sourcePoints.ToDictionary(pair => pair.Key.MetadataToken, pair => pair.Value);
         foreach (var method in assembly.MethodDefinitions)

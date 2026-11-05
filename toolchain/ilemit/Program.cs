@@ -126,13 +126,15 @@ static class IlEmit
             var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions);
             var declarations = MergeByFileClass(files);
             new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
-                nativeResources, versions, jitDebugging, portablePdbPath: portablePdbPath)
+                nativeResources, versions, jitDebugging, portablePdbPath: portablePdbPath,
+                deterministic: assemblyOptions?.Deterministic ?? false)
                 .EmitAssembly(declarations);
             // Use the same CLR declarations and Kotlin metadata, not the stdlib binding representation.
             // The reference image stubs executable bodies, adds the reference marker and omits runtime-only data.
             if (referenceAssemblyPath != null)
                 new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
-                    versions: versions, referenceAssemblyPath: referenceAssemblyPath).EmitAssembly(declarations);
+                    versions: versions, referenceAssemblyPath: referenceAssemblyPath,
+                    deterministic: assemblyOptions?.Deterministic ?? false).EmitAssembly(declarations);
             return 0;
         }
         catch (Exception ex)
@@ -308,7 +310,7 @@ sealed partial class Emitter
         BuildStdlibMode mode = BuildStdlibMode.App, string targetFrameworkMoniker = null,
         string targetPlatform = null, string supportedOsPlatform = null, ResourceSectionBuilder nativeResources = null,
         AssemblyVersions versions = null, bool? jitDebugging = null, string referenceAssemblyPath = null,
-        string portablePdbPath = null)
+        string portablePdbPath = null, bool deterministic = false)
     {
         _outDir = outDir; _asmName = asmName; _target = target;
         _targetFrameworkMoniker = string.IsNullOrWhiteSpace(targetFrameworkMoniker) ? null : targetFrameworkMoniker;
@@ -319,6 +321,7 @@ sealed partial class Emitter
         _jitDebugging = jitDebugging;
         _referenceAssemblyPath = referenceAssemblyPath;
         _portablePdbPath = portablePdbPath;
+        _deterministic = deterministic;
         _methodRetType = Bcl("System.Void");
         _stdlibAssembly = mode != BuildStdlibMode.App;       // both the metadata and runtime twins are stdlib artifacts
     }
