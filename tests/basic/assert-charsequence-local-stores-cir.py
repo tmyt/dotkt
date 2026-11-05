@@ -40,7 +40,9 @@ conditional = [node for node in stores
 assert len(conditional) == 4, "both ordinary and nullable conditional stores must retain synthetic destinations"
 assert all(adapters(node["value"]) for node in conditional), "each String branch needs its store-boundary adapter"
 nullable = [node for node in conditional
-            if any(part.get("k") == "valueBlock" for part in walk(node["value"]))]
+            if any(part.get("k") == "valueBlock"
+                   and any(stmt["k"] != "sourcePoint" for stmt in part["stmts"])
+                   for part in walk(node["value"]))]
 assert len(nullable) == 2, "nullable stores must use null-preserving conversions"
 assert all(any(part.get("k") == "const" and part.get("value") is None
                and is_type(part.get("type"), "dotkt$CharSequence")
