@@ -28,9 +28,10 @@ make pack
 bash tests/run-nunit-tests.sh
 ```
 
-The canonical repository entry point is `make verify-tests`, which packs the current SDK before invoking the
-runner. `nuget.config` uses an isolated cache and the local `build/nuget-feed`, so a same-version repack cannot be
-masked by a previously extracted SDK package.
+`make verify-nunit` packs the current SDK and invokes the NUnit runner. `make verify-tests` adds
+the isolated negative compilation lane, and `make verify-test-corpus` runs schema and sanity over
+the freshly emitted NUnit corpus. `nuget.config` uses an isolated cache and the local
+`build/nuget-feed`, so a same-version repack cannot be masked by a previously extracted package.
 
 `run-ilverify.sh` keeps real runtime-safe compiler defects in the machine-readable `ILVERIFY_XFAIL` baseline and
 intentional ECMA-335 unverifiability in `ILVERIFY_UNVERIFIABLE`. The latter accepts only ILVerify's

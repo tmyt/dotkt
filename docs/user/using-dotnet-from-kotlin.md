@@ -1,12 +1,12 @@
 # Using .NET from Kotlin
 
-DotKt is a **pure binding**: it ships no wrapper library. You call real .NET types directly, and
-the surface you see in Kotlin is the type's real reflected surface.
+DotKt projects referenced assemblies into Kotlin declarations. You call real .NET types directly,
+without generating or maintaining a wrapper library.
 
 ## 1. `import` a .NET type — that's the whole mechanism
 
-Any type from any referenced .NET assembly (the BCL, a NuGet package, a C# `<ProjectReference>`)
-becomes visible by importing its .NET name. No façade generation step, no binding file:
+Import the projected name of an accessible type from a referenced .NET assembly (the BCL, a
+NuGet package, or a C# `<ProjectReference>`). No façade generation step or binding file:
 
 ```kotlin
 import System.Text.StringBuilder
@@ -19,12 +19,13 @@ fun main() {
 }
 ```
 
-- Members keep their **.NET names** (`Append`, `Length`, `ToString`) and all overloads.
-- Constructors, instance methods, properties, indexers, and chaining all work as in C#.
+- Members generally keep their **.NET names** (`Append`, `Length`, `ToString`); Kotlin
+  resolves the projected overloads.
+- Constructors, instance methods, properties, indexers, and chaining use normal Kotlin syntax.
 - **Import aliases** work: `import System.Text.StringBuilder as SB`.
 
-Every public reference declaration is projected. Types appearing in signatures, including return types,
-parameters, and supertypes, therefore resolve without import-seeded discovery:
+Projection is based on the resolved reference assemblies, not on the source's imports.
+Types appearing in projected signatures can therefore resolve without import-seeded discovery:
 
 ```kotlin
 import TX.Panel
@@ -172,6 +173,21 @@ ordinary .NET platform rules and remain the application's responsibility.
 - C# **operator overloads** (`op_Addition`, …) surface as Kotlin operators: `a + b`, `-a`, etc.
   (`==` deliberately routes to `Equals`, the Kotlin semantics.)
 - C#-defined **extension methods** surface as Kotlin extension functions.
+
+### Kotlin arrays as `System.Array`
+
+Starting with 0.9.20, Kotlin's primitive, unsigned and generic arrays can be passed directly to a
+CLR API expecting `System.Array`. The base view does not copy the array or change its runtime element type.
+Inherited CLR members such as `Length`, `Rank` and `Clone()` are available alongside Kotlin
+array operations; a native member takes precedence over a same-named extension.
+
+```kotlin
+val numbers = intArrayOf(7, 8)
+val native: System.Array = numbers
+check(native.Length == 2)
+System.Array.Clear(native, 0, 1)
+check(numbers[0] == 0)
+```
 
 ## 7. One CLR type, two views — imported type vs. stdlib alias
 

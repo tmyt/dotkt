@@ -26,6 +26,19 @@ identity. Runtime references only disambiguate contract/runtime twins and supply
 compile-time member availability.
 See [Target-reference emission universe](design-target-reference-emission.md).
 
+## Application build outputs
+
+The SDK asks for a declaration-only reference assembly only when `ProduceReferenceAssembly` is
+enabled. It uses the same resolved declaration graph as the implementation, preserving signatures,
+constraints and Kotlin metadata while omitting executable bodies. This is distinct from the stdlib's
+binding assembly below.
+
+For source-line debugging, `kotc` provides lexical Kotlin source spans, `bir2cir` retains those
+facts on authored operations as it lowers them, and `ilemit` attaches sequence points to their
+actual IL offsets. The external Portable PDB and implementation DLL carry matching identities.
+Reference images do not have PDBs, and exported executable metadata carriers do not copy the
+producer's visible source positions into another module.
+
 ## Imported String constants
 
 The standard KLIB UTF-8 string table cannot store unpaired UTF-16 surrogates. For such a CLR literal

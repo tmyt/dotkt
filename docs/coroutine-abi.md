@@ -6,17 +6,18 @@ This document fixes the public boundary between Kotlin coroutines and ordinary C
 
 | Kotlin declaration | CLR-visible method |
 |---|---|
-| `suspend fun f(...): T` | `Task<T> F(...)` |
-| `suspend fun f(...): Unit` | `Task F(...)` |
-| `suspend fun f(...): Unit?` | `Task<kotlin.Unit?> F(...)` |
+| `suspend fun f(...): T` | `Task<T> f(...)` |
+| `suspend fun f(...): Unit` | `Task f(...)` |
+| `suspend fun f(...): Unit?` | `Task<kotlin.Unit?> f(...)` |
 
 The public method has no hidden `Continuation` parameter. C# and F# consume it as an ordinary task-returning method:
 
 ```csharp
-var value = await Namespace.F(...);
+var value = await ProducerKt.f(...);
 ```
 
-A call starts the computation immediately. Synchronous completion returns an already-completed task; failure is represented by a faulted task.
+A call starts the computation immediately. Synchronous success returns an already-completed task.
+The exception and cancellation rules below apply to both synchronous and resumed completion.
 
 ## Internal contract
 
@@ -43,9 +44,10 @@ The fast path uses `GetAwaiter().GetResult()` when the task is complete. Otherwi
 
 ## Exceptions and cancellation
 
-- An exception escaping an exported suspend function faults its returned task.
+- A non-cancellation exception escaping an exported suspend function faults its returned task.
 - An exception from an awaited task is rethrown into the Kotlin coroutine through the awaiter.
-- Kotlin `CancellationException` is mapped to CLR cancellation semantics at the task boundary where supported.
+- Kotlin `CancellationException` and CLR `OperationCanceledException` cancel the exported task.
+  For `OperationCanceledException`, the bridge also passes through its cancellation token.
 - `CancellationToken` is not an implicit parameter of every suspend function. Token-based APIs are explicit interop and library design.
 
 ## Non-contractual details

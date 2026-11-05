@@ -332,7 +332,7 @@ ilemit:
   - not depend on Kotlin names like sequence or await
 ```
 
-## 9. Implementation migration sketch
+## 9. Historical implementation migration sketch
 
 1. Introduce a CIR-level representation for the cold continuation body:
 
@@ -372,7 +372,7 @@ ilemit:
 - Builder/sink selection should be explicit: known stdlib/kotlinx builders or marker metadata, not receiver-name
   guessing.
 
-## 11. Implementation contract (P0 lock, 2026-07-03 — the approved bundle-6 plan)
+## 11. Historical implementation plan (P0, 2026-07-03)
 
 Locked decisions the implementation phases (P1-P6) built against. Remaining defects are tracked in
 GitHub Issues.
