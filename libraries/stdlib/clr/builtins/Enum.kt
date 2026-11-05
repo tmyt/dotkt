@@ -29,7 +29,7 @@ public actual abstract class Enum<E : Enum<E>> actual constructor(name: String, 
      * Returns the name of this enum constant, exactly as declared in its enum declaration.
      */
     @kotlin.internal.IntrinsicConstEvaluation
-    public actual final val name: String get() = TODO("clr binding should be implemented")
+    public actual final val name: String get() = DotKt.Runtime.CompilerServices.kotlinEnumName(this)
 
     /**
      * Returns the ordinal of this enumeration constant (its position in its enum declaration, where the initial constant

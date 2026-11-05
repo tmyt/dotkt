@@ -15,8 +15,18 @@ import roundtrip.entries.richOrdinal
 import roundtrip.entries.richCompare
 import roundtrip.entries.sharedEntries
 import roundtrip.entries.relayEntries
+import roundtrip.entries.producerEntryName
+import roundtrip.entries.producerStarEntryName
+import roundtrip.entries.producerConcreteEntryName
 
 private fun <E : Enum<E>> importedEntryOrdinal(value: E): Int = value.ordinal
+
+private fun <E : Enum<E>> importedEntryNameForms(value: E): String {
+    val bound = value::name
+    val unbound: (E) -> String = Enum<E>::name
+    val star: (Enum<*>) -> String = Enum<*>::name
+    return "${value.name}|${bound.get()}|${unbound(value)}|${star(value)}"
+}
 
 class EnumEntriesRoundtripTests {
     @TestAttribute
@@ -61,5 +71,18 @@ class EnumEntriesRoundtripTests {
         val render: (SuperRenderedEntry) -> String = SuperRenderedEntry::toString
         assertEquals("entry:second:SECOND", render(SuperRenderedEntry.SECOND))
         assertEquals(1, importedEntryOrdinal(SuperRenderedEntry.SECOND))
+        assertEquals("SECOND|SECOND|SECOND|SECOND", importedEntryNameForms(SuperRenderedEntry.SECOND))
+        assertEquals("SECOND", producerEntryName(SuperRenderedEntry.SECOND))
+        assertEquals("SECOND", producerStarEntryName(SuperRenderedEntry.SECOND))
+        assertEquals("SECOND", SuperRenderedEntry.SECOND.declaredName())
+        assertEquals("SECOND|SECOND|SECOND|SECOND", importedEntryNameForms(BasicEntry.SECOND))
+        assertEquals("SECOND", producerEntryName(BasicEntry.SECOND))
+        val concrete = BasicEntry::name
+        val bound = BasicEntry.SECOND::name
+        assertEquals("FIRST", concrete.get(BasicEntry.FIRST))
+        assertEquals("SECOND", concrete(BasicEntry.SECOND))
+        assertEquals("SECOND", bound.get())
+        assertEquals("SECOND", bound())
+        assertEquals("FIRST", producerConcreteEntryName(BasicEntry.FIRST))
     }
 }

@@ -297,7 +297,8 @@ static class NetInteropBinding
         // ordinal prop=get`) — but System.Enum declares NEITHER as a .NET property (they'd fall through to a non-existent
         // `get_name`/`get_ordinal`). Bind them to the CLR enum semantics: `name` -> ToString() (the constant name, the
         // System.Enum override), `ordinal` -> the DECLARATION INDEX via an explicitly ordered physical map. The
-        // GENERIC-receiver case (`e: T`, `T : Enum<T>`, owner kotlin.Enum) is handled separately by EnumMemberBinding.
+        // GENERIC-receiver case (`e: T`, `T : Enum<T>`, owner kotlin.Enum) uses ordinary stdlib getter binding for
+        // name; EnumMemberBinding supplies the declaration-order ordinal operation.
         if (!isStatic && IsNetEnum(netType) && Str(v.TryGetValue("prop", out var pj) ? pj : null) == "get"
             && (method == "name" || method == "ordinal"))
         {
