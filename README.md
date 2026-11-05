@@ -137,8 +137,9 @@ Every `.kt` under the project is compiled. MSBuild projects every resolved refer
 a project-local metadata KLIB, so `import System.X` resolves without an import-scanning or façade
 generation step. See `docs/user/getting-started.md`.
 
-The SDK supports [Kotlin source-line symbols and opt-in reference assemblies](docs/user/getting-started.md#4-build-and-run)
-and [Windows native resource settings](docs/application-manifest.md).
+Starting with 0.9.20, the SDK supports
+[Kotlin source-line symbols and opt-in reference assemblies](docs/user/getting-started.md#4-build-and-run).
+See also [Windows native resource settings](docs/application-manifest.md).
 
 ## Layout
 

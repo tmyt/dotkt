@@ -1669,18 +1669,13 @@ or an unloadable state machine. Where the CLR genuinely has no representation �
 suspension — the result is a compile-time error naming the value's source role ("the receiver of `copy`"), mirroring
 C#'s CS4007; never a silent duplication or reorder.
 
-A THIRD cross-module shape needs no carrier at all: a **data class's SYNTHETIC `copy`**, whose omitted field default is
-`this.<field>` by construction (a data class may also declare a differently-signed `copy` OVERLOAD of its own, whose
-defaults are ordinary expressions — the two are told apart by the generated signature, which mirrors the primary
-constructor parameter-for-parameter in name AND type, not by the name alone). The synthetic `copy` carries no
-`@KotlinDefault`; kotc already knows its canonical field-default rule and RECONSTRUCTS each omitted field as a read of
-the call's receiver, owned and typed by the INSTANTIATED receiver type
-(`kotlin.Pair[Int,Int]` and `Int`, never the class's own positional type variables — an open type variable is
-unresolvable in the caller's frame, and a state machine would spill it into a field of an unresolvable type). Each
-reconstruction is a READ of the receiver's plan binding, so `nextPair().copy(second = 9)` evaluates `nextPair()`
-exactly once and ahead of the argument, however many fields the call omits. This path serves a data class whose `data`
-nature reaches the consumer — i.e. one resolved through the frontend KLIB (`kotlin.Pair`, `kotlin.Triple`). A data
-class RE-CONSUMED from a DotKt library dll does not reach it at all: see the `data class` row in §10.2.
+The generated `copy` of a data class defaults each omitted parameter to the corresponding value on
+the receiver. A differently signed authored `copy` overload uses its own ordinary defaults.
+For declarations such as `Pair` from the stdlib frontend KLIB, kotc can express a generated
+`copy` default as a receiver read even when the KLIB has no default body. DotKt DLLs can also
+carry generated `copy` defaults through `@KotlinDefault`. The consumer binds the read to the
+selected declaration and the instantiated receiver's type frame. For example,
+`nextPair().copy(second = 9)` evaluates `nextPair()` once, before the supplied argument.
 
 A GENERIC callee's non-constant default closes its type frame at the call site too, like every other default. A
 `@KotlinDefault` carrier holds the default as the CALLEE wrote it, so its type parameters ride it as positional type

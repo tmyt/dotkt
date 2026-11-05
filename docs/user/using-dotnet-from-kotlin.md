@@ -176,8 +176,8 @@ ordinary .NET platform rules and remain the application's responsibility.
 
 ### Kotlin arrays as `System.Array`
 
-Kotlin's primitive, unsigned and generic arrays can be passed directly to a CLR API expecting
-`System.Array`. The base view does not copy the array or change its runtime element type.
+Starting with 0.9.20, Kotlin's primitive, unsigned and generic arrays can be passed directly to a
+CLR API expecting `System.Array`. The base view does not copy the array or change its runtime element type.
 Inherited CLR members such as `Length`, `Rank` and `Clone()` are available alongside Kotlin
 array operations; a native member takes precedence over a same-named extension.
 

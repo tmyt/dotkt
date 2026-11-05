@@ -75,8 +75,9 @@ BCL-bound runtime face (`IReadOnlyList`, `System.Char`). The ref.dll is the pure
 `@ClrTypeAlias`/`@ClrIntrinsic` labels that **bir2cir substitutes at app-emit time**
 (see [architecture.md](architecture.md)).
 
-A user library has no such bootstrap binding assembly. Like `DotKt.Sdk`, the MPP SDK can
-emit a normal declaration-only CLR reference assembly with `ProduceReferenceAssembly=true`.
+A user library has no such bootstrap binding assembly. Starting with 0.9.20, the MPP SDK
+inherits the `ProduceReferenceAssembly` setting from `DotKt.Sdk`. Set it to `true` to emit a
+declaration-only CLR reference assembly.
 This optional image preserves the actualized signatures and Kotlin metadata for consumers,
 but never replaces the runtime DLL. See [SDK build outputs](user/getting-started.md#reference-assemblies-and-native-resources).
 
