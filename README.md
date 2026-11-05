@@ -63,7 +63,7 @@ round-trip, wide-delegate, and packaged-SDK scenarios. Test entry points live be
 - Functions: default args (incl. cross-module, two-tier rule), `vararg`, local functions +
   closures, extension functions, `inline` (incl. cross-module non-local return), **`reified`**,
   `tailrec`, function references, generic functions/classes end-to-end
-- Classes: properties (every Kotlin property is a real CLR property), primary/secondary
+- Classes: CLR properties (with explicit field interop via `@ClrField`), primary/secondary
   constructors + `init`, inheritance, interfaces, visibility → real CLR access, `companion
   object`, nested classes, object expressions, `data class`, `value class`, `typealias`,
   `lateinit`, delegation (`by lazy`, `by map`, `ReadWriteProperty`), sealed hierarchies
@@ -79,8 +79,8 @@ round-trip, wide-delegate, and packaged-SDK scenarios. Test entry points live be
   on the CLR, including lazy `Sequence` chains and `sequence { yield(...) }` builders
 
 **Kotlin ↔ .NET interop**
-- `import System.X` façade-free (the complete public surface of every resolved reference assembly
-  is projected to KLIB); statics; events; lambdas → any delegate type (incl. custom generic
+- `import System.X` façade-free (the resolved CLR references are projected to KLIB); statics;
+  events; lambdas → CLR delegate types (incl. custom generic
   delegates); `out`/`ref` via `byref()`; nullable value types; .NET enums; C# operator
   overloads + extension methods; inherit .NET bases / implement .NET interfaces
 - Reverse interop: the emitted assembly is plain public IL — C# consumes it via
@@ -97,7 +97,7 @@ Prereqs: the repo's Gradle auto-provisions a JDK; you need the **.NET SDK 10**.
 
 ```bash
 make help                          # all targets
-make all                           # toolchain + stdlib artifacts
+make all                           # build the toolchain and stdlib, then pack the SDK
 make dev SRC=path/to/Foo.kt RUN=1  # compile + run one file (wraps scripts/dotkt.sh --run)
 make verify                        # all compiler, IR, MSBuild, roundtrip, and package gates
 make pack                          # NuGet packages into a local feed
@@ -121,7 +121,8 @@ Building the CLR stdlib (three artifacts — see `CLAUDE.md` for details):
 
 ### Build a project with MSBuild / `.ktproj`
 
-A DotKt project builds with plain `dotnet build` / `dotnet run` (and thus in Visual Studio):
+A DotKt project builds with `dotnet build` / `dotnet run`. Configure the
+[DotKt NuGet source](docs/user/getting-started.md#2-install) before restoring the SDK:
 
 ```xml
 <Project Sdk="DotKt.Sdk/0.9.19">
@@ -135,6 +136,9 @@ A DotKt project builds with plain `dotnet build` / `dotnet run` (and thus in Vis
 Every `.kt` under the project is compiled. MSBuild projects every resolved reference assembly to
 a project-local metadata KLIB, so `import System.X` resolves without an import-scanning or façade
 generation step. See `docs/user/getting-started.md`.
+
+The SDK supports [Kotlin source-line symbols and opt-in reference assemblies](docs/user/getting-started.md#4-build-and-run)
+and [Windows native resource settings](docs/application-manifest.md).
 
 ## Layout
 

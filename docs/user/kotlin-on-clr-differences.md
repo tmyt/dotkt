@@ -78,7 +78,8 @@ invariant. Exact native declarations and invariant mutable collection slots, suc
   their original methods and views.
 - BCL-backed read-only `Map.keys` / `values` / `entries` are snapshots of membership, while an
   entry's value reads through to the backing map. `MutableMap.keys` is live and supports remove/clear;
-  `MutableMap.values` uses the native dictionary view.
+  `MutableMap.values` is a live Kotlin collection; removals, including iterator removals, update
+  the backing map. These views do not replace the native dictionary's directly imported properties.
 
 ## `value class` is a real class
 

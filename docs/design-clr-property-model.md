@@ -1,100 +1,35 @@
-# CLR property model — emit every Kotlin property as a CLR property
+# CLR representation of Kotlin properties
 
-Status: **design locked** (design owner, 2026-06-28). **Phases 1–5 implemented & verified** (2026-06-28).
+An accessor-routed Kotlin property is a CLR Property row with typed getter and/or setter methods.
+C#, F#, and reflection consumers bind through that row. A separate backing field, where needed,
+is implementation storage rather than the public property. For a normal backed property, bir2cir
+chooses the compiler-generated `<Name>k__BackingField` name; a distinct name avoids collisions
+in reflection-driven libraries. The accessor names need not follow the C# `get_Name` and
+`set_Name` spelling. See [the property contract](dotkt-semantics.md#5h-an-auto-propertys-backing-field-is-a-compiler-generated-namek__backingfield-228).
 
-## Decision
+## Fields and initialization
 
-1. **Every Kotlin property is emitted as a REAL CLR property** — `PropertyBuilder` (`DefineProperty` +
-   `SetGetMethod`/`SetSetMethod`) over `T prop_get<p>()` / `void prop_set<p>(T)` accessors, with an **`internal`
-   (assembly-visible) backing field**. So a Kotlin `val`/`var` is seen as a *property* by a cross-assembly C#/F#/
-   reflection consumer (the backing field is invisible across the assembly boundary) — the interop-correct shape.
-   (Pre-model behavior: a plain public field — a deviation; see [dotkt-semantics.md](dotkt-semantics.md).)
-   NOTE on visibility: the field is `internal`, NOT strictly `private`. `private` would be invisible to cross-assembly
-   consumers too, but ECMA-335 scopes `private` to the *declaring type* — so a `byref(otherObj.prop)` from another
-   in-module type (Decision 3) could not `ldflda` it. `internal` (`FieldAttributes.Assembly`) is the minimal visibility
-   satisfying BOTH goals: invisible across the assembly boundary (interop), reachable across types in-module (byref).
-2. **Emitting a property as a plain FIELD is OPT-IN via `@ClrField`.** `@ClrField val p` -> a public CLR field `p`, no
-   accessors/property (the pre-model default, now opt-in). For perf-critical / layout-sensitive interop. The annotation
-   is `kotlin.clr.ClrField`; kotc recognizes it by short name so any `ClrField` annotation works.
-3. **A `byref(obj.prop)` (the unified ref/out interop intrinsic — `__clrref`/`__clrout` were merged into one `byref`,
-   [[interop-surface-complete]]) of a property WITHIN the current source set lowers to IL-level BACKING-FIELD access**
-   (`ldflda <internal backing>`), reachable in-module. A byref to a *cross-assembly* property is NOT supported (the
-   backing field is `internal`, invisible across the boundary; an accessor returns a value you cannot take the address
-   of). `byref` of a `@ClrField` property addresses its plain public field directly.
+- `kotlin.clr.ClrField` opts a supported declaration into a CLR field instead of a property.
+  The annotation is identified by its fully qualified name. Kotlin constants also have a
+  field representation; delegate storage is not a public property surface.
+- `lateinit var` is a typed property, not a CLR field. Its private backing slot stores
+  `null` until initialized and boxes CLR value types when assigned. The getter checks
+  initialization; Kotlin and C# property writes go through the typed setter.
+  `@ClrField lateinit` is a compile error.
+- A normal property is not a C# `ref`/`out` storage location. For supported same-compilation
+  Kotlin backing-field arguments, the compiler addresses the actual field, using a generated
+  access bridge if required by CLR visibility. Ordinary cross-assembly property access and
+  `lateinit` do not expose a native backing-field address. Use an actual field or a documented
+  [live ref-return delegate](user/using-dotnet-from-kotlin.md#4-out--ref-parameters--byref)
+  where the API needs live native storage.
 
-## Pre-implementation state (HISTORICAL — what had to change)
+## Ownership and checks
 
-> Historical: this describes the pre-model codegen. Phases 1–5 are now implemented & verified (see "Implemented &
-> verified" below) — every non-`@ClrField` property is a real CLR property today.
+`kotc` carries the selected Kotlin property and backing-field facts in BIR.
+`bir2cir` resolves storage, accessor and owner identities and chooses the physical CLR shape.
+`ilemit` encodes the resolved fields, methods and property associations from CIR.
 
-- **ilemit emits NO CLR properties** — there is no `PropertyBuilder`/`DefineProperty` anywhere.
-- A simple `val`/`var` (no custom accessor) -> a plain **public FIELD**; access sites read it directly (`IrGetField` ->
-  `{"k":"field"}`). `get_`/`set_` **methods** are emitted only for custom-accessor / CLR-interface-member / computed
-  (no-backing-field) properties — and even those are bare methods, not a `PropertyBuilder` property.
-- Consequence: a property implementing a Kotlin **interface property** (e.g. `ComparableRange.start` over
-  `ClosedRange<T>.start`) emits only a field, so the abstract `get_start` slot is unfilled -> load failure. And no
-  property is idiomatic to a C# consumer.
-
-## Target shape
-
-For `class C { val p: T ; var q: U }` (no `@ClrField`):
-- internal backing fields `<p>k__BackingField` : T, `<q>k__BackingField` : U (renamed so they don't collide with the
-  property name — the C# auto-property convention; bir2cir `BackingFieldRename`, #228).
-- `public T prop_get<p>()` { ldarg.0; ldfld `<p>k__BackingField`; ret } ; `public U prop_get<q>()` ;
-  `public void prop_set<q>(U)`.
-- CLR properties `p` (get only) and `q` (get+set) via `PropertyBuilder`.
-- accessors are `virtual final` when the property implements an interface/override (binds the slot — see the
-  `overridesIface` method/accessor fix already landed for the method side), else non-virtual.
-
-`@ClrField val p: T` -> `public T p` field, no accessor/property (today's path).
-
-## Implementation phases (each ends with the full verify suite green)
-
-1. **ilemit `PropertyBuilder`.** Add a `properties` list to the type metadata (name, type, getMethod, setMethod?). In
-   the method-baking pass, after methods exist, `tb.DefineProperty(name, PropertyAttributes.None, type, null)` +
-   `SetGetMethod`/`SetSetMethod`. Demote + rename the backing field. (Additive — no access-site change yet.) As built
-   it landed as `internal`, not private — an in-module `byref(obj.p)` must still be able to `ldflda` it (phase 5).
-2. **kotc emit accessors + property metadata for ALL properties** (not a public field), backing field internal/renamed,
-   UNLESS `@ClrField`. Reuses `accessorMethod` (already emits `return field` / virtual-on-override). Emit the
-   `properties` list.
-3. **Access-site routing (the broad, risky step).** A property read/write -> accessor call (`clrPropGet`/`clrPropSet`)
-   instead of `{"k":"field"}`. Touches every property access in every program — run the focused roundtrip tests
-   and `make verify`. (Within the owner, a self read MAY stay backing-field for perf — optional.)
-4. **`@ClrField` annotation.** ✅ DONE — `kotlin.clr.ClrField`. `isClrField(p)` (short
-   name) excludes the property from accessor/property emission (`emitsGet`/`emitsSet`) AND from the access-site routing,
-   and keeps the backing field at the property's own (public) visibility — i.e. the pre-model plain-field shape.
-5. **byref lowering.** ✅ DONE — `byrefBackingField(inner)` recognizes a `byref(...)` whose target is an own-source-set
-   property read and emits its backing-`{"k":"field"}` node, so ilemit `EmitAddr` `ldflda`s the `internal` backing field
-   (`Program.cs` EmitAddr `case "field"`). Falls back to `expr(inner)` (and thus the copy-to-temp path) for a
-   non-property / .NET / computed / delegated / lateinit target; a `@ClrField` target naturally routes to its plain field.
-
-## Implemented & verified (2026-06-28)
-
-- ilemit `PropertyBuilder` (`DefineProperty` + `SetGetMethod`/`SetSetMethod`); kotc emits a `properties` list and
-  bir2cir routes every non-`@ClrField`/const/lateinit/delegated property through its dedicated accessor, backing field
-  `internal`.
-- Verified: `il-outref` (behavioral — `byref(a.quo)` writes through the internal backing field; ref-swap between a
-  property-backed field and a `@ClrField` field); a `MetadataLoadContext` reflection probe over the emitted `Acc`
-  (structural — `quo` = CLR property + `internal` field, `raw`(`@ClrField`) = public field, no property);
-  the roundtrip suite and full verification gate.
-
-## Risks
-
-- **Phase 3 is the regression surface** — every property access changes. Do it under the full verify suite; expect to
-  fix differential/round-trip fallout (e.g. a consumer reading `obj.p` must now call `get_p`).
-- **Backing-field naming**: ✅ DONE (#228) — a CLR field and property *can* share a name across metadata tables, but a
-  reflection consumer that groups candidate members by name cannot resolve the pair (Newtonsoft's `SerializeObject`
-  returned `{}`). bir2cir's `BackingFieldRename` emits the storage as `<p>k__BackingField` + `[CompilerGenerated]`,
-  the C# auto-property convention.
-- **Perf**: trivial accessors are JIT-inlined, so the field->accessor change is effectively free at runtime.
-- **`data class` / `equals`/`hashCode`/`copy`**: these read properties; once routed through accessors they still work,
-  but verify the generated members.
-- Interaction with the existing field-based paths (lateinit, ref-cells, delegated properties, companion/top-level
-  props): each currently emits fields/accessors specially — audit they still hold (or also become properties).
-
-## Why now
-
-The immediate trigger is the load-error grind (`get_start`/`get_endInclusive` no-impl = interface-property binding).
-Phase 2 alone fixes that whole class uniformly (no per-case special-casing), and the full model is the interop-correct
-end state. Relationship to the metadata attrs: `@ClrField` joins the `[Kotlin*]` round-trip family
-([design-kotlin-metadata-attributes.md](design-kotlin-metadata-attributes.md)).
+The interop fixtures cover [backing-field shape](../tests/interop/consumer/fixtures/AutoPropertyBackingFieldTests.kt)
+and [by-reference arguments](../tests/interop/consumer/fixtures/ByRefParameterTests.kt).
+Round-trip fixtures cover [C# lateinit access](../tests/roundtrip/bidirectional/consumer/LateinitPropertyTests.cs)
+and [Kotlin lateinit access](../tests/roundtrip/consumer/LateinitStorageTests.kt).

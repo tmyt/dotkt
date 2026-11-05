@@ -4,10 +4,13 @@ The runners select freshly emitted BIR/CIR documents from the standard library a
 generic validators remain in `scripts/verify-schema.py` and `scripts/verify-sanity.py`; only corpus selection
 and test verdicts live here.
 
-Two lanes instead need documents the corpus does not contain, and carry their own:
+Run `make verify-test-corpus` to emit a fresh NUnit corpus, then check schema and sanity. The normal
+compiler output for these checks is BIR/CIR, not a full Kotlin IR text dump.
 
-- `selftest/` (`run-schema.sh`) — shapes the VALIDATOR must refuse, and the legitimate shape next door it must
-  accept. Without them a validator that silently stopped checking would look exactly like a clean corpus.
-- `lowering/` (`run-lowering.sh`) — synthetic BIR fed straight to bir2cir, asserted against the emitted CIR.
-  For a lowering RULE with no natural instance left in the corpus, typically because the producer was fixed so
-  the shape it guards no longer reaches it. A rule with no witness quietly stops being a rule.
+The runners also use explicit witnesses for shapes a current producer will not emit:
+
+- `selftest/` supplies BIR shape checks to `run-schema.sh` and CIR semantic checks to `run-sanity.sh`.
+- `selftest-schema/` supplies CIR shape checks to `run-schema.sh`. Accept and reject controls keep
+  a broken validator from passing on a clean generated corpus.
+- `lowering/` (`make verify-lowering`) supplies BIR directly to bir2cir and asserts the lowering
+  result or rejection, independently of the current frontend.

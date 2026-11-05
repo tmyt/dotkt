@@ -134,7 +134,7 @@ Not a single `gradle build` — a multi-stage native pipeline. Don't guess these
 | Goal | Command |
 |------|---------|
 | Canonical gate (a behavior-affecting change isn't done without it) | `make verify` |
-| Compiler behavior only (NUnit + `ilverify`) | `make verify-tests` |
+| Compiler behavior only (NUnit, ILVerify and negative compilation) | `make verify-tests` |
 | Compile and run one file | `./scripts/dotkt.sh --run path/to/Foo.kt` |
 | The CLR stdlib: frontend KLIB, then reference dll, then runtime dll | `make stdlib` |
 
@@ -148,10 +148,11 @@ The truthful fail-sets are machine-readable, never prose: `ILVERIFY_XFAIL` in `t
 `XFAIL_PKG` in `tests/packaged-sdk/run.sh`. A gate exits 0 iff every actual failure is listed, and reports what
 is new or newly fixed. Read that diff; don't copy counts into docs.
 
-Two traps worth knowing: the toolchain binaries are only checked for existence, so after changing
-bir2cir/ilemit/dll2klib you need `rm -rf build/*-bin` (plus `build/clr-stdlib*` for stdlib-affecting work)
-before a gate result means anything; and after any kotc change, `./gradlew :kotc:installDist`, or a stale
-launcher fails the gate for the wrong reason.
+Use the Make targets or standalone pack script to refresh tools before testing. Make checks .NET tools
+incrementally through MSBuild and consults content fingerprints for all three stdlib artifacts; unchanged
+inputs keep their existing artifacts. A direct low-level helper may only check that a binary exists, so
+build the affected tool first when bypassing the canonical targets. Run `make verify-test-corpus` to
+produce a fresh NUnit corpus before schema and sanity checks.
 
 Toolchain: JDK auto-provisioned by Gradle, .NET SDK 10 required, Kotlin/IR APIs pinned to 2.4.21 (bump
 procedure in `docs/kotlin-frontend-bump-playbook.md`).

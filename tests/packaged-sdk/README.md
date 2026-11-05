@@ -1,6 +1,7 @@
 # Packaged SDK tests
 
-`run.sh` packs the current SDK into an isolated local NuGet feed, then builds and runs Exe, Library,
+`make verify-packaged-sdk` runs `run.sh`: it packs the current SDK into a local NuGet feed, checks
+the packaged tool versions, and builds and runs Exe, Library, C# consumer, multi-target reference,
 cross-module asynchronous coroutine, multiplatform, CLI-template, and MPP-template scenarios. The coroutine
 scenario builds a packaged Kotlin producer and a separately compiled Kotlin consumer, proves that
 `Task.Delay().await()` returns before resuming across the assembly boundary, and IL-verifies both outputs.
@@ -15,7 +16,8 @@ payloads byte-for-byte against a same-identity C# control for default/disabled m
 and file/product version changes, including the final build/publish apphost and no-apphost output.
 This scenario maps only DotKt packages to
 the local feed; the SDK-selected `Microsoft.NETCore.App.Host.*` pack may come from nuget.org in its isolated
-cache. It inspects Windows PE files on the build host; it does not execute Windows UI or validate OS policy.
+cache. Explicit `.res` inputs are checked against the selected SDK's Roslyn; COFF is not a supported
+input. The test inspects Windows PE files on the build host; it does not execute Windows UI or validate OS policy.
 
 The managed-version scenario compares the actual Assembly table and version attributes with a same-target
 C# control: SDK defaults and explicit overrides, Version prefix/suffix, SourceRevisionId composition,
@@ -26,16 +28,21 @@ compares managed versions alongside the native resources, keeping these distinct
 The JIT-debugging scenario checks Debug/Release defaults, explicit `Optimize` overrides and independent
 symbol settings against actual assembly `DebuggableAttribute` metadata and same-target C# controls.
 It verifies target-BCL identity, rejects unintended Edit and Continue/symbol-store flags, runs the Kotlin
-outputs, and checks no-op builds plus emission-only invalidation when optimization changes. This does
-not claim Kotlin source-line breakpoints: Portable PDB documents/sequence points are tracked in #1257.
+outputs, and checks no-op builds plus emission-only invalidation when optimization changes.
+
+The Portable PDB scenario checks Kotlin documents and ordered sequence points, the DLL's matching
+CodeView identity, and symbol selection, incremental emission, publish and clean. This is a binary
+and runtime test, not an interactive debugger test. The reference-assembly scenario checks the
+opt-in declaration-only DLL, signature and Kotlin metadata preservation, and separate C# and Kotlin
+project-reference consumers.
 
 The state the scenarios create stays inside the repository, all of it gitignored: the scratch workspace
 `build/verify-packaged-sdk` and the local feed `build/nuget-feed`, both wiped at the start of every run, plus
 the cached refcheck tool in `build/verify-packaged-sdk-tool`, which is kept between runs on purpose. Within
 that boundary the DotKt SDK-resolution path restores through a per-run `nuget.config` with a `<clear/>`ed source
 list, the local feed only (except the separately mapped apphost pack described above), and a scratch `globalPackagesFolder`, and each template case installs into a
-template hive of its own (`dotnet new --debug:custom-hive`) rather than the store under `$HOME`. A failed run
-leaves nothing behind to clean up.
+template hive of its own (`dotnet new --debug:custom-hive`) rather than the machine-wide store.
+The scratch workspace is retained for diagnosis and replaced on the next run.
 
 Building the toolchain the scenarios then exercise is deliberately outside that boundary: `scripts/pack-nuget.sh`
 drives Gradle (Maven Central and `~/.gradle`) and the toolchain's own NuGet restore, and the refcheck tool
@@ -48,7 +55,8 @@ leaves partial outputs; successful builds must retain fingerprint-based reuse. I
 with `python3 tests/packaged-sdk/test_stdlib_build.py` without building the toolchain.
 Two more reaches outside the repository, neither of them shared mutable state: `run-ilverify.sh` locates
 ILVerify under `$HOME/.dotnet` (a read; the ILVerify check itself is part of the coroutine scenario's verdict),
-and `verify-pack-idempotency.sh` re-runs the pack twice more, using a `mktemp -d` scratch it removes on exit.
+and `verify-pack-idempotency.sh` checks standalone and Make pack reuse and content invalidation
+using a `mktemp -d` scratch it removes on exit.
 
 Full-source build and smoke CI for third-party projects are outside this repository's scope. This gate
 intentionally keeps only the compiler-facing packaged-SDK/cross-module slice and does not copy external source trees.

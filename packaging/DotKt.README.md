@@ -16,11 +16,12 @@ the real thing) and replaces only the backend, lowering Kotlin IR → CIL that r
 
 ## Getting started
 
-Pin the version to the one shown on this page: an unpinned `dotnet new install` resolves the newest
-*stable* release, so it skips pre-releases.
+Use .NET SDK 10 and Java 21 or newer to build. Configure the workspace's NuGet sources as shown
+in the [Getting started guide](https://github.com/tmyt/dotkt/blob/main/docs/user/getting-started.md#2-install).
+Then replace `<version>` with this package's version; an unpinned install skips pre-releases.
 
 ```
-dotnet new install DotKt.Templates::<version>
+dotnet new install DotKt.Templates@<version> --nuget-source https://dotkt.utatane.dev/nuget/index.json
 dotnet new dotkt-cli -o hello
 cd hello
 dotnet run

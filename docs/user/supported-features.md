@@ -27,7 +27,7 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | Area | Status |
 |---|---|
 | Collections (`listOf`/`mapOf`/…, `map`/`filter`/`fold`/`groupBy`/`joinToString`/`sorted*`/…) | ✅ |
-| Strings (`trim`/`padStart`/`split`/templates/… — a few ops still route through interim lowerings) | ✅ |
+| Strings (`trim`/`padStart`/`split`/templates/…) | ✅ |
 | `Regex` | ✅ Matching (including anchored `matchEntire`/`matches`), groups, replacement, splitting, `findAll`, `splitToSequence`, and `options`. The CLR engine and [option mapping](../dotkt-semantics.md#5b-quater-regexoptions-decodes-the-compiled-regexoptions-three-regexoptions-have-no-clr-bit-deliberate-clr-choice) have documented differences. |
 | `kotlin.math`, ranges, `Pair`/`Triple`, scope functions, unsigned types, `Array<T>` ops | ✅ |
 | `Result`/`runCatching`, atomics, exceptions (bound to `System.*`) | ✅ |
@@ -48,6 +48,7 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | Plain value consumption of a generic method's ref return | 🚧 [Current generic-call emission bug](using-dotnet-from-kotlin.md#4-out--ref-parameters--byref) |
 | Imported BCL signatures containing native-integer `nint`/`nuint` codes | 🚧 [Current projection bug](using-dotnet-from-kotlin.md#imported-native-sized-integers) |
 | C# operator overloads and extension methods | ✅ |
+| Kotlin arrays as native `System.Array` (same storage) | ✅ ([array interop](using-dotnet-from-kotlin.md#kotlin-arrays-as-systemarray)) |
 | Inherit .NET base classes / implement .NET interfaces | ✅ |
 | Consume the output from C# (`ProjectReference`, NRT, `Task<T>`) | ✅ |
 | Re-consume a DotKt dll **as Kotlin** through a reference KLIB | ✅ ([projection limits](../dotkt-semantics.md#10-round-trip-fidelity)) |
@@ -58,6 +59,11 @@ complete set.
 
 Sequence and Regex coverage lives in `tests/basic/fixtures/SequenceOperationTests.kt`,
 `tests/basic/fixtures/RegexTests.kt`, and `tests/coroutines/fixtures/CoroutineSequenceBuilderTests.kt`.
+
+## SDK build outputs
+
+The SDK supports [external Portable PDBs for Kotlin source-line debugging and opt-in reference assemblies](getting-started.md#4-build-and-run).
+See [Windows application manifests](../application-manifest.md) for native-resource and assembly-version settings.
 
 ## External kotlinx libraries
 

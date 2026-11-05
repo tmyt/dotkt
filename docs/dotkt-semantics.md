@@ -37,16 +37,16 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [5c](#5c-map-values-preserve-kotlin-covariance-across-invariant-clr-dictionaries) | Covariant `Map` values and exact CLR dictionary declarations |
 | [5d](#5d-appendable-is-systemtextstringbuilder) | `Appendable` is `System.Text.StringBuilder` |
 | [5e](#5e-enum-classes-have-two-clr-shapes) | Enum classes: basic/`@ClrEnum` → real CLR `enum`, rich → singleton class |
-| [5f](#5f-value-class-is-a-real-wrapper-class-never-erased) | `value class` = a real class (never erased) |
+| [5f](#5f-value-class-is-a-real-wrapper-class--never-erased) | `value class` = a real class (never erased) |
 | [6](#6-consuming-a-dotkt-assembly-as-kotlin--what-rides-metadata-vs-needs-an-attribute) | Round-trip: what rides metadata vs. needs an attribute |
 | [7](#7-default-arguments--a-two-tier-rule-native-metadata-else-a-carried-bir-expression) | Default arguments — the two-tier rule |
 | [8](#8-reverse--cross-assembly-interop) | Reverse / cross-assembly interop |
 | [8b](#8b-dual-representation-import-systemtextstringbuilder-vs-kotlintextstringbuilder--two-typed-views-of-one-clr-type) | Dual view: imported .NET type vs. its stdlib alias |
 | [8c](#8c-projected-net-static-members-typemember) | Projected .NET statics: direct `Type.member` |
-| [8c-bis](#8c-bis-kotlin-static-declarations-companion--and-companion-fun-cf) | Kotlin static declarations: `companion { }` and `companion fun C.f()` |
+| [8c-bis](#8c-bis-kotlin-static-declarations-companion---and-companion-fun-cf) | Kotlin static declarations: `companion { }` and `companion fun C.f()` |
 | [8d](#8d-net-event-subscriptions-and-closeable-tokens) | .NET events use closeable subscriptions |
 | [9](#9-reference-type-nullability--net-nrt-un-annotated-net-types-are-platform-types) | Nullability ⇔ .NET NRT; platform types `T!` |
-| [10](#10-round-trip-fidelity-audit--what-re-consuming-a-dotkt-assembly-as-kotlin-loses) | Round-trip fidelity audit |
+| [10](#10-round-trip-fidelity) | Round-trip fidelity audit |
 
 ---
 
@@ -1247,13 +1247,16 @@ all three `append` members). The range overload additionally marks its exclusive
   comparison constraint can cover both native enums and singleton classes. Source bounds remain in Kotlin metadata;
   singleton classes implement a compiler-owned comparison face using their declared ordinal field, independently
   of any user-authored CLR `IComparable` implementation.
-- Within a DotKt module both behave like Kotlin enums. **Across the round-trip** (re-consuming the dll as Kotlin)
-  an explicit `@ClrEnum` is restored from its trusted ordered carrier, including names, physical values, and
-  declaration ordinals. Ordinary basic and rich enums are not restored as Kotlin `enum class` declarations — see
-  §10.2 — so exhaustive `when` over those consumed enums degrades. A reference-KLIB-projected **.NET** enum retains
-  its nominal CLR enum identity and exact native literal values (read, pass, `==`, `when` all work, without
-  exhaustiveness). Native aliases with the same underlying value compare equal, unlike distinct Kotlin-authored
-  enum entries; they cannot be distinguished by equality or separate `when` branches.
+- In Kotlin-to-Kotlin DLL round-trips, declared enum entries are restored as enum entries for both
+  basic and rich enums, including exhaustive `when`. Basic and explicit `@ClrEnum` carriers
+  preserve names, physical values and declaration ordinals. A rich enum carrier identifies its
+  entries and synthesized members without turning the emitted singleton class into a CLR enum.
+  An authored `toString()` override retains virtual dispatch, including through `T : Enum<T>`;
+  it does not change `name` or `ordinal`.
+- A projected **.NET** enum retains its nominal CLR enum identity and exact native literal values.
+  Unlike distinct Kotlin-authored entries, native aliases with the same underlying value compare equal
+  and cannot be distinguished by equality or separate `when` branches. The CLR can also supply
+  values that have no declared entry.
 - Imported native enum `ordinal`, `values()` / `enumValues`, and Kotlin comparison operations follow the visible
   FieldDef declaration order projected by dll2klib, not CLR unsigned numeric sorting. Values lists retain aliases
   in that order, but equal native alias bits have the first matching declaration's ordinal and compare equal.
@@ -1351,8 +1354,8 @@ is not the identity of a DotKt property.
 
 The angle brackets are the unspeakable boundary: Kotlin rejects `<` and `>` even inside a backtick-quoted identifier,
 so source code cannot declare a function in the compiler-reserved `prop_get<…>` / `prop_set<…>` method domain.
-Same-kind declarations that become identical only after CLR erasure are outside this accessor naming rule; preserving
-their frontend-selected callee identity is tracked by #395.
+Same-kind declarations that become identical only after CLR erasure are outside this accessor naming rule.
+They use the general declaration-identity binding and physical signature allocation rules.
 
 **Framing:** interop-first, CLR-native. The name is un-writable in Kotlin: even backtick-quoted, the frontend rejects
 ``var `<Value>k__BackingField` = 0`` with *"name contains illegal characters: <>"* — so it can never collide with, or be
@@ -2868,10 +2871,12 @@ an explicit type argument (`f<Int>(3)`) and the non-generic one otherwise.
 ## 10. Round-trip fidelity
 
 A DotKt assembly is re-consumed through a metadata-only reference KLIB. Standard KLIB declarations preserve
-classes, objects, enums, value classes, companions, functions, properties, generics, bounds, variance, sealed
-modality, function types, visibility, and Kotlin modifiers. DotKt carrier attributes supply the declaration facts
+classes, objects, enums, value classes, companions, type aliases, functions, properties, generics, bounds,
+variance, sealed modality, function types, visibility, and Kotlin modifiers. DotKt carrier attributes supply the declaration facts
 that cannot be recovered from the lowered CLR signature alone, such as file-facade ownership, suspend and extension
-function shapes, inline payloads, collection identity, and Kotlin nullability.
+function shapes, inline payloads, collection identity, and Kotlin nullability. A source classifier's
+qualified name retains its declaration path, including nested and companion-owned classifiers; the
+physical CLR owner is recorded separately where needed for binding.
 
 Current deliberate limits are:
 

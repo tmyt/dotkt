@@ -1,10 +1,10 @@
-# BIR/CIR Specification (v1 — frozen contract)
+# BIR/CIR specification
 
 > NORMATIVE. This is the single source of truth for the BIR/CIR serialization format. Every layer
 > (kotc emit / bir2cir consume+produce / ilemit consume / dll2klib carrier decoding / [KotlinInline] splice)
 > implements to THIS. Earlier freeze proposals and producer/consumer audits are preserved in Git history.
-> Durable-ABI principles: uniformity, self-describing, additive-extensible,
-> codec-agnostic, single-source. **BIR contains NO stringly-typed compound tokens — types are nodes.**
+> This is a same-toolchain internal ABI, not a compatibility promise across compiler versions.
+> Keep it uniform, self-describing and codec-agnostic. **Types are nodes, not compound string tokens.**
 
 ## 0. Envelope & versioning
 
@@ -77,9 +77,8 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   `{parameters,signature,statements,arguments,terminalSignature}` in BIR vocabulary. `statements` is the ordered
   evaluation prefix authored by constructor delegation; a consumer substitutes its materialized source arguments
   and executes that prefix before evaluating the terminal physical constructor argument vector.
-  The old bare `(string)` ctors are DELETED (no dual-track). Producers
-  (`ilemit` `ApplyKotlinInline` / `ApplySuspendFnType`) and consumers (`bir2cir` cross-module splice,
-  `dll2klib` carrier decoding) all route through the one codec.
+  `bir2cir` encodes the payloads in its round-trip metadata pass and `ilemit` emits the supplied
+  attribute applications. The `bir2cir` cross-module splice and `dll2klib` decoders use the same codec.
 - A decoded `[KotlinInline]` content is the current payload object
   `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}`. The numeric `v` identifies the inline
   payload contract independently of the carrier's `codec/schema-version` identifier (`bir-json/1`). `body` is the raw BIR body.
@@ -1046,12 +1045,7 @@ forwarded into BIR without reinterpretation.
 
 The fixed `kotlin.clr` intrinsic vocabulary is declared in the CLR stdlib and loaded from its frontend KLIB.
 
-## 5. Validator (§7 of the plan)
-Validate live BIR/CIR + every emitted `[KotlinInline]` body against this spec: unknown `k`, a type that is
-not a valid `Type` node, or an unknown `version` reddens a gate. Round-trip: decode every stdlib ref.dll
-inline body, assert it re-encodes identically.
-
-## 7. The validator — LANDED (#37 m6, the freeze ENFORCER)
+## 7. Structural validation
 `scripts/verify-schema.py` (corpus runner `tests/ir/run-schema.sh`, Makefile target `verify-schema`) is the
 structural enforcer for this contract. Because `Type` is drift-proof by construction but node FIELD names are
 NOT (§2.5 — there is no single shared node model), the validator is node-format's ONLY safety net: it walks the
@@ -1085,9 +1079,9 @@ validator, and `make verify` includes the schema and sanity gates.
 **Carrier (§0) scope.** The `[KotlinInline]`/`[KotlinSuspendFunctionType]` carriers ride as CLR attributes on the
 emitted assembly, not as document nodes, so they are out of the document walk. Their version is guarded LOUDLY at
 decode time by `bir-common` `BirCarrier.DecodeBody` (an unknown version throws `NotSupportedException` — never a
-silent mis-decode) and is exercised end-to-end by the roundtrip tests (dll2klib decodes projected DotKt
-assembly carriers through the one codec). The decoded carrier BODY is itself a node/type that ALSO appears inline as the
-emitting method's body in the BIR/CIR — validated there by the document walk.
+silent mis-decode). Round-trip tests exercise consumed carriers end-to-end. The document walk validates
+structured IR where it appears in the emitted corpus; it does not unpack and revalidate each assembly
+attribute's encoded body.
 
 **Residual string type slots structuralized to land the enforcer clean** (bir2cir/kotc were still injecting a few
 bare-FQN strings the wire format forbids):
