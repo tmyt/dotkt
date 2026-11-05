@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+using System.Buffers.Binary;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
@@ -8,15 +8,12 @@ sealed partial class Emitter
 {
     readonly bool _deterministic;
 
-    BlobContentId DeterministicSymbolsId(ImmutableArray<int> rows, MethodDefinitionHandle entryPoint, BlobBuilder il)
+    BlobContentId DeterministicSymbolsSeed()
     {
-        // These are the complete inputs to WritePortablePdb: row counts and entry point, ordered source
-        // points, and IL bodies (including their final code sizes and local-signature tokens).
+        // The PE's initial CodeView ID seeds its content hash with the source points. That PE hash then
+        // includes the actual MethodDef-to-body map, local signatures and entry point too, and becomes
+        // the final shared PE/PDB ID. A point/IL-only hash would miss changed body ownership.
         var identity = new BlobBuilder();
-        identity.WriteInt32(rows.Length);
-        foreach (var count in rows) identity.WriteInt32(count);
-        identity.WriteInt32(MetadataTokens.GetToken(entryPoint));
-        identity.WriteInt32(il.Count);
         foreach (var pair in _sourcePoints.OrderBy(pair => pair.Key.MetadataToken))
         {
             identity.WriteInt32(pair.Key.MetadataToken);
@@ -31,7 +28,7 @@ sealed partial class Emitter
                 identity.WriteInt32(point.EndColumn);
             }
         }
-        return ContentId(identity.GetBlobs().Concat(il.GetBlobs()));
+        return ContentId(identity.GetBlobs());
     }
 
     static BlobContentId ContentId(IEnumerable<Blob> content)
@@ -66,5 +63,17 @@ sealed partial class Emitter
         var index = MetadataTokens.GetHeapOffset(metadata.GetModuleDefinition().Mvid);
         return checked(pe.PEHeaders.MetadataStartOffset
             + metadata.GetHeapMetadataOffset(HeapIndex.Guid) + (index - 1) * 16);
+    }
+
+    static void SetSymbolsId(byte[] bytes, BlobContentId id)
+    {
+        using var pe = new PEReader(new MemoryStream(bytes, writable: false));
+        // AddCodeViewEntry is the first entry in this emitter's directory. The SDK reader locates its
+        // table and RSDS data; only the stamp and GUID identity slots change after the content hash.
+        var codeView = pe.ReadDebugDirectory()[0];
+        if (!pe.PEHeaders.TryGetDirectoryOffset(pe.PEHeaders.PEHeader.DebugTableDirectory, out var table))
+            throw new InvalidOperationException("The emitted CodeView directory is missing.");
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(table + 4, 4), id.Stamp);
+        id.Guid.TryWriteBytes(bytes.AsSpan(codeView.DataPointer + 4, 16));
     }
 }

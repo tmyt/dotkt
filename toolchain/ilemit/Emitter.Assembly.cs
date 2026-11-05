@@ -1394,7 +1394,7 @@ sealed partial class Emitter
         var entryPoint = entry != null && _referenceAssemblyPath == null
             ? MetadataTokens.MethodDefinitionHandle(entry.MetadataToken) : default;
         var symbolsId = _portablePdbPath == null ? default
-            : _deterministic ? DeterministicSymbolsId(metadata.GetRowCounts(), entryPoint, ilStream)
+            : _deterministic ? DeterministicSymbolsSeed()
             : BlobContentId.GetTimeBasedProvider()(Array.Empty<Blob>());
         var debugDirectory = _portablePdbPath == null ? null : new DebugDirectoryBuilder();
         debugDirectory?.AddCodeViewEntry(Path.GetFileName(_portablePdbPath), symbolsId, PortablePdbFormatVersion);
@@ -1410,7 +1410,14 @@ sealed partial class Emitter
         var imageId = peBuilder.Serialize(blob);
         var imageBytes = blob.ToArray();
         if (_deterministic)
+        {
             imageId.Guid.TryWriteBytes(imageBytes.AsSpan(ModuleVersionIdOffset(imageBytes), 16));
+            if (_portablePdbPath != null)
+            {
+                symbolsId = imageId;
+                SetSymbolsId(imageBytes, symbolsId);
+            }
+        }
         if (_portablePdbPath != null)
             WritePortablePdb(imageBytes, metadata.GetRowCounts(), entryPoint, symbolsId);
         // #52 — write ATOMICALLY (temp + rename): FileMode.Create truncates-then-writes in place, so a concurrent

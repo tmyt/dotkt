@@ -48,7 +48,7 @@ verify_symbols() {
 emit_state() { stat -c '%y' "$obj/Probe.dll" "$obj/Probe.pdb" "$obj/dotkt-ilemit.stamp"; }
 frontend_state() { stat -c '%y' "$obj/bir/.stamp" "$obj/cir/.stamp"; }
 emitter="$ws/packages/dotkt.toolchain/$version/tools/ilemit/ilemit.dll"
-reemit() { (cd "$app" && dotnet "$emitter" "@$obj/dotkt-ilemit.rsp"); }
+reemit() { (cd "$app" && dotnet "$emitter" "@$obj/dotkt-ilemit.rsp" "$@"); }
 repeat_emission() {
     local stage="$1" stable="$2" policy="--deterministic"
     [[ "$stable" == true ]] || policy="--non-deterministic"
@@ -87,6 +87,15 @@ frontend="$(frontend_state)"; before="$(emit_state)"
 build no-op
 [[ "$before" == "$(emit_state)" ]]
 repeat_emission deterministic-portable true
+
+# Identical concatenated IL, row counts and source points can still map MethodDefs to different bodies.
+# Reuse the same SDK response and change only that physical input; no second frontend build is needed.
+inspect --shift-body-map "$fixture/BodyMap.cir.json" "$ws/shifted-body-map.cir.json"
+logged body-map-first reemit "$fixture/BodyMap.cir.json"
+cp "$obj/Probe.pdb" "$ws/body-map-first.pdb"
+logged body-map-second reemit "$ws/shifted-body-map.cir.json"
+inspect --different-pdb "$ws/body-map-first.pdb" "$obj/Probe.pdb"
+inspect "$obj/Probe.dll" "$obj/Probe.pdb" "$app/Sample.kt" "$app/Inline.kt" "$app/SourceCases.kt" --deterministic
 
 build disabled -p:DebugType=none
 [[ ! -e "$pdb" && ! -e "$obj/Probe.pdb" ]]
