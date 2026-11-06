@@ -33,10 +33,36 @@ internal fun printStackTraceImpl(throwable: Throwable): Unit = clrStdErr().write
 // expect/actual; app call sites resolve to the Throwable MEMBER (see builtins/Throwable.kt) which shares printStackTraceImpl.
 public actual fun Throwable.printStackTrace(): Unit = printStackTraceImpl(this)
 
-// System.Exception.ToString() renders the message and the stack trace (the .NET text differs from the JVM's).
+private class ExceptionTraceTask(val exception: Throwable, val caption: String, val render: Boolean)
+
+// Native ToString already describes the cause chain. Walk that chain for its
+// suppression edges without rendering the native cause descriptions a second time.
 @SinceKotlin("1.4")
-@kotlin.clr.ClrIntrinsic("ToString")
-public actual fun Throwable.stackTraceToString(): String = TODO("clr binding should be implemented")
+public actual fun Throwable.stackTraceToString(): String {
+    val text = StringBuilder()
+    val seen = System.Collections.Generic.HashSet<Throwable>(System.Collections.Generic.ReferenceEqualityComparer.Instance)
+    val pending = ArrayList<ExceptionTraceTask>()
+    pending.add(ExceptionTraceTask(this, "", true))
+    while (pending.isNotEmpty()) {
+        val task = pending.removeAt(pending.size - 1)
+        if (!seen.Add(task.exception)) {
+            if (task.render) text.append('\n').append(task.caption).append("[circular/shared reference]")
+            continue
+        }
+        // Take detached state before invoking any overridable formatting code.
+        val suppressed = task.exception.suppressedExceptions
+        val cause = task.exception.cause
+        if (task.render) {
+            if (text.length != 0) text.append('\n')
+            text.append(task.caption).append(task.exception.toString())
+        }
+        if (cause != null) pending.add(ExceptionTraceTask(cause, task.caption + "Caused by: ", false))
+        for (index in (suppressed.size - 1) downTo 0) {
+            pending.add(ExceptionTraceTask(suppressed[index], task.caption + "Suppressed: ", true))
+        }
+    }
+    return text.toString()
+}
 
 // Ephemeron keys preserve CLR exception identity without keeping otherwise unreachable
 // exception graphs alive. A suppressed exception may itself refer back to the primary.
