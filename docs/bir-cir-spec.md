@@ -504,6 +504,11 @@ not choose boxing or infer identity semantics from operand types. Homogeneous
 comparisons retain the documented physical comparison contract (§5a-bis in
 `dotkt-semantics.md`).
 
+Mixed numeric `binOp` operands receive explicit `conv` nodes in bir2cir once their
+physical types are final; ilemit does not select or widen operand types. Small
+integer storage types use the CLR Int32 evaluation-stack category. Shift operands
+retain their value width and Int32 distance rather than a shared arithmetic width.
+
 Node kinds are `{k}`-tagged objects but their FIELD names drifted (each wave's agent named fields ad-hoc).
 Audit-confirmed drift: the "a type" concept is spelled `type`/`retType`/`ret`/`elem`/`of`/`keyType`
 (`retType`≡`ret` are the SAME return type; `type`≡`of` overlap); a value/sub-expr is `value`/`val`/`init`/

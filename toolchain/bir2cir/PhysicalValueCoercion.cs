@@ -227,6 +227,7 @@ static class PhysicalValueCoercion
 
     internal static void SelfTest()
     {
+        NumericOperandsSelfTest();
         var root = JsonNode.Parse("""
         {"fileClass":"ValueEdges","methods":[
           {"name":"nativeSlot","typeParams":["T"],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
@@ -409,6 +410,52 @@ static class PhysicalValueCoercion
                 unusedParameters.Select(parameter => parameter.DeepClone()).ToArray()).ToJsonString())
             throw new InvalidOperationException("Unused anonymous parameters acquired addressable storage");
         Console.WriteLine("[physical value edges] self-test OK (local generic result, erased result, native carrier view)");
+    }
+
+    static void NumericOperandsSelfTest()
+    {
+        foreach (var referenceBuild in new[] { false, true })
+        foreach (var (left, right, target) in new[] {
+            ("long", "int", "System.Int64"), ("int", "double", "System.Double"),
+            ("uint", "ulong", "System.UInt64"), ("short", "sbyte", "System.Int32"),
+            ("char", "ushort", "System.Int32"), ("kotlin.Long", "kotlin.Int", "System.Int64"),
+            ("uint", "int", "System.UInt32"), ("int", "uint", "System.Int32"),
+        })
+        {
+            var scope = new Scope(locals: new Dictionary<string, TypeNode> {
+                ["left"] = new TypeNode.Fqn(left), ["right"] = new TypeNode.Fqn(right),
+            });
+            var index = Index.Build(Array.Empty<JsonNode>(), () => throw new InvalidOperationException());
+            index.ReferenceBuild = referenceBuild;
+            var operation = new JsonObject {
+                ["k"] = "binOp", ["op"] = "+",
+                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "left" },
+                ["rhs"] = new JsonObject { ["k"] = "local", ["name"] = "right" },
+            };
+            CoerceInputs(operation, scope, index);
+            foreach (var side in new[] { "lhs", "rhs" })
+                if (BirTypeLowering.CanonicalExpressionResult(ExprType(operation[side], scope, index))
+                    != new TypeNode.Fqn(target))
+                    throw new InvalidOperationException($"Mixed arithmetic lost its physical width: {left}/{right}");
+            var once = operation.DeepClone();
+            CoerceInputs(operation, scope, index);
+            if (!JsonNode.DeepEquals(once, operation))
+                throw new InvalidOperationException("Numeric operand coercion is not stable on its first result");
+            foreach (var shift in new[] { "<<", ">>", ">>>" })
+            {
+                if (left != "long" || right != "int") continue;
+                var shifted = new JsonObject {
+                    ["k"] = "binOp", ["op"] = shift,
+                    ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "left" },
+                    ["rhs"] = new JsonObject { ["k"] = "local", ["name"] = "right" },
+                };
+                var before = shifted.DeepClone();
+                CoerceInputs(shifted, scope, index);
+                if (!JsonNode.DeepEquals(before, shifted))
+                    throw new InvalidOperationException("Numeric coercion rewrote a shift distance");
+            }
+        }
+        Console.WriteLine("[numeric operands] self-test OK (widths, stack categories, signed ties, ref mode, shifts)");
     }
 
     // Terminal operand materialization reads the same exact CLR result contract as value coercion. In particular
@@ -812,6 +859,7 @@ static class PhysicalValueCoercion
     static void CoerceInputs(JsonObject node, Scope scope, Index index)
     {
         var kind = Str(node["k"]);
+        if (kind == "binOp") WidenNumericOperands(node, scope, index);
         if (index.ReferenceBuild && !(kind == "binOp" && Str(node["op"]) == "===")) return;
         switch (kind)
         {
@@ -1096,6 +1144,39 @@ static class PhysicalValueCoercion
             ["e"] = physical,
         };
     }
+
+    // Resolve arithmetic widths after member results and lexical slots are physical. ilemit must not choose
+    // a representation while emitting operands. Shifts keep an Int32 distance; ref constructors execute too.
+    static void WidenNumericOperands(JsonObject node, Scope scope, Index index)
+    {
+        if (Str(node["op"]) is "<<" or ">>" or ">>>" or "===") return;
+        var left = BirTypeLowering.CanonicalExpressionResult(ExprType(node["lhs"], scope, index));
+        var right = BirTypeLowering.CanonicalExpressionResult(ExprType(node["rhs"], scope, index));
+        var leftRank = NumericRank(left);
+        var rightRank = NumericRank(right);
+        if (leftRank < 0 || rightRank < 0 || left == right) return;
+        var target = leftRank >= rightRank ? left : right;
+        // Byte/short/char already occupy Int32 stack slots. A conversion to the other's storage width would
+        // truncate a value rather than widen it; their actual arithmetic category is Int32.
+        if (Math.Max(leftRank, rightRank) < 2) target = new TypeNode.Fqn("System.Int32");
+        foreach (var operand in new[] { "lhs", "rhs" })
+            if ((operand == "lhs" ? left : right) != target)
+                node[operand] = new JsonObject
+                {
+                    ["k"] = "conv", ["to"] = TypeJson.Write(target), ["e"] = node[operand]!.DeepClone(),
+                };
+    }
+
+    static int NumericRank(TypeNode type) => type is TypeNode.Fqn { Args: null } named ? named.Name switch
+    {
+        "System.Double" => 5,
+        "System.Single" => 4,
+        "System.Int64" or "System.UInt64" => 3,
+        "System.Int32" or "System.UInt32" => 2,
+        "System.Int16" or "System.UInt16" or "System.Char" => 1,
+        "System.Byte" or "System.SByte" => 0,
+        _ => -1,
+    } : -1;
 
     static TypeNode ExprType(JsonNode node, Scope scope, Index index)
     {
