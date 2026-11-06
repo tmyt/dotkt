@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # A newly extracted SDK owns one clean project graph. Subsequent consumers reuse that graph's producer outputs.
 
+nunit_discard_corpus() {
+	local root="$1"
+	rm -f -- "$root/build/nunit-ir-corpus.list" "$root/build/nunit-ir-corpus.pending"
+}
+
 nunit_prepare_cohort() {
 	local root="$1" cache="$2" configuration="$3" project name
 	shift 3
+	nunit_discard_corpus "$root" || return 1
 	# Keep SDK resolution and restore on the same private cache even when the caller exports another NuGet root.
 	export NUGET_PACKAGES="$cache"
 	if [[ -d "$cache" ]]; then
@@ -40,5 +46,16 @@ nunit_build_project() {
 	local root="$1" configuration="$2" project="$3" name
 	name="${project//\//-}"
 	dotnet build "$root/$project" -c "$configuration" --no-restore -m:1 -v:q --nologo \
+		-p:CustomAfterMicrosoftCommonTargets="$root/tests/support/nunit/record-ir.targets" \
+		-p:DotKtTestIrManifest="$root/build/nunit-ir-corpus.pending" \
 		> "$root/build/nunit-$name.build.log" 2>&1
+}
+
+nunit_publish_corpus() {
+	local root="$1"
+	if [[ ! -s "$root/build/nunit-ir-corpus.pending" ]]; then
+		echo 'NUnit cohort: no IR artifacts were recorded' >&2
+		return 1
+	fi
+	mv -- "$root/build/nunit-ir-corpus.pending" "$root/build/nunit-ir-corpus.list"
 }

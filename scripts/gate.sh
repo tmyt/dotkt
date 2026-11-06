@@ -144,7 +144,10 @@ classify() { # <path>
 		tests/packaged-sdk/*) want packagedsdk; reason "$p -> packaged SDK tests" ;;
 		tests/gate-selection/*) want gate_selection; reason "$p -> gate selector policy tests" ;;
 		tests/stdlib-common-upstream/*) want stdlib_upstream; reason "$p -> upstream stdlib snapshot gate" ;;
-		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/ilverify/*|tests/run-nunit-tests.sh)
+		tests/support/nunit/*|tests/run-nunit-tests.sh)
+			want compiler_tests; want schema; want sanity
+			reason "$p -> NUnit cohort lifecycle and recorded IR consumers" ;;
+		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/ilverify/*)
 			want compiler_tests; reason "$p -> categorized compiler tests" ;;
 		tests/target-universe/*)
 			want targetuniverse; reason "$p -> host/target metadata-universe calibration" ;;
@@ -158,9 +161,10 @@ classify() { # <path>
 }
 
 # ---- suite targets --------------------------------------------------------------------------------
-declare -a RUN_ORDER=(compiler_tests schema sanity lowering stdlib_upstream msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection packagedsdk)
+declare -a RUN_ORDER=(compiler_tests nunit_corpus schema sanity lowering stdlib_upstream msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection packagedsdk)
 declare -A SUITE_TARGET=(
 	[compiler_tests]=verify-tests [schema]=verify-schema [sanity]=verify-sanity
+	[nunit_corpus]=verify-nunit
 	[msbuild]=verify-msbuild
 	[targetuniverse]=verify-target-universe [gate_selection]=verify-gate-selection
 	[stdlib_upstream]=verify-stdlib-upstream
@@ -189,6 +193,13 @@ else
 		for s in "${FULL_SUITES[@]}"; do want "$s"; done
 		reason "==> a broad/unmatched path was seen: escalated to the FULL verify-core set + clean stdlib rebuild"
 	fi
+fi
+
+# Default IR consumers require the completed producer cohort. Do not repeat it when compiler_tests already owns
+# that work, and do not pull the unrelated compile-fail lane into a corpus-only dependency.
+if { [[ -v WANT[schema] ]] || [[ -v WANT[sanity] ]]; } && [[ ! -v WANT[compiler_tests] ]]; then
+	want nunit_corpus
+	reason "schema/sanity -> build the NUnit IR cohort once before its consumers"
 fi
 
 # ---- print the plan -------------------------------------------------------------------------------

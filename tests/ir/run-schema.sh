@@ -17,14 +17,12 @@
 #
 # COVERAGE = the whole pipeline surface:
 #   - the CLR stdlib  build/clr-stdlib/{bir,cir}   (fresh after `make stdlib`) — 250 files, the bulk corpus;
-#   - every categorized test project tests/**/obj/<configuration>/<tfm>[/<rid>]/{bir,cir}/*.json (fresh after
-#     verify-tests) — exercises
-#     the language, CLR interop, coroutine-lowered, and cross-module kinds that the stdlib build does not;
-#   - legacy one-shot developer outputs build/{bir,cir}-*/*.json, when present.
+#   - the successful NUnit cohort's recorded BIR/CIR, including transitive producers. Output paths come from
+#     the actual MSBuild emit targets, not every obj configuration or unrelated developer outputs.
 #
-# FRESHNESS: this validates whatever is on disk, so run it AFTER a fresh emit. In the gate aggregate it runs
-# AFTER verify-tests (which re-emits the test BIR/CIR); `make stdlib` refreshes the stdlib corpus. A stale tree
-# with a retired spelling will (correctly) red — that IS drift.
+# FRESHNESS: run AFTER verify-nunit; its manifest is invalidated before setup and published only after success.
+# `make stdlib` refreshes the reference stdlib corpus. Explicit path/glob arguments select a focused corpus
+# instead; the caller owns its freshness. Neither mode promises compatibility with old compiler artifacts.
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
@@ -34,15 +32,12 @@ PY="${PYTHON:-python3}"
 "$PY" tests/ir/test-generic-receiver-schema.py || exit 1
 "$PY" tests/ir/test-valueblock-schema.py || exit 1
 
-globs=()
-[ -d build/clr-stdlib/bir ] && globs+=("build/clr-stdlib/bir/*.bir.json")
-[ -d build/clr-stdlib/cir ] && globs+=("build/clr-stdlib/cir/*.cir.json")
-# DLL-to-KLIB E2E validates its own fresh emit in the integration shard, not a previous run's artifacts here.
-while IFS= read -r -d '' file; do globs+=("$file"); done < <(
-  find tests -type f \( -path '*/obj/*/bir/*.bir.json' -o -path '*/obj/*/cir/*.cir.json' \) -print0
-)
-for d in build/bir-*; do [ -d "$d" ] && globs+=("$d/*.bir.json"); done
-for d in build/cir-*; do [ -d "$d" ] && globs+=("$d/*.cir.json"); done
+if [ $# -gt 0 ]; then
+  globs=("$@")
+else
+  if ! corpus="$("$PY" tests/ir/corpus.py both)"; then exit 2; fi
+  mapfile -t globs <<< "$corpus"
+fi
 
 # Accepted direct-lowering fixtures are authored BIR too. Include them in the #397 boundary lane so a fixture cannot
 # carry a forbidden physical Property link merely because it bypasses kotc's emitted obj directories. Deliberate
@@ -54,11 +49,6 @@ done
 for file in tests/ir/lowering/*.bir-part.json; do
   property_globs+=("$file")
 done
-
-if [ ${#globs[@]} -eq 0 ]; then
-  echo "SCHEMA GATE: no emitted BIR/CIR found — run 'make stdlib' and/or 'make verify-tests' first" >&2
-  exit 2
-fi
 
 # The shared BIR/CIR codec (toolchain/bir-common: TypeNode, MemberRefNode) has no project and no test host of
 # its own — it is <Compile Link/>-shared into each tool. `bir2cir --selftest` runs its round-trip and

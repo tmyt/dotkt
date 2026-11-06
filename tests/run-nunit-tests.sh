@@ -21,6 +21,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/tests/support/nunit/cohort.sh"
+# Invalidate even if feed setup, metadata checks, restore or a later build fails before a new cohort completes.
+nunit_discard_corpus "$ROOT"
 FEED="$ROOT/build/nuget-feed"
 CACHE="$ROOT/build/test-package-cache"
 CONFIGURATION="Debug"
@@ -988,5 +990,6 @@ if (( ${#EMITTED[@]} )); then
 fi
 
 echo "=========================================================="
+if (( rc == 0 )); then nunit_publish_corpus "$ROOT" || rc=1; fi
 (( rc == 0 )) && echo "run-nunit-tests: GREEN" || echo "run-nunit-tests: RED"
 exit $rc

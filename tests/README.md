@@ -25,6 +25,11 @@ build, every suite graph is restored and transitively cleaned against one fresh 
 consumer builds then reuse unchanged shared producers within that cohort; a same-version SDK repack starts a new
 clean cohort so previous compiler outputs cannot survive.
 
+The build records its actual BIR/CIR paths, including transitive producers, and publishes
+`build/nunit-ir-corpus.list` only after the whole NUnit/ILVerify cohort succeeds. Schema and sanity use that list
+plus the reference stdlib, not other obj configurations or developer outputs. Run `make verify-nunit` before
+their default corpus gates; pass explicit paths/globs to `tests/ir/run-{schema,sanity}.sh` for a focused check.
+
 ```bash
 make pack
 bash tests/run-nunit-tests.sh

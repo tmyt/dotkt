@@ -1,0 +1,15 @@
+<Project>
+  <!-- Imported only by the NUnit driver's build command. Global properties carry this through ProjectReference;
+       the compiler's actual output properties, not an obj-directory convention, select the current artifacts. -->
+  <Target Name="RecordNUnitIrCorpus" AfterTargets="DotKtIlEmit"
+          Condition="'$(DotKtTestIrManifest)' != ''">
+    <Error Condition="'$(DotKtIntermediateBirPath)' == '' or '$(DotKtIntermediateCirPath)' == ''"
+           Text="The NUnit IR recorder requires the emitting project's BIR and CIR output paths." />
+    <ItemGroup>
+      <_NUnitIrFile Include="$(DotKtIntermediateBirPath)/*.bir.json;$(DotKtIntermediateCirPath)/*.cir.json" />
+    </ItemGroup>
+    <!-- Builds are serial (-m:1); reused producers may append again and readers deduplicate the paths. -->
+    <WriteLinesToFile File="$(DotKtTestIrManifest)" Lines="@(_NUnitIrFile->'%(FullPath)')"
+                      Encoding="UTF-8" Overwrite="false" Condition="'@(_NUnitIrFile)' != ''" />
+  </Target>
+</Project>
