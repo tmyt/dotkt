@@ -36,6 +36,7 @@ set +o pipefail
 PY="${PYTHON:-python3}"
 ILEMIT="build/ilemit-bin/ilemit.dll"
 SELF_OUT="build/ir-selftest-out"
+SANITY_CHECK="build/ir-sanity-check/SanityCheck.dll"
 
 # SELF-TEST first (tests/ir/selftest/*.cir.json): the validators check whatever is on disk, so one that silently
 # stopped checking would look exactly like a clean corpus. Each `reject-*.cir.json` is a shape the compiler must
@@ -49,15 +50,20 @@ SELF_OUT="build/ir-selftest-out"
 #
 # BOTH implementations are asserted. scripts/verify-sanity.py is only the corpus net; the NORMATIVE checker is the
 # C# IrSanity compiled into ilemit, which is what actually stops a bad build. Asserting only the mirror would leave
-# the normative half pinned by nothing but a comment. ilemit cannot fully EMIT a synthetic fixture (there are no
-# refs to resolve its types against), so the accept side asserts the absence of a sanity diagnostic rather than a
-# zero exit — the sanity gate runs at the head of EmitAssembly, ahead of any resolution.
+# the normative half pinned by nothing but a comment. The positive fixtures describe valid sanity relations, not
+# complete emit-ready assemblies. A small host calls the actual checker compiled into ilemit and must exit zero;
+# failure in a later emission stage is not evidence of acceptance. Reject fixtures also exercise ilemit itself,
+# retaining coverage of the in-process gate's wiring and diagnostic attribution.
 echo "== verify-sanity: self-test (the checks with no natural negative in the corpus) =="
 self_rc=0; n_reject=0; n_accept=0
 rm -rf "$SELF_OUT"; mkdir -p "$SELF_OUT"
 if [ ! -f "$ILEMIT" ]; then
   echo "  SELFTEST FAIL  $ILEMIT is missing — the normative C# half cannot be asserted (run 'make ilemit')"; self_rc=1
+elif ! dotnet build tests/ir/sanity-check/SanityCheck.csproj -c Release \
+    -o build/ir-sanity-check --nologo -v:quiet; then
+  echo "  SELFTEST FAIL  could not build the normative C# sanity-check host"; self_rc=1
 fi
+if [ $self_rc -ne 0 ]; then echo "SANITY GATE: RED (self-test setup)"; exit 1; fi
 
 for f in tests/ir/selftest/reject-*.cir.json; do
   [ -e "$f" ] || continue
@@ -78,16 +84,26 @@ for f in tests/ir/selftest/reject-*.cir.json; do
   else
     echo "  SELFTEST ok    $(basename "$f") (verify-sanity.py refused as documented)"
   fi
-  if [ -f "$ILEMIT" ]; then
-    iout="$(dotnet "$ILEMIT" "$SELF_OUT" IrSelftest --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" "$f" 2>&1)"; irc=$?
-    if [ $irc -eq 0 ]; then
-      echo "  SELFTEST FAIL  $(basename "$f"): ilemit ACCEPTED a document it must refuse"; self_rc=1
-    elif ! printf '%s' "$iout" | grep -qF -- "$want"; then
-      echo "  SELFTEST FAIL  $(basename "$f"): ilemit refused, but the message does not contain: $want"; self_rc=1
+  # Calibrate the host with one existing negative: deleting its Check call must not make its positive lane green.
+  # The real ilemit checks below cover every invariant and the emitter hook; repeating all of them in the host
+  # would add no host-wiring coverage.
+  if [ $n_reject -eq 1 ]; then
+    iout="$(dotnet "$SANITY_CHECK" "$f" 2>&1)"; irc=$?
+    if [ $irc -eq 0 ] || ! printf '%s' "$iout" | grep -qF -- "$want"; then
+      echo "  SELFTEST FAIL  $(basename "$f"): sanity-check host did not refuse the negative control as documented"; self_rc=1
       printf '%s\n' "$iout" | sed 's/^/                 /'
     else
-      echo "  SELFTEST ok    $(basename "$f") (ilemit refused as documented)"
+      echo "  SELFTEST ok    $(basename "$f") (sanity-check host negative control)"
     fi
+  fi
+  iout="$(dotnet "$ILEMIT" "$SELF_OUT" IrSelftest --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" "$f" 2>&1)"; irc=$?
+  if [ $irc -eq 0 ]; then
+    echo "  SELFTEST FAIL  $(basename "$f"): ilemit ACCEPTED a document it must refuse"; self_rc=1
+  elif ! printf '%s' "$iout" | grep -qF -- "$want"; then
+    echo "  SELFTEST FAIL  $(basename "$f"): ilemit refused, but the message does not contain: $want"; self_rc=1
+    printf '%s\n' "$iout" | sed 's/^/                 /'
+  else
+    echo "  SELFTEST ok    $(basename "$f") (ilemit refused as documented)"
   fi
 done
 
@@ -100,14 +116,11 @@ for f in tests/ir/selftest/accept-*.cir.json; do
     echo "  SELFTEST FAIL  $(basename "$f"): verify-sanity.py REFUSED a well-formed document"; self_rc=1
     "$PY" scripts/verify-sanity.py "$f" 2>&1 | sed 's/^/                 /'
   fi
-  if [ -f "$ILEMIT" ]; then
-    iout="$(dotnet "$ILEMIT" "$SELF_OUT" IrSelftest --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" "$f" 2>&1)"
-    if printf '%s' "$iout" | grep -qF -- ": sanity: "; then
-      echo "  SELFTEST FAIL  $(basename "$f"): ilemit raised a sanity violation on a well-formed document"; self_rc=1
-      printf '%s\n' "$iout" | sed 's/^/                 /'
-    else
-      echo "  SELFTEST ok    $(basename "$f") (ilemit raised no sanity violation)"
-    fi
+  if iout="$(dotnet "$SANITY_CHECK" "$f" 2>&1)"; then
+    echo "  SELFTEST ok    $(basename "$f") (compiled C# IrSanity accepted)"
+  else
+    echo "  SELFTEST FAIL  $(basename "$f"): compiled C# IrSanity did not complete successfully"; self_rc=1
+    printf '%s\n' "$iout" | sed 's/^/                 /'
   fi
 done
 

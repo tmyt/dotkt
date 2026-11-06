@@ -157,6 +157,7 @@ verify-schema: ## BIR/CIR schema contract enforcer (types-are-nodes + canonical 
 	bash tests/ir/check-emitter-residual.sh
 
 verify-sanity: ## offline IR-sanity gate (semantic invariants over fresh BIR/CIR); run AFTER verify-nunit
+	python3 tests/ir/test-sanity-harness.py
 	bash tests/ir/run-sanity.sh
 
 verify-lowering: bir2cir stdlib-ref ## lowering self-tests (synthetic BIR -> bir2cir -> CIR assertions, for rules the corpus no longer witnesses)

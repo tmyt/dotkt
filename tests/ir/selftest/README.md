@@ -30,9 +30,13 @@ kind — a lane that asserted nothing is indistinguishable from a lane that pass
 
 The sanity lane asserts **both** implementations on every fixture: `scripts/verify-sanity.py` is only the corpus
 net, and the normative checker is the C# `IrSanity` compiled into ilemit, which is what actually stops a bad
-build. ilemit cannot fully emit a synthetic fixture — there are no references to resolve its types against — so
-the accept side asserts that no sanity diagnostic is raised rather than a zero exit; the sanity gate runs at the
-head of `EmitAssembly`, ahead of any resolution.
+build. Positive fixtures state valid sanity relations, not complete emit-ready assemblies (for example, they
+omit the fixed-member table). `tests/ir/sanity-check/SanityCheck.csproj` references the actual built `ilemit.dll` and
+calls its public `IrSanity.Check` directly. Every positive fixture must complete that check with exit zero;
+unrelated emission failures and crashes are not acceptance. Reject fixtures still run through ilemit itself,
+so the in-process gate's wiring and diagnostic attribution remain covered. No compiler source is linked into
+the test host and no second C# checker implementation is maintained. One existing negative fixture also
+calibrates the host, so a host that stopped calling the checker cannot make the positive lane silently green.
 
 ## What is pinned today
 
