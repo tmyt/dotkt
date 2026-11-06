@@ -20,8 +20,10 @@ one program per assertion.
 
 `run-nunit-tests.sh` builds all categorized projects against the locally packed SDK, runs `dotnet test`, and then
 runs `run-ilverify.sh` once for every DotKt-emitted assembly. A project build failure, test failure, discovery
-failure (including a zero-test TRX), or ILVerify finding outside the narrow baseline fails the gate. Builds are
-non-incremental because the gate deliberately repacks and reuses the same local SDK version.
+failure (including a zero-test TRX), or ILVerify finding outside the narrow baseline fails the gate. Before any
+build, every suite graph is restored and transitively cleaned against one fresh SDK extraction. Independent
+consumer builds then reuse unchanged shared producers within that cohort; a same-version SDK repack starts a new
+clean cohort so previous compiler outputs cannot survive.
 
 ```bash
 make pack

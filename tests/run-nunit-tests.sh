@@ -12,14 +12,15 @@
 #     finds an issue. Exact counts make test additions and removals visible in the same review as their rationale;
 #     they also catch VSTest exiting zero after matching an empty or stale test assembly.
 #
-# Order (design §5): recreate DotKt.* in the isolated cache -> non-incremental build -> dotnet test --no-build ->
-# ilverify. The non-incremental build is load-bearing after repacking the SDK at the same version: otherwise MSBuild
-# can retain stale compiler outputs from the prior package cohort. Green (exit 0) iff
+# Order: recreate DotKt.* in the isolated cache -> restore and clean every project graph -> independent consumer
+# builds with shared producers reused -> dotnet test --no-build -> ilverify. The clean cohort is mandatory after
+# same-version SDK repacks; no prior-cohort compiler outputs may survive. Green (exit 0) iff
 # every project builds, discovers at least one test, every `dotnet test` exits 0, and ILVerify is clean
 # against tests/run-ilverify.sh's baseline.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/tests/support/nunit/cohort.sh"
 FEED="$ROOT/build/nuget-feed"
 CACHE="$ROOT/build/test-package-cache"
 CONFIGURATION="Debug"
@@ -121,12 +122,8 @@ python3 "$ROOT/tests/assert-uuid-entropy.py" \
 # under test: a virtual member from a PackageReference can be overridden by Kotlin.
 dotnet pack "$ROOT/tests/interop/package-producer/PackageInterop.csproj" -o "$FEED" -v q --nologo >/dev/null
 
-# Recreate the extracted DotKt.* packages in the ISOLATED cache so a repacked SAME-version SDK always wins
-# (NuGet prefers an already-extracted exact-version package; design D4 caveat). NUnit/test-sdk stay cached.
-if [[ -d "$CACHE" ]]; then
-	find "$CACHE" -maxdepth 1 -type d -iname 'dotkt.*' -exec rm -rf {} + 2>/dev/null || true
-	find "$CACHE" -maxdepth 1 -type d -iname 'dotkt.tests.virtualpackage' -exec rm -rf {} + 2>/dev/null || true
-fi
+# A fresh SDK extraction and transitive clean form one cohort. NUnit/test-sdk packages stay cached.
+nunit_prepare_cohort "$ROOT" "$CACHE" "$CONFIGURATION" "${PROJECTS[@]}"
 
 rc=0
 declare -a EMITTED=()
@@ -138,8 +135,8 @@ for proj in "${PROJECTS[@]}"; do
 	echo "=========================================================="
 	echo "NUnit suite: $proj"
 
-	# Build (restore from the local feed via tests/nuget.config). A build failure is a red gate.
-	if ! dotnet build "$dir" -c "$CONFIGURATION" --no-incremental -m:1 -v q --nologo >"$ROOT/build/nunit-$name.build.log" 2>&1; then
+	# Build against the already restored local SDK. A build failure is a red gate.
+	if ! nunit_build_project "$ROOT" "$CONFIGURATION" "$proj"; then
 		echo "  BUILD FAIL — see build/nunit-$name.build.log"; tail -25 "$ROOT/build/nunit-$name.build.log"; rc=1; continue
 	fi
 	case "$proj" in

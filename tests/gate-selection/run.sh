@@ -44,6 +44,7 @@ for path in toolchain/bir-common/TypeNode.cs toolchain/kotc/build.gradle.kts too
 done
 assert_suites stdlib-snapshot-test tests/stdlib-common-upstream/upstream-v2.4.21.sha256 stdlib_upstream
 assert_suites ilverify-harness tests/ilverify/test_harness.py compiler_tests
+assert_suites nunit-cohort tests/support/nunit/cohort.sh compiler_tests
 verifier_suites="compiler_tests csharp14 pinvoke dll2klib packagedsdk"
 assert_suites shared-ilverify tests/run-ilverify.sh "$verifier_suites"
 mixed_suites="$(suite_line tests/run-ilverify.sh tests/basic/fixtures/SomeTest.kt tests/packaged-sdk/run.sh)"
