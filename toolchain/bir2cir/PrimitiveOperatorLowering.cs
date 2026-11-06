@@ -69,8 +69,8 @@ static class PrimitiveOperatorLowering
     {
         "kotlin.Int", "kotlin.Long", "kotlin.Short", "kotlin.Byte", "kotlin.Boolean", "kotlin.Char",
     };
-    // Value primitives whose OPERATOR result is DECLARED wider-or-different than ilemit's natural typing (ilemit types
-    // a bin/unary result as the narrow left operand, and promotes a narrow operand to int in a mixed op). Kotlin
+    // Value primitives whose OPERATOR result is DECLARED wider-or-different than the operand's storage type. Kotlin
+    // operators run at their physical stack width; PhysicalValueCoercion makes mixed-width operands explicit. Kotlin
     // DECLARES: Byte/Short arith -> Int; UByte/UShort arith -> UInt; Char.plus/minus(Int) -> Char, Char.minus(Char) ->
     // Int; inc/dec -> the receiver's own narrow type (but the `+1` desugaring runs at int width). For these owners the
     // bare op truncates on box / narrow store, so wrap it in a `conv` to the frontend-resolved return type (`dynRet`).
@@ -217,7 +217,7 @@ static class PrimitiveOperatorLowering
         if (args.Count == 0 && UnaryOp.TryGetValue(member, out var uop))
             return WrapDeclaredReturn(o, ownerFqn, new JsonObject { ["k"] = "unaryOp", ["op"] = uop, ["e"] = o["recv"]?.DeepClone() });
         // inc/dec (the `i++`/`i--` desugaring) -> `(recv + 1)`/`(recv - 1)`. The `const 1` is typed `kotlin.Int` for
-        // EVERY primitive (ilemit widens it), so a narrow receiver's `+1` runs at int width and MUST be converted back
+        // EVERY primitive (physical value coercion widens it), so a narrow receiver's `+1` runs at int width and MUST be converted back
         // to the receiver's own narrow type (`dynRet`) — else `(127.toByte()).inc()` yields int 128, not Byte -128.
         if (args.Count == 0 && (member == "inc" || member == "dec"))
             return WrapDeclaredReturn(o, ownerFqn, new JsonObject

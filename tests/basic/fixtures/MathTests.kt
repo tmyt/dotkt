@@ -21,8 +21,6 @@
 // a set of numeric values, so it is captured 1:1 here as typed value asserts (design D3: value asserts subsume the
 // oracle) and their verify-differential.sh PURE entries are removed in the SAME change.
 //
-// Top-level names are unique within this single battery assembly (one project = one namespace); every method body is
-// self-contained (no shared top-level declarations), so there is nothing to prefix.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
@@ -33,6 +31,20 @@ import kotlin.math.min
 import kotlin.math.sqrt
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+
+private fun numericLongLeft(a: Long, b: Int): Long = a / b
+private fun numericLongRight(a: Int, b: Long): Long = a + b
+private fun numericDoubleLeft(a: Double, b: Int): Double = a / b
+private fun numericDoubleRight(a: Int, b: Double): Double = a + b
+private fun numericFloatRight(a: Int, b: Float): Float = a * b
+private fun numericChained(a: Int, b: Long, c: Double): Double = (a + b) / c
+private fun numericUnsigned(a: ULong, b: UInt): ULong = a / b
+private fun numericSmall(a: Byte, b: Short): Int = a + b
+private fun numericChar(a: Char, b: Int): Char = a + b
+private fun numericShift(a: Long, distance: Int): Long = a ushr distance
+private fun numericLoopRange(n: Int): Long { var t = 0L; for (i in 1..n) t += i; return t }
+private fun numericLoopUntil(n: Int): Long { var t = 0L; for (i in 1 until n) t = i + t; return t }
+private fun numericLoopDownTo(n: Int): Double { var t = 0.0; for (i in n downTo 1) t += i / 2.0; return t }
 
 class MathTests {
     // il-math: kotlin.math.* -> System.Math.* clrStatic lowering parity.
@@ -123,5 +135,37 @@ class MathTests {
         assertEquals(5L, l - i)                  // 5   (Long)
         assertEquals(3, 10 / 3)                  // 3   (Int division)
         assertEquals(3.5, 7.0 / 2.0)             // 3.5 (Double)
+        // Parameter operands cannot fold away the physical conversions inspected in this fixture's CIR.
+        assertEquals(-3L, numericLongLeft(-10L, 3))
+        assertEquals(Long.MIN_VALUE, numericLongLeft(Long.MIN_VALUE, -1))
+        assertEquals(4294967297L, numericLongRight(1, 4294967296L))
+        assertEquals(-4.0, numericDoubleLeft(8.0, -2))
+        assertEquals(2.5, numericDoubleRight(-1, 3.5))
+        assertEquals(-7.5f, numericFloatRight(-3, 2.5f))
+        assertEquals(3.0, numericChained(-1, 7L, 2.0))
+        assertEquals(9223372036854775807uL, numericUnsigned(ULong.MAX_VALUE, 2u))
+        assertEquals(4294967297uL, numericUnsigned(ULong.MAX_VALUE, UInt.MAX_VALUE))
+        assertEquals(32639, numericSmall((-128).toByte(), 32767.toShort()))
+        assertEquals('\u0000', numericChar('\uFFFF', 1))
+        assertEquals(Long.MAX_VALUE, numericShift(-1L, 65))
+    }
+
+    @TestAttribute
+    fun wideningPreservesLoopVariableTypes() {
+        assertEquals(10L, numericLoopRange(4))
+        assertEquals(6L, numericLoopUntil(4))
+        assertEquals(5.0, numericLoopDownTo(4))
+    }
+
+    @TestAttribute
+    fun wideningPreservesOperandEvaluationOrder() {
+        var order = ""
+        fun left(): Int { order += "L"; return -2 }
+        fun right(): Long { order += "R"; return 9L }
+        assertEquals(7L, left() + right())
+        assertEquals("LR", order)
+        order = ""
+        assertEquals(7L, left() + try { right() } catch (e: Exception) { 0L })
+        assertEquals("LR", order)
     }
 }

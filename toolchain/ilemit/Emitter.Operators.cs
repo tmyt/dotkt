@@ -56,53 +56,11 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Ldc_I4, Convert.ToInt32(cv)); return ft;   // sbyte/byte/short/ushort/int
     }
 
-    int NumRank(Type t) =>
-        t == Bcl("System.Double") ? 5 : t == Bcl("System.Single") ? 4 :
-        (t == Bcl("System.Int64") || t == Bcl("System.UInt64")) ? 3 :
-        (t == Bcl("System.Int32") || t == Bcl("System.UInt32")) ? 2 :
-        (t == Bcl("System.Int16") || t == Bcl("System.UInt16") || t == Bcl("System.Char")) ? 1 :
-        (t == Bcl("System.Byte") || t == Bcl("System.SByte")) ? 0 : -1;
-
-    // The common numeric type of two operands (the wider), or null if no coercion is needed / they're not numeric.
-    Type NumericCommon(Type a, Type b)
-    {
-        if (a == b) return null;
-        int ra = NumRank(a), rb = NumRank(b);
-        if (ra < 0 || rb < 0) return null;
-        return ra >= rb ? a : b;
-    }
-
-    void ConvTo(Type t)
-    {
-        if (t == Bcl("System.Double")) _il.Emit(OpCodes.Conv_R8);
-        else if (t == Bcl("System.Single")) _il.Emit(OpCodes.Conv_R4);
-        else if (t == Bcl("System.Int64")) _il.Emit(OpCodes.Conv_I8);
-        else if (t == Bcl("System.UInt64")) _il.Emit(OpCodes.Conv_U8);
-        else if (t == Bcl("System.Int32")) _il.Emit(OpCodes.Conv_I4);
-        else if (t == Bcl("System.UInt32")) _il.Emit(OpCodes.Conv_U4);
-    }
-
     Type EmitBin(JsonElement e)
     {
         var op = e.GetProperty("op").GetString();
         var lt = EmitExpr(e.GetProperty("lhs"));
-        var rt = EmitExpr(e.GetProperty("rhs"));
-        // Mixed numeric operands (e.g. `Double / Int`, `Int + Long`) -> coerce both to the wider type. Shifts keep
-        // their int shift-amount operand, so they're excluded.
-        if (op != "<<" && op != ">>" && op != ">>>")
-        {
-            var common = NumericCommon(lt, rt);
-            if (common != null)
-            {
-                if (rt != common) ConvTo(common);                       // coerce r (top of stack)
-                if (lt != common)                                       // coerce l (below r): stash r, conv l, restore
-                {
-                    var tmp = _il.DeclareLocal(common);
-                    _il.Emit(OpCodes.Stloc, tmp); ConvTo(common); _il.Emit(OpCodes.Ldloc, tmp);
-                }
-                lt = common;
-            }
-        }
+        EmitExpr(e.GetProperty("rhs"));
         // Unsigned operands (Kotlin UInt/ULong -> .NET uint/ulong) need the UNSIGNED CIL ops for division and
         // remainder (a direct `bin` on the raw unsigned operand). Reads the CIR operand type only -- no Kotlin
         // knowledge. Without this, `a / b` on UInt >= 2^31 is silently wrong (signed Div on the bit pattern).

@@ -227,6 +227,7 @@ static class PhysicalValueCoercion
 
     internal static void SelfTest()
     {
+        NumericOperandsSelfTest();
         var root = JsonNode.Parse("""
         {"fileClass":"ValueEdges","methods":[
           {"name":"nativeSlot","typeParams":["T"],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
@@ -411,6 +412,71 @@ static class PhysicalValueCoercion
         Console.WriteLine("[physical value edges] self-test OK (local generic result, erased result, native carrier view)");
     }
 
+    static void NumericOperandsSelfTest()
+    {
+        foreach (var referenceBuild in new[] { false, true })
+        foreach (var (left, right, target) in new[] {
+            ("long", "int", "System.Int64"), ("int", "double", "System.Double"),
+            ("uint", "ulong", "System.UInt64"), ("short", "sbyte", "System.Int32"),
+            ("char", "ushort", "System.Int32"), ("kotlin.Long", "kotlin.Int", "System.Int64"),
+            ("uint", "int", "System.UInt32"), ("int", "uint", "System.Int32"),
+        })
+        {
+            var scope = new Scope(locals: new Dictionary<string, TypeNode> {
+                ["left"] = new TypeNode.Fqn(left), ["right"] = new TypeNode.Fqn(right),
+            });
+            var index = Index.Build(Array.Empty<JsonNode>(), () => throw new InvalidOperationException());
+            index.ReferenceBuild = referenceBuild;
+            var operation = new JsonObject {
+                ["k"] = "binOp", ["op"] = "+",
+                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "left" },
+                ["rhs"] = new JsonObject { ["k"] = "local", ["name"] = "right" },
+            };
+            CoerceInputs(operation, scope, index);
+            foreach (var side in new[] { "lhs", "rhs" })
+                if (BirTypeLowering.CanonicalExpressionResult(ExprType(operation[side], scope, index))
+                    != new TypeNode.Fqn(target))
+                    throw new InvalidOperationException($"Mixed arithmetic lost its physical width: {left}/{right}");
+            var once = operation.DeepClone();
+            CoerceInputs(operation, scope, index);
+            if (!JsonNode.DeepEquals(once, operation))
+                throw new InvalidOperationException("Numeric operand coercion is not stable on its first result");
+            foreach (var shift in new[] { "<<", ">>", ">>>" })
+            {
+                if (left != "long" || right != "int") continue;
+                var shifted = new JsonObject {
+                    ["k"] = "binOp", ["op"] = shift,
+                    ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "left" },
+                    ["rhs"] = new JsonObject { ["k"] = "local", ["name"] = "right" },
+                };
+                var before = shifted.DeepClone();
+                CoerceInputs(shifted, scope, index);
+                if (!JsonNode.DeepEquals(before, shifted))
+                    throw new InvalidOperationException("Numeric coercion rewrote a shift distance");
+            }
+        }
+        foreach (var kind in new[] { "clrStatic", "clrInstance", "callStatic", "callInstance", "constrainedCall" })
+        {
+            var call = new JsonObject { ["k"] = kind };
+            if (kind is "clrStatic" or "clrInstance")
+                call["memberRef"] = new JsonObject {
+                    ["returnType"] = TypeJson.Write(new TypeNode.ByRef(new TypeNode.Fqn("System.Int32"))),
+                };
+            else call["calleeRet"] = TypeJson.Fqn("System.Int32");
+            var operation = new JsonObject {
+                ["k"] = "binOp", ["op"] = "+", ["lhs"] = call,
+                ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int64"), ["value"] = 1 },
+            };
+            var index = Index.Build(Array.Empty<JsonNode>(), () => throw new InvalidOperationException());
+            CoerceInputs(operation, new Scope(), index);
+            if (Str(operation["lhs"]?["k"]) != "conv"
+                || TypeJson.Read(operation["lhs"]?["to"]) != new TypeNode.Fqn("System.Int64")
+                || !JsonNode.DeepEquals(operation["lhs"]?["e"], call))
+                throw new InvalidOperationException($"Numeric coercion lost the exact copied result of {kind}");
+        }
+        Console.WriteLine("[numeric operands] self-test OK (widths, stack categories, signed ties, ref mode, shifts, call values)");
+    }
+
     // Terminal operand materialization reads the same exact CLR result contract as value coercion. In particular
     // source sty stamps and Kotlin array spellings are not authoritative for final physical call/spill slots.
     internal static Func<JsonNode, BirScope, TypeNode> ResultTypeOracle(IReadOnlyList<JsonNode> roots)
@@ -419,21 +485,12 @@ static class PhysicalValueCoercion
         var fields = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         return (node, scope) =>
         {
-            // Plain local CIR calls carry their exact authored declaration contract. A Kotlin function modifier
-            // on a parameter is metadata, not a reason to re-match that call against another declaration.
-            if (node is JsonObject call && Str(call["k"]) is "callStatic" or "callInstance" or "constrainedCall"
-                && TypeJson.Read(call["calleeRet"]) is TypeNode declared)
-                return SignatureValueTypes.Of(Close(declared, CallOwner(call)?.Args, MethodArgs(call)));
             if (node is JsonObject construction && Str(construction["k"]) == "newSam"
                 && TypeJson.Read(construction["samType"]) is TypeNode.Fqn implementation)
                 return construction["typeArgs"] is JsonArray args && args.Count > 0
                     ? new TypeNode.Fqn(implementation.Name, args.Select(TypeJson.Read).ToArray()) : implementation;
-            var result = ConstructedReferenceType(node, fields, scope.VarTypes)
+            return ConstructedReferenceType(node, fields, scope.VarTypes)
                 ?? ExprType(node, new Scope(locals: scope.VarTypes), index);
-            // A plain clrStatic/clrInstance expression copies a ref return; byrefOf is the distinct physical
-            // operation that retains its pointer. A value spill must therefore hold the loaded element, not T&.
-            return node is JsonObject expression && Str(expression["k"]) is "clrStatic" or "clrInstance"
-                && result is TypeNode.ByRef reference ? reference.Of : result;
         };
     }
 
@@ -679,7 +736,7 @@ static class PhysicalValueCoercion
         }
         CoerceInputs(obj, scope, index);
         // Reference declarations retain Kotlin signature vocabulary. Only consume the
-        // executable identity operations left in constructor delegation after body squash.
+        // executable operations left in constructor delegation after body squash.
         if (index.ReferenceBuild) return obj;
         if (Str(obj["k"]) is "return" or "returnExpr" && IsVoid(scope.Return)
             && obj["value"] is JsonNode discarded)
@@ -798,11 +855,11 @@ static class PhysicalValueCoercion
     static Scope LoopScope(JsonObject node, Scope scope)
     {
         var kind = Str(node["k"]);
-        if (kind is not ("forRange" or "forArray" or "forEachInline" or "forIn")) return null;
+        if (kind is not ("for" or "forRange" or "forArray" or "forEachInline" or "forIn")) return null;
         var name = Str(node["var"]);
         if (name == null) return null;
         var type = TypeJson.Read(node["elem"])
-            ?? (kind == "forRange" ? new TypeNode.Fqn("System.Int32") : null);
+            ?? (kind is "for" or "forRange" ? new TypeNode.Fqn("System.Int32") : null);
         if (type == null) return null;
         var child = scope.Copy();
         child.Locals[name] = type;
@@ -812,6 +869,7 @@ static class PhysicalValueCoercion
     static void CoerceInputs(JsonObject node, Scope scope, Index index)
     {
         var kind = Str(node["k"]);
+        if (kind == "binOp") WidenNumericOperands(node, scope, index);
         if (index.ReferenceBuild && !(kind == "binOp" && Str(node["op"]) == "===")) return;
         switch (kind)
         {
@@ -1097,6 +1155,39 @@ static class PhysicalValueCoercion
         };
     }
 
+    // Resolve arithmetic widths after member results and lexical slots are physical. ilemit must not choose
+    // a representation while emitting operands. Shifts keep an Int32 distance; ref constructors execute too.
+    static void WidenNumericOperands(JsonObject node, Scope scope, Index index)
+    {
+        if (Str(node["op"]) is "<<" or ">>" or ">>>" or "===") return;
+        var left = BirTypeLowering.CanonicalExpressionResult(ExprType(node["lhs"], scope, index));
+        var right = BirTypeLowering.CanonicalExpressionResult(ExprType(node["rhs"], scope, index));
+        var leftRank = NumericRank(left);
+        var rightRank = NumericRank(right);
+        if (leftRank < 0 || rightRank < 0 || left == right) return;
+        var target = leftRank >= rightRank ? left : right;
+        // Byte/short/char already occupy Int32 stack slots. A conversion to the other's storage width would
+        // truncate a value rather than widen it; their actual arithmetic category is Int32.
+        if (Math.Max(leftRank, rightRank) < 2) target = new TypeNode.Fqn("System.Int32");
+        foreach (var operand in new[] { "lhs", "rhs" })
+            if ((operand == "lhs" ? left : right) != target)
+                node[operand] = new JsonObject
+                {
+                    ["k"] = "conv", ["to"] = TypeJson.Write(target), ["e"] = node[operand]!.DeepClone(),
+                };
+    }
+
+    static int NumericRank(TypeNode type) => type is TypeNode.Fqn { Args: null } named ? named.Name switch
+    {
+        "System.Double" => 5,
+        "System.Single" => 4,
+        "System.Int64" or "System.UInt64" => 3,
+        "System.Int32" or "System.UInt32" => 2,
+        "System.Int16" or "System.UInt16" or "System.Char" => 1,
+        "System.Byte" or "System.SByte" => 0,
+        _ => -1,
+    } : -1;
+
     static TypeNode ExprType(JsonNode node, Scope scope, Index index)
     {
         if (node is not JsonObject obj) return null;
@@ -1104,7 +1195,19 @@ static class PhysicalValueCoercion
         if (kind == "local" && Str(obj["name"]) is string name && scope.Locals.TryGetValue(name, out var local))
             return local;
         if (kind == "this") return scope.Owner;
-        if (PhysicalResult(obj, scope, index) is TypeNode physical) return SignatureValueTypes.Of(physical);
+        // Plain local CIR calls already carry their exact declaration contract. A Kotlin function modifier on
+        // a parameter is metadata, not a reason to re-match the call against another declaration.
+        if (kind is "callStatic" or "callInstance" or "constrainedCall"
+            && TypeJson.Read(obj["calleeRet"]) is TypeNode declared)
+            return SignatureValueTypes.Of(Close(declared, CallOwner(obj)?.Args, MethodArgs(obj)));
+        if (PhysicalResult(obj, scope, index) is TypeNode physical)
+        {
+            // Ordinary CLR calls copy a ref return. byrefOf is the separate operation retaining its pointer;
+            // arithmetic and value spills both consume the loaded element, not the method's T& signature.
+            if (kind is "clrStatic" or "clrInstance" && physical is TypeNode.ByRef reference)
+                physical = reference.Of;
+            return SignatureValueTypes.Of(physical);
+        }
         var inferred = NodeType.Of(obj, child => ExprType(child, scope, index),
             name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var elem) ? elem : null);
         return SignatureValueTypes.Of(index.ReferenceBuild ? inferred : BirTypeLowering.CanonicalExpressionResult(inferred));
