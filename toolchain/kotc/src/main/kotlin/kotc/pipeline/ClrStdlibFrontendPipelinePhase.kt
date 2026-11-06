@@ -30,7 +30,6 @@ import org.jetbrains.kotlin.config.moduleName
 import org.jetbrains.kotlin.fir.DependencyListForCliModule
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.pipeline.AllModulesFrontendOutput
-import org.jetbrains.kotlin.fir.pipeline.runPlatformCheckers
 import org.jetbrains.kotlin.name.Name
 import java.io.File
 
@@ -101,7 +100,7 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 				kotc.frontend.ClrProjectedMemberExtensionProperties.capture(session, it.fir)
 			}
 		}
-		outputs.runPlatformCheckers(diagnosticsReporter)
+		outputs.runClrPlatformCheckers(diagnosticsReporter)
 		checkKotlinPackageUsageForPsi(configuration, ktFiles)
 		FirDiagnosticsCompilerResultsReporter.reportToMessageCollector(diagnosticsReporter, configuration)
 		return MetadataFrontendPipelineArtifact(

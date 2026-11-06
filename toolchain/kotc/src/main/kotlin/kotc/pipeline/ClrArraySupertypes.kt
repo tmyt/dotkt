@@ -34,7 +34,6 @@ import org.jetbrains.kotlin.fir.types.ConeIntersectionType
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.ConeTypeParameterType
 import org.jetbrains.kotlin.fir.types.FirCorrespondingSupertypesCache
-import org.jetbrains.kotlin.fir.types.FirTypeRef
 import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.fir.types.constructClassLikeType
 import org.jetbrains.kotlin.fir.types.lowerBoundIfFlexible
@@ -67,7 +66,7 @@ private fun nativeArrayBaseRef() = buildResolvedTypeRef {
 
 /** Source array declarations keep their Kotlin inheritance. The native base is an expression
  * assignability relation, not a declaration's supertype or a reference-assembly base class. */
-private fun FirSession.sourceArrayClasses(): List<FirRegularClass> {
+internal fun FirSession.sourceArrayClasses(): List<FirRegularClass> {
     val arrayIds = listOf(StandardClassIds.Array) + StandardClassIds.elementTypeByPrimitiveArrayType.keys +
         StandardClassIds.elementTypeByUnsignedArrayType.keys
     return arrayIds.mapNotNull { id ->
@@ -100,7 +99,7 @@ internal fun FirSession.normalizeClrArrayReceivers(files: List<FirFile>, normali
     }
 }
 
-private fun <T> FirSession.withSourceArrayBases(arrays: List<FirRegularClass>, action: () -> T): T {
+internal fun <T> FirSession.withSourceArrayBases(arrays: List<FirRegularClass>, action: () -> T): T {
     val original = arrays.associateWith { it.superTypeRefs.toList() }
     try {
         for ((array, bases) in original) array.replaceSuperTypeRefs(bases + nativeArrayBaseRef())

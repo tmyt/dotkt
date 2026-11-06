@@ -48,7 +48,7 @@ assert_suites ilverify-harness tests/ilverify/test_harness.py compiler_tests
 for path in tests/support/nunit/cohort.sh tests/support/nunit/record-ir.targets tests/run-nunit-tests.sh; do
 	assert_suites nunit-cohort "$path" 'compiler_tests schema sanity'
 done
-verifier_suites="compiler_tests csharp14 pinvoke dll2klib packagedsdk"
+verifier_suites="compiler_tests stdlib_source_array csharp14 pinvoke dll2klib packagedsdk"
 assert_suites shared-ilverify tests/run-ilverify.sh "$verifier_suites"
 mixed_suites="$(suite_line tests/run-ilverify.sh tests/basic/fixtures/SomeTest.kt tests/packaged-sdk/run.sh)"
 [[ "$mixed_suites" == "$verifier_suites" ]] || die "overlapping verifier consumers were duplicated: '$mixed_suites'"
@@ -75,7 +75,7 @@ mixed_suites="$(suite_line eng/KotlinClr.targets tests/msbuild/run.sh tests/targ
 
 # Backend edits affect direct lowering, in-repo builds, CLR import and packaged consumers.
 # The C#-only ABI oracle, upstream checksum and policy self-tests do not consume these tools.
-compiler_suites='compiler_tests schema sanity lowering msbuild targetuniverse pinvoke dll2klib packagedsdk'
+compiler_suites='compiler_tests schema sanity lowering stdlib_source_array msbuild targetuniverse pinvoke dll2klib packagedsdk'
 for path in toolchain/bir2cir/Program.cs toolchain/ilemit/Emitter.Expressions.cs toolchain/bir2cir toolchain/ilemit; do
 	assert_suites backend-consumers "$path" "$compiler_suites"
 	plan="$(bash "$ROOT/scripts/gate.sh" --dry-run "$path")"
@@ -85,7 +85,7 @@ mixed_suites="$(suite_line toolchain/bir2cir/Program.cs toolchain/ilemit/Emitter
 	scripts/verify-schema.py tests/target-universe/run.sh)"
 [[ "$mixed_suites" == "$compiler_suites" ]] || die "overlapping backend consumers were lost or duplicated: '$mixed_suites'"
 mixed_suites="$(suite_line toolchain/bir2cir/Program.cs tests/run-ilverify.sh)"
-[[ "$mixed_suites" == 'compiler_tests schema sanity lowering msbuild targetuniverse csharp14 pinvoke dll2klib packagedsdk' ]] ||
+[[ "$mixed_suites" == 'compiler_tests schema sanity lowering stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib packagedsdk' ]] ||
 	die "backend/verifier union must retain the C#-only verifier consumer: '$mixed_suites'"
 mixed_suites="$(suite_line toolchain/ilemit/Emitter.Expressions.cs build-logic/unknown.input)"
 [[ "$mixed_suites" == "$FULL_SUITES packagedsdk" ]] || die "FULL fallback lost the packaged backend consumer: '$mixed_suites'"

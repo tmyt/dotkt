@@ -126,6 +126,7 @@ classify() { # <path>
 			reason "$p -> MSBuild task consumers: dev pipeline + target-universe + packaged SDK" ;;
 		toolchain/bir2cir|toolchain/bir2cir/*|toolchain/ilemit|toolchain/ilemit/*)
 			want compiler_tests; want schema; want sanity; want lowering; want msbuild; want targetuniverse
+			want stdlib_source_array
 			want pinvoke; want dll2klib; want packagedsdk; CLEAN=1
 			reason "$p -> bir2cir/ilemit consumers: clean stdlib + compiler tests + schema/sanity + lowering + MSBuild + target-universe + P/Invoke + DLL-to-KLIB E2E + packaged SDK" ;;
 		toolchain/bir-common|toolchain/bir-common/*)
@@ -136,7 +137,7 @@ classify() { # <path>
 			reason "$p -> FULL + packaged SDK + clean stdlib (upstream compiler/stdlib input)" ;;
 		# ---- tests ------------------------------------------------------------------------------
 		tests/run-ilverify.sh)
-			want compiler_tests; want csharp14; want pinvoke; want dll2klib; want packagedsdk
+			want compiler_tests; want stdlib_source_array; want csharp14; want pinvoke; want dll2klib; want packagedsdk
 			reason "$p -> all shared ILVerify consumers, including packaged SDK" ;;
 		tests/ir/run-schema.sh) want schema; reason "$p -> verify-schema" ;;
 		tests/ir/run-sanity.sh) want sanity; reason "$p -> verify-sanity" ;;

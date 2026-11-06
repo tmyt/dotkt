@@ -191,7 +191,7 @@ verify-xfail-policy: ## self-test the shared NEW/FIXED baseline verdict without 
 verify-stdlib-upstream: ## offline byte-for-byte common stdlib check against the selected Kotlin snapshot
 	bash tests/stdlib-common-upstream/run.sh
 
-verify-stdlib-source-array: kotc stdlib-klib ## source-owned stdlib array contracts and unchanged declaration metadata
+verify-stdlib-source-array: toolchain stdlib ## source-owned stdlib array contracts and unchanged declaration metadata
 	bash tests/stdlib-source-array/run.sh
 
 # ==================================================================================================
