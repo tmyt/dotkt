@@ -22,6 +22,8 @@ class SuppressedExceptionTests {
         check(one.size == 1 && one[0] === first)
         check(all.size == 3)
         check(all[0] === first && all[1] === second && all[2] === first)
+        primary.addSuppressed(RuntimeException("later"))
+        check(all.size == 3 && primary.suppressedExceptions.size == 4)
         check(RuntimeException("other").suppressedExceptions.isEmpty())
     }
 
@@ -70,7 +72,9 @@ class SuppressedExceptionTests {
         val secondChild = RuntimeException("second child")
         first.addSuppressed(firstChild)
         second.addSuppressed(secondChild)
-        check(first.suppressedExceptions.single() === firstChild)
+        first.addSuppressed(second)
+        check(first.suppressedExceptions.size == 2)
+        check(first.suppressedExceptions[0] === firstChild && first.suppressedExceptions[1] === second)
         check(second.suppressedExceptions.single() === secondChild)
     }
 

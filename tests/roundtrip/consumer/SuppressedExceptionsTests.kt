@@ -1,10 +1,22 @@
 package roundtriptests.suppression
 
 import NUnit.Framework.TestAttribute
+import DotKt.Tests.Suppression.SuppressionGcProbe
 import roundtrip.suppression.suppressInProducer
 import roundtrip.suppression.suppressionSnapshotFromProducer
 
 class SuppressedExceptionsRoundtripTests {
+    @TestAttribute
+    fun aSuppressedBackReferenceDoesNotKeepThePrimaryAlive() {
+        val weak = SuppressionGcProbe.CreateCycle(System.Action2<System.Exception, System.Exception> { primary, child ->
+            val error = primary as Throwable
+            val suppressed = child as Throwable
+            error.addSuppressed(suppressed)
+            check(error.suppressedExceptions.single() === suppressed)
+        })
+        check(SuppressionGcProbe.AreCollected(weak))
+    }
+
     @TestAttribute
     fun producerAndConsumerShareSuppressionOnTheSameNativeException() {
         val primary = IllegalStateException("primary")
