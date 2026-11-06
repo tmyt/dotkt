@@ -40,9 +40,10 @@ public actual abstract class Enum<E : Enum<E>> actual constructor(name: String, 
     public actual override final fun compareTo(other: E): Int =
         DotKt.Runtime.CompilerServices.kotlinEnumCompareTo(this, other)
 
-    public actual override final fun equals(other: Any?): Boolean = TODO("clr binding should be implemented")
+    public actual override final fun equals(other: Any?): Boolean =
+        DotKt.Runtime.CompilerServices.kotlinEnumEquals(this, other)
 
-    public actual override final fun hashCode(): Int = TODO("clr binding should be implemented")
+    public actual override final fun hashCode(): Int = DotKt.Runtime.CompilerServices.kotlinEnumHashCode(this)
 
     public actual override fun toString(): String = DotKt.Runtime.CompilerServices.kotlinEnumName(this)
 }

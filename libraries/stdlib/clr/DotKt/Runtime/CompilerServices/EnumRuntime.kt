@@ -13,7 +13,26 @@ internal abstract class KotlinEnumComparable : Comparable<Any> {
 }
 
 @kotlin.clr.ClrTypeAlias("System.Enum")
-private interface NativeEnumValue
+private interface NativeEnumValue {
+    @kotlin.clr.ClrIntrinsic("Equals")
+    fun nativeEquals(other: Any?): Boolean
+
+    @kotlin.clr.ClrIntrinsic("GetHashCode")
+    fun nativeHashCode(): Int
+}
+
+@kotlin.clr.ClrIntrinsic("System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode")
+private fun enumIdentityHash(value: Any): Int = error("CLR binding")
+
+// A selected Enum base implementation must not dispatch back through a rich entry's Object slot.
+// Native CLR enums retain their value semantics, including separately boxed copies of the same value.
+@PublishedApi
+internal fun kotlinEnumEquals(receiver: Any, other: Any?): Boolean =
+    if (receiver is NativeEnumValue) receiver.nativeEquals(other) else receiver === other
+
+@PublishedApi
+internal fun kotlinEnumHashCode(receiver: Any): Int =
+    if (receiver is NativeEnumValue) receiver.nativeHashCode() else enumIdentityHash(receiver)
 
 @kotlin.clr.ClrTypeAlias("System.Array")
 private interface EnumArrayStorage
