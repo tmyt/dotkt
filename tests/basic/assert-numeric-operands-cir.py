@@ -66,4 +66,10 @@ distance = shift["rhs"]
 assert distance.get("k") == "binOp" and distance.get("op") == "&", shift
 assert distance["lhs"].get("k") == "local" and distance["rhs"].get("value") == 63, shift
 assert not any(node.get("k") == "conv" for node in objects(distance)), shift
+for name, op, side, target in (
+        ("numericLoopRange", "+", "rhs", "Int64"),
+        ("numericLoopUntil", "+", "lhs", "Int64"),
+        ("numericLoopDownTo", "/", "lhs", "Double")):
+    node = binary(name, op)
+    assert node[side].get("k") == "conv" and node[side].get("to") == fqn(target), (name, node)
 print("numeric operands: explicit widths, unsigned/narrow categories, nested operations and Int32 shift distance")

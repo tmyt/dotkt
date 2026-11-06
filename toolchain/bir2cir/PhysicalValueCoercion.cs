@@ -455,7 +455,26 @@ static class PhysicalValueCoercion
                     throw new InvalidOperationException("Numeric coercion rewrote a shift distance");
             }
         }
-        Console.WriteLine("[numeric operands] self-test OK (widths, stack categories, signed ties, ref mode, shifts)");
+        foreach (var kind in new[] { "clrStatic", "clrInstance", "callStatic", "callInstance", "constrainedCall" })
+        {
+            var call = new JsonObject { ["k"] = kind };
+            if (kind is "clrStatic" or "clrInstance")
+                call["memberRef"] = new JsonObject {
+                    ["returnType"] = TypeJson.Write(new TypeNode.ByRef(new TypeNode.Fqn("System.Int32"))),
+                };
+            else call["calleeRet"] = TypeJson.Fqn("System.Int32");
+            var operation = new JsonObject {
+                ["k"] = "binOp", ["op"] = "+", ["lhs"] = call,
+                ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int64"), ["value"] = 1 },
+            };
+            var index = Index.Build(Array.Empty<JsonNode>(), () => throw new InvalidOperationException());
+            CoerceInputs(operation, new Scope(), index);
+            if (Str(operation["lhs"]?["k"]) != "conv"
+                || TypeJson.Read(operation["lhs"]?["to"]) != new TypeNode.Fqn("System.Int64")
+                || !JsonNode.DeepEquals(operation["lhs"]?["e"], call))
+                throw new InvalidOperationException($"Numeric coercion lost the exact copied result of {kind}");
+        }
+        Console.WriteLine("[numeric operands] self-test OK (widths, stack categories, signed ties, ref mode, shifts, call values)");
     }
 
     // Terminal operand materialization reads the same exact CLR result contract as value coercion. In particular
@@ -466,21 +485,12 @@ static class PhysicalValueCoercion
         var fields = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         return (node, scope) =>
         {
-            // Plain local CIR calls carry their exact authored declaration contract. A Kotlin function modifier
-            // on a parameter is metadata, not a reason to re-match that call against another declaration.
-            if (node is JsonObject call && Str(call["k"]) is "callStatic" or "callInstance" or "constrainedCall"
-                && TypeJson.Read(call["calleeRet"]) is TypeNode declared)
-                return SignatureValueTypes.Of(Close(declared, CallOwner(call)?.Args, MethodArgs(call)));
             if (node is JsonObject construction && Str(construction["k"]) == "newSam"
                 && TypeJson.Read(construction["samType"]) is TypeNode.Fqn implementation)
                 return construction["typeArgs"] is JsonArray args && args.Count > 0
                     ? new TypeNode.Fqn(implementation.Name, args.Select(TypeJson.Read).ToArray()) : implementation;
-            var result = ConstructedReferenceType(node, fields, scope.VarTypes)
+            return ConstructedReferenceType(node, fields, scope.VarTypes)
                 ?? ExprType(node, new Scope(locals: scope.VarTypes), index);
-            // A plain clrStatic/clrInstance expression copies a ref return; byrefOf is the distinct physical
-            // operation that retains its pointer. A value spill must therefore hold the loaded element, not T&.
-            return node is JsonObject expression && Str(expression["k"]) is "clrStatic" or "clrInstance"
-                && result is TypeNode.ByRef reference ? reference.Of : result;
         };
     }
 
@@ -726,7 +736,7 @@ static class PhysicalValueCoercion
         }
         CoerceInputs(obj, scope, index);
         // Reference declarations retain Kotlin signature vocabulary. Only consume the
-        // executable identity operations left in constructor delegation after body squash.
+        // executable operations left in constructor delegation after body squash.
         if (index.ReferenceBuild) return obj;
         if (Str(obj["k"]) is "return" or "returnExpr" && IsVoid(scope.Return)
             && obj["value"] is JsonNode discarded)
@@ -845,11 +855,11 @@ static class PhysicalValueCoercion
     static Scope LoopScope(JsonObject node, Scope scope)
     {
         var kind = Str(node["k"]);
-        if (kind is not ("forRange" or "forArray" or "forEachInline" or "forIn")) return null;
+        if (kind is not ("for" or "forRange" or "forArray" or "forEachInline" or "forIn")) return null;
         var name = Str(node["var"]);
         if (name == null) return null;
         var type = TypeJson.Read(node["elem"])
-            ?? (kind == "forRange" ? new TypeNode.Fqn("System.Int32") : null);
+            ?? (kind is "for" or "forRange" ? new TypeNode.Fqn("System.Int32") : null);
         if (type == null) return null;
         var child = scope.Copy();
         child.Locals[name] = type;
@@ -1185,7 +1195,19 @@ static class PhysicalValueCoercion
         if (kind == "local" && Str(obj["name"]) is string name && scope.Locals.TryGetValue(name, out var local))
             return local;
         if (kind == "this") return scope.Owner;
-        if (PhysicalResult(obj, scope, index) is TypeNode physical) return SignatureValueTypes.Of(physical);
+        // Plain local CIR calls already carry their exact declaration contract. A Kotlin function modifier on
+        // a parameter is metadata, not a reason to re-match the call against another declaration.
+        if (kind is "callStatic" or "callInstance" or "constrainedCall"
+            && TypeJson.Read(obj["calleeRet"]) is TypeNode declared)
+            return SignatureValueTypes.Of(Close(declared, CallOwner(obj)?.Args, MethodArgs(obj)));
+        if (PhysicalResult(obj, scope, index) is TypeNode physical)
+        {
+            // Ordinary CLR calls copy a ref return. byrefOf is the separate operation retaining its pointer;
+            // arithmetic and value spills both consume the loaded element, not the method's T& signature.
+            if (kind is "clrStatic" or "clrInstance" && physical is TypeNode.ByRef reference)
+                physical = reference.Of;
+            return SignatureValueTypes.Of(physical);
+        }
         var inferred = NodeType.Of(obj, child => ExprType(child, scope, index),
             name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var elem) ? elem : null);
         return SignatureValueTypes.Of(index.ReferenceBuild ? inferred : BirTypeLowering.CanonicalExpressionResult(inferred));

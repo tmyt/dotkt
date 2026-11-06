@@ -42,6 +42,9 @@ private fun numericUnsigned(a: ULong, b: UInt): ULong = a / b
 private fun numericSmall(a: Byte, b: Short): Int = a + b
 private fun numericChar(a: Char, b: Int): Char = a + b
 private fun numericShift(a: Long, distance: Int): Long = a ushr distance
+private fun numericLoopRange(n: Int): Long { var t = 0L; for (i in 1..n) t += i; return t }
+private fun numericLoopUntil(n: Int): Long { var t = 0L; for (i in 1 until n) t = i + t; return t }
+private fun numericLoopDownTo(n: Int): Double { var t = 0.0; for (i in n downTo 1) t += i / 2.0; return t }
 
 class MathTests {
     // il-math: kotlin.math.* -> System.Math.* clrStatic lowering parity.
@@ -145,6 +148,13 @@ class MathTests {
         assertEquals(32639, numericSmall((-128).toByte(), 32767.toShort()))
         assertEquals('\u0000', numericChar('\uFFFF', 1))
         assertEquals(Long.MAX_VALUE, numericShift(-1L, 65))
+    }
+
+    @TestAttribute
+    fun wideningPreservesLoopVariableTypes() {
+        assertEquals(10L, numericLoopRange(4))
+        assertEquals(6L, numericLoopUntil(4))
+        assertEquals(5.0, numericLoopDownTo(4))
     }
 
     @TestAttribute

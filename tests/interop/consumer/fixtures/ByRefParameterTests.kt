@@ -265,6 +265,10 @@ class ByRefParameterTests {
         assertEquals(20, slot)                              // 20
         slot = 99                                           // write through the ref
         assertEquals(109, c.Slot(0) + c.Slot(1))            // 10 + 99 = 109
+        assertEquals(11L, c.Slot(0) + 1L)
+        assertEquals(100L, 1L + c.Slot(1))
+        assertEquals(5.0, c.Slot(0) / 2.0)
+        assertEquals(99.5, 0.5 + c.Slot(1))
 
         val a = OutRefAcc()
         c.TryDivide(20, 4, byref(a.quo))                    // out -> writes a.quo=5 via ldflda of its backing field
