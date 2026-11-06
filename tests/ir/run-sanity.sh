@@ -84,16 +84,26 @@ for f in tests/ir/selftest/reject-*.cir.json; do
   else
     echo "  SELFTEST ok    $(basename "$f") (verify-sanity.py refused as documented)"
   fi
-  if [ -f "$ILEMIT" ]; then
-    iout="$(dotnet "$ILEMIT" "$SELF_OUT" IrSelftest --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" "$f" 2>&1)"; irc=$?
-    if [ $irc -eq 0 ]; then
-      echo "  SELFTEST FAIL  $(basename "$f"): ilemit ACCEPTED a document it must refuse"; self_rc=1
-    elif ! printf '%s' "$iout" | grep -qF -- "$want"; then
-      echo "  SELFTEST FAIL  $(basename "$f"): ilemit refused, but the message does not contain: $want"; self_rc=1
+  # Calibrate the host with one existing negative: deleting its Check call must not make its positive lane green.
+  # The real ilemit checks below cover every invariant and the emitter hook; repeating all of them in the host
+  # would add no host-wiring coverage.
+  if [ $n_reject -eq 1 ]; then
+    iout="$(dotnet "$SANITY_CHECK" "$f" 2>&1)"; irc=$?
+    if [ $irc -eq 0 ] || ! printf '%s' "$iout" | grep -qF -- "$want"; then
+      echo "  SELFTEST FAIL  $(basename "$f"): sanity-check host did not refuse the negative control as documented"; self_rc=1
       printf '%s\n' "$iout" | sed 's/^/                 /'
     else
-      echo "  SELFTEST ok    $(basename "$f") (ilemit refused as documented)"
+      echo "  SELFTEST ok    $(basename "$f") (sanity-check host negative control)"
     fi
+  fi
+  iout="$(dotnet "$ILEMIT" "$SELF_OUT" IrSelftest --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" "$f" 2>&1)"; irc=$?
+  if [ $irc -eq 0 ]; then
+    echo "  SELFTEST FAIL  $(basename "$f"): ilemit ACCEPTED a document it must refuse"; self_rc=1
+  elif ! printf '%s' "$iout" | grep -qF -- "$want"; then
+    echo "  SELFTEST FAIL  $(basename "$f"): ilemit refused, but the message does not contain: $want"; self_rc=1
+    printf '%s\n' "$iout" | sed 's/^/                 /'
+  else
+    echo "  SELFTEST ok    $(basename "$f") (ilemit refused as documented)"
   fi
 done
 
