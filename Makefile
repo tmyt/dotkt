@@ -42,7 +42,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
         verify verify-core verify-tests verify-nunit verify-compile-fail verify-test-corpus verify-integration \
         verify-schema verify-sanity verify-lowering verify-msbuild verify-gate-selection verify-packaged-sdk \
-        verify-target-universe verify-csharp14-extension-abi verify-xfail-policy verify-stdlib-upstream \
+        verify-target-universe verify-csharp14-extension-abi verify-xfail-policy verify-stdlib-upstream verify-stdlib-source-array \
         dev dll2klib-e2e dll2klib-index-benchmark \
         clean clean-tools clean-stdlib clean-pack help
 
@@ -144,6 +144,7 @@ verify-test-corpus: verify-nunit ## NUnit/ILVerify followed by schema + sanity o
 
 verify-integration: toolchain stdlib ## independent MSBuild/target/ABI/policy gates
 	+$(MAKE) verify-stdlib-upstream
+	+$(MAKE) verify-stdlib-source-array
 	+$(MAKE) verify-msbuild
 	+$(MAKE) verify-target-universe
 	+$(MAKE) verify-csharp14-extension-abi
@@ -189,6 +190,9 @@ verify-xfail-policy: ## self-test the shared NEW/FIXED baseline verdict without 
 
 verify-stdlib-upstream: ## offline byte-for-byte common stdlib check against the selected Kotlin snapshot
 	bash tests/stdlib-common-upstream/run.sh
+
+verify-stdlib-source-array: kotc stdlib-klib ## source-owned stdlib array contracts and unchanged declaration metadata
+	bash tests/stdlib-source-array/run.sh
 
 # ==================================================================================================
 # Dev conveniences

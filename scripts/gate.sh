@@ -144,6 +144,7 @@ classify() { # <path>
 		tests/packaged-sdk/*) want packagedsdk; reason "$p -> packaged SDK tests" ;;
 		tests/gate-selection/*) want gate_selection; reason "$p -> gate selector policy tests" ;;
 		tests/stdlib-common-upstream/*) want stdlib_upstream; reason "$p -> upstream stdlib snapshot gate" ;;
+		tests/stdlib-source-array/*) want stdlib_source_array; reason "$p -> source-owned stdlib array contracts" ;;
 		tests/support/nunit/*|tests/run-nunit-tests.sh)
 			want compiler_tests; want schema; want sanity
 			reason "$p -> NUnit cohort lifecycle and recorded IR consumers" ;;
@@ -161,19 +162,20 @@ classify() { # <path>
 }
 
 # ---- suite targets --------------------------------------------------------------------------------
-declare -a RUN_ORDER=(compiler_tests nunit_corpus schema sanity lowering stdlib_upstream msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection packagedsdk)
+declare -a RUN_ORDER=(compiler_tests nunit_corpus schema sanity lowering stdlib_upstream stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection packagedsdk)
 declare -A SUITE_TARGET=(
 	[compiler_tests]=verify-tests [schema]=verify-schema [sanity]=verify-sanity
 	[nunit_corpus]=verify-nunit
 	[msbuild]=verify-msbuild
 	[targetuniverse]=verify-target-universe [gate_selection]=verify-gate-selection
 	[stdlib_upstream]=verify-stdlib-upstream
+	[stdlib_source_array]=verify-stdlib-source-array
 	[lowering]=verify-lowering [csharp14]=verify-csharp14-extension-abi
 	[pinvoke]=verify-pinvoke [dll2klib]=dll2klib-e2e [xfail]=verify-xfail-policy
 	[packagedsdk]=verify-packaged-sdk
 )
 
-FULL_SUITES=(compiler_tests schema sanity lowering stdlib_upstream msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection)
+FULL_SUITES=(compiler_tests schema sanity lowering stdlib_upstream stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection)
 
 # ---- compute the plan -----------------------------------------------------------------------------
 mapfile -t CHANGES < <(collect_changes)
