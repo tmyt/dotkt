@@ -1031,7 +1031,7 @@ ONE type read/write per language, used by EVERY site. No other code parses/build
 `birType(IrType): TypeNode` produces the node; nothing emits a type string.
 
 **C# (bir2cir / ilemit / dll2klib)** — a shared `DotKt.Bir.TypeNode` record hierarchy (Fqn/Tv/Fn/Nullable/
-Array/Byref) + `TypeNode Read(JsonElement)` / `JsonNode Write(TypeNode)`, in ONE shared file referenced by
+Array/Byref) + `TypeNode Read(JsonElement)` / `TypeNode Read(JsonNode?)` / `JsonNode Write(TypeNode)`, in ONE shared file referenced by
 all three C# tools. Its `Fn.Clr` member is the sole phase extension: absent in kotc BIR, required in
 ilemit-facing CIR (§1). Serialized types are read only through `TypeNode`; internal CLR identity lookup and
 signature-key canonicalization consume the resulting nodes rather than parsing wire-format strings.

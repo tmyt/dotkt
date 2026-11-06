@@ -235,6 +235,8 @@ public abstract record TypeNode
     /// <summary>Read an already-materialized, mutable JSON tree without serializing the type.</summary>
     public static TypeNode Read(JsonNode? node)
     {
+        // Customized JsonValues can serialize as objects (or arrays), not just CLR scalars.
+        if (node is not JsonObject) node = node?.DeepClone();
         if (node is not JsonObject e)
             throw new FormatException($"Type must be a JSON object, got {node?.GetValueKind() ?? JsonValueKind.Null}");
         string t = ReadString(Required(e, "t"))
@@ -244,9 +246,9 @@ public abstract record TypeNode
             case "fqn":
                 return new Fqn(
                     ReadString(Required(e, "name")) ?? throw new FormatException("fqn missing name"),
-                    e.TryGetPropertyValue("args", out var args) ? ReadArray(args) : null)
+                    TryProperty(e, "args", out var args) ? ReadArray(args) : null)
                 {
-                    Classifier = e.TryGetPropertyValue("classifier", out var source)
+                    Classifier = TryProperty(e, "classifier", out var source)
                         ? ReadClassifier(source) : null,
                 };
             case "tv":
@@ -264,16 +266,16 @@ public abstract record TypeNode
             case "fn":
                 return new Fn(ReadBoolean(Required(e, "suspend")), Read(Required(e, "ret")),
                     ReadArray(Required(e, "params")),
-                    e.TryGetPropertyValue("recv", out var recv) ? Read(recv) : null,
-                    e.TryGetPropertyValue("clr", out var clr) ? ReadString(clr) : null,
-                    e.TryGetPropertyValue("ctx", out var ctx) ? ReadArray(ctx) : null);
+                    TryProperty(e, "recv", out var recv) ? Read(recv) : null,
+                    TryProperty(e, "clr", out var clr) ? ReadString(clr) : null,
+                    TryProperty(e, "ctx", out var ctx) ? ReadArray(ctx) : null);
             case "nullable":
                 return new Nullable(Read(Required(e, "of")));
             case "oblivious":
                 return new Oblivious(Read(Required(e, "of")));
             case "array":
             {
-                if (!e.TryGetPropertyValue("rank", out var rk))
+                if (!TryProperty(e, "rank", out var rk))
                     return new Array(Read(Required(e, "elem")));
                 int rank = ReadInt32(rk);
                 if (rank < 1 || rank > MaxArrayRank)
@@ -292,27 +294,53 @@ public abstract record TypeNode
     }
 
     private static JsonNode? Required(JsonObject e, string name) =>
-        e.TryGetPropertyValue(name, out var value) ? value : throw new KeyNotFoundException(name);
+        TryProperty(e, name, out var value) ? value : throw new KeyNotFoundException(name);
 
-    // Parsed JsonValues expose JsonElement conversions; generated ones retain their CLR scalar type
-    // (e.g. a rank can be a long). Keep the common string/bool/int path allocation-free, and normalize
-    // other scalar representations through their JSON value, just as the JsonElement reader does.
-    private static string? ReadString(JsonNode? node) => node is null ? null
-        : node is JsonValue value && value.TryGetValue<string>(out var s) ? s
-        : JsonSerializer.SerializeToElement(node).GetString();
+    private static bool TryProperty(JsonObject e, string name, out JsonNode? value)
+    {
+        // JsonElement property names are ordinal, regardless of JsonNodeOptions on a generated tree.
+        if (e.Options?.PropertyNameCaseInsensitive != true) return e.TryGetPropertyValue(name, out value);
+        foreach (var property in e)
+            if (property.Key == name) { value = property.Value; return true; }
+        value = null;
+        return false;
+    }
 
-    private static bool ReadBoolean(JsonNode? node) =>
-        node is JsonValue value && value.TryGetValue<bool>(out var b) ? b
-        : JsonSerializer.SerializeToElement(node).GetBoolean();
+    // DeepClone normalizes customized JsonValues using their own serialization contract, while
+    // ordinary scalar clones retain their value. Reading the original CLR value directly can bypass
+    // custom converters or number handling. Only scalar values, never whole types, take this path.
+    private static string? ReadString(JsonNode? node)
+    {
+        node = node?.DeepClone();
+        if (node is null) return null;
+        if (node is JsonValue value && value.TryGetValue<string>(out var s)
+            && s.AsSpan().IndexOfAnyInRange('\uD800', '\uDFFF') < 0) return s;
+        // JSON writing replaces unpaired UTF-16 surrogates; do not preserve an invalid CLR string.
+        return JsonSerializer.SerializeToElement(node).GetString();
+    }
 
-    private static int ReadInt32(JsonNode? node) =>
-        node is JsonValue value && value.TryGetValue<int>(out var i) ? i
-        : JsonSerializer.SerializeToElement(node).GetInt32();
+    private static bool ReadBoolean(JsonNode? node)
+    {
+        node = node?.DeepClone();
+        return node is JsonValue value && value.TryGetValue<bool>(out var b) ? b
+            : JsonSerializer.SerializeToElement(node).GetBoolean();
+    }
+
+    private static int ReadInt32(JsonNode? node)
+    {
+        node = node?.DeepClone();
+        return node is JsonValue value && value.TryGetValue<int>(out var i) ? i
+            : JsonSerializer.SerializeToElement(node).GetInt32();
+    }
 
     private static SourceClassifier ReadClassifier(JsonNode? node)
     {
-        if (node is not JsonObject source || Required(source, "ownerPath") is not JsonArray owners)
+        if (node is not JsonObject) node = node?.DeepClone();
+        if (node is not JsonObject source)
             throw new InvalidOperationException("classifier must be an object with an ownerPath array");
+        var ownerPath = Required(source, "ownerPath");
+        var owners = ownerPath as JsonArray ?? ownerPath?.DeepClone() as JsonArray
+            ?? throw new InvalidOperationException("classifier.ownerPath must be an array");
         // Match the existing JsonElement classifier contract, including its nullable string values.
         return new SourceClassifier(ReadString(Required(source, "packageName"))!,
             owners.Select(p => ReadString(p)!).ToArray(), ReadString(Required(source, "name"))!);
@@ -320,6 +348,7 @@ public abstract record TypeNode
 
     private static TypeNode[] ReadArray(JsonNode? node)
     {
+        if (node is not JsonArray) node = node?.DeepClone();
         if (node is not JsonArray array)
             throw new FormatException($"expected a JSON array of Types, got {node?.GetValueKind() ?? JsonValueKind.Null}");
         var result = new TypeNode[array.Count];
@@ -595,18 +624,53 @@ public static class TypeNodeSelfTest
                 ["rank"] = number?.DeepClone() });
         }
         CheckReaders(new JsonObject { ["t"] = "fqn", ["name"] = JsonValue.Create('T') });
+        foreach (string name in new[] { "\uD800", "\uDC00", "a\uD800b", "\uD83D\uDE00" })
+            CheckReaders(new JsonObject { ["t"] = "fqn", ["name"] = name });
 
-        var mutable = TypeNode.Write(new TypeNode.Fqn("Before", [new TypeNode.Tv("method", 0)]) {
-            Classifier = new TypeNode.SourceClassifier("p", ["Outer"], "Before") });
-        var before = TypeNode.Read(mutable);
-        mutable["name"] = "After";
-        mutable["args"]![0]!["i"] = 3L;
-        mutable["classifier"]!["name"] = "After";
-        mutable["classifier"]!["ownerPath"]![0] = "Changed";
-        CheckReaders(mutable, new TypeNode.Fqn("After", [new TypeNode.Tv("method", 3)]) {
-            Classifier = new TypeNode.SourceClassifier("p", ["Changed"], "After") });
-        if (TypeNode.ToJson(before).Contains("After", StringComparison.Ordinal))
-            throw new Exception("[C# TypeNode] mutation changed an already-decoded type");
+        // Customized values retain their serializer's contract, not just their underlying CLR value.
+        var numberOptions = new JsonSerializerOptions {
+            NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.WriteAsString,
+            TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
+        };
+        var numberTypeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<int>)numberOptions.GetTypeInfo(typeof(int));
+        var stringRank = new JsonObject { ["t"] = "array", ["elem"] = TypeNode.Write(new TypeNode.Star()),
+            ["rank"] = JsonValue.Create(2, numberTypeInfo) };
+        Refuse(() => TypeNode.Parse(stringRank.ToJsonString()));
+        Refuse(() => TypeNode.Read(stringRank));
+        CheckReaders(JsonValue.Create<object>(new { t = "star" }));
+        CheckReaders(new JsonObject { ["t"] = "nullable", ["of"] = JsonValue.Create<object>(new { t = "star" }) });
+        CheckReaders(new JsonObject { ["t"] = "fqn", ["name"] = "G",
+            ["args"] = JsonValue.Create<object>(new[] { new { t = "star" } }),
+            ["classifier"] = JsonValue.Create<object>(new { packageName = "p", ownerPath = new[] { "O" }, name = "G" }) });
+        var classifierOwners = TypeNode.Write(new TypeNode.Fqn("G") {
+            Classifier = new TypeNode.SourceClassifier("p", [], "G") });
+        classifierOwners["classifier"]!["ownerPath"] = JsonValue.Create<object>(new[] { "O" });
+        CheckReaders(classifierOwners);
+
+        var insensitiveOptions = new JsonNodeOptions { PropertyNameCaseInsensitive = true };
+        CheckReaders(new JsonObject(insensitiveOptions) { ["t"] = "array",
+            ["elem"] = TypeNode.Write(new TypeNode.Star()), ["RANK"] = 2 });
+        CheckReaders(new JsonObject(insensitiveOptions) { ["t"] = "fqn", ["name"] = "G", ["ARGS"] = 1 });
+        var wrongCase = new JsonObject(insensitiveOptions) { ["t"] = "fqn", ["Name"] = "G" };
+        Refuse(() => TypeNode.Parse(wrongCase.ToJsonString()));
+        Refuse(() => TypeNode.Read(wrongCase));
+
+        foreach (bool parsed in new[] { false, true })
+        {
+            var original = new TypeNode.Fqn("Before", [new TypeNode.Tv("method", 0)]) {
+                Classifier = new TypeNode.SourceClassifier("p", ["Outer"], "Before") };
+            var mutable = parsed ? JsonNode.Parse(TypeNode.ToJson(original)) ?? throw new Exception("null type")
+                : TypeNode.Write(original);
+            var before = TypeNode.Read(mutable);
+            mutable["name"] = "After";
+            mutable["args"]![0]!["i"] = 3L;
+            mutable["classifier"]!["name"] = "After";
+            mutable["classifier"]!["ownerPath"]![0] = "Changed";
+            CheckReaders(mutable, new TypeNode.Fqn("After", [new TypeNode.Tv("method", 3)]) {
+                Classifier = new TypeNode.SourceClassifier("p", ["Changed"], "After") });
+            if (TypeNode.ToJson(before) != TypeNode.ToJson(original))
+                throw new Exception("[C# TypeNode] mutation changed an already-decoded type");
+        }
 
         // Current structured vocabulary only: absent required properties, wrong JSON kinds, invalid
         // projection variance and unrepresentable ranks. Do not freeze rejection of legacy formats.
