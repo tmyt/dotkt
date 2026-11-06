@@ -153,6 +153,7 @@ verify-integration: toolchain stdlib ## independent MSBuild/target/ABI/policy ga
 	+$(MAKE) verify-gate-selection
 
 verify-schema: ## BIR/CIR schema contract enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-nunit
+	python3 tests/ir/test-corpus.py
 	bash tests/ir/run-schema.sh
 	bash tests/ir/check-emitter-residual.sh
 

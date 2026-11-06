@@ -107,6 +107,9 @@ class CohortTests(unittest.TestCase):
             if stage == "build":
                 self.assertIn("--no-restore", args)
                 self.assertNotIn("--no-incremental", args)
+                self.assertIn("-p:CustomAfterMicrosoftCommonTargets=" +
+                              str(self.root / "tests/support/nunit/record-ir.targets"), args)
+                self.assertIn("-p:DotKtTestIrManifest=" + str(self.root / "build/nunit-ir-corpus.pending"), args)
 
     def test_restore_or_clean_failure_stops_preparation(self):
         for stage in ("restore", "clean"):
@@ -124,6 +127,20 @@ class CohortTests(unittest.TestCase):
         log = self.root / "build/nunit-consumer-a.build.log"
         self.assertIn("controlled build failure", log.read_text())
         self.assertFalse((self.root / "compiled").exists())
+
+    def test_corpus_is_invalidated_on_failure_and_requires_pending_output_to_publish(self):
+        manifest = self.root / "build/nunit-ir-corpus.list"
+        pending = self.root / "build/nunit-ir-corpus.pending"
+        manifest.write_text("previous cohort")
+        pending.write_text("previous partial build")
+        self.assertNotEqual(self.prepare("restore").returncode, 0)
+        self.assertFalse(manifest.exists())
+        self.assertFalse(pending.exists())
+        self.assertNotEqual(self.invoke('nunit_publish_corpus "$root"').returncode, 0)
+        pending.write_text("current artifacts")
+        self.success(self.invoke('nunit_publish_corpus "$root"'))
+        self.assertEqual(manifest.read_text(), "current artifacts")
+        self.assertFalse(pending.exists())
 
 
 if __name__ == "__main__":

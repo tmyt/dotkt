@@ -14,9 +14,9 @@
 # directory's README.
 #
 # COVERAGE = CIR ONLY (unlike verify-schema, which validates BIR + CIR shape): the CLR stdlib
-# build/clr-stdlib/cir + every categorized test project
-# tests/**/obj/<configuration>/<tfm>[/<rid>]/cir/*.cir.json, plus any legacy
-# one-shot developer outputs build/cir-*/*.cir.json. The sanity invariants (local resolution,
+# build/clr-stdlib/cir + the successful NUnit cohort's recorded CIR, including transitive producers.
+# Explicit path/glob arguments select a focused corpus instead; the caller owns its freshness.
+# Unrelated obj configurations and developer outputs are not discovered. The sanity invariants (local resolution,
 # CFG targets) hold for POST-LOWERING CIR — the exact tree the in-process gate checks (bir2cir on its CIR
 # output; ilemit at EmitAssembly). BIR is PRE-lowering: an inline-lambda body still references `it` and loop
 # vars that bir2cir materializes as `var` statements during splice, so the local-resolution check
@@ -133,12 +133,12 @@ fi
 rm -rf "$SELF_OUT"
 if [ $self_rc -ne 0 ]; then echo "SANITY GATE: RED (self-test)"; exit 1; fi
 
-globs=()
-[ -d build/clr-stdlib/cir ] && globs+=("build/clr-stdlib/cir/*.cir.json")
-while IFS= read -r -d '' file; do globs+=("$file"); done < <(
-  find tests -type f -path '*/obj/*/cir/*.cir.json' -print0
-)
-for d in build/cir-*; do [ -d "$d" ] && globs+=("$d/*.cir.json"); done
+if [ $# -gt 0 ]; then
+  globs=("$@")
+else
+  if ! corpus="$("$PY" tests/ir/corpus.py cir)"; then exit 2; fi
+  mapfile -t globs <<< "$corpus"
+fi
 
 if [ ${#globs[@]} -eq 0 ]; then
   echo "SANITY GATE: no emitted BIR/CIR found — run 'make stdlib' and/or 'make verify-tests' first" >&2
