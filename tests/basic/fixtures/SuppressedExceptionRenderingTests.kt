@@ -8,8 +8,12 @@ private class RenderEqualException(private val label: String) : RuntimeException
     override fun toString(): String = label
 }
 
-private class RenderCallbackException(private val onRender: () -> Unit) : RuntimeException("render callback") {
-    override fun toString(): String { onRender(); return "render-callback-description" }
+private class RenderCallbackException(private val onRender: (Throwable) -> Unit) : RuntimeException("render callback") {
+    override fun toString(): String { onRender(this); return "render-callback-description" }
+}
+
+private class RenderOpaqueException(cause: Throwable) : RuntimeException("opaque", cause) {
+    override fun toString(): String = "opaque-description"
 }
 
 // Console.Error is process-wide; do not race other fixtures while capturing it.
@@ -66,18 +70,46 @@ class SuppressedExceptionRenderingTests {
         check(text.contains("cycle-root"))
         check(text.contains("equal-left-marker") && text.contains("equal-right-marker"))
         check(text.length < 10_000)
+
+        val shared = RuntimeException("required-suppressed-marker")
+        val opaque = RenderOpaqueException(shared)
+        val holder = RuntimeException("shared-root")
+        holder.addSuppressed(opaque)
+        holder.addSuppressed(shared)
+        check(holder.stackTraceToString().contains("required-suppressed-marker"))
+    }
+
+    @TestAttribute
+    fun deepSuppressionUsesBoundedLabelsWithoutRecursiveTraversal() {
+        val root = RuntimeException("depth-root")
+        var current = root
+        val depth = 1_000
+        for (index in 0 until depth) {
+            val next = RuntimeException("depth-$index")
+            current.addSuppressed(next)
+            current = next
+            // Reject quadratic output at a small prefix before testing the deep graph.
+            if (index == 499) check(root.stackTraceToString().length < 500 * 200)
+        }
+        val text = root.stackTraceToString()
+        check(text.contains("depth-${depth - 1}"))
+        check(text.length < depth * 200)
     }
 
     @TestAttribute
     fun bothPrintPathsUseSnapshotsAndRenderOutsideSuppressionLocks() {
         val primary = RuntimeException("print-primary")
         val late = RuntimeException("added-during-render-marker")
+        val childLate = RuntimeException("added-to-child-during-render-marker")
         var worker: System.Threading.Thread? = null
         var first = true
-        primary.addSuppressed(RenderCallbackException {
+        primary.addSuppressed(RenderCallbackException { child ->
             if (first) {
                 first = false
-                val thread = System.Threading.Thread(System.Threading.ThreadStart { primary.addSuppressed(late) })
+                val thread = System.Threading.Thread(System.Threading.ThreadStart {
+                    primary.addSuppressed(late)
+                    child.addSuppressed(childLate)
+                })
                 worker = thread
                 thread.IsBackground = true
                 thread.Start()
@@ -90,11 +122,13 @@ class SuppressedExceptionRenderingTests {
             val snapshotText = primary.stackTraceToString()
             check(snapshotText.contains("render-callback-description"))
             check(!snapshotText.contains("added-during-render-marker"))
+            check(!snapshotText.contains("added-to-child-during-render-marker"))
             check(primary.suppressedExceptions.last() === late)
             System.Console.SetError(writer)
             primary.printStackTrace()
             val memberText = writer.ToString()
             check(memberText.contains("render-callback-description") && memberText.contains("added-during-render-marker"))
+            check(memberText.contains("added-to-child-during-render-marker"))
             primary.printDetailedStackTrace()
             check(writer.ToString() == memberText + memberText)
         } finally {

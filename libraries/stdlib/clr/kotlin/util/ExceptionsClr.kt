@@ -6,7 +6,8 @@
     "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS",
     "PLATFORM_CLASS_MAPPED_TO_KOTLIN",
 )
-// Throwable is mapped to System.Exception; the stack-trace text comes from Exception.ToString().
+// Throwable maps to System.Exception. Native descriptions are supplemented with
+// the Kotlin suppression graph; CLR-wide ToString behavior is unchanged.
 // See docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP".
 
 package kotlin
@@ -33,32 +34,34 @@ internal fun printStackTraceImpl(throwable: Throwable): Unit = clrStdErr().write
 // expect/actual; app call sites resolve to the Throwable MEMBER (see builtins/Throwable.kt) which shares printStackTraceImpl.
 public actual fun Throwable.printStackTrace(): Unit = printStackTraceImpl(this)
 
-private class ExceptionTraceTask(val exception: Throwable, val caption: String, val render: Boolean)
+private class ExceptionTraceTask(val exception: Throwable, val caption: String, val depth: Int, val render: Boolean)
 
-// Native ToString already describes the cause chain. Walk that chain for its
-// suppression edges without rendering the native cause descriptions a second time.
+// Native base descriptions normally include their cause chains. Walk causes for
+// suppression, but do not count a cause-only visit as an explicit description:
+// an opaque native override may omit a subsequently suppressed shared node.
 @SinceKotlin("1.4")
 public actual fun Throwable.stackTraceToString(): String {
     val text = StringBuilder()
-    val seen = System.Collections.Generic.HashSet<Throwable>(System.Collections.Generic.ReferenceEqualityComparer.Instance)
+    val expanded = System.Collections.Generic.HashSet<Throwable>(System.Collections.Generic.ReferenceEqualityComparer.Instance)
+    val described = System.Collections.Generic.HashSet<Throwable>(System.Collections.Generic.ReferenceEqualityComparer.Instance)
     val pending = ArrayList<ExceptionTraceTask>()
-    pending.add(ExceptionTraceTask(this, "", true))
+    pending.add(ExceptionTraceTask(this, "", 0, true))
     while (pending.isNotEmpty()) {
         val task = pending.removeAt(pending.size - 1)
-        if (!seen.Add(task.exception)) {
-            if (task.render) text.append('\n').append(task.caption).append("[circular/shared reference]")
-            continue
-        }
+        val expand = expanded.Add(task.exception)
         // Take detached state before invoking any overridable formatting code.
-        val suppressed = task.exception.suppressedExceptions
-        val cause = task.exception.cause
+        val suppressed = if (expand) task.exception.suppressedExceptions else emptyList()
+        val cause = if (expand) task.exception.cause else null
         if (task.render) {
             if (text.length != 0) text.append('\n')
-            text.append(task.caption).append(task.exception.toString())
+            if (task.depth != 0) text.append(task.caption).append(" (depth ").append(task.depth).append("): ")
+            text.append(if (described.Add(task.exception)) task.exception.toString() else "[circular/shared reference]")
         }
-        if (cause != null) pending.add(ExceptionTraceTask(cause, task.caption + "Caused by: ", false))
+        if (!expand) continue
+        if (cause != null) pending.add(ExceptionTraceTask(cause, "Caused by", task.depth + 1, false))
         for (index in (suppressed.size - 1) downTo 0) {
-            pending.add(ExceptionTraceTask(suppressed[index], task.caption + "Suppressed: ", true))
+            pending.add(ExceptionTraceTask(suppressed[index],
+                if (task.render) "Suppressed" else "Suppressed in cause", task.depth + 1, true))
         }
     }
     return text.toString()
