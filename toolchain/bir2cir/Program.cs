@@ -45,6 +45,7 @@ static class Bir2Cir
                 EnumIntrinsicLowering.SelfTest();
                 EnumValueLowering.SelfTest();
                 EnumEntriesLowering.SelfTest();
+                CompanionRepresentationLoweringTests.SelfTest();
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 BirTypeLowering.SelfTestSlotReturns();

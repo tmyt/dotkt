@@ -430,9 +430,8 @@ static class CompanionRepresentationLowering
         {
             foreach (var association in associations)
             {
-                var physicalType = PhysicalType(association);
                 if (obj["t"] is JsonValue && Str(obj["name"]) == association.SemanticName)
-                    Replace(obj, physicalType);
+                    Replace(obj, PhysicalType(association));
                 if (Str(obj["semanticOwner"]) == association.SemanticName)
                     obj["semanticOwner"] = association.PhysicalName;
 
@@ -442,19 +441,19 @@ static class CompanionRepresentationLowering
                     IsCompanionMemberOwner(memberOwner, association) &&
                     IsCompanionReceiver(obj["recv"], association))
                 {
-                    obj["ownerType"] = physicalType.DeepClone();
+                    obj["ownerType"] = PhysicalType(association);
                 }
                 else if (kind == "newBoundDelegate" &&
                     IsCompanionMemberOwner(memberOwner, association) &&
                     IsCompanionReceiver(obj["recv"], association))
                 {
-                    obj["ownerType"] = physicalType.DeepClone();
-                    obj["calleeOwner"] = physicalType.DeepClone();
+                    obj["ownerType"] = PhysicalType(association);
+                    obj["calleeOwner"] = PhysicalType(association);
                 }
                 else if (kind == "companionValue" &&
                     Str((obj["companionType"] as JsonObject)?["name"]) == association.SemanticName)
                 {
-                    ReplaceWithSingletonLoad(obj, physicalType);
+                    ReplaceWithSingletonLoad(obj, PhysicalType(association));
                 }
             }
             foreach (var child in obj.ToArray())
