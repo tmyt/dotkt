@@ -31,6 +31,9 @@ The compiler regression suite is organized as subject-oriented NUnit projects. T
 7. Shared infrastructure belongs under `tests/support/`; fixture-specific helpers stay with their fixture.
 8. Each suite's discovered-test count is reviewed in `tests/run-nunit-tests.sh`. Additions and removals update that
    baseline in the same change so growth, consolidation, and accidental loss remain visible during review.
+9. Each extracted SDK cohort restores and transitively cleans all suite graphs before any build. Consumers then
+   build independently without another restore or rebuild of unchanged shared producers. A same-version SDK repack
+   starts a new clean cohort; incremental timestamps alone must not preserve previous-cohort output.
 
 ## Adding a regression
 
