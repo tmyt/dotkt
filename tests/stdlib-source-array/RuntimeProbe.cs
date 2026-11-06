@@ -29,6 +29,17 @@ Require(ReferenceEquals(Call("sourceArrayBound", chars), chars), "expression gen
 Require(ReferenceEquals(Call("sourceArrayExplicitCast", chars), chars), "explicit native-base cast");
 Require((string)Call("sourceArrayOverload", chars)! == "array", "array overload");
 Require((string)Call("sourceObjectOverload", new object())! == "object", "ordinary object overload");
+foreach (var method in new[] { "sourceArrayCovariant", "sourceArrayCovariantProperty", "sourceArrayInitializers",
+                               "sourceArrayLazy", "sourceArrayDestructuring" })
+    Require(ReferenceEquals(Call(method, chars), chars), method + " changed array identity");
+foreach (var method in new[] { "sourceArrayDelegatedClone", "sourceArrayBoundClone", "sourceArrayUnboundClone", "sourceArrayAliasClone" })
+{
+    var result = (char[])Call(method, chars)!;
+    Require(!ReferenceEquals(result, chars) && result.SequenceEqual(chars), method + " native Clone");
+}
+Require((int)Call("sourceArrayUnboundLength", chars)! == 3, "unbound native property reference");
+Require((int)Call("sourceUnsignedNativeLength", new byte[] { 1, 2 })! == 2, "unsigned native member");
+Require((int)Call("sourceGenericStringNativeLength", new[] { "a", "b" })! == 2, "open generic native member");
 var clone = (char[])Call("sourceArrayClone", chars)!;
 Require(!ReferenceEquals(clone, chars) && clone.SequenceEqual(chars), "native Clone");
 Call("sourceArrayClear", chars);

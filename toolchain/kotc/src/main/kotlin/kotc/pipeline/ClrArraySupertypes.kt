@@ -9,11 +9,15 @@ import org.jetbrains.kotlin.fir.exceptionHandler
 import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.declarations.FirRegularClass
 import org.jetbrains.kotlin.fir.declarations.FirResolvePhase
+import org.jetbrains.kotlin.fir.declarations.fullyExpandedClass
 import org.jetbrains.kotlin.fir.declarations.builder.FirRegularClassBuilder
 import org.jetbrains.kotlin.fir.expressions.FirOperation
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
+import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
+import org.jetbrains.kotlin.fir.expressions.FirResolvedQualifier
 import org.jetbrains.kotlin.fir.expressions.builder.buildArgumentList
 import org.jetbrains.kotlin.fir.expressions.builder.buildTypeOperatorCall
+import org.jetbrains.kotlin.fir.expressions.builder.buildResolvedQualifier
 import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.pipeline.runResolution
 import org.jetbrains.kotlin.fir.resolve.ScopeSession
@@ -34,6 +38,7 @@ import org.jetbrains.kotlin.fir.types.ConeIntersectionType
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.ConeTypeParameterType
 import org.jetbrains.kotlin.fir.types.FirCorrespondingSupertypesCache
+import org.jetbrains.kotlin.fir.types.FirTypeRef
 import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.fir.types.constructClassLikeType
 import org.jetbrains.kotlin.fir.types.lowerBoundIfFlexible
@@ -99,19 +104,26 @@ internal fun FirSession.normalizeClrArrayReceivers(files: List<FirFile>, normali
     }
 }
 
-internal fun <T> FirSession.withSourceArrayBases(arrays: List<FirRegularClass>, action: () -> T): T {
+internal fun <T> FirSession.withSourceArrayBases(arrays: List<FirRegularClass>,
+    action: (Map<FirRegularClass, List<FirTypeRef>>) -> T): T {
     val original = arrays.associateWith { it.superTypeRefs.toList() }
+    return withArrayBaseOverrides(original.mapValues { (_, bases) -> bases + nativeArrayBaseRef() }) { action(original) }
+}
+
+internal fun <T> FirSession.withArrayBaseOverrides(bases: Map<FirRegularClass, List<FirTypeRef>>, action: () -> T): T {
+    val previous = bases.keys.associateWith { it.superTypeRefs.toList() }
     try {
-        for ((array, bases) in original) array.replaceSuperTypeRefs(bases + nativeArrayBaseRef())
+        for ((array, view) in bases) array.replaceSuperTypeRefs(view)
         register(FirCorrespondingSupertypesCache::class, FirCorrespondingSupertypesCache(this))
         return action()
     } finally {
-        for ((array, bases) in original) array.replaceSuperTypeRefs(bases)
+        for ((array, view) in previous) array.replaceSuperTypeRefs(view)
         register(FirCorrespondingSupertypesCache::class, FirCorrespondingSupertypesCache(this))
     }
 }
 
 /** Keep the selected native owner explicit after the lookup-only relation is removed. */
+@OptIn(org.jetbrains.kotlin.fir.types.ResolvedQualifierTypeAccess::class)
 private fun FirSession.normalizeArrayNativeReceivers(files: List<FirFile>) {
     val native = (symbolProvider.getClassLikeSymbolByClassId(nativeArrayBase) as FirRegularClassSymbol).fir
     val owners = lookupSuperTypes(native, lookupInterfaces = true, deep = true,
@@ -132,7 +144,32 @@ private fun FirSession.normalizeArrayNativeReceivers(files: List<FirFile>) {
             element.acceptChildren(this)
             val access = element as? FirQualifiedAccessExpression ?: return
             val callable = (access.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol as? FirCallableSymbol<*> ?: return
-            if (callable.containingClassLookupTag()?.classId !in owners) return
+            val owner = callable.containingClassLookupTag()?.classId ?: return
+            if (owner !in owners) return
+            val qualifier = (access.explicitReceiver as? FirResolvedQualifier)
+                ?: (access.dispatchReceiver as? FirResolvedQualifier)
+            if (qualifier != null && qualifier.qualifierSymbol?.fullyExpandedClass(this@normalizeArrayNativeReceivers)
+                    ?.classId?.let(::isClrArray) == true) {
+                val selectedOwner = symbolProvider.getClassLikeSymbolByClassId(owner)
+                    ?: error("Missing native array declaration owner $owner")
+                val normalized = buildResolvedQualifier {
+                    source = qualifier.source
+                    coneTypeOrNull = qualifier.resolvedType
+                    packageFqName = owner.packageFqName
+                    relativeClassFqName = owner.relativeClassName
+                    qualifierSymbol = selectedOwner
+                    resolvedToCompanionObject = false
+                }
+                if (access.explicitReceiver === qualifier) access.replaceExplicitReceiver(normalized)
+                if (access.dispatchReceiver === qualifier) access.replaceDispatchReceiver(normalized)
+                if (access is FirCallableReferenceAccess) {
+                    val path = file.sourceFile?.path ?: error("Missing source path for array reference")
+                    val source = access.source ?: error("Missing source location for array reference")
+                    kotc.frontend.SelectedCallDeclarations.recordReferenceOwner(path, source.endOffset,
+                        callable.name.asString(), owner.constructClassLikeType(emptyArray(), false))
+                }
+                return
+            }
             val receiver = access.dispatchReceiver ?: return
             if (!sourceArray(receiver.resolvedType, mutableSetOf())) return
             val target = nativeArrayBase.constructClassLikeType(emptyArray(), false)

@@ -910,7 +910,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val externalTarget = targetOwner?.let { isExternalNetType(it) } == true
 			val selectedOwner = if (externalTarget) {
 				val receiverType = ((node.type as IrSimpleType).arguments.first() as IrTypeProjection).type
-				val constructed = correspondingSupertypeInstantiation(
+				val constructed = kotc.frontend.SelectedCallDeclarations.referenceOwnerAt(
+					sourcePathOf(node), node.endOffset, fn.name.asString(),
+				) ?: correspondingSupertypeInstantiation(
 					receiverType, targetOwner!!, allowCapturedArguments = true,
 				) ?: error("No selected reference owner for ${target.name} on $receiverType")
 				birType(constructed)
@@ -989,9 +991,11 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val target = selectedDeclaration ?: if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
 				val targetOwner = target.parent as IrClass
 				val receiverType = ((node.type as IrSimpleType).arguments.first() as IrTypeProjection).type
-				val liftedOwner = correspondingSupertypeInstantiation(
+				val liftedOwner = (kotc.frontend.SelectedCallDeclarations.referenceOwnerAt(
+					sourcePathOf(node), node.endOffset, fn.name.asString(),
+				) ?: correspondingSupertypeInstantiation(
 					receiverType, targetOwner, allowCapturedArguments = true,
-				)?.let { birType(it) } ?: error("No selected reference owner for ${target.name} on $receiverType")
+				))?.let { birType(it) } ?: error("No selected reference owner for ${target.name} on $receiverType")
 				val signature = overloadSigField(target)
 				val psJson = (listOf("""{"name":"__self","type":${selfT.toJson()}}""") +
 					regs.zip(liftedFuncType.params.drop(1)).map { (parameter, type) ->
@@ -1531,7 +1535,9 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		bound && semanticCompanionType != null -> semanticCompanionType
 		bound && companionCaptureClass != null -> ownerSpec(companionCaptureClass, boundRecv!!.type)
 		bound && declClass != null -> ownerSpec(declClass, boundRecv!!.type)
-		unbound && declClass != null -> recvTypeNode ?: OBJ
+		unbound && declClass != null -> kotc.frontend.SelectedCallDeclarations.referenceOwnerAt(
+			sourcePathOf(node), node.endOffset, name,
+		)?.let(::birType) ?: recvTypeNode ?: OBJ
 		else -> OBJ
 	}
 	// A top-level EXTENSION property: its getter/setter is a static `<name>` accessor (a `prop:get`/`prop:set` marker

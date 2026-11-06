@@ -6,6 +6,11 @@ class CharArray
 private class NativeArrayBound<T : System.Array>
 private fun invalidSourceArrayBound(value: NativeArrayBound<String>) {}
 
+private interface NativeArrayProducer { fun read(): System.Array }
+private class InvalidArrayProducer : NativeArrayProducer {
+    override fun read(): String = "not an array"
+}
+
 private open class OrdinaryBase
 @kotlin.jvm.JvmInline
 private value class InvalidSourceValueClass(val value: Int) : OrdinaryBase()
