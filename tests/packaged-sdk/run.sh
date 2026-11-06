@@ -933,7 +933,7 @@ EOF
 # Every other gate consumes an emitted DotKt library AS KOTLIN, so it re-imports whatever the compiler emitted and
 # is blind to the physical signature by construction. A real C# project cannot re-import anything: it binds the CLR
 # signature literally, so it is the only lane that measures what the ABI actually IS. Two independent verdicts over
-# one library, because they prune at different points:
+# one library, because metadata shape and consumer behavior are distinct contracts:
 #   nullable-generic-shape — METADATA: a nullable-generic slot's physical type is `System.Object` and its
 #                            pre-erasure Kotlin shape rides the [KotlinNullableGeneric] carrier. A slot can be
 #                            physically wrong and still run when nothing crosses it, so this is asserted directly.
