@@ -38,12 +38,44 @@ public actual fun Throwable.printStackTrace(): Unit = printStackTraceImpl(this)
 @kotlin.clr.ClrIntrinsic("ToString")
 public actual fun Throwable.stackTraceToString(): String = TODO("clr binding should be implemented")
 
-// Suppressed exceptions are not tracked on the CLR (a ConditionalWeakTable side-table would be needed); this is a
-// no-op, and `suppressedExceptions` always reports an empty list. Functionally correct for `use {}`'s closeFinally.
+// Ephemeron keys preserve CLR exception identity without keeping otherwise unreachable
+// exception graphs alive. A suppressed exception may itself refer back to the primary.
+@kotlin.clr.ClrTypeAlias("System.Runtime.CompilerServices.ConditionalWeakTable")
+private class SuppressedExceptionsTable<K : Any, V : Any> {
+    constructor()
+    @kotlin.clr.ClrIntrinsic("GetOrCreateValue")
+    fun get(key: K): V = error("CLR binding")
+}
+
+private class SuppressedExceptionsCell public constructor() {
+    val exceptions = ArrayList<Throwable>()
+}
+
+private val suppressedExceptionsTable = SuppressedExceptionsTable<Throwable, SuppressedExceptionsCell>()
+
+@kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Enter")
+private fun enterSuppressedExceptions(cell: Any): Unit = error("CLR binding")
+@kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Exit")
+private fun exitSuppressedExceptions(cell: Any): Unit = error("CLR binding")
+
 @SinceKotlin("1.1")
 @kotlin.internal.HidesMembers
-public actual fun Throwable.addSuppressed(exception: Throwable) { }
+public actual fun Throwable.addSuppressed(exception: Throwable) {
+    // Match the Kotlin extension's self-suppression policy, not Java's raw member.
+    if (this === exception) return
+    val cell = suppressedExceptionsTable.get(this)
+    enterSuppressedExceptions(cell)
+    try {
+        cell.exceptions.add(exception)
+    } finally { exitSuppressedExceptions(cell) }
+}
 
 @SinceKotlin("1.4")
 public actual val Throwable.suppressedExceptions: List<Throwable>
-    get() = emptyList()
+    get() {
+        val cell = suppressedExceptionsTable.get(this)
+        enterSuppressedExceptions(cell)
+        try {
+            return cell.exceptions.toList()
+        } finally { exitSuppressedExceptions(cell) }
+    }
