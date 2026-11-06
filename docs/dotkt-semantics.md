@@ -516,6 +516,28 @@ on the CLR — `CancellationExceptionClr.kt`), while .NET signals it with `Syste
   bridge's exception mapping. Catch `System.OperationCanceledException` explicitly when consuming cancellable .NET
   work, or use a library adapter with an explicit cancellation contract. Remaining work is tracked in GitHub Issues.
 
+## 4a-ter. CLR exception suppression and detailed rendering
+
+`Throwable` retains its native CLR exception identity. `addSuppressed` stores ordered,
+duplicate-preserving entries by reference identity; self-suppression is ignored.
+`suppressedExceptions` returns a detached snapshot, including across DLL calls.
+`use` retains the primary body exception when closing also fails.
+
+`stackTraceToString()` and both `printStackTrace()` paths retain the native virtual
+`ToString()` base description and append stored suppression, including nested and
+cause-side suppression. Graph expansion and explicit description visitation are
+tracked independently by reference identity. Repeated descriptions have a shared/
+cycle marker; fixed labels with depth numbers bound traversal-label overhead.
+The text is CLR-oriented, not a promised JVM layout or a machine-readable format.
+Snapshots are taken and suppression locks released before user formatting or I/O.
+
+Two pre-existing gaps remain bugs, not additional platform deviations: custom
+`toString()` can hide the base stack/cause details ([#1338](https://github.com/tmyt/dotkt/issues/1338)),
+and overridden Kotlin `cause` is lost through a `Throwable`-typed read
+([#1339](https://github.com/tmyt/dotkt/issues/1339)). These are tracked separately;
+the suppression walker does not repair native base formatting or virtual property
+dispatch using reflection or type/name-specific cases.
+
 ## 4c. `.await()` binds to the .NET AWAITABLE PATTERN (GetAwaiter), not to Task (#10)
 
 `await` is NOT Task-specific — it binds to the same **awaitable pattern** the C# compiler uses, so ANY .NET awaitable is

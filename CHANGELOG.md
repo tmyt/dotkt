@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Include stored suppressed exceptions in Kotlin stack-trace text and printing, including cause-side suppression and cyclic graphs.
+
 - Preserve suppressed exceptions on CLR exceptions, including close failures, ordered snapshots and cross-DLL calls.
 
 - Resolve source-owned stdlib arrays against `System.Array` contracts without changing their Kotlin declaration inheritance or native storage.
