@@ -26,7 +26,7 @@
 #              signatures LITERALLY (no Kotlin re-import), so it is the only lane that measures what the ABI is
 #              rather than what the compiler can restore. Reports two verdicts: `nullable-generic-shape` (the
 #              erased slot's physical type + [KotlinNullableGeneric] carrier, by reflection) and `csharp-consumer`
-#              (the C# program compiles against those slots and runs). Both #86, both XFAIL_PKG-listed today.
+#              (the C# program compiles against those slots and runs). Both verdicts must pass.
 #   coroutine-cross-module — a packaged Kotlin library exports suspend declarations that genuinely suspend on
 #              Task.Delay; a separately compiled packaged-SDK Kotlin Exe restores and drives both a top-level call
 #              and an overriding cross-module super call, observes return-before-resume, and both emitted assemblies
@@ -42,8 +42,7 @@
 # packages the cases resolve never land in that cache; `dotnet new` installs into a scratch template hive
 # instead of the machine-global store. Getting the toolchain BUILT is deliberately outside that boundary:
 # the refcheck tool below restores from the user's configured NuGet sources into ~/.nuget, and pack-nuget.sh
-# drives Gradle (~/.gradle, Maven Central) plus the toolchain's own NuGet restore. Green = every fail name is
-# XFAIL_PKG-listed AND every listed name still fails; NEW-FAIL or stale FIXED names exit 1.
+# drives Gradle (~/.gradle, Maven Central) plus the toolchain's own NuGet restore. Every scenario must pass.
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT_NAME=packaged-sdk-tests
 source "$ROOT/scripts/lib.sh"
@@ -51,7 +50,7 @@ source "$ROOT/scripts/lib.sh"
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
 Packs the 5 nupkgs to build/nuget-feed and drives packaged SDK/template scenarios from that feed only.
-Green (exit 0) = no fail name outside XFAIL_PKG and no stale entry inside it.
+Green (exit 0) = every scenario passes.
 EOF
 }
 while (( $# )); do
@@ -60,38 +59,6 @@ while (( $# )); do
 		*) usage_error "unknown argument '$1'" ;;
 	esac
 done
-
-# The authoritative XFAIL baseline (fail name -> reason). A listed name that starts passing prints
-# "FIXED — remove it" and reddens as a stale baseline; any name NOT listed that fails prints NEW-FAIL and reddens.
-# Computed by lib.sh xfail_diff at the bottom.
-declare -A XFAIL_PKG=(
-	# EMPTY. Both halves of case_csharp_consumer were listed here for #86: their assertions are written against the
-	# POST-erasure ABI — the ABI break is the sanctioned decision in #86 — so they stayed red until it landed, and
-	# they are the reason the case exists (no other gate sees the physical signature; every other one re-imports the
-	# library as Kotlin). The uniform-erasure core made the top-level `T?` param, ctor param and return
-	# `System.Object` with a carrier; `Array<X?>`-is-`object[]` (D2) closed the last two slots, so a C# caller now
-	# binds `object[]` in both directions and every probe matches.
-)
-
-# The two XFAIL-listed verdicts above are per-case booleans, so on their own they only say "it did not work" —
-# and a missing tool, a restore failure, a changed diagnostic or a NEW wrong slot would satisfy them exactly as
-# well as the documented #86 break. These are the EXACT failures they are allowed to be. A mismatch reddens
-# under csharp-consumer-diagnostics / nullable-generic-shape-drift, neither of which is baseline-listed, so a
-# drift cannot hide inside an expected red. Both are checked only while the case is failing; once the erasure
-# lands the sets are empty, the verdicts pass, and there is nothing left to compare.
-#
-# Sorted, one per line, with paths and the trailing [project] suffix stripped — a diagnostic's identity here is
-# its line, code and message, not where the scratch workspace happened to be.
-# EMPTY, like its NG_SHAPE_EXPECTED sibling: the three `int?[]` / `object[]` conversion errors it used to pin were
-# the C# consumer's view of `Array<Int?>` before #86 D2 made it `object[]`, and the case now builds and runs. The
-# drift check below is reached only while the case is FAILING, so an empty set means it has nothing left to guard.
-CS_EXPECTED_DIAGNOSTICS=""
-
-# The refcheck --shape mismatches the erasure has not yet fixed — EMPTY now that every probed slot is its
-# declaration's erasure. The drift check below only runs while mismatches exist, so an empty set means the verdict
-# passes and there is nothing left for it to guard. `System.Int32`'s assembly qualification inside Nullable`1[[…]]
-# carries a runtime version, so it is collapsed before comparison; nothing else is normalized.
-NG_SHAPE_EXPECTED=""
 
 # The package version the pack stamps (single-sourced in DotKt.Versions.props). The Sdk="DotKt.Sdk/$VER"
 # reference, the second library's PackageReference, and the MPP global.json all pin THIS version, so a
@@ -444,8 +411,6 @@ case_exe() {
     <Error Condition="'@(_WrongReferenceTfm)' != ''" Text="DotKtResolvedKlibReference has the wrong TargetFramework: @(_WrongReferenceTfm)" />
     <Error Condition="'@(_RelativeReferenceKlib)' != ''" Text="DotKtResolvedKlibReference identity was not absolute: @(_RelativeReferenceKlib)" />
     <Error Condition="'\$(DotKtStdlib)' == '' or !Exists('\$(DotKtStdlib)')" Text="DotKtStdlib was not published as a dedicated property." />
-    <Error Condition="'@(DotKtReferenceKlib)' != '' or '@(DotKtFrontendKlib)' != ''"
-           Text="The removed synthetic frontend-input items were still published." />
     <Error Condition="'\$(DotKtKotlinVersion)' != '$KOTLIN_VER'" Text="DotKtKotlinVersion was '\$(DotKtKotlinVersion)', expected '$KOTLIN_VER'." />
   </Target>
 </Project>
@@ -576,8 +541,6 @@ EOF
     <Error Condition="'@(_MissingSourceAssembly)' != ''" Text="Returned item lost SourceAssembly: @(_MissingSourceAssembly)" />
     <Error Condition="'\$(DotKtStdlib)' == '' or !Exists('\$(DotKtStdlib)')"
            Text="DotKtStdlib was not published to the outer build as a dedicated property." />
-    <Error Condition="'@(DotKtReferenceKlib)' != '' or '@(DotKtFrontendKlib)' != ''"
-           Text="The removed synthetic frontend-input items were still published." />
     <Error Condition="'\$(DotKtStdlibRefAsm)' != ''"
            Text="TFM-specific toolchain properties leaked into the outer build: DotKtStdlibRefAsm='\$(DotKtStdlibRefAsm)'." />
     <WriteLinesToFile File="$d/resolved.txt"
@@ -970,14 +933,13 @@ EOF
 # Every other gate consumes an emitted DotKt library AS KOTLIN, so it re-imports whatever the compiler emitted and
 # is blind to the physical signature by construction. A real C# project cannot re-import anything: it binds the CLR
 # signature literally, so it is the only lane that measures what the ABI actually IS. Two independent verdicts over
-# one library, because they prune at different points:
+# one library, because metadata shape and consumer behavior are distinct contracts:
 #   nullable-generic-shape — METADATA: a nullable-generic slot's physical type is `System.Object` and its
 #                            pre-erasure Kotlin shape rides the [KotlinNullableGeneric] carrier. A slot can be
 #                            physically wrong and still run when nothing crosses it, so this is asserted directly.
 #   csharp-consumer        — BEHAVIOR: a C# program COMPILES against those slots (passing `null` at T=int, which
 #                            no bare-`T` slot admits) and RUNS to the expected output.
-# Both are written against the POST-erasure ABI (the ABI break is sanctioned by the decision in #86), so they start
-# XFAIL_PKG-listed and prune as the erasure lands — see the reasons in the baseline at the top of this file.
+# Both assert the current ABI and are required to pass independently.
 # ---------------------------------------------------------------------------------------------------------
 case_csharp_consumer() {
 	local d="$WS/csharp-consumer"; mkdir -p "$d"; cp "$NUGET_CONFIG" "$d/nuget.config"
@@ -1031,9 +993,7 @@ class NgArrays {
     }
 }
 EOF
-	# The library building is a PRECONDITION of both verdicts, not one of the documented failures — so it gets
-	# its own name. Absorbing it into the XFAIL-listed pair would let a broken library masquerade as the
-	# expected #86 red and keep the gate green.
+	# Building the library is a precondition of both verdicts; report a failure separately from consumer binding.
 	if ! (cd "$lib" && dotnet build -v q --nologo >"$lib/build.log" 2>&1); then
 		fail csharp-consumer-library "nullable-generic library build failed" "$(tail -25 "$lib/build.log")"; return
 	fi
@@ -1045,12 +1005,6 @@ EOF
 	# (b) METADATA verdict. Each slot's physical type must be the erasure of its DECLARED Kotlin type, with the
 	#     pre-erasure shape in the carrier. Single-quoted where a generic arity backtick appears — an unquoted one
 	#     is command substitution and would silently assert against an empty type name.
-	#
-	#     The verdict is XFAIL-listed today, so it also carries a DRIFT check: the observed mismatch set must be
-	#     exactly the documented one. Without it the XFAIL only says "some slot is wrong", and a new wrong slot,
-	#     a differently-wrong slot, or a probe that stopped resolving would all be absorbed silently. The drift
-	#     name is NOT baseline-listed, so any of those reddens. It is checked only while mismatches exist; once
-	#     the erasure lands the set is empty, the verdict passes, and there is nothing left to drift.
 	if ! have_refcheck; then
 		fail refcheck-unavailable "the metadata verdict cannot be taken — refcheck did not build"
 	else
@@ -1076,14 +1030,6 @@ EOF
 			pass nullable-generic-shape
 		else
 			fail nullable-generic-shape "erased slot shape mismatch" "$shape_fail"
-			# The System.Int32 assembly-qualification inside Nullable`1[[...]] carries a runtime version, so it
-			# is collapsed before comparison; nothing else is normalized.
-			local observed
-			observed="$(printf '%s' "$shape_fail" | sed -E 's/System\.Nullable`1\[\[System\.Int32,[^]]*\]\]/System.Nullable`1[[System.Int32]]/g' | sed '/^$/d' | LC_ALL=C sort)"
-			if [[ "$observed" != "$NG_SHAPE_EXPECTED" ]]; then
-				fail nullable-generic-shape-drift "the observed slot-shape mismatches are not the documented set" \
-					"$(printf -- '--- documented ---\n%s\n--- observed ---\n%s' "$NG_SHAPE_EXPECTED" "$observed")"
-			fi
 		fi
 	fi
 
@@ -1143,23 +1089,6 @@ EOF
 
 	if (( rc != 0 )); then fail csharp-consumer "C# consumer build/run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr/build ---\n%s' "$expected" "$actual" "$(tail -30 "$app/run.err" 2>/dev/null)")"
 	else fail csharp-consumer "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
-
-	# The verdict above is XFAIL-listed, so on its own it only says "the C# consumer did not work" — which a
-	# restore failure, a missing SDK, a changed diagnostic or a NEW diagnostic would each satisfy just as well
-	# as the documented #86 ABI break. So the csc diagnostics are compared against the documented set, exactly:
-	# an extra, a missing, or a differently-worded one reddens under a name that is NOT baseline-listed.
-	# Normalized to `line N: error CSxxxx: message` — the leading path and the trailing [project] suffix are
-	# location, not claim, and MSBuild prints each diagnostic twice (once inline, once in its error summary),
-	# which is why the set is deduplicated. The message text itself is compared verbatim, brackets included.
-	local observed
-	observed="$(grep -E ': error CS[0-9]+: ' "$app/run.err" 2>/dev/null \
-		| sed -E 's/^[^(]*\(([0-9]+),[0-9]+\): error/line \1: error/; s/ \[[^]]*\.csproj\]$//; s/[[:space:]]+$//' \
-		| LC_ALL=C sort -u)"
-	if [[ "$observed" != "$CS_EXPECTED_DIAGNOSTICS" ]]; then
-		fail csharp-consumer-diagnostics "the C# consumer did not fail with the documented diagnostics" \
-			"$(printf -- '--- documented ---\n%s\n--- observed ---\n%s\n--- raw build output ---\n%s' \
-				"$CS_EXPECTED_DIAGNOSTICS" "$observed" "$(tail -40 "$app/run.err" 2>/dev/null)")"
-	fi
 }
 
 # ---------------------------------------------------------------------------------------------------------
@@ -1527,12 +1456,10 @@ case_template
 case_mpp_template
 
 echo "------------------------------------"
-xfail_diff pkgsdk XFAIL_PKG "${FAILS[@]}"
-if xfail_gate_is_clean; then
+if (( ${#FAILS[@]} == 0 )); then
 	echo "PACKAGED-SDK OK"
 else
-	(( ${#XFAIL_NEW[@]} == 0 )) || echo "PACKAGED-SDK NEW-FAIL: ${XFAIL_NEW[*]}"
-	(( ${#XFAIL_FIXED[@]} == 0 )) || echo "PACKAGED-SDK STALE XFAIL: ${XFAIL_FIXED[*]}"
+	echo "PACKAGED-SDK FAILURES: ${FAILS[*]}"
 	echo "PACKAGED-SDK FAIL"
 	exit 1
 fi

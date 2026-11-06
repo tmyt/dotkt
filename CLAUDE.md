@@ -144,9 +144,9 @@ fails, iterate on its failing stage and validate the fix with focused checks —
 review round — before rerunning the whole gate. A draft PR may expose honest work in progress, but it must
 state which reviews or checks remain and cannot be treated as ready for handoff.
 
-The truthful fail-sets are machine-readable, never prose: `ILVERIFY_XFAIL` in `tests/run-ilverify.sh`,
-`XFAIL_PKG` in `tests/packaged-sdk/run.sh`. A gate exits 0 iff every actual failure is listed, and reports what
-is new or newly fixed. Read that diff; don't copy counts into docs.
+ILVerify's allowed failures are machine-readable: `ILVERIFY_XFAIL` in `tests/run-ilverify.sh`.
+Unexpected failures and stale entries in the complete-corpus audit are red. Packaged-SDK has no expected
+failures: every scenario must pass. Read the actual verdicts; don't copy counts into docs.
 
 Use the Make targets or standalone pack script to refresh tools before testing. Make checks .NET tools
 incrementally through MSBuild and consults content fingerprints for all three stdlib artifacts; unchanged

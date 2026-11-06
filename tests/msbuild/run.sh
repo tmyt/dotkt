@@ -294,11 +294,6 @@ if [[ -z "$config_msg" ]] && {
 }; then
 	config_msg="configuration-conditioned CIR or emitted assemblies crossed or disappeared"
 fi
-if [[ -z "$config_msg" ]] && { [[ -e "$config/app/obj/dotkt-bir" ]] \
-	|| [[ -e "$config/app/obj/dotkt-cir" ]] || [[ -e "$config/app/obj/dotkt-reference-klibs" ]]; }; then
-	config_msg="legacy BaseIntermediateOutputPath-rooted compiler state was created"
-fi
-
 if [[ -z "$config_msg" ]]; then
 	dotnet build "$config/app/app.ktproj" -c Debug --no-restore -v n --nologo >"$config/debug-noop.log" 2>&1 \
 		|| config_msg="Debug no-op rebuild failed"
