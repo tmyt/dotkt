@@ -135,7 +135,7 @@ for proj in "${PROJECTS[@]}"; do
 	echo "=========================================================="
 	echo "NUnit suite: $proj"
 
-	# Build (restore from the local feed via tests/nuget.config). A build failure is a red gate.
+	# Build against the already restored local SDK. A build failure is a red gate.
 	if ! nunit_build_project "$ROOT" "$CONFIGURATION" "$proj"; then
 		echo "  BUILD FAIL — see build/nunit-$name.build.log"; tail -25 "$ROOT/build/nunit-$name.build.log"; rc=1; continue
 	fi
