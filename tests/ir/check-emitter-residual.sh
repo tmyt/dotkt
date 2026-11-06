@@ -18,25 +18,36 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MARK='member-lookup-residual'
+sources=("$ROOT"/toolchain/ilemit/*.cs)
+# Missing/unreadable input is not evidence that the emitter contains zero residuals.
+for file in "${sources[@]}" "$ROOT/toolchain/ilemit/Emitter.Delegates.cs"; do
+	if [[ ! -f "$file" || ! -r "$file" ]]; then
+		echo "EMITTER RESIDUAL: RED — cannot read source: $file"
+		exit 1
+	fi
+done
 
 # Every singular lookup, independent of argument syntax, plus enumeration filtered by Name. Do not return to an
 # argument-shape allow-list: literal, variable, conditional, and JsonElement-derived arguments have all escaped one.
-lookups() {
-	grep -rnE '\.(GetMethods?|GetFields?|GetConstructors?)\(' "$ROOT"/toolchain/ilemit/*.cs \
-		| grep -vE ':[0-9]+: *(//|\*)'
-	grep -rnE '\.Name *(==|!=) *' "$ROOT"/toolchain/ilemit/*.cs | grep -vE ':[0-9]+: *(//|\*)'
-}
+scan_rc=0
+hits="$(grep -nHE '\.(GetMethods?|GetFields?|GetConstructors?)\(|\.Name *(==|!=) *' "${sources[@]}")" || scan_rc=$?
+if (( scan_rc > 1 )); then
+	echo "EMITTER RESIDUAL: RED — member-lookup source scan failed."
+	exit 1
+fi
 
 found=0
 while IFS= read -r hit; do
 	[[ -n "$hit" ]] || continue
 	file="${hit%%:*}"; rest="${hit#*:}"; line="${rest%%:*}"
+	code="${rest#*:}"
+	[[ "$code" =~ ^[[:space:]]*(//|\*) ]] && continue
 	# the site itself, or the two lines above it, must carry the marker
 	if ! sed -n "$((line > 2 ? line - 2 : 1)),${line}p" "$file" | grep -q -- "$MARK"; then
 		echo "  UNJUSTIFIED  ${hit:0:150}"
 		found=1
 	fi
-done < <(lookups)
+done <<< "$hits"
 
 if (( found )); then
 	echo "EMITTER RESIDUAL: RED — a member lookup with no stated reason."
@@ -44,18 +55,22 @@ if (( found )); then
 	echo "  and make sure the adjacent reason satisfies the external-member rule in docs/architecture.md."
 	exit 1
 fi
-# A generic frame MINTED in the delegate emitter is the shape the retired Unit adapter had: a helper the emitter
-# invents, over parameters it chooses, whose constraints it must then reconstruct. bir2cir authors that adapter as
-# an ordinary CIR class now (including the `allows ref struct` anti-constraint its parameters owe — pinned by
-# tests/ir/lowering/unit-delegate-adapter.assert and driven by the interop battery's Span fixture), so what is left
-# here may only be an encoding workaround, and each one says so on the spot. Same rule and same shape as the
+# Generic frames must come from CIR declarations. A frame minted in the delegate emitter may only be an encoding
+# workaround and must say why at its site. Scanner calibration lives in test-emitter-residual.py: the actual
+# source may legitimately contain no such workarounds. Same rule and same shape as the
 # member-lookup check above: the marker sits at the site, not in a list that drifts from it.
 FRAME_MARK='delegate-frame-residual'
-frames=0
+scan_rc=0
+hits="$(grep -nE '\.DefineGenericParameters\(' "$ROOT/toolchain/ilemit/Emitter.Delegates.cs")" || scan_rc=$?
+if (( scan_rc > 1 )); then
+	echo "EMITTER RESIDUAL: RED — delegate-frame source scan failed."
+	exit 1
+fi
 while IFS= read -r hit; do
 	[[ -n "$hit" ]] || continue
-	frames=1
 	line="${hit%%:*}"
+	code="${hit#*:}"
+	[[ "$code" =~ ^[[:space:]]*(//|\*) ]] && continue
 	if ! sed -n "$((line > 2 ? line - 2 : 1)),${line}p" "$ROOT/toolchain/ilemit/Emitter.Delegates.cs" \
 		| grep -q -- "$FRAME_MARK"; then
 		echo "EMITTER RESIDUAL: RED — a generic frame is minted at Emitter.Delegates.cs:$line with no stated reason."
@@ -63,9 +78,5 @@ while IFS= read -r hit; do
 		echo "  the site '$FRAME_MARK: <encoding reason>'."
 		exit 1
 	fi
-done < <(grep -nE '\.DefineGenericParameters\(' "$ROOT/toolchain/ilemit/Emitter.Delegates.cs" | cut -d: -f1)
-if (( ! frames )); then
-	echo "EMITTER RESIDUAL: RED — the minted-frame check matched nothing; its grep no longer describes the code."
-	exit 1
-fi
+done <<< "$hits"
 echo "EMITTER RESIDUAL: GREEN — every member lookup in ilemit states why the external-member rule allows it."

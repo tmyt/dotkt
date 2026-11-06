@@ -487,9 +487,7 @@ class ArrayTests {
         assertEquals("[hi, null]", refs.toList().toString())                 // [hi, null]
     }
 
-    // #86 D2 — the `Array<T>` FACTORIES whose bodies the reify-back representation existed for. Each one has to hand
-    // back a genuine `T[]` at a value instantiation now that `arrayOfNulls<T>(n)` is honestly an `object[]`: an
-    // `object[]` returned where `Array<Int>` is declared is not merely imprecise, it fails the very next element read.
+    // Factories and append overloads must preserve Kotlin element values, including typed reads and sums.
     @TestAttribute
     fun typedArrayFactoriesAtValueElements() {
         assertEquals(0, emptyArray<Int>().size)                              // 0
@@ -497,13 +495,10 @@ class ArrayTests {
         val grown = arrayOf(1, 2, 3).plus(4)
         assertEquals(4, grown.size)                                          // 4
         assertEquals(4, grown[3])                                            // 4
-        assertEquals(10, grown.sum())                                        // 10 (read back AS Int, not as a box)
+        assertEquals(10, grown.sum())                                        // 10 (typed Int reads)
         assertEquals("[1, 2, 3, 9]", arrayOf(1, 2, 3).plusElement(9).toList().toString())   // [1, 2, 3, 9]
         assertEquals("[1, 2, 3, 4]", arrayOf(1, 2).plus(arrayOf(3, 4)).toList().toString()) // [1, 2, 3, 4]
         assertEquals("[1, 2, 3, 4]", arrayOf(1, 2).plus(listOf(3, 4)).toList().toString())  // [1, 2, 3, 4]
-        val typed = listOf(1, 2, 3).toTypedArray()
-        assertEquals(3, typed.size)                                          // 3
-        assertEquals(6, typed.sum())                                         // 6
         assertEquals("[a, b, c]", arrayOf("a", "b").plus("c").toList().toString())          // [a, b, c] (reference)
 
         // ArrayDeque's Collection-to-typed-array extension, independently of its protected toArray overloads.
@@ -511,18 +506,20 @@ class ArrayTests {
         deque.addLast(1)
         deque.addLast(2)
         deque.addFirst(0)
-        assertEquals("[0, 1, 2]", deque.toTypedArray().toList().toString())  // [0, 1, 2]
-        assertEquals(3, deque.toTypedArray().sum())                          // 3
+        val dequeArray = deque.toTypedArray()
+        assertEquals("[0, 1, 2]", dequeArray.toList().toString())          // [0, 1, 2]
+        assertEquals(3, dequeArray.sum())                                  // 3
         // The RingBuffer-backed windowing terminal (its buffer is filled and snapshotted per window).
         assertEquals("[[1, 2], [2, 3], [3, 4]]", listOf(1, 2, 3, 4).windowed(2).toString())  // [[1, 2], [2, 3], [3, 4]]
         assertEquals("[[1, 2], [3, 4]]", listOf(1, 2, 3, 4).chunked(2).toString())           // [[1, 2], [3, 4]]
     }
 
-    // Reified copies retain native value-component arrays and compose with the array append operations.
+    // Collection copies preserve typed element reads and compose with array append operations.
     @TestAttribute
     fun toTypedArrayAtValueElements() {
         val ints = listOf(1, 2, 3).toTypedArray()
         assertEquals(3, ints.size)                                              // 3
+        assertEquals(6, ints.sum())                                             // 6
         assertEquals(1, ints[0])                                                // 1
         assertEquals(3, ints[2])                                                // 3
         assertEquals("[1, 2, 3]", ints.toList().toString())                     // [1, 2, 3]

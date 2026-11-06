@@ -21,7 +21,7 @@ CACHE="$ROOT/build/test-package-cache"
 rm -rf "$OUT"
 mkdir -p "$OUT/native" "$OUT/inspector"
 if [[ -d "$CACHE" ]]; then
-	find "$CACHE" -maxdepth 1 -type d -iname 'dotkt.*' -exec rm -rf {} + 2>/dev/null || true
+	find "$CACHE" -mindepth 1 -maxdepth 1 -type d -iname 'dotkt.*' -exec rm -rf -- {} +
 fi
 
 cc -shared -fPIC "$ROOT/tests/special/pinvoke/native/probe.c" \
