@@ -11,11 +11,8 @@
 //                      { val sm = new <Owner>_f$sm[<tp>]([this,] a, completion); return sm.invokeSuspend(null) }
 //     -- suspend main additionally gets a synthesized PLAIN `fun main()` that drains the cold body.
 //
-// The blueprint is kotc's LIVE CPS engine (BirEmitter.kt collectCpsVars/spillExpr/emitWhenCps/emitWhileCps/
-// emitTryCps), re-implemented over BIR JSON targeting the cold shape. CRITICAL OBSERVATION: kotc already
-// FLATTENS `while`/`for`/`do-while` into structured `block`/`label`/`brIf`/`goto` BIR, so loops need no
-// re-segmentation here — only `if`/`when` survive as `cond` (ternary) EXPRESSIONS, which this pass lowers to
-// label/brIf/goto control flow when they contain a suspension (mirroring emitWhenCps).
+// kotc supplies typed Kotlin bodies without coroutine lowering. This pass authors the cold state machines;
+// suspension-bearing `cond` expressions become label/brIf/goto control flow here.
 //
 // The SM resume protocol matches Kotlin/JVM's ContinuationImpl lowering: a single `result` carrier (the
 // invokeSuspend parameter), label dispatch that jumps to each post-suspend merge point, a
@@ -981,7 +978,6 @@ static partial class SuspendColdLowering
         if (!Mod(m, "suspend")) return false;
         if (!Bool(m["static"])) return false;                       // top-level statics + extensions (kotc: __self param)
         if (Mod(m, "inline") && !_appBuild) return false;           // #22: cold-lower an inline suspend WRAPPER's standalone body in app builds; stdlib intrinsics (suspendCoroutine*) stay stubbed
-        if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;  // old CPS / sequence path (kotc-owned)
         return true;
     }
 
@@ -992,7 +988,6 @@ static partial class SuspendColdLowering
     {
         if (!Mod(m, "suspend")) return false;
         if (Mod(m, "inline") && !_appBuild) return false;           // #22: as IsColdCandidate — inline suspend member wrapper lowers in app builds
-        if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;
         return true;
     }
 

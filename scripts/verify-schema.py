@@ -360,9 +360,6 @@ KINDS = {
     # .NET-event IMPLEMENT (§4.2, #187): the bir2cir-lowered CIR forms of the synthesis — a resolved accessor body (CAS
     # loop / raise, carrying the backing field + concrete delegate D) and a type-level `.event` metadata record.
     "clrEventAccessorImpl", "clrEventDecl",
-    # --- coroutine-lowered (bir2cir → CIR) ---
-    "coReturn", "coSuspend", "coLabel", "coGoto", "coCondGoto", "coYield", "coYieldAll",
-    "coTryBegin", "coCatchBegin", "coTryEnd",
 }
 
 

@@ -515,8 +515,8 @@ UNCONDITIONALLY. The classifier assigns each admitted member one of three shapes
 An empty concrete Unit-returning default interface body remains concrete. It uses a direct cold entry returning
 the Unit value plus its Task bridge; body length does not determine declaration modality.
 
-The only members NOT admitted are the reference-KLIB `@ClrAwaitBridge` declarations, the old kotc CPS/sequence
-path (`steps`/`coClass`), and stdlib inline coroutine intrinsics (`suspendCoroutine*`, left un-lowered in stdlib
+The only members NOT admitted are the reference-KLIB `@ClrAwaitBridge` declarations and stdlib inline
+coroutine intrinsics (`suspendCoroutine*`, left un-lowered in stdlib
 builds because their call sites are reconstructed inline). A concrete declaration that is not admitted keeps no
 emittable body: `SuspendResidueLowering` replaces it with an explicit `throw NotSupportedException(...)` in CIR — as
 it does for the stdlib self-build's RETAINED original beside its cold entry. Two shapes are deliberately outside that
