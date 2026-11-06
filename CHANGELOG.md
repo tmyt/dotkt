@@ -9,6 +9,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - Implement enum base `toString()` using declaration-owned entry names, preserving explicit-super and entry-body override chains across Kotlin DLLs.
 
+- Implement explicit enum base equality and hashing with rich singleton identity and native CLR enum value semantics, including entry-specific bodies and Kotlin DLL consumers.
+
 - Normalize Object slots at source and payload entry without a second per-file sweep, and verify first-pass correctness separately from idempotence.
 
 - Honor deterministic emission for implementation/reference DLLs and matching external Portable PDBs, using content-derived image and symbol identities.
