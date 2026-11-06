@@ -11,7 +11,7 @@ static class TypeJson
         n is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s != null;
 
     // Read the structured Type out of a JSON slot (null when the slot is absent or not a Type node).
-    public static TypeNode Read(JsonNode n) => IsType(n) ? TypeNode.Parse(n.ToJsonString()) : null;
+    public static TypeNode Read(JsonNode n) => IsType(n) ? TypeNode.Read(n) : null;
 
     // Write a Type back into a JSON node for storage in a slot.
     public static JsonNode Write(TypeNode t) => TypeNode.Write(t);
