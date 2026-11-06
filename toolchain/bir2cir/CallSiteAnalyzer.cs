@@ -41,7 +41,7 @@ sealed class CallSiteAnalyzer
 
             if (obj["kind"]?.GetValue<string>() is "class" or "interface")
                 nextOwner = StringProp(obj, "name") ?? owner;
-            if ((obj["params"] is JsonArray && obj["body"] is JsonArray) || obj["steps"] is JsonArray)
+            if (obj["params"] is JsonArray && obj["body"] is JsonArray)
                 nextMethod = StringProp(obj, "name") ?? method;
 
             var kind = StringProp(obj, "k");

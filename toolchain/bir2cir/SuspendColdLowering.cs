@@ -981,7 +981,6 @@ static partial class SuspendColdLowering
         if (!Mod(m, "suspend")) return false;
         if (!Bool(m["static"])) return false;                       // top-level statics + extensions (kotc: __self param)
         if (Mod(m, "inline") && !_appBuild) return false;           // #22: cold-lower an inline suspend WRAPPER's standalone body in app builds; stdlib intrinsics (suspendCoroutine*) stay stubbed
-        if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;  // old CPS / sequence path (kotc-owned)
         return true;
     }
 
@@ -992,7 +991,6 @@ static partial class SuspendColdLowering
     {
         if (!Mod(m, "suspend")) return false;
         if (Mod(m, "inline") && !_appBuild) return false;           // #22: as IsColdCandidate — inline suspend member wrapper lowers in app builds
-        if (m.ContainsKey("steps") || m.ContainsKey("coClass")) return false;
         return true;
     }
 
