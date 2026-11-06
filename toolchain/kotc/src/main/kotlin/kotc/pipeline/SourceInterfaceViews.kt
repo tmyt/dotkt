@@ -23,8 +23,6 @@ import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.resolve.calls.candidate.Candidate
 import org.jetbrains.kotlin.fir.resolve.calls.overloads.ConeCallConflictResolver
 import org.jetbrains.kotlin.fir.pipeline.SingleModuleFrontendOutput
-import org.jetbrains.kotlin.fir.pipeline.runCheckers
-import org.jetbrains.kotlin.fir.pipeline.runResolution
 import org.jetbrains.kotlin.fir.resolve.ScopeSession
 import org.jetbrains.kotlin.fir.resolve.lookupSuperTypes
 import org.jetbrains.kotlin.fir.resolve.toRegularClassSymbol
@@ -58,10 +56,10 @@ internal fun <T> withSourceInterfaceViewLookup(enabled: Boolean, action: () -> T
 
 /** The stock resolve/check pipeline, with protocol vocabulary available only during expression resolution. */
 internal fun resolveAndCheckClrFir(session: FirSession, files: List<FirFile>, reporter: BaseDiagnosticsCollector): SingleModuleFrontendOutput {
-    val (scopeSession, resolved) = withSourceInterfaceViewLookup(true) { session.runResolution(files) }
+    val (scopeSession, resolved) = withSourceInterfaceViewLookup(true) { session.resolveWithClrArrayRelations(files) }
     if (!session.languageVersionSettings.getFlag(AnalysisFlags.headerMode))
-        session.runCheckers(scopeSession, resolved, reporter, MppCheckerKind.Common)
-    normalizeSourceInterfaceViewReceivers(session, resolved)
+        session.runClrArrayCheckers(scopeSession, resolved, reporter, MppCheckerKind.Common)
+    session.normalizeClrArrayReceivers(resolved) { normalizeSourceInterfaceViewReceivers(session, resolved) }
     return SingleModuleFrontendOutput(session, scopeSession, resolved)
 }
 

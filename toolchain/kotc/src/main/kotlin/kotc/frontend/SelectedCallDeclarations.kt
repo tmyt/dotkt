@@ -15,6 +15,8 @@ import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.symbols.impl.FirNamedFunctionSymbol
 import org.jetbrains.kotlin.fir.unwrapFakeOverrides
 import org.jetbrains.kotlin.fir.visitors.FirDefaultVisitorVoid
+import org.jetbrains.kotlin.fir.types.ConeKotlinType
+import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
@@ -38,8 +40,21 @@ object SelectedCallDeclarations {
 	private val source = linkedMapOf<Key, FirNamedFunctionSymbol>()
 	private val ir = mutableMapOf<Key, IrSimpleFunction>()
 	private val adapterCalls = java.util.IdentityHashMap<IrCall, IrSimpleFunction>()
+	private val referenceOwners = mutableMapOf<Key, ConeKotlinType>()
+	private val irReferenceOwners = mutableMapOf<Key, IrType>()
 
-	fun reset() { source.clear(); ir.clear(); adapterCalls.clear() }
+	fun reset() { source.clear(); ir.clear(); adapterCalls.clear(); referenceOwners.clear(); irReferenceOwners.clear() }
+
+	/** A lookup-only relation can select an owner absent from the receiver's declaration inheritance.
+	 * Preserve that exact constructed owner without changing the authored callable-reference type. */
+	fun recordReferenceOwner(file: String, end: Int, name: String, owner: ConeKotlinType) {
+		val key = Key(file, end, name, reference = true)
+		val previous = referenceOwners.putIfAbsent(key, owner)
+		check(previous == null || previous == owner) { "Conflicting selected reference owners at $key" }
+	}
+
+	fun referenceOwnerAt(file: String?, end: Int, name: String): IrType? =
+		file?.let { irReferenceOwners[Key(it, end, name, reference = true)] }
 
 	fun capture(files: List<FirFile>) {
 		for (file in files) {
@@ -64,6 +79,8 @@ object SelectedCallDeclarations {
 	}
 
 	fun convertDeclarations(components: Fir2IrComponents, module: IrModuleFragment) {
+		for ((key, owner) in referenceOwners)
+			irReferenceOwners[key] = with(components.typeConverter) { owner.toIrType() }
 		for ((key, symbol) in source)
 			ir[key] = components.declarationStorage.getIrFunctionSymbol(symbol).owner as IrSimpleFunction
 		// Fir2Ir's return/argument-coercion adapters contain calls, but their source expression was a reference.

@@ -35,7 +35,6 @@ import org.jetbrains.kotlin.config.targetPlatform
 import org.jetbrains.kotlin.fir.DependencyListForCliModule
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.pipeline.AllModulesFrontendOutput
-import org.jetbrains.kotlin.fir.pipeline.runPlatformCheckers
 import org.jetbrains.kotlin.fir.session.AbstractFirMetadataSessionFactory
 import org.jetbrains.kotlin.fir.session.FirJsSessionFactory
 import org.jetbrains.kotlin.fir.session.FirJvmSessionFactory
@@ -208,7 +207,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 			}
 		}
 
-		outputs.runPlatformCheckers(diagnosticsReporter)
+		outputs.runClrPlatformCheckers(diagnosticsReporter)
 		checkKotlinPackageUsageForPsi(configuration, sourceFiles.asKtFilesList())
 
 		FirDiagnosticsCompilerResultsReporter.reportToMessageCollector(diagnosticsReporter, configuration)

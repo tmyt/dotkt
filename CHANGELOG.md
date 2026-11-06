@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Resolve source-owned stdlib arrays against `System.Array` contracts without changing their Kotlin declaration inheritance or native storage.
+
 - Preserve declared enum names through generic bounds, star projections and property references instead of invoking an authored `toString()` override.
 
 - Implement enum base `toString()` using declaration-owned entry names, preserving explicit-super and entry-body override chains across Kotlin DLLs.

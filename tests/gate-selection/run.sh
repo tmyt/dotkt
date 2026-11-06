@@ -12,7 +12,7 @@ suite_line() { # [gate.sh arguments...]
 FULL_SUITES="$(suite_line --full)"
 [[ -n "$FULL_SUITES" && "$FULL_SUITES" != '(none)' ]] || die "could not obtain the FULL suite set"
 [[ " $FULL_SUITES " != *' packagedsdk '* ]] || die "ordinary --full unexpectedly includes packagedsdk"
-expected_full="compiler_tests schema sanity lowering stdlib_upstream msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection"
+expected_full="compiler_tests schema sanity lowering stdlib_upstream stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection"
 [[ "$FULL_SUITES" == "$expected_full" ]] || die "FULL must cover every canonical core gate once: got '$FULL_SUITES'"
 
 assert_suites() { # <fixture-name> <changed-path> <expected suites>
@@ -43,11 +43,12 @@ for path in toolchain/bir-common/TypeNode.cs toolchain/kotc/build.gradle.kts too
 	grep -qx 'clean stdlib rebuild: YES' <<<"$plan" || die "$path must rebuild the baked stdlib"
 done
 assert_suites stdlib-snapshot-test tests/stdlib-common-upstream/upstream-v2.4.21.sha256 stdlib_upstream
+assert_suites source-owned-array-test tests/stdlib-source-array/SourceArrayProbe.kt stdlib_source_array
 assert_suites ilverify-harness tests/ilverify/test_harness.py compiler_tests
 for path in tests/support/nunit/cohort.sh tests/support/nunit/record-ir.targets tests/run-nunit-tests.sh; do
 	assert_suites nunit-cohort "$path" 'compiler_tests schema sanity'
 done
-verifier_suites="compiler_tests csharp14 pinvoke dll2klib packagedsdk"
+verifier_suites="compiler_tests stdlib_source_array csharp14 pinvoke dll2klib packagedsdk"
 assert_suites shared-ilverify tests/run-ilverify.sh "$verifier_suites"
 mixed_suites="$(suite_line tests/run-ilverify.sh tests/basic/fixtures/SomeTest.kt tests/packaged-sdk/run.sh)"
 [[ "$mixed_suites" == "$verifier_suites" ]] || die "overlapping verifier consumers were duplicated: '$mixed_suites'"
@@ -74,7 +75,7 @@ mixed_suites="$(suite_line eng/KotlinClr.targets tests/msbuild/run.sh tests/targ
 
 # Backend edits affect direct lowering, in-repo builds, CLR import and packaged consumers.
 # The C#-only ABI oracle, upstream checksum and policy self-tests do not consume these tools.
-compiler_suites='compiler_tests schema sanity lowering msbuild targetuniverse pinvoke dll2klib packagedsdk'
+compiler_suites='compiler_tests schema sanity lowering stdlib_source_array msbuild targetuniverse pinvoke dll2klib packagedsdk'
 for path in toolchain/bir2cir/Program.cs toolchain/ilemit/Emitter.Expressions.cs toolchain/bir2cir toolchain/ilemit; do
 	assert_suites backend-consumers "$path" "$compiler_suites"
 	plan="$(bash "$ROOT/scripts/gate.sh" --dry-run "$path")"
@@ -84,7 +85,7 @@ mixed_suites="$(suite_line toolchain/bir2cir/Program.cs toolchain/ilemit/Emitter
 	scripts/verify-schema.py tests/target-universe/run.sh)"
 [[ "$mixed_suites" == "$compiler_suites" ]] || die "overlapping backend consumers were lost or duplicated: '$mixed_suites'"
 mixed_suites="$(suite_line toolchain/bir2cir/Program.cs tests/run-ilverify.sh)"
-[[ "$mixed_suites" == 'compiler_tests schema sanity lowering msbuild targetuniverse csharp14 pinvoke dll2klib packagedsdk' ]] ||
+[[ "$mixed_suites" == 'compiler_tests schema sanity lowering stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib packagedsdk' ]] ||
 	die "backend/verifier union must retain the C#-only verifier consumer: '$mixed_suites'"
 mixed_suites="$(suite_line toolchain/ilemit/Emitter.Expressions.cs build-logic/unknown.input)"
 [[ "$mixed_suites" == "$FULL_SUITES packagedsdk" ]] || die "FULL fallback lost the packaged backend consumer: '$mixed_suites'"
@@ -111,6 +112,8 @@ for target in verify verify-core "${ci_targets[@]}" verify-packaged-sdk; do
 	count="$(grep -Fxc 'bash tests/special/dll2klib-e2e/run.sh' <<<"$plan" || true)"
 	case "$target" in verify|verify-core|verify-integration) expected_count=1 ;; *) expected_count=0 ;; esac
 	[[ "$count" == "$expected_count" ]] || die "$target: expected $expected_count DLL-to-KLIB E2E invocation(s), got $count"
+	count="$(grep -Fxc 'bash tests/stdlib-source-array/run.sh' <<<"$plan" || true)"
+	[[ "$count" == "$expected_count" ]] || die "$target: expected $expected_count source-array invocation(s), got $count"
 done
 
 # Exercise the default Git collector, not only explicit path classification. With rename folding enabled,
