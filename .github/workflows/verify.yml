@@ -19,9 +19,8 @@
 #                             attributed and blocks independently of the functional gates. It starts at t=0,
 #                             builds independently, and still runs its pack-idempotency check itself.
 #
-# Green semantics: ILVerify and packaged-SDK carry explicit XFAIL baselines
-# (ILVERIFY_XFAIL / XFAIL_PKG in their test runners) — they exit 0 iff every fail is a
-# listed, reasoned expected-fail and every listed entry still fails. NEW failures and stale FIXED entries are red.
+# Green semantics: ILVerify requires its strict, reasoned expected-failure baseline
+# to match exactly; new failures and stale entries are red. Every packaged-SDK scenario must pass.
 name: verify
 
 on:
@@ -192,6 +191,6 @@ jobs:
 
       # Packs the 5 nupkgs fresh from source and drives exe / library / cross-module async coroutine / mpp /
       # template scenarios that resolve them from a local feed only (isolated globalPackagesFolder — no cache
-      # masking). Exit 0 iff no fail name is outside the XFAIL_PKG baseline in tests/packaged-sdk/run.sh.
+      # masking). Every scenario must pass.
       - name: make verify-packaged-sdk (packaged nupkg resolution)
         run: make verify-packaged-sdk
