@@ -58,6 +58,7 @@ class PortableTextTests {
     }
 
     @TestAttribute fun repetitionUsesPortablePolicyForStringsAndCustomSequences() {
+        check("ab".repeat(3) == "ababab")
         val repetition: (CharSequence, Int) -> String = CharSequence::repeat
         fun verify(value: CharSequence) {
             check(value.repeat(0) == "")

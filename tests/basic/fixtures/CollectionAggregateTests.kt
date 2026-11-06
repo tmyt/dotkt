@@ -80,10 +80,4 @@ class CollectionAggregateTests {
         assertEquals(9, xs.associateWith { it * it }[3])           // 9
         assertEquals(3, listOf("a", "bb", "ccc").associateBy { it.length }.size)  // 3 (keys {1,2,3})
     }
-
-    // ---- m-b11 : String.repeat / reversed ----
-    @TestAttribute
-    fun stringRepeat() {
-        assertEquals("ababab", "ab".repeat(3))              // ababab
-    }
 }

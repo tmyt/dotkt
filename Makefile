@@ -155,6 +155,7 @@ verify-integration: toolchain stdlib ## independent MSBuild/target/ABI/policy ga
 verify-schema: ## BIR/CIR schema contract enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-nunit
 	python3 tests/ir/test-corpus.py
 	bash tests/ir/run-schema.sh
+	python3 tests/ir/test-emitter-residual.py
 	bash tests/ir/check-emitter-residual.sh
 
 verify-sanity: ## offline IR-sanity gate (semantic invariants over fresh BIR/CIR); run AFTER verify-nunit
@@ -180,6 +181,7 @@ verify-csharp14-extension-abi: ## released C# 14 static extension-member metadat
 	bash tests/special/csharp14-static-extensions/run.sh
 
 verify-pinvoke: pack ## Kotlin DllImport -> MethodImport/runtime + dll2klib round-trip
+	python3 tests/special/pinvoke/test-harness.py
 	bash tests/special/pinvoke/run.sh
 
 verify-xfail-policy: ## self-test the shared NEW/FIXED baseline verdict without building the toolchain

@@ -14,8 +14,5 @@
 +"k":"return","value":{"k":"staticField","ownerType":{"t":"fqn","name":"kotlin.Unit"},"name":"INSTANCE","fieldRef":{"kind":"field","assembly":"DotKt.Stdlib","declaringType":{"t":"fqn","name":"kotlin.Unit"},"name":"INSTANCE"
 # `sty` is a BIR-only transient stripped before CIR; a node authored AFTER that strip must not reintroduce it.
 -"sty"
-# The retired carriers: the emitter has no second constructor to choose between and no singleton to be handed.
--"unitInstanceRef"
--"targetDelegateCtorRef"
 # The marking is transient and must never reach CIR.
 -"dotktDelegateSlot"
