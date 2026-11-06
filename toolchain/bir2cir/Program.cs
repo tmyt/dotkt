@@ -141,7 +141,7 @@ sealed class Pipeline
 
         var suspend = SuspendShapeAnalysis.Combine(birFiles.Select(f => f.Suspend));
         Console.Error.WriteLine(
-            $"bir2cir: lowered {birFiles.Count} BIR file(s) -> {_options.OutDir} ({refs.Count} ref(s), build: {(_options.RefBuild ? "reference" : "substitute/app")}, suspend: {suspend.FunctionCount} fn/{suspend.AwaitCount} await)");
+            $"bir2cir: lowered {birFiles.Count} BIR file(s) -> {_options.OutDir} ({refs.Count} ref(s), build: {(_options.RefBuild ? "reference" : "substitute/app")}, suspend: {suspend.FunctionCount} fn)");
     }
 
     static List<BirFile> LoadBirFiles(IReadOnlyList<string> inputs)
