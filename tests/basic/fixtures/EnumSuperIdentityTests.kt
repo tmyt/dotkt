@@ -5,11 +5,15 @@ import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 import System.DayOfWeek
 
 private enum class EnumSuperIdentity(val code: Int) {
-    FIRST(7), SECOND(7), ENTRY(7) { override fun label(): String = "entry" };
+    FIRST(7), SECOND(7), ENTRY(7) {
+        override fun label(): String = "entry"
+        override fun baseEquals(other: Any?): Boolean = super.equals(other)
+        override fun baseHash(): Int = super.hashCode()
+    };
 
     open fun label(): String = "plain"
-    fun baseEquals(other: Any?): Boolean = super.equals(other)
-    fun baseHash(): Int = super.hashCode()
+    open fun baseEquals(other: Any?): Boolean = super.equals(other)
+    open fun baseHash(): Int = super.hashCode()
 }
 
 private enum class EnumSuperBasic { FIRST, SECOND }
