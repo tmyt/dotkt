@@ -103,14 +103,15 @@ class CorpusTests(unittest.TestCase):
         ET.ElementTree(parent).write(project, encoding="unicode")
         pending = self.root / "build/nunit-ir-corpus.pending"
         expected = {producer.parent / f"custom output/{kind}/Output.{kind}.json" for kind in ("bir", "cir")}
-        for _ in range(2):
+        for run in range(2):
             result = subprocess.run(
                 ["dotnet", "msbuild", str(project), "-nologo", "-v:quiet", "-m:1",
                  "-p:CustomAfterMicrosoftCommonTargets=" + str(ROOT / "tests/support/nunit/record-ir.targets"),
                  "-p:DotKtTestIrManifest=" + str(pending)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(set(map(Path, pending.read_text(encoding="utf-8-sig").splitlines())), expected)
-            pending.unlink()
+            records = pending.read_text(encoding="utf-8-sig").splitlines()
+            self.assertEqual(set(map(Path, records)), expected)
+            self.assertEqual(len(records), 2 * (run + 1))
         self.assertEqual((producer.parent / "compile-count.txt").read_text().splitlines(), ["compiled"])
 
 

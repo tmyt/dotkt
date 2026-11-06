@@ -50,11 +50,6 @@ for file in tests/ir/lowering/*.bir-part.json; do
   property_globs+=("$file")
 done
 
-if [ ${#globs[@]} -eq 0 ]; then
-  echo "SCHEMA GATE: no emitted BIR/CIR found — run 'make stdlib' and/or 'make verify-tests' first" >&2
-  exit 2
-fi
-
 # The shared BIR/CIR codec (toolchain/bir-common: TypeNode, MemberRefNode) has no project and no test host of
 # its own — it is <Compile Link/>-shared into each tool. `bir2cir --selftest` runs its round-trip and
 # completeness assertions inside the EXACT compiled copy that reads and writes documents, so the contract and

@@ -140,11 +140,6 @@ else
   mapfile -t globs <<< "$corpus"
 fi
 
-if [ ${#globs[@]} -eq 0 ]; then
-  echo "SANITY GATE: no emitted BIR/CIR found — run 'make stdlib' and/or 'make verify-tests' first" >&2
-  exit 2
-fi
-
 echo "== verify-sanity: validating freshly-emitted CIR against the IR sanity invariants =="
 "$PY" scripts/verify-sanity.py "${globs[@]}"
 rc=$?

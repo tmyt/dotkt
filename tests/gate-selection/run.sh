@@ -44,14 +44,23 @@ for path in toolchain/bir-common/TypeNode.cs toolchain/kotc/build.gradle.kts too
 done
 assert_suites stdlib-snapshot-test tests/stdlib-common-upstream/upstream-v2.4.21.sha256 stdlib_upstream
 assert_suites ilverify-harness tests/ilverify/test_harness.py compiler_tests
-assert_suites nunit-cohort tests/support/nunit/cohort.sh compiler_tests
+for path in tests/support/nunit/cohort.sh tests/support/nunit/record-ir.targets tests/run-nunit-tests.sh; do
+	assert_suites nunit-cohort "$path" 'compiler_tests schema sanity'
+done
 verifier_suites="compiler_tests csharp14 pinvoke dll2klib packagedsdk"
 assert_suites shared-ilverify tests/run-ilverify.sh "$verifier_suites"
 mixed_suites="$(suite_line tests/run-ilverify.sh tests/basic/fixtures/SomeTest.kt tests/packaged-sdk/run.sh)"
 [[ "$mixed_suites" == "$verifier_suites" ]] || die "overlapping verifier consumers were duplicated: '$mixed_suites'"
 assert_suites dll2klib-test tests/special/dll2klib-e2e/run.sh "$FULL_SUITES"
-assert_suites schema-consumers scripts/verify-schema.py 'schema dll2klib'
-assert_suites schema-contract docs/bir-cir.schema.json 'schema dll2klib'
+assert_suites schema-consumers scripts/verify-schema.py 'nunit_corpus schema dll2klib'
+assert_suites schema-contract docs/bir-cir.schema.json 'nunit_corpus schema dll2klib'
+assert_suites sanity-corpus scripts/verify-sanity.py 'nunit_corpus sanity'
+assert_suites schema-runner tests/ir/run-schema.sh 'nunit_corpus schema'
+assert_suites sanity-runner tests/ir/run-sanity.sh 'nunit_corpus sanity'
+mixed_corpus="$(suite_line scripts/verify-schema.py scripts/verify-sanity.py)"
+[[ "$mixed_corpus" == 'nunit_corpus schema sanity dll2klib' ]] || die "IR consumers must share one NUnit producer"
+mixed_corpus="$(suite_line tests/basic/fixtures/SomeTest.kt scripts/verify-sanity.py)"
+[[ "$mixed_corpus" == 'compiler_tests sanity' ]] || die "compiler tests must not duplicate the NUnit producer"
 
 # MSBuild and target-universe evaluate the in-repo targets; DLL-to-KLIB E2E invokes the tools directly.
 targets_suites='msbuild targetuniverse'
@@ -61,7 +70,7 @@ plan="$(bash "$ROOT/scripts/gate.sh" --dry-run eng/KotlinClr.targets)"
 grep -qx 'clean stdlib rebuild: no' <<<"$plan" || die "in-repo targets do not bake the stdlib"
 mixed_suites="$(suite_line eng/KotlinClr.targets tests/msbuild/run.sh tests/target-universe/run.sh \
 	scripts/verify-schema.py)"
-[[ "$mixed_suites" == "schema $targets_suites dll2klib" ]] || die "overlapping in-repo targets consumers were lost or duplicated: '$mixed_suites'"
+[[ "$mixed_suites" == "nunit_corpus schema $targets_suites dll2klib" ]] || die "overlapping in-repo targets consumers were lost or duplicated: '$mixed_suites'"
 
 # Backend edits affect direct lowering, in-repo builds, CLR import and packaged consumers.
 # The C#-only ABI oracle, upstream checksum and policy self-tests do not consume these tools.
