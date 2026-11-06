@@ -59,6 +59,8 @@ static class CompanionRepresentationLoweringTests
             new JsonObject { ["t"] = "nullable", ["of"] = Fqn(Semantic) },
             new JsonObject { ["name"] = "Probe.Child", ["semanticOwner"] = Semantic },
             Value(), Value("Probe.Generic.<companion:Named>"));
+        // The matching delegate inputs deliberately start with a distinct calleeOwner sentinel to distinguish
+        // the receiver-driven rewrite from ordinary child traversal; these are isolated pass-order controls.
         foreach (var kind in new[] { "callInstance", "field", "setField", "setFieldExpr", "lateinitGet", "newBoundDelegate" })
             uses.Add(Member(kind));
         uses.Add(Member("newBoundDelegate", Physical));
@@ -66,6 +68,7 @@ static class CompanionRepresentationLoweringTests
         uses.Add(Member("newBoundDelegate", "Probe.SelectedOwner"));
         var otherReceiver = Member("newBoundDelegate");
         otherReceiver["recv"] = new JsonObject { ["k"] = "local", ["name"] = "ordinaryReceiver" };
+        otherReceiver["calleeOwner"] = Fqn(Semantic);
         uses.Add(otherReceiver);
         uses.Add(Fqn("Probe.Unrelated"));
         uses.Add(Value("Probe.Unknown.<companion:Named>"));
@@ -87,11 +90,14 @@ static class CompanionRepresentationLoweringTests
                 expected[i]!["calleeOwner"] = Fqn(Physical);
         }
         expected[11]!["recv"] = Singleton(Physical);
-        // Ordinary traversal still binds a semantic type token, without retargeting the selected callee owner.
+        // An ordinary receiver keeps the real delegate invariant: both selected owner tokens bind together.
         expected[12]!["ownerType"] = Fqn(Physical);
+        expected[12]!["calleeOwner"] = Fqn(Physical);
         if (!JsonNode.DeepEquals(actual, expected))
             throw new InvalidOperationException($"Companion binding changed exact use/owner facts: {actual}");
 
+        // JsonNode's single-parent checks already reject direct sharing during insertion. Also pin the
+        // resulting attachments and mutation independence explicitly, without relying on serialization alone.
         var owners = new[] { actual[9]!["ownerType"]!, actual[9]!["calleeOwner"]!,
             actual[9]!["recv"]!["ownerType"]!, actual[9]!["recv"]!["sty"]!, actual[10]!["ownerType"]! };
         if (owners.Distinct(ReferenceEqualityComparer.Instance).Count() != owners.Length ||
