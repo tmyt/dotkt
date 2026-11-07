@@ -78,6 +78,24 @@ static partial class OwnerConstrainedMethodLowering
             }
             Expect(TypeJson.Read(parent[0]["body"][1]["ownerType"]) != TypeJson.Read(parent[1]["body"][1]["ownerType"]),
                 "sibling frames were shared");
+
+            // The body can carry unrelated method metadata. Only the selected declaration frame owns the
+            // override-bound substitution; reading the lambda's metadata would select the wrong owner argument.
+            var metadataBody = Body();
+            var metadataFrame = Frame();
+            string Override(string argument) => new JsonArray(new JsonObject {
+                ["index"] = 0,
+                ["bound"] = metadataFrame["typeParams"][0]["constraints"][0].DeepClone(),
+                ["template"] = metadataFrame["typeParams"][0]["constraints"][0].DeepClone(),
+                ["ownerArgs"] = new JsonArray(TypeJson.Fqn(argument)), ["consequences"] = new JsonArray(),
+            }).ToJsonString();
+            metadataFrame[OverrideBoundsKey] = Override("DeclarationArgument");
+            metadataBody[OverrideBoundsKey] = Override("BodyArgument");
+            CloseBodyOwnerViews(metadataBody, metadataFrame, Owner("Outer"),
+                FBoundStarProjectionErasure.ContainsOwnerTv, type => type);
+            Expect(TypeJson.Read(metadataBody["body"][0]["ownerType"]) == new TypeNode.Fqn("MethodOwner",
+                new TypeNode[] { new TypeNode.Fqn("DeclarationArgument") }), "lambda metadata replaced declaration-frame metadata");
+
             var unchanged = new JsonObject { ["params"] = new JsonArray(), ["body"] = new JsonArray(
                 new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = 42 }) };
             var unchangedBody = unchanged["body"];
