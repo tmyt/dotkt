@@ -182,13 +182,10 @@ static partial class FBoundStarProjectionErasure
                     var declaration = new JsonObject
                     {
                         ["typeParams"] = methodFrame,
-                        ["params"] = obj["params"]?.DeepClone(),
-                        ["body"] = obj["body"]?.DeepClone(),
                     };
-                    OwnerConstrainedMethodLowering.CloseOwnerViews(declaration,
+                    OwnerConstrainedMethodLowering.CloseBodyOwnerViews(obj, declaration,
                         new JsonObject { ["typeParams"] = typeFrame },
                         ContainsOwnerTv, bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
-                    obj["body"] = declaration["body"]?.DeepClone();
                 }
                 foreach (var pair in obj)
                     if (pair.Value != null) CloseSuspendLambdaOwners(pair.Value, owner);

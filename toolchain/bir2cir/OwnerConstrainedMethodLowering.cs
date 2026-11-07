@@ -7,7 +7,7 @@ using DotKt.Bir;
 // Kotlin owner-dependent bounds describe the source view, not the receiver's exact CLR construction.
 // Preserve the complete Kotlin constraint list in metadata and retain only representable physical rows.
 // Calls through the existential slot then use ordinary typed forwarding, without reflective generic binding.
-static class OwnerConstrainedMethodLowering
+static partial class OwnerConstrainedMethodLowering
 {
     internal const string DispatchBoundsKey = "_ownerConstraintDispatchBounds";
     internal const string OverrideBoundsKey = "_ownerConstraintOverrideBounds";
@@ -82,6 +82,7 @@ static class OwnerConstrainedMethodLowering
 
     internal static void SelfTest()
     {
+        BodyOwnerViewSelfTest();
         var invariantReferences = References;
         try
         {
@@ -562,11 +563,17 @@ static class OwnerConstrainedMethodLowering
     }
 
     internal static void CloseOwnerViews(JsonObject method, JsonObject owner,
+        Func<TypeNode, bool> dependsOnOwner, Func<TypeNode, TypeNode> projectedBound) =>
+        CloseBodyOwnerViews(method, method, owner, dependsOnOwner, projectedBound);
+
+    // A suspended body can retain its own JsonNode parent while using an explicitly selected donor frame.
+    // Only constraint declarations are copied/projected; parameters and executable nodes stay in their owner.
+    internal static void CloseBodyOwnerViews(JsonObject bodyOwner, JsonObject declarationFrame, JsonObject owner,
         Func<TypeNode, bool> dependsOnOwner, Func<TypeNode, TypeNode> projectedBound)
     {
-        var parameters = (method["typeParams"] as JsonArray)?.DeepClone().AsArray() ?? new JsonArray();
-        RewriteConstraints(method, owner, parameters, dependsOnOwner, projectedBound);
-        ConstrainedTypeParameterReceiverBinding.CloseMethodOwners(method, owner, parameters, References);
+        var parameters = (declarationFrame["typeParams"] as JsonArray)?.DeepClone().AsArray() ?? new JsonArray();
+        RewriteConstraints(declarationFrame, owner, parameters, dependsOnOwner, projectedBound);
+        ConstrainedTypeParameterReceiverBinding.CloseMethodOwners(bodyOwner, owner, parameters, References);
     }
 
     internal static void Apply(Func<TypeNode, bool> dependsOnOwner, Func<TypeNode, TypeNode> projectedBound)
