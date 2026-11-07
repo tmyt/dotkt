@@ -18,7 +18,10 @@
          $(DotKtIntermediateBirPath)/.stamp bumps ONLY on a real recompile, so the whole chain (bir2cir -> ilemit)
          cascades exactly when the frontend produced new BIR and no-ops otherwise. -->
     <DotKtDll2KlibJobs Condition="'$(DotKtDll2KlibJobs)' == ''">$([System.Environment]::ProcessorCount)</DotKtDll2KlibJobs>
-    <!-- Non-file compile options (raw kotc flags + MPP config) hashed into a manifest file so a change to an OPTION
+    <!-- CLR targeting packs exceed the upstream CLI's 64-entry ZIP cache. Keep project builds bounded but avoid
+         reopening the usual reference universe on every metadata query; zero disables caching. -->
+    <DotKtKlibZipFileAccessorCacheLimit Condition="'$(DotKtKlibZipFileAccessorCacheLimit)' == ''">256</DotKtKlibZipFileAccessorCacheLimit>
+    <!-- Non-file compile options (raw kotc flags, KLIB cache limit and MPP config) hashed into a manifest so a change to an OPTION
          (not a source) still flips a timestamp and retriggers the incremental KotlinCompile (#50). -->
     <!-- ilemit emits real CIL (Reflection.Emit) and must load each referenced type's RUNTIME (implementation)
          assembly — it takes its refs from @(ReferenceCopyLocalPaths) (the runtime set), NOT @(ReferencePath) (which
@@ -185,7 +188,7 @@
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;$(_DotKtEscapedCommonSourcePaths)&quot;</DotKtMppFlags>
     </PropertyGroup>
     <WriteLinesToFile File="$(DotKtCompileOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="kotc=$(DotKtKotcOptions);mpp=$(DotKtMppFlags);@(DotKtCommon->'common=%(FullPath)');@(KotlinCompile->'source=%(FullPath)');@(_DotKtCompileReference->'compile-ref=%(FullPath)');@(_DotKtRuntimeReference->'runtime-ref=%(FullPath)')" />
+                      Lines="kotc=$(DotKtKotcOptions);klib-zip-cache=$(DotKtKlibZipFileAccessorCacheLimit);mpp=$(DotKtMppFlags);@(DotKtCommon->'common=%(FullPath)');@(KotlinCompile->'source=%(FullPath)');@(_DotKtCompileReference->'compile-ref=%(FullPath)');@(_DotKtRuntimeReference->'runtime-ref=%(FullPath)')" />
   </Target>
 
   <!-- Compile every .kt to BIR from the frontend stdlib plus the complete MSBuild-resolved reference-KLIB set.
@@ -231,6 +234,7 @@
       <_DotKtKotcResponseArgument Include="_classpath_value"><Value>&quot;$(_DotKtEscapedFrontendClasspath)&quot;</Value></_DotKtKotcResponseArgument>
       <_DotKtKotcResponseArgument Include="_output_option"><Value>-d</Value></_DotKtKotcResponseArgument>
       <_DotKtKotcResponseArgument Include="_output_value"><Value>&quot;$(_DotKtEscapedBirOutputPath)&quot;</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_klib_zip_cache"><Value>-Xklib-zip-file-accessor-cache-limit=$(DotKtKlibZipFileAccessorCacheLimit)</Value></_DotKtKotcResponseArgument>
       <!-- Keep the manifest and compiler on the same MPP argument source. This is intentionally one argfile line:
            kotc tokenizes its three arguments, while the quoted common-source value remains one token. -->
       <_DotKtKotcResponseArgument Include="_mpp_flags" Condition="'$(DotKtMppFlags)' != ''"><Value>$(DotKtMppFlags)</Value></_DotKtKotcResponseArgument>

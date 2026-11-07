@@ -22,6 +22,7 @@ WORK="$ROOT/build/tests-msbuild"
 mkdir -p "$WORK"
 # Build the compiler launcher once (a plain Java app) so the MSBuild EnsureKotlinClrCompiler bootstrap is a no-op.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
+bash "$ROOT/tests/msbuild/klib-cache.sh" || fail=1
 
 # ktproj_run <absolute-project> <stderr-logfile> — build+run a .ktproj; echo its noise-filtered stdout;
 # RETURN the run's exit status (0 iff `dotnet run` — build AND execution — succeeded). Status and stdout are
@@ -121,6 +122,10 @@ incr_rc1=0; incr1="$(ktproj_run "$incr/app.ktproj" "$incr/run1.err")" || incr_rc
 rm -f "$incr/Shape.kt"
 printf 'class Shape(val w: Int, val h: Int) { fun area() = w * h }\nfun main() { println(Shape(3, 4).area()) }\n' > "$incr/App.kt"
 incr_rc2=0; incr2="$(ktproj_run "$incr/app.ktproj" "$incr/run2.err")" || incr_rc2=$?
+if ! grep -Fxq -- '-Xklib-zip-file-accessor-cache-limit=256' "$incr/obj/Debug/net10.0/dotkt-kotc.rsp"; then
+	echo "FAIL ktproj-klib-zip-cache: SDK cache limit missing from frontend response"
+	fail=1
+fi
 if [[ $incr_rc1 -eq 0 && $incr_rc2 -eq 0 && "$incr1" == "12" && "$incr2" == "12" ]]; then echo "PASS  ktproj-incr"; else
 	echo "FAIL  ktproj-incr (build1 exit $incr_rc1, build2 exit $incr_rc2)"
 	printf -- '--- build1 (want 12) ---\n%s\n--- build2 incremental after delete (want 12) ---\n%s\n--- stderr build2 ---\n%s\n' "$incr1" "$incr2" "$(tail -20 "$incr/run2.err" 2>/dev/null)"; fail=1

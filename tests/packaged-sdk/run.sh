@@ -462,6 +462,8 @@ EOF
 		fail exe "a packaged response-file fixture no longer exceeds cmd.exe's 8191-character limit"
 	elif ! grep -qx -- '-classpath' "$d/obj/Debug/net10.0/dotkt-kotc.rsp"; then
 		fail exe "kotc response file did not carry the frontend classpath option"
+	elif ! grep -qx -- '-Xklib-zip-file-accessor-cache-limit=256' "$d/obj/Debug/net10.0/dotkt-kotc.rsp"; then
+		fail exe "kotc response file did not carry the SDK KLIB cache limit"
 	elif ! grep -qx -- '--compile-refs' "$d/obj/Debug/net10.0/dotkt-bir2cir.rsp" \
 		|| ! grep -qx -- '--runtime-refs' "$d/obj/Debug/net10.0/dotkt-ilemit.rsp"; then
 		fail exe "back-end response files did not carry the resolved reference sets"

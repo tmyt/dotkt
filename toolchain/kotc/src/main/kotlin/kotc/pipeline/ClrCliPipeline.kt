@@ -9,6 +9,7 @@ import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.common.arguments.K2MetadataCompilerArguments
 import org.jetbrains.kotlin.cli.common.diagnosticsCollector
 import org.jetbrains.kotlin.cli.common.config.addKotlinSourceRoot
+import org.jetbrains.kotlin.cli.common.getZipFileSystemAccessor
 import org.jetbrains.kotlin.cli.jvm.config.K2MetadataConfigurationKeys
 import org.jetbrains.kotlin.cli.jvm.config.addJvmClasspathRoots
 import org.jetbrains.kotlin.cli.pipeline.AbstractCliPipeline
@@ -29,6 +30,7 @@ import org.jetbrains.kotlin.config.LanguageFeature
 import org.jetbrains.kotlin.config.LanguageVersionSettings
 import org.jetbrains.kotlin.config.languageVersionSettings
 import org.jetbrains.kotlin.config.moduleName
+import org.jetbrains.kotlin.config.zipFileSystemAccessor
 import org.jetbrains.kotlin.config.phaser.CompilerPhase
 import org.jetbrains.kotlin.fir.backend.Fir2IrConfiguration
 import org.jetbrains.kotlin.fir.backend.Fir2IrExtensions
@@ -79,6 +81,10 @@ object ClrMetadataConfigurationUpdater : ConfigurationUpdater<K2MetadataCompiler
 			org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity.ERROR,
 			"Specify destination via -d",
 		)
+		arguments.getZipFileSystemAccessor(
+			K2MetadataCompilerArguments::klibZipFileAccessorCacheLimit,
+			configuration, input.rootDisposable,
+		)?.let { configuration.zipFileSystemAccessor = it }
 	}
 }
 
