@@ -1,4 +1,5 @@
 #nullable enable
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Reflection.Metadata;
 using DotKt.Bir;
@@ -16,6 +17,7 @@ internal sealed class MetadataAttributes
     private readonly bool _standardLibrary;
     private readonly HashSet<string> _trustedCarriers = new(StringComparer.Ordinal);
     private readonly HashSet<TypeDefinitionHandle> _trustedCarrierDefinitions = new();
+    private readonly ConcurrentDictionary<EntityHandle, string> _attributeTypeNames = new();
 
     public MetadataAttributes(MetadataReader md)
     {
@@ -43,14 +45,16 @@ internal sealed class MetadataAttributes
 
     public bool IsStandardLibrary => _standardLibrary;
 
+    public bool DefinesTrustedCarrier(string name) => _dotKtAssembly && _trustedCarriers.Contains(name);
+
     public bool Has(EntityHandle owner, string name, bool requireTrust = true) =>
-        All(owner, requireTrust).Any(a => a.Name == name);
+        Find(owner, name, requireTrust) is not null;
 
     // Exact trusted bare markers are structural contracts, not optional decoration. Unlike Has/All, this path keeps
     // duplicates and malformed blobs visible so a corrupted current-format carrier cannot silently become "absent".
     public int ExactBareMarkerCount(EntityHandle owner, string name)
     {
-        if (owner.IsNil) return 0;
+        if (owner.IsNil || !DefinesTrustedCarrier(name)) return 0;
         var count = 0;
         foreach (var handle in _md.GetCustomAttributes(owner))
         {
@@ -71,8 +75,12 @@ internal sealed class MetadataAttributes
         return count;
     }
 
-    public Attr? Find(EntityHandle owner, string name, bool requireTrust = true) =>
-        All(owner, requireTrust).FirstOrDefault(a => a.Name == name);
+    public Attr? Find(EntityHandle owner, string name, bool requireTrust = true)
+    {
+        if (owner.IsNil || (requireTrust && name.StartsWith(DotKtNs, StringComparison.Ordinal) &&
+            !DefinesTrustedCarrier(name))) return null;
+        return All(_md.GetCustomAttributes(owner), name, requireTrust).FirstOrDefault();
+    }
 
     // Return the exact metadata type handles behind matching custom-attribute applications. A name alone is not
     // enough for contracts such as [System.Flags]: an input assembly may define a same-FQN lookalike. The projection
@@ -117,6 +125,7 @@ internal sealed class MetadataAttributes
 
     public void ValidateCarrierTargets(string name, params HandleKind[] allowedTargets)
     {
+        if (!DefinesTrustedCarrier(name)) return;
         var allowed = allowedTargets.ToHashSet();
         foreach (var handle in _md.CustomAttributes)
         {
@@ -133,7 +142,7 @@ internal sealed class MetadataAttributes
     // carrier; only the shape inside differs, which is why it is decoded here rather than through `CarrierType`.
     public System.Text.Json.JsonDocument? CarrierDocument(EntityHandle owner, string name)
     {
-        if (owner.IsNil) return null;
+        if (owner.IsNil || !DefinesTrustedCarrier(name)) return null;
         var exact = _md.GetCustomAttributes(owner)
             .Select(_md.GetCustomAttribute)
             .Where(ca => IsExactTrustedCarrier(ca, name))
@@ -191,24 +200,6 @@ internal sealed class MetadataAttributes
     {
         var attr = Find(owner, Nullable, requireTrust: false);
         return attr?.BytesValue ?? (attr?.ByteValue is byte b ? [b] : null);
-    }
-
-    private IEnumerable<Attr> All(EntityHandle owner, bool requireTrust)
-    {
-        if (owner.IsNil) yield break;
-        foreach (var handle in _md.GetCustomAttributes(owner))
-        {
-            var ca = _md.GetCustomAttribute(handle);
-            var name = AttributeTypeName(ca.Constructor);
-            if (name is null) continue;
-            if (requireTrust && name.StartsWith(DotKtNs, StringComparison.Ordinal) &&
-                !IsExactTrustedCarrier(ca, name))
-                continue;
-            Attr? decoded = null;
-            try { decoded = Decode(name, ca.Value); }
-            catch { /* unrelated or malformed attributes never hide usable metadata siblings */ }
-            if (decoded is not null) yield return decoded;
-        }
     }
 
     private Attr Decode(string name, BlobHandle valueHandle)
@@ -282,31 +273,40 @@ internal sealed class MetadataAttributes
             .Any(a => a.StringValue == key && a.StringValue2 == value);
     }
 
-    private IEnumerable<Attr> All(CustomAttributeHandleCollection handles, string expectedName)
+    private IEnumerable<Attr> All(CustomAttributeHandleCollection handles, string expectedName, bool requireTrust = false)
     {
         foreach (var handle in handles)
         {
             var ca = _md.GetCustomAttribute(handle);
             if (AttributeTypeName(ca.Constructor) != expectedName) continue;
+            if (requireTrust && expectedName.StartsWith(DotKtNs, StringComparison.Ordinal) &&
+                !IsExactTrustedCarrier(ca, expectedName)) continue;
             Attr? decoded = null;
-            try { decoded = Decode(expectedName, ca.Value); } catch { }
+            try { decoded = Decode(expectedName, ca.Value); }
+            catch { /* malformed attributes never hide usable metadata siblings */ }
             if (decoded is not null) yield return decoded;
         }
     }
 
-    private string? AttributeTypeName(EntityHandle constructor) => constructor.Kind switch
+    private string? AttributeTypeName(EntityHandle constructor)
     {
-        HandleKind.MemberReference => ParentTypeName(_md.GetMemberReference((MemberReferenceHandle)constructor).Parent),
-        HandleKind.MethodDefinition => DefinitionName(_md.GetMethodDefinition((MethodDefinitionHandle)constructor).GetDeclaringType()),
-        _ => null,
-    };
+        if (_attributeTypeNames.TryGetValue(constructor, out var name)) return name;
+        name = constructor.Kind switch
+        {
+            HandleKind.MemberReference => ParentTypeName(_md.GetMemberReference((MemberReferenceHandle)constructor).Parent),
+            HandleKind.MethodDefinition => DefinitionName(_md.GetMethodDefinition((MethodDefinitionHandle)constructor).GetDeclaringType()),
+            _ => null,
+        };
+        if (name is not null) _attributeTypeNames.TryAdd(constructor, name);
+        return name;
+    }
 
     private bool IsExactTrustedCarrier(CustomAttribute attribute, string expectedName)
     {
-        if (!_dotKtAssembly || !_trustedCarriers.Contains(expectedName)) return false;
+        if (!DefinesTrustedCarrier(expectedName)) return false;
         var definition = AttributeTypeDefinition(attribute.Constructor);
         return !definition.IsNil && _trustedCarrierDefinitions.Contains(definition) &&
-            DefinitionName(definition) == expectedName;
+            AttributeTypeName(attribute.Constructor) == expectedName;
     }
 
     private TypeDefinitionHandle AttributeTypeDefinition(EntityHandle constructor)

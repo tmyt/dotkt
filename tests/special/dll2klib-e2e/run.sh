@@ -107,7 +107,7 @@ grep -q '0 KLIB(s) up to date' <<<"$stdlib_batch" \
 
 printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp"
-dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib-second" --jobs 0 @"$OUT/references.rsp"
+dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib-second" --jobs 1 @"$OUT/references.rsp"
 cmp -s "$PROBE_KLIB" "$OUT/klib-second/Probe.klib" \
 	|| die "same Probe MVID did not produce a deterministic KLIB"
 cmp -s "$CONTRACTS_KLIB" "$OUT/klib-second/Probe.Contracts.klib" \

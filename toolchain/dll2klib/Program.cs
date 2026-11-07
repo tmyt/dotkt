@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.IO.Compression;
@@ -202,14 +203,20 @@ internal static class Program
         Directory.CreateDirectory(stageDirectory);
         try
         {
-            var parallelism = jobs == 0 ? stale.Length : Math.Max(1, Math.Min(jobs, stale.Length));
+            var parallelism = jobs == 0 ? stale.Length : Math.Max(1, jobs);
+            // Share one worker budget across assemblies and their package-local NameTables. Larger assemblies start
+            // first; reserving at most four package lanes prevents one large reference from becoming a serial tail.
+            var packageParallelism = Math.Min(4, parallelism);
+            var assemblyParallelism = Math.Min(stale.Length, Math.Max(1, parallelism / packageParallelism));
+            var typeCounts = inputMetadata.ToDictionary(input => input.Path, input => input.PublicArities.Length,
+                StringComparer.Ordinal);
             Console.WriteLine($"dll2klib: converting {stale.Length}/{work.Length} reference(s), jobs={parallelism}");
             var failures = new List<string>();
             var failureLock = new object();
             var inheritedArityClashes = string.Join(';', arityClashes);
             await Parallel.ForEachAsync(
-                stale,
-                new ParallelOptions { MaxDegreeOfParallelism = parallelism },
+                stale.OrderByDescending(item => typeCounts[item.Input]),
+                new ParallelOptions { MaxDegreeOfParallelism = assemblyParallelism },
                 (item, _) =>
                 {
                     try
@@ -222,7 +229,8 @@ internal static class Program
                             companionCatalog,
                             innerCatalog,
                             publicTypeCatalog,
-                            sourceViews);
+                            sourceViews,
+                            packageParallelism);
                     }
                     catch (Exception ex)
                     {
@@ -292,7 +300,8 @@ internal static class Program
         CompanionReferenceCatalog companionCatalog,
         InnerReferenceCatalog innerCatalog,
         PublicTypeCatalog publicTypeCatalog,
-        SourceInterfaceViews sourceViews)
+        SourceInterfaceViews sourceViews,
+        int packageParallelism)
     {
         using var file = File.OpenRead(input);
         // C# 14 extension grouping declarations are signature-only stubs whose non-callable ldnull/throw body is
@@ -308,7 +317,7 @@ internal static class Program
         using var scanner = new AssemblyScanner(
             input, pe, md, arityNames, inheritedArityClashes,
             delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog, sourceViews);
-        var fragments = scanner.Scan();
+        var fragments = scanner.Scan(packageParallelism);
         var hasUtf16PackageConstants = scanner.HasUtf16StringConstants &&
             fragments.Any(fragment => fragment.Message.Package?.Property.Any(property =>
                 property.CompileTimeValue?.Type == Annotation.Types.Argument.Types.Value.Types.Type.Array) == true);
@@ -1450,7 +1459,8 @@ internal sealed class ArityNames
 
 internal sealed class AssemblyScanner : IDisposable
 {
-    public bool HasUtf16StringConstants { get; private set; }
+    private volatile bool _hasUtf16StringConstants;
+    public bool HasUtf16StringConstants => _hasUtf16StringConstants;
 
     private sealed record CompanionCarrier(
         string Kind,
@@ -1752,7 +1762,7 @@ internal sealed class AssemblyScanner : IDisposable
             ValidateCompanionExtensionPhysicalMembers(handle, md.GetTypeDefinition(handle));
     }
 
-    public IReadOnlyList<Fragment> Scan()
+    public IReadOnlyList<Fragment> Scan(int parallelism)
     {
         var visible = _md.TypeDefinitions
             .Select(h => (Handle: h, Definition: _md.GetTypeDefinition(h)))
@@ -1764,9 +1774,36 @@ internal sealed class AssemblyScanner : IDisposable
             .GroupBy(x => _md.GetString(x.Definition.Namespace), StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
 
-        var result = new List<Fragment>();
-        foreach (var packageName in visible.Keys.Concat(_typeAliases.Packages).Distinct(StringComparer.Ordinal)
-            .OrderBy(name => name, StringComparer.Ordinal))
+        var packages = visible.Keys.Concat(_typeAliases.Packages).Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var projected = new Fragment?[packages.Length];
+        var failures = new Exception?[packages.Length];
+        Parallel.For(0, packages.Length, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, index =>
+        {
+            try { projected[index] = ProjectPackage(packages[index]); }
+            catch (Exception error) { failures[index] = error; }
+        });
+        if (failures.FirstOrDefault(error => error is not null) is { } failure)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        var result = projected.OfType<Fragment>().ToList();
+        // The KLIB reader probes root_package while resolving ordinary source,
+        // even when this assembly has no root-package declarations.
+        if (!result.Any(x => x.PackageName.Length == 0))
+        {
+            var names = new NameTable();
+            var fragment = new PackageFragment
+            {
+                Package = new Package { PackageFqName = names.Package("") },
+                IsEmpty = true,
+                FqName = "",
+                Strings = names.Strings,
+                QualifiedNames = names.QualifiedNames,
+            };
+            result.Insert(0, new Fragment("", fragment));
+        }
+        return result;
+
+        Fragment? ProjectPackage(string packageName)
         {
             var package = visible.GetValueOrDefault(packageName) ?? [];
             var names = new NameTable();
@@ -1833,26 +1870,9 @@ internal sealed class AssemblyScanner : IDisposable
                 fragment.Package.Function.Count != 0 ||
                 fragment.Package.Property.Count != 0 ||
                 fragment.Package.TypeAlias.Count != 0)
-                result.Add(new Fragment(packageName, fragment));
+                return new Fragment(packageName, fragment);
+            return null;
         }
-        // The KLIB reader probes root_package while resolving ordinary source,
-        // even when this assembly has no root-package declarations. A packed
-        // KLIB cannot represent an empty directory unless an entry is written,
-        // so keep an explicit empty root fragment in every output.
-        if (!result.Any(x => x.PackageName.Length == 0))
-        {
-            var names = new NameTable();
-            var fragment = new PackageFragment
-            {
-                Package = new Package { PackageFqName = names.Package("") },
-                IsEmpty = true,
-                FqName = "",
-                Strings = names.Strings,
-                QualifiedNames = names.QualifiedNames,
-            };
-            result.Insert(0, new Fragment("", fragment));
-        }
-        return result;
     }
 
     private CompanionCarrier? ReadCompanionCarrier(TypeDefinitionHandle handle)
@@ -5587,7 +5607,7 @@ internal sealed class AssemblyScanner : IDisposable
                 {
                     // A standard UTF-8 StringTable cannot represent these code units. The manifest
                     // selects the DotKt reader for this otherwise impossible const-value shape.
-                    HasUtf16StringConstants = true;
+                    _hasUtf16StringConstants = true;
                     value.Type = Annotation.Types.Argument.Types.Value.Types.Type.Array;
                     foreach (var unit in text)
                         value.ArrayElement.Add(new Annotation.Types.Argument.Types.Value
@@ -5670,9 +5690,8 @@ internal sealed class AssemblyScanner : IDisposable
         });
     }
 
-    private readonly Dictionary<MethodDefinitionHandle, (string Name, int Kind)> _propertyAccessorAssociations = new();
-    private readonly HashSet<MethodDefinitionHandle> _ambiguousPropertyAccessorAssociations = new();
-    private readonly HashSet<TypeDefinitionHandle> _indexedPropertyAccessorTypes = new();
+    private readonly ConcurrentDictionary<TypeDefinitionHandle,
+        ImmutableDictionary<MethodDefinitionHandle, (string Name, int Kind)?>> _propertyAccessorAssociations = new();
 
     private (string Name, int Kind)? PropertyAccessorAssociation(MethodDefinitionHandle methodHandle)
     {
@@ -5681,23 +5700,21 @@ internal sealed class AssemblyScanner : IDisposable
             return (carrier.Name, carrier.Kind);
         var typeHandle = _md.GetMethodDefinition(methodHandle).GetDeclaringType();
         if (typeHandle.IsNil) return null;
-        if (_indexedPropertyAccessorTypes.Add(typeHandle))
+        var associations = _propertyAccessorAssociations.GetOrAdd(typeHandle, IndexType);
+        return associations.GetValueOrDefault(methodHandle);
+
+        ImmutableDictionary<MethodDefinitionHandle, (string Name, int Kind)?> IndexType(TypeDefinitionHandle owner)
         {
+            var result = ImmutableDictionary.CreateBuilder<MethodDefinitionHandle, (string Name, int Kind)?>();
             void Index(MethodDefinitionHandle accessor, string propertyName, int kind)
             {
-                if (accessor.IsNil || _ambiguousPropertyAccessorAssociations.Contains(accessor)) return;
+                if (accessor.IsNil) return;
                 var association = (propertyName, kind);
-                if (_propertyAccessorAssociations.TryGetValue(accessor, out var existing)
-                    && existing != association)
-                {
-                    _propertyAccessorAssociations.Remove(accessor);
-                    _ambiguousPropertyAccessorAssociations.Add(accessor);
-                }
-                else
-                    _propertyAccessorAssociations[accessor] = association;
+                result[accessor] = result.TryGetValue(accessor, out var existing) && existing != association
+                    ? null : association;
             }
 
-            var type = _md.GetTypeDefinition(typeHandle);
+            var type = _md.GetTypeDefinition(owner);
             foreach (var propertyHandle in type.GetProperties())
             {
                 var property = _md.GetPropertyDefinition(propertyHandle);
@@ -5706,8 +5723,8 @@ internal sealed class AssemblyScanner : IDisposable
                 Index(accessors.Getter, propertyName, 1);
                 Index(accessors.Setter, propertyName, 2);
             }
+            return result.ToImmutable();
         }
-        return _propertyAccessorAssociations.TryGetValue(methodHandle, out var result) ? result : null;
     }
 
     private void AddCompanion(
@@ -6192,6 +6209,7 @@ internal sealed class AssemblyScanner : IDisposable
     private void ValidateKotlinExtensionReceiverCarriers()
     {
         var carrier = MetadataAttributes.DotKtNs + "KotlinExtensionReceiverAttribute";
+        if (!_attrs.DefinesTrustedCarrier(carrier)) return;
         foreach (var methodHandle in _md.MethodDefinitions)
         {
             var method = _md.GetMethodDefinition(methodHandle);
@@ -7667,6 +7685,7 @@ internal sealed record SignatureDecoderSeeds(
             if (payload?.RootElement.TryGetProperty("owner", out var owner) == true)
                 carriers.Add(handle, owner.GetString()!);
         }
+        if (carriers.Count == 0) return [];
         string SourceName(TypeDefinitionHandle handle)
         {
             if (carriers.TryGetValue(handle, out var owner)) return owner;
@@ -7814,7 +7833,7 @@ internal sealed record SignatureDecoderSeeds(
 // for the scanner's lifetime so the first external delegate in every namespace does not reopen and rescan it.
 internal sealed class ExternalSignatureDecoderCache : IDisposable
 {
-    private readonly Dictionary<string, Source> _sources = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Lazy<Source>> _sources = new(StringComparer.Ordinal);
     private readonly string? _inheritedArityClashes;
 
     internal ExternalSignatureDecoderCache(string? inheritedArityClashes) =>
@@ -7823,30 +7842,23 @@ internal sealed class ExternalSignatureDecoderCache : IDisposable
     internal Source Get(string path)
     {
         var fullPath = Path.GetFullPath(path);
-        if (!_sources.TryGetValue(fullPath, out var source))
-        {
-            source = new Source(fullPath, _inheritedArityClashes);
-            _sources.Add(fullPath, source);
-        }
-        return source;
+        return _sources.GetOrAdd(fullPath,
+            key => new Lazy<Source>(() => new Source(key, _inheritedArityClashes))).Value;
     }
 
     internal Source Get(string path, MetadataReader reader)
     {
         var fullPath = Path.GetFullPath(path);
-        if (!_sources.TryGetValue(fullPath, out var source))
-        {
-            // PublicTypeCatalog owns this reader until after AssemblyScanner is disposed. Borrow it rather than
-            // opening the same PE a second time; a direct delegate lookup may instead have populated an owned source.
-            source = new Source(reader, _inheritedArityClashes);
-            _sources.Add(fullPath, source);
-        }
-        return source;
+        // PublicTypeCatalog owns this reader until after AssemblyScanner is disposed. A direct delegate lookup
+        // may instead have populated an owned source; only the winning lazy may open an owned PE.
+        return _sources.GetOrAdd(fullPath,
+            _ => new Lazy<Source>(() => new Source(reader, _inheritedArityClashes))).Value;
     }
 
     public void Dispose()
     {
-        foreach (var source in _sources.Values) source.Dispose();
+        foreach (var source in _sources.Values)
+            if (source.IsValueCreated) source.Value.Dispose();
         _sources.Clear();
     }
 
@@ -8277,11 +8289,11 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
         if (!_publicTypeCatalog.TryResolveDefinition(reader, handle, out var definition)) return;
         if (definition.DefinitionPath is null)
             throw new InvalidDataException("Resolved external type requires its definition path");
-        var source = _externalSignatureDecoders.Get(definition.DefinitionPath, definition.Reader);
-        var frame = NullableFrameMetadata.TypeFrame(source.Reader, source.Attributes, definition.Handle);
+        var attributes = SignatureDecoderSeeds.Attributes(definition.Reader);
+        var frame = NullableFrameMetadata.TypeFrame(definition.Reader, attributes, definition.Handle);
         if (frame is null) return;
         _nullableTypeFrames[type] = frame;
-        if (source.Attributes.Int32(definition.Handle, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is int capturedOuter)
+        if (attributes.Int32(definition.Handle, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is int capturedOuter)
             _semanticInnerTypes[type] = SemanticInnerArgumentOrder(frame, capturedOuter);
     }
 

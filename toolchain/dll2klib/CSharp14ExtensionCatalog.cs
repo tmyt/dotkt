@@ -57,11 +57,6 @@ internal sealed class CSharp14ExtensionCatalog
         MetadataReader md,
         MetadataAttributes attrs)
     {
-        var propertyOwners = new Dictionary<PropertyDefinitionHandle, TypeDefinitionHandle>();
-        foreach (var typeHandle in md.TypeDefinitions)
-            foreach (var propertyHandle in md.GetTypeDefinition(typeHandle).GetProperties())
-                propertyOwners.Add(propertyHandle, typeHandle);
-
         var markers = new Dictionary<EntityHandle, string>();
         foreach (var (parent, value) in attrs.StringAttributes(ExtensionMarkerAttribute))
         {
@@ -72,6 +67,12 @@ internal sealed class CSharp14ExtensionCatalog
                 throw new InvalidDataException(
                     $"duplicate [{ExtensionMarkerAttribute}] on metadata token 0x{MetadataTokens.GetToken(parent):X8}");
         }
+
+        if (markers.Count == 0) return new([], []);
+        var propertyOwners = new Dictionary<PropertyDefinitionHandle, TypeDefinitionHandle>();
+        foreach (var typeHandle in md.TypeDefinitions)
+            foreach (var propertyHandle in md.GetTypeDefinition(typeHandle).GetProperties())
+                propertyOwners.Add(propertyHandle, typeHandle);
 
         var groupHandles = markers.Keys.Select(parent => parent.Kind switch
         {

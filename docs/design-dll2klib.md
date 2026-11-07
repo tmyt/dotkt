@@ -414,7 +414,7 @@ Batch mode:
    both its routing facade and resolved definition, and definitions and users of any changed whole-universe arity key
    become additional invalidation roots;
 5. selects only changed roots and their current or former reverse dependents;
-6. converts those assemblies concurrently in process, bounded by `--jobs`; and
+6. converts those assemblies and their independent namespace fragments concurrently in process, bounded by `--jobs`; and
 7. stages every KLIB and publishes the batch state only after every conversion succeeds.
 
 Discovery temporarily retains one copied metadata block and the precomputed TypeRef facts for every input, but no PE
@@ -423,8 +423,12 @@ before stale assemblies are converted in parallel. Conversion therefore does not
 universe in memory; public-type definitions needed by an actual stale conversion are reopened lazily and shared by
 path.
 
-`--jobs 0` means one concurrent conversion per stale input. The normal MSBuild
-default is the processor count.
+`--jobs N` shares a worker budget across assemblies and their namespace fragments.
+Each assembly uses at most four package lanes, and the assembly/package limits multiply
+to at most the budget. Larger assemblies start first. Each package retains its own
+name table and signature decoder; output and failure ordering remain deterministic.
+`--jobs 1` is serial; `--jobs 0` uses the number of stale inputs as its budget.
+The normal MSBuild default is the processor count.
 
 Each KLIB is first written beneath a unique batch staging directory. No final KLIB is replaced until every conversion
 succeeds. Publication writes an incomplete marker before moving staged files; if publication is interrupted, the next
