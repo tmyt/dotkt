@@ -8,15 +8,16 @@ work="$(mktemp -d "$ROOT/build/klib-zip-cache.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 probe="$ROOT/tests/msbuild/klib-cache/Probe.kt"
 
-for mode in default disabled bounded; do
+for mode in default disabled bounded sdk; do
     options=()
     case "$mode" in
         disabled) options=(-Xklib-zip-file-accessor-cache-limit=0) ;;
         bounded) options=(-Xklib-zip-file-accessor-cache-limit=1) ;;
+        sdk) options=(-Xklib-zip-file-accessor-cache-limit=256) ;;
     esac
     "$KOTC" "$probe" -classpath "$FE_KLIB" -d "$work/$mode" "${options[@]}" > "$work/$mode.log" 2>&1
 done
-for mode in disabled bounded; do
+for mode in disabled bounded sdk; do
     if ! cmp -s "$work/default/Probe.bir.json" "$work/$mode/Probe.bir.json"; then
         echo "FAIL klib-zip-cache: $mode changed frontend output"
         exit 1
@@ -41,4 +42,4 @@ for limit in -1 invalid; do
         exit 1
     fi
 done
-echo 'PASS klib-zip-cache: default/bounded/disabled output equality and upstream option validation'
+echo 'PASS klib-zip-cache: default/SDK/bounded/disabled output equality and upstream option validation'
