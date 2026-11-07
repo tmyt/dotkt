@@ -67,6 +67,7 @@ static class Bir2Cir
                 StringCharSequenceBridge.CallSignatureSelfTest();
                 ClrMemberResolution.NullableSlotComparisonSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
+                ConstrainedTypeParameterReceiverBinding.AritySnapshotSelfTest();
                 StdlibSubstituteTypeParams.SelfTest();
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
                 ComparableRepresentationLowering.SelfTest();
