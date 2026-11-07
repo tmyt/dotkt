@@ -185,6 +185,7 @@ STR_OK = {
     "member", "method", "get", "set", "event",  # member/accessor/event NAME references (reflection/override — §2.2.1)
     "field", "ordinal", "values", "valueOf",      # rich-enum round-trip carrier's exact physical member names;
                                                     # declaration identities, not value-type slots
+    "policyField",                               # clrEventBacking's exact delegated-storage field name, not a Type.
     "accessor",                                  # W1-S3 (#46/#121): the ref.dll-resolved get_/set_/add_/remove_ accessor
                                                 # METHOD NAME ilemit links (clrPropGet/Set, clrEvent*, external field) — a
                                                 # bir2cir resolution decision, NOT a type slot (paired with `member`+`dispatch`)
@@ -349,7 +350,7 @@ KINDS = {
     # The dialect node never reaches ilemit/CIR; the ordinary runtime ClrEvent class does.
     "clrEventGet",
     # kotc-dialect CLR-only-vocab for the .NET-event IMPLEMENT/RAISE feature (§4.2/§4.3, #187). BIR-only (kotc -> bir2cir):
-    #   clrEventBacking  — a per-event `by clrEvent()` backing directive (in a type's `clrEvents` array; carries the handler
+    #   clrEventBacking  — a per-event `by clrEvent(...)` directive (in a type's `clrEvents`; optional policyField names Kotlin storage; carries the handler
     #                      Kotlin fn type). bir2cir ClrEventImplBinding -> a real `<E>$delegate` field + a `clrEventDecl`.
     #   clrEventAccessor — the tagged body of a synthesized add_/remove_/raise_<E> accessor. bir2cir -> clrEventAccessorImpl.
     #   clrEventRaise    — a Kotlin-declared event handle `.invoke(...)`. bir2cir -> a `callInstance raise_<E>`.

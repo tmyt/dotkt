@@ -65,8 +65,9 @@ platform deviations.
   with `by clrEvent()` may be ordinary parameters, return values, locals, fields,
   stored values, and captured values. Subscription is supported through these
   handles; raising remains supported only through a Kotlin event declaration
-  with a synthesized raise accessor. Subclassing `ClrEvent<T>` or supplying
-  custom add/remove behavior is currently undefined behavior.
+  with a synthesized raise accessor. Custom storage and dispatch are supported
+  through `ClrEventPolicy<T>` and `by clrEvent(policy)`; subclassing the retained
+  `ClrEvent<T>` handle is undefined behavior.
 
 These mechanisms are intentionally not gated on a stdlib or user build mode.
 Undefined forms may therefore happen to compile and work. Do not add validation,

@@ -1,0 +1,2 @@
+custom CLR event 'Changed' parameter 0
+cannot be represented in the ClrEventPolicy.invoke Any? argument array

@@ -1,7 +1,7 @@
 # CLR event model for Kotlin — consume / implement / raise (MVVM, `INotifyPropertyChanged`)
 
 Status: implemented event declaration/raise/delegation model (#187, #113, #186), extended by #216
-with retained consumer handles. Custom event implementation/storage policy remains a separate #188 scope.
+with retained consumer handles and #188 with explicit custom storage/dispatch policies.
 
 DotKt supports consuming, implementing, raising, and class-delegating CLR events. The declaration path provides
 the accessor slots required by CLR interfaces; the value path lets ordinary Kotlin code retain a subscription
@@ -118,8 +118,8 @@ A Kotlin class inheriting that implementation elides the event fake override. A 
 `override val E by clrEvent()`; the declaration emission check still reports a missing provider. This is
 independent of whether ClrEvent is a materialized runtime class.
 
-Custom subclasses, custom add/remove storage policies, weak events and new declaration synthesis contracts
-remain #188 work. Retaining a consumed event does not change the existing field-like event or forwarding policy.
+The retained handle is not subclassed. Custom storage and dispatch use the separate `ClrEventPolicy<H>`
+contract described in §5. Retaining a consumed event does not change its declaration's storage policy.
 
 ---
 
@@ -252,7 +252,7 @@ generic delegate error.
 **New-event handler type is explicit.** For an override (`override val E by clrEvent()`), kotc reads
 the handler function type off the overridden interface slot (frontend-resolved; bir2cir maps it to the
 concrete delegate). For a **new** declaration there is no slot to infer from, so the author annotates
-`ClrEvent<D>` explicitly (`val clicked: ClrEvent<Action> by clrEvent()`, or `by clrEvent<Action>()`);
+`ClrEvent<D>` explicitly (`val clicked: ClrEvent<Action> by clrEvent()`);
 kotc carries `D` as the handler Kotlin function type and bir2cir resolves/synthesizes the concrete
 delegate. A bare `val clicked by clrEvent()` with no inferable `T` is a diagnostic ("cannot infer the
 event handler type; annotate `ClrEvent<…>`").
@@ -260,6 +260,51 @@ event handler type; annotate `ClrEvent<…>`").
 The direct `by clrEvent()` initializer is the field-like synthesis signal. Projected event metadata and
 overridden declarations distinguish other event members from ordinary handle storage; a handle's type alone
 does not grant declaration or synthesis behavior.
+
+### Custom storage and dispatch
+
+`by clrEvent(policy)` explicitly declares the same native event with a user-defined
+`ClrEventPolicy<H>`. The retained `ClrEvent<H>` handle remains final and unchanged:
+
+```kotlin
+abstract class ClrEventPolicy<out H> protected constructor() {
+    protected abstract fun add(handler: @UnsafeVariance H)
+    protected abstract fun remove(handler: @UnsafeVariance H)
+    abstract operator fun invoke(vararg args: Any?)
+}
+
+val Changed: ClrEvent<MyHandler> by clrEvent(myPolicy)
+```
+
+The policy receives the complete registered handler. It owns storage, filtering and dispatch;
+the compiler does not implement weak references or infer a payload type. Its protected hooks are
+connected by stdlib-internal bridges to native `add_Changed`/`remove_Changed`; `raise_Changed`
+packs the native delegate's arguments into the policy's argument array. A policy exception propagates
+normally. Consumer subscription remains exclusively `subscribe`/`EventSubscription.close`.
+Hooks are protected in the Kotlin API and on the policy's class declaration. Compiler-generated
+existential views are internal ABI, not additional supported subscription APIs or a security boundary
+against C# callers deliberately inspecting representation carriers or using reflection.
+The policy's argument-array contract requires boxable native argument types. Managed references,
+unmanaged pointers/function pointers and byref-like values cannot enter that array; a custom-policy
+declaration with such an argument is a compilation error, not a copied-reference approximation or
+undefined behavior. This restriction does not change the existing field-like event path.
+Like field-like declarations, custom-policy declarations currently use instance accessors. Ordinary
+objects and companion objects are instances and work normally. Kotlin 2.4 receiverless companion-block
+event declarations are not implemented and are diagnosed for either factory overload; this does not
+restrict consuming static events imported from CLR libraries.
+Top-level native event declarations are likewise diagnosed rather than silently emitted as ordinary
+delegated properties. An ordinary `val handle by policy` remains supported at top level.
+
+kotc retains the real Kotlin delegate field and its original initializer, including source order and
+single evaluation. `clrEventBacking.policyField` explicitly identifies that declaration. bir2cir
+resolves the native delegate and creates ordinary calls to the policy using the field's actual
+generic frame. It emits the same `.event` row and interface slots as a field-like event, but no
+native multicast backing field. ilemit sees ordinary calls plus native event metadata, not policies.
+
+Delegating directly to a policy (`val handle by myPolicy`), without `clrEvent`, creates an ordinary
+handle-valued property. Neither a policy type nor a matching `getValue`/`invoke` API makes a property
+an event. Subscription tokens intentionally retain their exact handler strongly until the token
+itself is no longer reachable; a weak-event test must drop that token as well as its subscriber.
 
 ---
 

@@ -2154,6 +2154,13 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
 - Reading an event creates a retained `kotlin.clr.ClrEvent<H>` handle bound to that event and source, evaluating
   the source once. Handles can be parameters, returned values, fields, locals, and captures, including across DLLs.
   An ordinary property storing a handle remains an ordinary property, not a new CLR event declaration.
+- `val E: ClrEvent<H> by clrEvent(policy)` declares a native event with user-defined
+  `ClrEventPolicy<H>` storage and dispatch. The policy is initialized once at the ordinary Kotlin
+  declaration position. Its protected add/remove hooks receive the exact native handler; its
+  `invoke(vararg Any?)` receives the native raise arguments. Native metadata and interface slots
+  remain compiler-owned. `val handle by policy` without the explicit factory is an ordinary property.
+  Native raise arguments must fit the policy's `Any?` array; managed references, native pointers and
+  byref-like arguments are diagnosed rather than boxed or silently copied.
 - `subscribe(handler)` adds the handler and returns `kotlin.clr.EventSubscription<H>`, an `AutoCloseable`.
   `close()` atomically claims removal and removes the **same handler instance** exactly once, including concurrent
   or reentrant close calls. It does not wait for callbacks already in flight; a Flow adapter's channel owns delivery

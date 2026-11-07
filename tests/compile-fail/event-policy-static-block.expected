@@ -1,0 +1,2 @@
+CLR event declarations in companion blocks are not supported
+declare the event on an instance or companion object

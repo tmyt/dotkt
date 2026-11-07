@@ -105,7 +105,6 @@ import java.security.MessageDigest
 private val CLR_COMPILE_TIME_INTRINSIC_FUNCTIONS = setOf(
 	"kotlin.clr.byref",
 	"kotlin.clr.stackBuffer",
-	"kotlin.clr.clrEvent",
 )
 
 private val CLR_COMPILE_TIME_INTRINSIC_CLASSES = setOf(
@@ -1018,7 +1017,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			.filter {
 				it.origin.toString() == "DEFINED" &&
 					!isExternalNetType(it) &&
-					it.fqNameWhenAvailable?.asString() !in CLR_COMPILE_TIME_INTRINSIC_FUNCTIONS
+					it.fqNameWhenAvailable?.asString() !in CLR_COMPILE_TIME_INTRINSIC_FUNCTIONS &&
+					!(it.fqNameWhenAvailable?.asString() == "kotlin.clr.clrEvent" &&
+						it.parameters.none(::isValueParameter))
 			}
 		// Compile-time kotlin.clr types are BIR vocabulary or handles and have no physical CLR class.
 		// @ClrTypeAlias classes (collections/StringBuilder/unsigned/primitives/String/…) are emitted here as ORDINARY
@@ -1050,6 +1051,12 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// Only USER properties (origin DEFINED) — a consuming module's FIR also holds external top-level properties
 		// loaded from reference KLIBs; those are the library's, not ours to emit.
 		val topProps = file.declarations.filterIsInstance<IrProperty>().filter { it.origin.toString() == "DEFINED" }
+		for (property in topProps) if (clrEventDelegateCall(property) != null) {
+			hadError = true
+			messageCollector?.report(CompilerMessageSeverity.ERROR,
+				"top-level CLR event declarations are not supported; " +
+					"declare the event on an instance or companion object", locationOf(property))
+		}
 		// A source file containing only Kotlin alias declarations still owns a metadata surface.
 		if (functions.isEmpty() && classes.isEmpty() && objects.isEmpty() && interfaces.isEmpty() && enums.isEmpty() && annClasses.isEmpty() && topProps.isEmpty() && typeAliases.isEmpty())
 			return ""

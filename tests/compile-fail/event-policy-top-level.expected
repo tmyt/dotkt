@@ -1,0 +1,2 @@
+top-level CLR event declarations are not supported
+declare the event on an instance or companion object
