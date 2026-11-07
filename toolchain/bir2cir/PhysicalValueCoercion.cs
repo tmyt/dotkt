@@ -21,6 +21,7 @@ static class PhysicalValueCoercion
     {
         source = SignatureValueTypes.Of(source);
         target = SignatureValueTypes.Of(target);
+        ValidateNativePointerConversion(source, target);
         return source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
         || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
@@ -35,6 +36,15 @@ static class PhysicalValueCoercion
         // target interface. State the boxing edge before a conditional merge, store, argument or return.
         || !IsVoid(source) && !IsVoid(target)
             && NeedsBox(source, index.IsValue) && IsReferenceSlot(target, index.IsValue);
+    }
+
+    static void ValidateNativePointerConversion(TypeNode source, TypeNode target)
+    {
+        if (source == null || target == null || IsVoid(target)) return;
+        if ((source is TypeNode.FnPtr || target is TypeNode.FnPtr)
+            && BirTypeLowering.CanonicalPhysicalSlotType(source) != BirTypeLowering.CanonicalPhysicalSlotType(target))
+            throw new InvalidOperationException("bir2cir: a native function-pointer value requires its exact signature; boxing and checked casts are not supported"
+                + $" (source={TypeNode.ToJson(source)}, target={TypeNode.ToJson(target)})");
     }
 
     static bool NeedsBox(TypeNode type, ValueTypeOracle isValue) => type switch
@@ -884,6 +894,27 @@ static class PhysicalValueCoercion
         if (index.ReferenceBuild && !(kind == "binOp" && Str(node["op"]) == "===")) return;
         switch (kind)
         {
+            case "objMethod":
+                ValidateNativePointerConversion(ExprType(node["recv"], scope, index), new TypeNode.Fqn("System.Object"));
+                ValidateNativePointerConversion(ExprType(node["arg"], scope, index), new TypeNode.Fqn("System.Object"));
+                break;
+            case "objEq":
+                ValidateNativePointerConversion(ExprType(node["lhs"], scope, index), new TypeNode.Fqn("System.Object"));
+                ValidateNativePointerConversion(ExprType(node["rhs"], scope, index), new TypeNode.Fqn("System.Object"));
+                break;
+            case "isInst": case "isInstRef":
+                var checkedValue = ExprType(node["e"], scope, index);
+                ValidateNativePointerConversion(checkedValue, new TypeNode.Fqn("System.Object"));
+                ValidateNativePointerConversion(checkedValue, TypeJson.Read(node["type"]));
+                break;
+            case "concat":
+                if (node["parts"] is JsonArray parts)
+                    foreach (var part in parts)
+                        ValidateNativePointerConversion(ExprType(part, scope, index), new TypeNode.Fqn("System.Object"));
+                break;
+            case "cast":
+                ValidateNativePointerConversion(ExprType(node["e"], scope, index), TypeJson.Read(node["type"]));
+                break;
             case "binOp" when Str(node["op"]) == "===":
                 var identityLeft = ExprType(node["lhs"], scope, index);
                 var identityRight = ExprType(node["rhs"], scope, index);
@@ -894,11 +925,14 @@ static class PhysicalValueCoercion
                 // without calling Equals or narrowing one operand to the other's type.
                 if (!identityLeft.Equals(identityRight))
                     foreach (var operand in new[] { "lhs", "rhs" })
+                    {
+                        ValidateNativePointerConversion(ExprType(node[operand], scope, index), new TypeNode.Fqn("System.Object"));
                         node[operand] = new JsonObject
                         {
                             ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Object"),
                             ["e"] = node[operand]!.DeepClone(),
                         };
+                    }
                 node["op"] = "==";
                 break;
             case "var":
@@ -1319,6 +1353,10 @@ static class PhysicalValueCoercion
         TypeNode.ByRef b => new TypeNode.ByRef(Close(b.Of, ownerArgs, methodArgs)),
         TypeNode.Ptr p => new TypeNode.Ptr(Close(p.Of, ownerArgs, methodArgs)),
         TypeNode.Mod m => new TypeNode.Mod(m.Req, Close(m.M, ownerArgs, methodArgs), Close(m.Of, ownerArgs, methodArgs)),
+        TypeNode.FnPtr pointer => pointer with {
+            Ret = Close(pointer.Ret, ownerArgs, methodArgs),
+            Params = pointer.Params.Select(parameter => Close(parameter, ownerArgs, methodArgs)).ToArray(),
+        },
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, Close(fn.Ret, ownerArgs, methodArgs),
             fn.Params.Select(p => Close(p, ownerArgs, methodArgs)).ToArray(),
             fn.Recv == null ? null : Close(fn.Recv, ownerArgs, methodArgs), fn.Clr,

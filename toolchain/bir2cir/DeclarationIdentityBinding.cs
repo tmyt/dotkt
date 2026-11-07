@@ -836,6 +836,8 @@ static class DeclarationIdentityBinding
     internal static string PhysicalTypeSignature(TypeNode type) => type switch
     {
         TypeNode.Mod m => (m.Req ? "modreq:" : "modopt:") + PhysicalTypeSignature(m.M) + ":" + PhysicalTypeSignature(m.Of),
+        TypeNode.Fqn { Name: "System.Nullable" or "System.Nullable`1", Args: [var value] } =>
+            "System.Nullable[" + PhysicalTypeSignature(value) + "]",
         TypeNode.Fqn { Args: null } f => PhysicalTypeName(f.Name),
         TypeNode.Fqn f => PhysicalTypeName(f.Name) + "[" +
             string.Join(",", f.Args!.Select(PhysicalTypeSignature)) + "]",
@@ -845,9 +847,12 @@ static class DeclarationIdentityBinding
         TypeNode.Fn fn => PhysicalDelegateSignature(fn),
         TypeNode.Nullable n => "System.Nullable[" + PhysicalTypeSignature(n.Of) + "]",
         TypeNode.Oblivious o => PhysicalTypeSignature(o.Of),
-        TypeNode.Array a => "array:" + PhysicalTypeSignature(a.Elem),
+        TypeNode.Array a => "array:" + a.Rank + ":" + a.SzArray + ":" + PhysicalTypeSignature(a.Elem),
         TypeNode.ByRef b => "byref:" + PhysicalTypeSignature(b.Of),
         TypeNode.Ptr pointer => "ptr:" + PhysicalTypeSignature(pointer.Of),
+        TypeNode.FnPtr pointer => "fnPtr:" + pointer.CallingConvention + ":" + pointer.GenericArity
+            + ":" + pointer.RequiredParams + "[" + string.Join(";", pointer.Params.Select(PhysicalTypeSignature))
+            + "]->" + PhysicalTypeSignature(pointer.Ret),
         TypeNode.Star => throw new InvalidOperationException(
             "bir2cir: unresolved star projection reached final CLR MethodDef signature allocation"),
         _ => throw new InvalidOperationException(

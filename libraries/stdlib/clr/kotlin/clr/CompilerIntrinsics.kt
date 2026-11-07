@@ -29,6 +29,14 @@ public class ClrRef<T> private constructor() {
  */
 public class ClrPointer<T> private constructor()
 
+/**
+ * An opaque CLR function pointer. [C] carries its calling convention and [F]
+ * its callable signature, including signature-only types when required.
+ * Unlike a Kotlin function or delegate, this does not retain a managed target.
+ * This is a compile-time type; no wrapper class is emitted.
+ */
+public class ClrFunctionPointer<C, F> private constructor()
+
 /** Marks [x] as an addressable CLR `ref`/`out` argument or a live ref-returning delegate. */
 public fun <T> byref(x: T): ClrRef<T> = TODO("compiler intrinsic")
 

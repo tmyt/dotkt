@@ -20,7 +20,7 @@ using DotKt.Bir;
 // string (see TypeKeys + the `sig` comma-list + the `attrs`/attribute-class force path), not just the signature
 // keys — a primitive left un-lowered in an expression position reaches ilemit as `kotlin.Byte` and fails to
 // resolve ("cannot resolve .NET type kotlin.Byte").
-static class BirTypeLowering
+static partial class BirTypeLowering
 {
     // A synthesized declaration/MethodImpl may fill a value-returning generic CLR slot even when its closed
     // Kotlin type is Unit. This representation fact is consumed here, never serialized into final CIR.
@@ -82,6 +82,22 @@ static class BirTypeLowering
         {
             switch (type)
             {
+                case TypeNode.Fqn { Name: FunctionPointerVocabulary.Pointer } pointer:
+                    if (directGenericArgument)
+                        Refuse("A CLR function pointer cannot occupy a CLR generic argument");
+                    var shape = FunctionPointerShape(pointer);
+                    ValidateType(shape.Ret, directGenericArgument: false);
+                    foreach (var parameter in shape.Params) ValidateType(parameter, directGenericArgument: false);
+                    return;
+                case TypeNode.Fqn { Name: FunctionPointerVocabulary.Required or FunctionPointerVocabulary.Optional, Args: [_, var modified] }:
+                    ValidateType(modified, directGenericArgument);
+                    return;
+                case TypeNode.Fqn { Name: FunctionPointerVocabulary.Value, Args: [var value] }:
+                    ValidateType(value, directGenericArgument);
+                    return;
+                case TypeNode.Fqn { Name: var name, Args: [var element] } when FunctionPointerVocabulary.ArrayRanks.ContainsKey(name):
+                    ValidateType(element, directGenericArgument: false);
+                    return;
                 case TypeNode.Fqn { Name: PointerIntrinsicFqn } pointer:
                     if (pointer.Args is not { Length: 1 })
                         Refuse($"{PointerIntrinsicFqn} requires exactly one pointee type");
@@ -445,6 +461,7 @@ static class BirTypeLowering
         {
             case TypeNode.Fqn f:
                 {
+                    if (TryLowerNativeSignature(f, refBuild, force, typeArg, out var native)) return native;
                     // A SIGNED primitive array (`kotlin.IntArray`) -> `Array(elem)` in EVERY build (ref included): this is
                     // the array REPRESENTATION, not a primitive substitution, so it fires before the refBuild passthrough.
                     // The element then lowers on the recursive call (kotlin.Int -> System.Int32 in app/rt, verbatim in ref).
@@ -465,9 +482,7 @@ static class BirTypeLowering
                         if (f.Args[0] is TypeNode.Star)
                             throw new InvalidDataException(
                                 $"bir2cir: {_file}: {PointerIntrinsicFqn}<*> has no exact CLR pointee signature");
-                        var pointee = f.Args[0] is TypeNode.Fqn { Name: "kotlin.Unit", Args: null }
-                            ? VoidType
-                            : LowerType(f.Args[0], refBuild, force, typeArg: false);
+                        var pointee = LowerNativeSlot(f.Args[0], refBuild, force, voidPosition: true);
                         return new TypeNode.Ptr(pointee);
                     }
                     // `kotlin.clr.Span<T>` -> the real `System.Span<T>` in EVERY build (ref included). A synthetic interop
@@ -529,7 +544,7 @@ static class BirTypeLowering
                     return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
                 }
             case TypeNode.Array a:
-                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
+                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false), a.Rank, a.SzArray);
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
             case TypeNode.Mod modifier:
@@ -711,6 +726,8 @@ static class BirTypeLowering
             "ushort" => "System.UInt16",
             _ => f.Name,
         }),
+        TypeNode.Fqn { Name: "System.Nullable" or "System.Nullable`1", Args: [var value] } =>
+            new TypeNode.Nullable(CanonicalPhysicalSlotType(value)),
         TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(
             f.Name, args.Select(CanonicalPhysicalSlotType).ToArray()),
         TypeNode.Array a => new TypeNode.Array(
@@ -721,6 +738,10 @@ static class BirTypeLowering
         TypeNode.Ptr p => new TypeNode.Ptr(CanonicalPhysicalSlotType(p.Of)),
         TypeNode.Mod m => new TypeNode.Mod(m.Req,
             CanonicalPhysicalSlotType(m.M), CanonicalPhysicalSlotType(m.Of)),
+        TypeNode.FnPtr pointer => pointer with {
+            Ret = CanonicalPhysicalSlotType(pointer.Ret),
+            Params = pointer.Params.Select(CanonicalPhysicalSlotType).ToArray(),
+        },
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
             CanonicalPhysicalSlotType(fn.Ret),
             fn.Params.Select(CanonicalPhysicalSlotType).ToArray(),

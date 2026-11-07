@@ -25,7 +25,7 @@ internal sealed record Dll2KlibProjectionInput(
 
 internal static class Program
 {
-    private const int ProjectionStateVersion = 4;
+    private const int ProjectionStateVersion = 5;
 
     public static async Task<int> Main(string[] args)
     {
@@ -1032,7 +1032,7 @@ internal static class CompanionCarrierShape
             carrierHandle,
             default,
             ImmutableDictionary<GenericParameterHandle, int>.Empty);
-        var actual = field.DecodeSignature(RawSignatureTypeProvider.Instance, context);
+        var actual = field.DecodeProjectedSignature(RawSignatureTypeProvider.Instance, context);
         var expected = RawSignatureTypeProvider.Instance.GetTypeFromDefinition(
             md, carrierHandle, rawTypeKind: 0x12); // ELEMENT_TYPE_CLASS
         return StringComparer.Ordinal.Equals(actual, expected);
@@ -2081,7 +2081,7 @@ internal sealed class AssemblyScanner : IDisposable
                     !_attrs.Has(methodHandle, "System.Runtime.CompilerServices.CompilerGeneratedAttribute",
                         requireTrust: false))
                     continue;
-                var signature = method.DecodeSignature(signatures, context);
+                var signature = method.DecodeProjectedSignature(signatures, context);
                 var shapeMatches = signature.GenericParameterCount == 0 && (isValues
                     ? signature.ParameterTypes.Length == 0 &&
                         signatures.ArrayElement(signature.ReturnType) is { } element &&
@@ -2110,7 +2110,7 @@ internal sealed class AssemblyScanner : IDisposable
                     $"physical entry field '{entry.Field}' has {fields.Length} declarations");
             var field = _md.GetFieldDefinition(fields[0]);
             var required = FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly;
-            var fieldType = field.DecodeSignature(signatures, context);
+            var fieldType = field.DecodeProjectedSignature(signatures, context);
             if ((field.Attributes & required) != required ||
                 (field.Attributes & FieldAttributes.Literal) != 0 ||
                 !IsSelfType(fieldType, projectedSelfName))
@@ -2128,7 +2128,7 @@ internal sealed class AssemblyScanner : IDisposable
                     $"malformed [KotlinRichEnum] carrier on '{MetadataTypeName(handle)}': " +
                     $"metadata field '{physicalName}' has {fields.Length} declarations");
             var field = _md.GetFieldDefinition(fields[0]);
-            var fieldType = field.DecodeSignature(signatures, context);
+            var fieldType = field.DecodeProjectedSignature(signatures, context);
             var required = FieldAttributes.Public | FieldAttributes.InitOnly;
             if ((field.Attributes & required) != required ||
                 (field.Attributes & (FieldAttributes.Static | FieldAttributes.Literal)) != 0 ||
@@ -2425,7 +2425,7 @@ internal sealed class AssemblyScanner : IDisposable
             var name = isClrDelegate ? "invoke" : declarationIdentity?.Name ?? clrMethodName;
             if (accessorMethods.Contains(methodHandle)) continue;
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
-            var sig = method.DecodeSignature(signatures, context);
+            var sig = method.DecodeProjectedSignature(signatures, context);
             if (name == ".ctor")
             {
                 if (isKotlinRichEnum) continue;
@@ -2545,7 +2545,7 @@ internal sealed class AssemblyScanner : IDisposable
                 continue;
             var unary = UnaryOperators.Contains(operatorName);
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
-            var signature = method.DecodeSignature(signatures, context);
+            var signature = method.DecodeProjectedSignature(signatures, context);
             if (signature.ParameterTypes.Length != (unary ? 1 : 2) ||
                 !IsSelfType(signature.ParameterTypes[0], result.FqName))
                 continue;
@@ -2594,7 +2594,7 @@ internal sealed class AssemblyScanner : IDisposable
             // defaults, parameter names and generic metadata cannot drift with the private implementation signature.
             if (explicitInterfaceProperty || !IsPublicOrProtected(representative.Attributes)) continue;
             var context = new GenericContext(handle, accessors.Getter.IsNil ? accessors.Setter : accessors.Getter, typeParameterIds);
-            var signature = property.DecodeSignature(signatures, context);
+            var signature = property.DecodeProjectedSignature(signatures, context);
             var name = explicitInterfaceProperty
                 ? metadataPropertyName[(metadataPropertyName.LastIndexOf('.') + 1)..]
                 : sourcePropertyName;
@@ -2660,7 +2660,7 @@ internal sealed class AssemblyScanner : IDisposable
                     result.EnumEntry.Add(new EnumEntry { Name = names.String(name) });
                 continue;
             }
-            var fieldType = ProjectType(fieldHandle, field.DecodeSignature(signatures, typeContext), handle, names, signatures, typeContext);
+            var fieldType = ProjectType(fieldHandle, field.DecodeProjectedSignature(signatures, typeContext), handle, names, signatures, typeContext);
             var hasCustomAccessors = customFieldAccessors.TryGetValue(name, out var custom);
             var canWrite = hasCustomAccessors && (custom.Access & 2) != 0 ||
                 (field.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) == 0 &&
@@ -2838,7 +2838,7 @@ internal sealed class AssemblyScanner : IDisposable
             var getterParameterCount = pair.Getter is null
                 ? 0
                 : pair.Getter.Reader.GetMethodDefinition(pair.Getter.Declaration)
-                    .DecodeSignature(
+                    .DecodeProjectedSignature(
                         pair.Getter.Signatures,
                         InheritedContext(
                             pair.Getter.Reader,
@@ -2848,7 +2848,7 @@ internal sealed class AssemblyScanner : IDisposable
             var setterParameterCount = pair.Setter is null
                 ? 0
                 : pair.Setter.Reader.GetMethodDefinition(pair.Setter.Declaration)
-                    .DecodeSignature(
+                    .DecodeProjectedSignature(
                         pair.Setter.Signatures,
                         InheritedContext(
                             pair.Setter.Reader,
@@ -2892,7 +2892,7 @@ internal sealed class AssemblyScanner : IDisposable
             {
                 var method = getter.Reader.GetMethodDefinition(getter.Declaration);
                 var context = InheritedContext(getter.Reader, getter.Declaration, method);
-                var signature = method.DecodeSignature(getter.Signatures, context);
+                var signature = method.DecodeProjectedSignature(getter.Signatures, context);
                 propertyType = ProjectInheritedReturn(
                     getter.Reader,
                     getter.Declaration,
@@ -2905,7 +2905,7 @@ internal sealed class AssemblyScanner : IDisposable
                 var setter = pair.Setter!;
                 var method = setter.Reader.GetMethodDefinition(setter.Declaration);
                 var context = InheritedContext(setter.Reader, setter.Declaration, method);
-                var signature = method.DecodeSignature(setter.Signatures, context);
+                var signature = method.DecodeProjectedSignature(setter.Signatures, context);
                 propertyType = ProjectInheritedType(
                     setter.Reader,
                     method.GetParameters().FirstOrDefault(handle =>
@@ -3022,7 +3022,7 @@ internal sealed class AssemblyScanner : IDisposable
             var reader = inherited.Reader;
             var declaration = reader.GetMethodDefinition(inherited.Declaration);
             var context = InheritedContext(reader, inherited.Declaration, declaration);
-            var signature = declaration.DecodeSignature(inherited.Signatures, context);
+            var signature = declaration.DecodeProjectedSignature(inherited.Signatures, context);
             if (signature.ParameterTypes.Length != 1) continue;
             var parameterHandle = declaration.GetParameters().FirstOrDefault(handle =>
                 reader.GetParameter(handle).SequenceNumber == 1);
@@ -3527,7 +3527,7 @@ internal sealed class AssemblyScanner : IDisposable
         });
         MethodSignature<string>? referenceIdentity = declarationEntity.Kind == HandleKind.MemberReference
             ? reader.GetMemberReference((MemberReferenceHandle)declarationEntity)
-                .DecodeMethodSignature(identitySignatures, sourceContext)
+                .DecodeProjectedMethodSignature(identitySignatures, sourceContext)
             : null;
         foreach (var candidateHandle in declarationReader.GetTypeDefinition(resolvedOwner.Handle).GetMethods())
         {
@@ -3540,7 +3540,7 @@ internal sealed class AssemblyScanner : IDisposable
             var candidateContext = InheritedContext(declarationReader, candidateHandle, candidate);
             if (referenceIdentity is { } expectedIdentity)
             {
-                var actualIdentity = candidate.DecodeSignature(identitySignatures, candidateContext);
+                var actualIdentity = candidate.DecodeProjectedSignature(identitySignatures, candidateContext);
                 if (actualIdentity.Header != expectedIdentity.Header
                     || actualIdentity.RequiredParameterCount != expectedIdentity.RequiredParameterCount
                     || actualIdentity.ReturnType != expectedIdentity.ReturnType
@@ -3597,7 +3597,7 @@ internal sealed class AssemblyScanner : IDisposable
                 var representative = reader.GetMethodDefinition(representativeHandle);
                 if (!IsPublicOrProtected(representative.Attributes) ||
                     (representative.Attributes & MethodAttributes.Static) != 0) continue;
-                var signature = property.DecodeSignature(decoder, context with { Method = representativeHandle });
+                var signature = property.DecodeProjectedSignature(decoder, context with { Method = representativeHandle });
                 if (signature.ParameterTypes.Length != 0) continue;
                 var propertyType = !accessors.Getter.IsNil
                     ? ProjectInheritedReturn(reader, representativeHandle, representative, signature.ReturnType, decoder)
@@ -3636,7 +3636,7 @@ internal sealed class AssemblyScanner : IDisposable
                 if (reader.GetString(field.Name) != name || !IsPublicOrProtected(field.Attributes)) continue;
                 if ((field.Attributes & FieldAttributes.Static) != 0) return null;
                 var fieldType = ProjectInheritedType(reader, fieldHandle,
-                    field.DecodeSignature(decoder, context), resolved.Handle, decoder);
+                    field.DecodeProjectedSignature(decoder, context), resolved.Handle, decoder);
                 fieldType = SubstituteTypeParameters(fieldType, arguments);
                 var canWrite = (field.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) == 0 &&
                     !decoder.Attributes.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinReadOnlyAttribute");
@@ -3795,7 +3795,7 @@ internal sealed class AssemblyScanner : IDisposable
         var declarationHandle = inherited.Declaration;
         var declaration = reader.GetMethodDefinition(declarationHandle);
         var context = InheritedContext(reader, declarationHandle, declaration);
-        var signature = declaration.DecodeSignature(inherited.Signatures, context);
+        var signature = declaration.DecodeProjectedSignature(inherited.Signatures, context);
         var returnType = SubstituteTypeParameters(signature.ReturnType, inherited.InterfaceArguments);
         var attrs = inherited.Signatures.Attributes;
         kotlinFlags |= attrs.Int32(
@@ -4096,7 +4096,7 @@ internal sealed class AssemblyScanner : IDisposable
         declaration.InlineClassUnderlyingPropertyName = names.String(propertyName);
         declaration.InlineClassUnderlyingType = ProjectType(
             fieldHandle,
-            field.DecodeSignature(signatures, context),
+            field.DecodeProjectedSignature(signatures, context),
             ownerHandle,
             names,
             signatures,
@@ -4120,7 +4120,7 @@ internal sealed class AssemblyScanner : IDisposable
                 method.GetGenericParameters().Count != 0)
                 continue;
             var context = ownerContext with { Method = methodHandle };
-            var signature = method.DecodeSignature(signatures, context);
+            var signature = method.DecodeProjectedSignature(signatures, context);
             if (signature.ParameterTypes.Length != 0 ||
                 !TryAwaitResult(methodHandle, signature.ReturnType, names, signatures, out var resultType))
                 continue;
@@ -4174,7 +4174,7 @@ internal sealed class AssemblyScanner : IDisposable
             if (!IsPublicOrProtected(getter.Attributes) ||
                 (getter.Attributes & MethodAttributes.Static) != 0)
                 return false;
-            var signature = property.DecodeSignature(
+            var signature = property.DecodeProjectedSignature(
                 awaiterSignatures, context with { Method = getterHandle });
             return signature.ParameterTypes.Length == 0 &&
                 IsNamed(signature.ReturnType, "kotlin.Boolean", names);
@@ -4188,7 +4188,7 @@ internal sealed class AssemblyScanner : IDisposable
                 !IsPublicOrProtected(method.Attributes) ||
                 (method.Attributes & MethodAttributes.Static) != 0)
                 return false;
-            var signature = method.DecodeSignature(
+            var signature = method.DecodeProjectedSignature(
                 awaiterSignatures, context with { Method = methodHandle });
             return signature.ParameterTypes.Length == 1;
         });
@@ -4203,7 +4203,7 @@ internal sealed class AssemblyScanner : IDisposable
                 method.GetGenericParameters().Count != 0)
                 continue;
             var methodContext = context with { Method = methodHandle };
-            var signature = method.DecodeSignature(awaiterSignatures, methodContext);
+            var signature = method.DecodeProjectedSignature(awaiterSignatures, methodContext);
             if (signature.ParameterTypes.Length != 0) continue;
             var projected = ProjectReturn(
                 methodHandle,
@@ -4236,7 +4236,7 @@ internal sealed class AssemblyScanner : IDisposable
                 method.GetGenericParameters().Count != 0)
                 continue;
             var methodContext = context with { Method = methodHandle };
-            var signature = method.DecodeSignature(signatures, methodContext);
+            var signature = method.DecodeProjectedSignature(signatures, methodContext);
             if (signature.ParameterTypes.Length != 1 ||
                 !IsNamed(signature.ParameterTypes[0], "kotlin.Boolean", names))
                 continue;
@@ -4287,7 +4287,7 @@ internal sealed class AssemblyScanner : IDisposable
                 (method.Attributes & MethodAttributes.Static) != 0 ||
                 method.GetGenericParameters().Count != 0)
                 continue;
-            var signature = method.DecodeSignature(
+            var signature = method.DecodeProjectedSignature(
                 signatures, context with { Method = methodHandle });
             if (signature.ParameterTypes.Length != 0) continue;
             var concreteAwaiter = SubstituteTypeParameters(
@@ -4451,7 +4451,7 @@ internal sealed class AssemblyScanner : IDisposable
                 (method.Attributes & MethodAttributes.Static) != 0 ||
                 method.GetGenericParameters().Count != 0)
                 continue;
-            var signature = method.DecodeSignature(
+            var signature = method.DecodeProjectedSignature(
                 signatures, context with { Method = methodHandle });
             if (signature.ParameterTypes.Length != 0) continue;
             var concreteEnumerator = SubstituteTypeParameters(
@@ -4503,7 +4503,7 @@ internal sealed class AssemblyScanner : IDisposable
                 !IsPublicOrProtected(method.Attributes) ||
                 (method.Attributes & MethodAttributes.Static) != 0)
                 return false;
-            var signature = method.DecodeSignature(
+            var signature = method.DecodeProjectedSignature(
                 signatures, context with { Method = methodHandle });
             return signature.ParameterTypes.Length == 0 &&
                 IsNamed(signature.ReturnType, "kotlin.Boolean", names);
@@ -4521,7 +4521,7 @@ internal sealed class AssemblyScanner : IDisposable
                 (getter.Attributes & MethodAttributes.Static) != 0)
                 continue;
             var getterContext = context with { Method = getterHandle };
-            var signature = property.DecodeSignature(signatures, getterContext);
+            var signature = property.DecodeProjectedSignature(signatures, getterContext);
             if (signature.ParameterTypes.Length != 0) continue;
             var projected = ProjectReturn(
                 getterHandle,
@@ -4641,7 +4641,7 @@ internal sealed class AssemblyScanner : IDisposable
     }
 
     private ImmutableArray<string> PhysicalParameterKeys(MethodDefinition method, GenericContext context) =>
-        method.DecodeSignature(RawSignatureTypeProvider.Instance, context).ParameterTypes;
+        method.DecodeProjectedSignature(RawSignatureTypeProvider.Instance, context).ParameterTypes;
 
     private static bool PhysicalPrefixMatches(
         ImmutableArray<string> fixedParameters,
@@ -4864,7 +4864,7 @@ internal sealed class AssemblyScanner : IDisposable
                 continue;
             var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
             var context = new GenericContext(owner, methodHandle, typeParameterIds);
-            var sig = method.DecodeSignature(signatures, context);
+            var sig = method.DecodeProjectedSignature(signatures, context);
             var function = new Function
             {
                 Name = names.String(_md.GetString(method.Name)),
@@ -4951,7 +4951,7 @@ internal sealed class AssemblyScanner : IDisposable
             var declarationIdentity = KotlinDeclarationIdentityCarrier(entry.KotlinImplementation);
             var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
             var context = new GenericContext(owner, entry.KotlinImplementation, typeParameterIds);
-            var signature = method.DecodeSignature(signatures, context);
+            var signature = method.DecodeProjectedSignature(signatures, context);
             var kotlinFlags = _attrs.Int32(
                 entry.KotlinImplementation, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
             var function = new Function
@@ -5096,7 +5096,7 @@ internal sealed class AssemblyScanner : IDisposable
             markerOwner,
             markerHandle,
             new Dictionary<GenericParameterHandle, int>());
-        var signature = marker.DecodeSignature(signatures, context);
+        var signature = marker.DecodeProjectedSignature(signatures, context);
         // Roslyn omits the Param row when the synthetic receiver parameter has an empty metadata name. Its type is
         // still present in the method signature; a nil slot correctly falls back to the marker method's NRT context.
         var parameterHandle = PhysicalParameters(marker).Select(parameter => parameter.Handle).FirstOrDefault();
@@ -5298,7 +5298,7 @@ internal sealed class AssemblyScanner : IDisposable
                 methodAccessorMethods.Contains(methodHandle))
                 continue;
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
-            var sig = method.DecodeSignature(signatures, context);
+            var sig = method.DecodeProjectedSignature(signatures, context);
             var modality = (method.Attributes & MethodAttributes.Abstract) != 0 ? 2
                 : (method.Attributes & MethodAttributes.Virtual) != 0 && (method.Attributes & MethodAttributes.Final) == 0 ? 1 : 0;
             var companion = CompanionExtension(methodHandle, signatures, "function");
@@ -5376,7 +5376,7 @@ internal sealed class AssemblyScanner : IDisposable
             var method = _md.GetMethodDefinition(methodHandle);
             if (!IsPublicOrProtected(method.Attributes)) continue;
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
-            var sig = property.DecodeSignature(signatures, context);
+            var sig = property.DecodeProjectedSignature(signatures, context);
             var type = !accessors.Getter.IsNil
                 ? ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context)
                 : ProjectType(
@@ -5439,7 +5439,7 @@ internal sealed class AssemblyScanner : IDisposable
             var name = _md.GetString(field.Name);
             if (!IsPublicOrProtected(field.Attributes) || name.StartsWith('<') || propertyNames.Contains(name)) continue;
             var context = new GenericContext(handle, default, typeParameterIds);
-            var type = ProjectType(fieldHandle, field.DecodeSignature(signatures, context), handle, names, signatures, context);
+            var type = ProjectType(fieldHandle, field.DecodeProjectedSignature(signatures, context), handle, names, signatures, context);
             var hasCustomAccessors = customFieldAccessors.TryGetValue(name, out var custom);
             var canWrite = hasCustomAccessors && (custom.Access & 2) != 0 ||
                 (field.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) == 0 &&
@@ -5776,7 +5776,7 @@ internal sealed class AssemblyScanner : IDisposable
                 continue;
             MethodSignature<string>? getterSignature = getterHandle.IsNil
                 ? null
-                : _md.GetMethodDefinition(getterHandle).DecodeSignature(
+                : _md.GetMethodDefinition(getterHandle).DecodeProjectedSignature(
                     RawSignatureTypeProvider.Instance,
                     new GenericContext(owner, getterHandle, typeParameterIds));
             // Context parameters participate in Kotlin property overload resolution. Parameter count alone can pair
@@ -5797,7 +5797,7 @@ internal sealed class AssemblyScanner : IDisposable
                     if (HasKotlinExtensionReceiver(getterHandle) != HasKotlinExtensionReceiver(setterHandle))
                         throw new InvalidDataException(
                             "Kotlin property getter/setter disagree about the extension-receiver role");
-                    var setterSignature = setter.DecodeSignature(
+                    var setterSignature = setter.DecodeProjectedSignature(
                     RawSignatureTypeProvider.Instance,
                     new GenericContext(owner, setterHandle, typeParameterIds));
                     var getterParameterCount = SemanticParameterCount(
@@ -5864,7 +5864,7 @@ internal sealed class AssemblyScanner : IDisposable
             var representativeHandle = pair.Getter.IsNil ? pair.Setter : pair.Getter;
             if (representativeHandle.IsNil || pair.Name is null) continue;
             var representative = _md.GetMethodDefinition(representativeHandle);
-            var representativeSignature = representative.DecodeSignature(
+            var representativeSignature = representative.DecodeProjectedSignature(
                 RawSignatureTypeProvider.Instance,
                 new GenericContext(owner, representativeHandle, typeParameterIds));
             if (representativeSignature.GenericParameterCount == 0
@@ -5879,10 +5879,10 @@ internal sealed class AssemblyScanner : IDisposable
                 if (HasKotlinExtensionReceiver(pair.Getter) != HasKotlinExtensionReceiver(pair.Setter))
                     throw new InvalidDataException(
                         "[KotlinPropertyAccessor] getter/setter disagree about the extension-receiver role");
-                var getterSignature = getter.DecodeSignature(
+                var getterSignature = getter.DecodeProjectedSignature(
                     RawSignatureTypeProvider.Instance,
                     new GenericContext(owner, pair.Getter, typeParameterIds));
-                var setterSignature = setter.DecodeSignature(
+                var setterSignature = setter.DecodeProjectedSignature(
                     RawSignatureTypeProvider.Instance,
                     new GenericContext(owner, pair.Setter, typeParameterIds));
                 var getterParameterCount = SemanticParameterCount(
@@ -6096,8 +6096,8 @@ internal sealed class AssemblyScanner : IDisposable
         var hasReceiver = HasKotlinExtensionReceiver(representativeHandle);
         var context = new GenericContext(owner, representativeHandle, typeParameterIds);
         var propertySignature = propertyHandle.IsNil
-            ? representative.DecodeSignature(signatures, context)
-            : _md.GetPropertyDefinition(propertyHandle).DecodeSignature(signatures, context);
+            ? representative.DecodeProjectedSignature(signatures, context)
+            : _md.GetPropertyDefinition(propertyHandle).DecodeProjectedSignature(signatures, context);
         var propertyTypeSignature = propertyHandle.IsNil && getterHandle.IsNil
             ? propertySignature.ParameterTypes[physical.Count - 1]
             : propertySignature.ReturnType;
@@ -6466,7 +6466,7 @@ internal sealed class AssemblyScanner : IDisposable
                     $"CLR attribute '{MetadataTypeName(owner)}' declares duplicate named argument '{name}'");
             var type = ProjectType(
                 fieldHandle,
-                field.DecodeSignature(signatures, context),
+                field.DecodeProjectedSignature(signatures, context),
                 owner,
                 names,
                 signatures,
@@ -6483,7 +6483,7 @@ internal sealed class AssemblyScanner : IDisposable
             if ((setter.Attributes & MethodAttributes.MemberAccessMask) != MethodAttributes.Public ||
                 (setter.Attributes & MethodAttributes.Static) != 0)
                 continue;
-            var signature = property.DecodeSignature(signatures, context);
+            var signature = property.DecodeProjectedSignature(signatures, context);
             if (signature.ParameterTypes.Length != 0) continue;
             var name = _md.GetString(property.Name);
             if (!seen.Add(name))
@@ -6607,7 +6607,7 @@ internal sealed class AssemblyScanner : IDisposable
             var getter = _md.GetMethodDefinition(accessors.Getter);
             if (IsPublicOrProtected(getter.Attributes))
             {
-                var sig = getter.DecodeSignature(signatures, context with { Method = accessors.Getter });
+                var sig = getter.DecodeProjectedSignature(signatures, context with { Method = accessors.Getter });
                 var function = new Function
                 {
                     Name = names.String("get"),
@@ -6630,7 +6630,7 @@ internal sealed class AssemblyScanner : IDisposable
         {
             var setter = _md.GetMethodDefinition(accessors.Setter);
             var setterContext = context with { Method = accessors.Setter };
-            var sig = setter.DecodeSignature(signatures, setterContext);
+            var sig = setter.DecodeProjectedSignature(signatures, setterContext);
             var function = new Function
             {
                 Name = names.String("set"),
@@ -7316,7 +7316,7 @@ internal sealed class AssemblyScanner : IDisposable
             HandleKind.TypeReference => MatchReference(reader.GetTypeReference((TypeReferenceHandle)handle)),
             HandleKind.TypeDefinition => MatchDefinition(reader.GetTypeDefinition((TypeDefinitionHandle)handle)),
             HandleKind.TypeSpecification => reader.GetTypeSpecification((TypeSpecificationHandle)handle)
-                .DecodeSignature(ClrPhysicalConstraintTypeProvider.Instance, genericContext: null),
+                .DecodeProjectedSignature(ClrPhysicalConstraintTypeProvider.Instance, genericContext: null),
             _ => false,
         };
         bool MatchReference(TypeReference type) => reader.GetString(type.Namespace) == "System" &&
@@ -7497,7 +7497,7 @@ internal sealed class ClrPhysicalConstraintTypeProvider : ISignatureTypeProvider
             reader.GetString(reader.GetTypeReference(handle).Name));
     public bool GetTypeFromSpecification(MetadataReader reader, object? genericContext,
         TypeSpecificationHandle handle, byte rawTypeKind) =>
-        reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
+        reader.GetTypeSpecification(handle).DecodeProjectedSignature(this, genericContext);
 
     static bool Match(string ns, string name) => ns == "System" && name is "ValueType" or "Enum";
 }
@@ -7580,8 +7580,8 @@ internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, 
         TypeSpecificationHandle handle,
         byte rawTypeKind) =>
         _typeIdentity is null
-            ? $"{rawTypeKind}:spec:{reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext)}"
-            : reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
+            ? $"{rawTypeKind}:spec:{reader.GetTypeSpecification(handle).DecodeProjectedSignature(this, genericContext)}"
+            : reader.GetTypeSpecification(handle).DecodeProjectedSignature(this, genericContext);
 
     private static string DefinitionName(MetadataReader reader, TypeDefinitionHandle handle)
     {
@@ -7900,7 +7900,7 @@ internal sealed class ExternalSignatureDecoderCache : IDisposable
     }
 }
 
-internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericContext>
+internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, GenericContext>
 {
     private readonly MetadataReader _md;
     private readonly NameTable _names;
@@ -7989,7 +7989,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
 
     public KType GetArrayType(KType elementType, ArrayShape shape) => Array(elementType);
     public KType GetByReferenceType(KType elementType) => ByRef(elementType);
-    public KType GetFunctionPointerType(MethodSignature<KType> signature) => Any(nullable: true);
+    public KType GetFunctionPointerType(MethodSignature<KType> signature) =>
+        throw new InvalidOperationException("Function pointers require the complete native signature projection");
     public KType GetGenericInstantiation(KType genericType, ImmutableArray<KType> typeArguments)
     {
         if (_semanticCompanionTypes.Contains(genericType)) return genericType;
@@ -8306,7 +8307,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         return declarationArguments.ToImmutableArray();
     }
     public KType GetTypeFromSpecification(MetadataReader reader, GenericContext genericContext, TypeSpecificationHandle handle, byte rawTypeKind) =>
-        reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
+        reader.GetTypeSpecification(handle).DecodeProjectedSignature(this, genericContext);
 
     public KType DecodeEntity(EntityHandle handle, GenericContext context, bool platform) =>
         handle.Kind switch
@@ -8319,8 +8320,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             // supertype must be rigid. Preserve generic arguments and clear
             // only the outer platform wrapper requested by DecodeEntity.
             HandleKind.TypeSpecification => platform
-                ? _md.GetTypeSpecification((TypeSpecificationHandle)handle).DecodeSignature(this, context)
-                : AsNonNull(_md.GetTypeSpecification((TypeSpecificationHandle)handle).DecodeSignature(this, context)),
+                ? _md.GetTypeSpecification((TypeSpecificationHandle)handle).DecodeProjectedSignature(this, context)
+                : AsNonNull(_md.GetTypeSpecification((TypeSpecificationHandle)handle).DecodeProjectedSignature(this, context)),
             _ => Any(nullable: true),
         };
 
@@ -8392,19 +8393,43 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var index = 0;
         return Walk(source);
 
-        KType Walk(KType type)
+        KType Walk(KType type, bool nativeSignature = false)
         {
             var copy = type.Clone();
-            var consumes = ConsumesNullability(copy);
+            var name = copy.HasClassName ? _names.ClassName(copy.ClassName) : null;
+            if (name == FunctionPointerVocabulary.Value)
+            {
+                copy.Argument[0].Type = Walk(copy.Argument[0].Type, nativeSignature);
+                return copy;
+            }
+            if (name is FunctionPointerVocabulary.Required or FunctionPointerVocabulary.Optional)
+            {
+                copy.Argument[1].Type = Walk(copy.Argument[1].Type, nativeSignature);
+                return copy;
+            }
+            var consumes = !(nativeSignature && name is "System.Nullable" or "System.Nullable1") && ConsumesNullability(copy);
             var byteValue = consumes
                 ? flags is { Length: 1 } ? flags[0]
                 : flags is not null && index < flags.Length ? flags[index]
                 : context
                 : (byte)1;
             if (consumes) index++;
+            if (name == FunctionPointerVocabulary.Pointer)
+            {
+                // Roslyn visits the native return before its parameters. The
+                // convention and Kotlin FunctionN wrapper consume no NRT bytes.
+                var signature = copy.Argument[1].Type;
+                signature.Argument[^1].Type = Walk(signature.Argument[^1].Type, nativeSignature: true);
+                for (var i = 0; i < signature.Argument.Count - 1; i++)
+                    signature.Argument[i].Type = Walk(signature.Argument[i].Type, nativeSignature: true);
+                return copy;
+            }
             for (var i = 0; i < copy.Argument.Count; i++)
                 if (copy.Argument[i].Type is { } arg)
-                    copy.Argument[i].Type = Walk(arg);
+                    copy.Argument[i].Type = Walk(arg, nativeSignature);
+            // NRT on a native generic variable does not construct Nullable<T>.
+            // Otherwise closing T at Int would change the callable ABI to int?.
+            if (nativeSignature && copy.HasTypeParameter) return AsNonNull(copy);
             // A VALUE type holds a byte position but never an annotation: its byte is always 0 (oblivious), and its
             // one nullable form is the structural `System.Nullable<T>` already folded in by the decoder. Reading the
             // byte — or, worse, the enclosing declaration's `[NullableContext]` — as an annotation is what turned
@@ -8817,7 +8842,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         if (invokeHandle.IsNil) return Any(nullable: true);
         var ids = def.GetGenericParameters().ToDictionary(h => h, h => _md.GetGenericParameter(h).Index);
         var context = new GenericContext(handle, invokeHandle, ids);
-        var sig = _md.GetMethodDefinition(invokeHandle).DecodeSignature(this, context);
+        var sig = _md.GetMethodDefinition(invokeHandle).DecodeProjectedSignature(this, context);
         return Function(sig.ParameterTypes, sig.ReturnType);
     }
 

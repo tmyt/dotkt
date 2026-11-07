@@ -239,6 +239,8 @@ sealed partial class ReferenceMetadataIndex
 
     static TypeNode DeclarationSignatureSlot(ParameterInfo parameter)
     {
+        if (parameter.Member is MethodBase method && NativeSignatures.Method(method) is { } native)
+            return parameter.Position < 0 ? native.Return : native.Parameters[parameter.Position];
         TypeNode type = DeclarationTypeNode(parameter.ParameterType);
         foreach (var modifier in parameter.GetOptionalCustomModifiers().Reverse())
             type = new TypeNode.Mod(false, DeclarationTypeNode(modifier), type);
@@ -246,6 +248,8 @@ sealed partial class ReferenceMetadataIndex
             type = new TypeNode.Mod(true, DeclarationTypeNode(modifier), type);
         return type;
     }
+
+    static readonly NativeSignatureReader NativeSignatures = new();
 
     internal ConstructorInfo SelectConstructorDeclaration(IEnumerable<ConstructorInfo> constructors, string identity) =>
         SelectDeclarationTwin(constructors, constructor => KotlinDeclarationIdentityPayload(
@@ -5522,6 +5526,7 @@ sealed partial class ReferenceMetadataIndex
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
+                        var nativeSignature = NativeSignatures.Method(method);
                         var countRange = CountRangeOf(method);
                         var collectionFactoryKind = isFileClass && method.IsStatic
                             ? AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrCollectionFactory")
@@ -5577,9 +5582,9 @@ sealed partial class ReferenceMetadataIndex
                             suspend,
                             isConv,
                             convTo,
-                            TypeNodeOf(method.ReturnType),
+                            nativeSignature?.Return ?? TypeNodeOf(method.ReturnType),
                             method.GetGenericArguments().Length,
-                            method.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray(),
+                            method.GetParameters().Select((p, i) => nativeSignature?.Parameters[i] ?? DeclarationTypeNode(p.ParameterType)).ToArray(),
                             method.IsVirtual,
                             dotKtAuthored ? KotlinTypeOf(method.ReturnParameter.GetCustomAttributesData(), method.DeclaringType?.Assembly) : null,
                             suspendReturn,
@@ -5590,7 +5595,7 @@ sealed partial class ReferenceMetadataIndex
                             dotKtAuthored
                                 ? method.GetParameters().Select(p => CarrierTypeOf(p.GetCustomAttributesData(), method.DeclaringType?.Assembly, KotlinNullableGenericAttr)).ToArray()
                                 : null,
-                            DeclarationTypeNode(method.ReturnType),
+                            nativeSignature?.Return ?? DeclarationTypeNode(method.ReturnType),
                             method.MetadataToken,
                             carriedProperty?.Name ?? owningProperty?.Name,
                             carriedProperty?.Kind ?? owningProperty?.Kind,
@@ -5951,7 +5956,8 @@ sealed partial class ReferenceMetadataIndex
         public TypeNode GetArrayType(TypeNode elementType, ArrayShape shape) => new TypeNode.Array(elementType);
         public TypeNode GetByReferenceType(TypeNode elementType) => new TypeNode.ByRef(elementType);
         public TypeNode GetFunctionPointerType(MethodSignature<TypeNode> signature) =>
-            new TypeNode.Fqn("System.IntPtr");
+            new TypeNode.FnPtr(signature.Header.RawValue, signature.GenericParameterCount,
+                signature.RequiredParameterCount, signature.ReturnType, signature.ParameterTypes.ToArray());
         public TypeNode GetGenericInstantiation(TypeNode genericType, ImmutableArray<TypeNode> typeArguments) =>
             genericType is TypeNode.Fqn f ? new TypeNode.Fqn(f.Name, typeArguments.ToArray()) : genericType;
         public TypeNode GetGenericMethodParameter(MethodImplGenericContext genericContext, int index) =>

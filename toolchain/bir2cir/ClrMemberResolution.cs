@@ -1098,8 +1098,10 @@ static partial class ClrMemberResolution
         // frame; substitute the explicitly selected native owner before exact comparison, never accept either frame.
         var exact = candidates.Where(candidate => parameterOwnerArguments == null
             ? Match(candidate.GetParameters(), signature, null) == MatchKind.Exact
-            : candidate.GetParameters().Select(parameter => CanonicalNativeFormalType(
-                SupertypeGraph.SubstOwnerTvs(RefTypeOf(parameter.ParameterType), parameterOwnerArguments)))
+            : (NativeSignatures.Method(candidate)?.Parameters
+                ?? candidate.GetParameters().Select(parameter => RefTypeOf(parameter.ParameterType)).ToArray())
+                .Select(parameter => CanonicalNativeFormalType(
+                    SupertypeGraph.SubstOwnerTvs(parameter, parameterOwnerArguments)))
                 .SequenceEqual(signature)).ToList();
         var own = exact.Where(candidate => SameDeclType(candidate.DeclaringType, declarationOwner)).ToList();
         if (own.Count != 0) return own.Count == 1 ? own[0] : null;
@@ -1313,7 +1315,18 @@ static partial class ClrMemberResolution
         var acc = MatchKind.Exact;
         for (int i = 0; i < ps.Length; i++)
         {
-            var m = Applies(argNodes[i], ps[i].ParameterType, ownerArgs);
+            MatchKind m;
+            if (NativeSignatureReader.ContainsPointer(ps[i].ParameterType)
+                && NativeSignatures.Method((MethodBase)ps[i].Member) is { } native)
+            {
+                var actual = BirTypeLowering.LowerPhysicalType(argNodes[i], _refs.Aliases,
+                    _ => false, _refs.PhysicalTypeNames, typeArg: false);
+                var expected = ownerArgs is { Length: > 0 }
+                    ? SupertypeGraph.SubstOwnerTvs(native.Parameters[i], ownerArgs) : native.Parameters[i];
+                m = BirTypeLowering.CanonicalPhysicalSlotType(actual) == BirTypeLowering.CanonicalPhysicalSlotType(expected)
+                    ? MatchKind.Exact : MatchKind.No;
+            }
+            else m = Applies(argNodes[i], ps[i].ParameterType, ownerArgs);
             if (m == MatchKind.No) return MatchKind.No;
             if (m == MatchKind.Assignable) acc = MatchKind.Assignable;
         }

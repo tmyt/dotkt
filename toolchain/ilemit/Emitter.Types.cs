@@ -70,6 +70,7 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Array { SzArray: true, Rank: 1 } a => MapType(a.Elem).MakeArrayType(),
         DotKt.Bir.TypeNode.Array a => MapType(a.Elem).MakeArrayType(a.Rank),
         DotKt.Bir.TypeNode.Ptr p => MapType(p.Of).MakePointerType(),
+        DotKt.Bir.TypeNode.FnPtr pointer => FunctionPointerType(pointer),
         DotKt.Bir.TypeNode.Nullable n => MapNullable(n),
         DotKt.Bir.TypeNode.Fn fn => FuncType(fn),
         DotKt.Bir.TypeNode.Tv tv => ResolveTv(tv),

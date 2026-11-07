@@ -333,13 +333,15 @@ sealed partial class Emitter
             return type.GenericParameterPosition < ownerArguments.Length
                 ? ownerArguments[type.GenericParameterPosition] : type;
         }
+        if (type.IsFunctionPointer)
+            return RemapFunctionPointer(type, child => SubstituteSignatureType(child, declaringType, ownerArguments,
+                methodParameters, methodArguments));
         if (type.HasElementType)
         {
             var element = SubstituteSignatureType(type.GetElementType(), declaringType, ownerArguments,
                 methodParameters, methodArguments);
             if (ReferenceEquals(element, type.GetElementType())) return type;
-            return type.IsArray ? (type.GetArrayRank() == 1 ? element.MakeArrayType() : element.MakeArrayType(type.GetArrayRank()))
-                : type.IsByRef ? element.MakeByRefType() : type.IsPointer ? element.MakePointerType() : type;
+            return RebuildSignatureElement(type, element);
         }
         if (!type.IsGenericType) return type;
         var arguments = type.GetGenericArguments()

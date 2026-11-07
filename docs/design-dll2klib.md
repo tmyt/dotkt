@@ -540,8 +540,15 @@ an upgrade neither validates nor preserves their compatibility.
 
 Current deliberate limits are:
 
-- function-pointer types fall back to `Any?`; unmanaged pointers project as the compiler-only
-  `kotlin.clr.ClrPointer<T>` vocabulary and bir2cir lowers them to exact `T*` signatures;
+- unmanaged pointers project as the compiler-only `kotlin.clr.ClrPointer<T>` vocabulary;
+  function pointers use `kotlin.clr.ClrFunctionPointer<C, F>`, with convention `C` and
+  callable signature `F`. They never become `Any?`, `IntPtr`, or a delegate. The
+  `kotlin.clr.signature` types retain custom modifiers, non-vector array ranks and
+  explicit value positions (`Value<Unit>` is the Unit class, not void). kotc
+  carries these Kotlin types; bir2cir alone selects the native signature;
+- generic/vararg/instance function pointers, bounded arrays within native callable
+  signatures, and modifier orders the supported persisted encoder cannot retain
+  fail diagnostically rather than changing type identity;
 - Kotlin function arities 17..22 use the stdlib's canonical
   `DotKt.Runtime.CompilerServices.KFunc`/`KAction`. The stdlib produces no projected KLIB, but remains in the
   resolved delegate catalog so references are restored from the actual TypeDef/`Invoke` shape and assembly identity.

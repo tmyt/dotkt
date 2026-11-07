@@ -2901,8 +2901,26 @@ physical CLR owner is recorded separately where needed for binding.
 
 Current deliberate limits are:
 
-- function-pointer types project as `Any?`; unmanaged pointers project through the opaque
-  `kotlin.clr.ClrPointer<T>` compiler vocabulary and retain their exact CLR `T*` signature;
+- unmanaged pointers use the opaque `kotlin.clr.ClrPointer<T>` vocabulary and retain
+  their CLR `T*` signatures. Function pointers use `ClrFunctionPointer<C, F>`:
+  `C` names a `kotlin.clr.signature` convention (Managed, Cdecl, Stdcall, Thiscall,
+  Fastcall, or Unmanaged), and `F` describes the native callable signature. This
+  is not an ordinary Kotlin function or a delegate. Handles can be passed through
+  projected CLR APIs and retained in native-signature fields, properties and locals;
+  this feature does not add a direct Kotlin call operator for a native pointer;
+- function-pointer handles are unboxed native values, not reified Kotlin objects.
+  Ordinary boxing and checked casts are rejected rather than producing invalid CIL;
+- signature-only `Required<M,T>`, `Optional<M,T>`, `Array1<T>` through `Array32<T>`
+  and `Value<T>` preserve native modifiers, non-vector array ranks and explicit
+  value positions. In particular `Value<Unit>` means the Unit class, whereas a
+  plain Unit native return means CLR void. Native pointers cannot occupy CLR
+  generic arguments, but arrays of pointers remain array types. Generic/vararg/
+  instance function pointers, bounded native arrays and unrepresentable modifier
+  orders produce diagnostics. Persisted function-pointer emission requires the
+  .NET runtime 10.0.12 or later;
+- native callable signatures retain the nominal CLR `Nullable<T>` constructor
+  separately from NRT annotations on generic variables. A nullable Kotlin type
+  variable alone is not an exact native signature description;
 - Kotlin function arities 0..22 round-trip exactly; 23 and above has no CLR delegate and is refused (§8e-bis);
 - arbitrary CLR custom-attribute applications are not reproduced as Kotlin annotation applications;
 - SOURCE-retained annotations and compile-time-only facts such as contracts are not present in CLR metadata; and

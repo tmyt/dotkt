@@ -108,6 +108,7 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `array` | `elem:T`, `rank?:1..32` | `Array<T>`; an absent `rank` is the SZ vector `T[]`. A **CIR-only** stated rank names the general ECMA ARRAY: ≥2 is `T[,…]`, and 1 is the non-vector `T[*]`, a distinct type from `T[]` | `array:X` |
 | `byRef` | `of:T` | a CLR by-ref `ref T` | `byRef:X` |
 | `ptr` | `of:T` | **CIR-only**: a CLR unmanaged pointer `T*`; BIR uses the semantic `kotlin.clr.ClrPointer<T>` vocabulary | no old physical form |
+| `fnPtr` | `cc:byte`, `genericArity:int`, `requiredParams:int`, `ret:T`, `params:[T…]` | **CIR-only**: exact ECMA function-pointer header and callable signature; nested modifiers remain attached to their signature positions | — |
 | `mod` | `req:bool`, `m:T`, `of:T` | **CIR-only**: an ECMA custom modifier (II.7.1.1) at its signature position — `req` selects modreq from modopt | no Kotlin form |
 
 Notes:
@@ -635,10 +636,16 @@ member would be two members to it. The rules, all validator-enforced:
 - `.ctor` names a constructor and nothing else;
 - `mod` is CIR-only declaration-signature vocabulary: it can appear in emitted declaration signatures,
   exact local linkage descriptors, and `memberRef`. It does not change a value's storage type.
-  `array.rank` distinguishes exact foreign array signatures inside a `memberRef`.
+  `array.rank` distinguishes exact general-array signatures and retained native
+  array values, including ordinary CIR declaration, local and result slots.
   `ptr` is also CIR-only but may appear in ordinary declaration, local, operand,
   and result slots: bir2cir materializes the KLIB/BIR `kotlin.clr.ClrPointer<T>` vocabulary into that physical type,
   and ilemit emits it one-to-one.
+  `fnPtr` likewise represents ordinary native values, but retains an entire
+  callable signature rather than a pointee. Its BIR vocabulary is
+  `kotlin.clr.ClrFunctionPointer<C,F>` with signature-only types from
+  `kotlin.clr.signature`; bir2cir resolves the convention, modifiers and generic
+  frame before writing CIR. The emitter consumes those physical facts directly.
 
 Same-emission-unit members are NOT memberRefs: they have no assembly identity yet (their MethodDefs are being
 built by this compilation) and stay on the internal linkage (`localCtorIndex`, the emitted type's own signature

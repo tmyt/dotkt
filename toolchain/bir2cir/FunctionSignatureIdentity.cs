@@ -29,6 +29,7 @@ static class FunctionSignatureIdentity
     // This describes only the signature discriminator; ordinary function values keep their shared carrier.
     internal static TypeNode DeclarationType(TypeNode type) => type switch
     {
+        TypeNode.Fqn { Name: FunctionPointerVocabulary.Pointer } => type,
         TypeNode.Fn { Suspend: false } fn => BirTypeLowering.PhysicalDelegate(
             DeclarationType(BirTypeLowering.DelegateReturnSlot(fn)),
             fn.Params.Select(DeclarationType).ToArray(),

@@ -375,8 +375,9 @@ sealed partial class Emitter
             .Where(field => field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly).ToArray();
         // member-lookup-residual: exact memberRef field-name+type comparison.
         var hits = candidates.Where(field => field.Name == reference.Name
-                && TypeRefEquals(reference.ReturnType, field.FieldType,
-                    field.GetRequiredCustomModifiers(), field.GetOptionalCustomModifiers()))
+                && (NativeSignatures.Field(field) is { } native ? native == reference.ReturnType
+                    : TypeRefEquals(reference.ReturnType, field.FieldType,
+                        field.GetRequiredCustomModifiers(), field.GetOptionalCustomModifiers())))
             .ToList();
         if (hits.Count == 1) return hits[0];
         // member-lookup-residual: diagnostic-only same-name list after exact memberRef matching failed.
@@ -392,6 +393,9 @@ sealed partial class Emitter
             ? (member.IsStatic ? MemberRefNode.VarargStatic : MemberRefNode.VarargInstance)
             : (member.IsStatic ? MemberRefNode.Static : MemberRefNode.Instance);
         if (!string.Equals(convention, reference.CallingConvention, StringComparison.Ordinal)) return false;
+        if (NativeSignatures.Method(member) is { } native)
+            return native.Parameters.SequenceEqual(reference.ParameterTypes ?? [])
+                && (member is ConstructorInfo || native.Return == reference.ReturnType);
         var parameters = member.GetParameters();
         var declared = reference.ParameterTypes ?? System.Array.Empty<TypeNode>();
         if (parameters.Length != declared.Length) return false;
@@ -409,6 +413,8 @@ sealed partial class Emitter
         }
         return true;
     }
+
+    readonly NativeSignatureReader NativeSignatures = new();
 
     // A slot's declared type WITH its modifiers. Reflection reports modifiers as two sets beside the type;
     // the reference nests them around it, in the same order, so the comparison unwraps and matches sets.

@@ -604,6 +604,15 @@ public static class IrSanity
                 if (!StampAgrees(fa.Args[i], fb.Args[i])) return false;
             return true;
         }
+        if (a is TypeNode.FnPtr ap && b is TypeNode.FnPtr bp)
+        {
+            if (ap.CallingConvention != bp.CallingConvention || ap.GenericArity != bp.GenericArity
+                || ap.RequiredParams != bp.RequiredParams || ap.Params.Length != bp.Params.Length
+                || !StampAgrees(ap.Ret, bp.Ret)) return false;
+            for (var i = 0; i < ap.Params.Length; i++)
+                if (!StampAgrees(ap.Params[i], bp.Params[i])) return false;
+            return true;
+        }
         if (a is TypeNode.Fn na && b is TypeNode.Fn nb)
         {
             if (!StampAgrees(na.Ret, nb.Ret)) return false;

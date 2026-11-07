@@ -49,6 +49,7 @@ static class Bir2Cir
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
+                BirTypeLowering.SelfTestFunctionPointers();
                 UncheckedGenericCastReturnErasure.SelfTest();
                 UnsafeAccessorLowering.SuperForwarderSelfTest();
                 UnsafeAccessorLowering.FamilyAccessSelfTest();
