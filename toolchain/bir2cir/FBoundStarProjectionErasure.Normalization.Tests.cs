@@ -11,7 +11,8 @@ static partial class FBoundStarProjectionErasure
         var logical = new TypeNode.Fqn("Logical", new TypeNode[] { new TypeNode.Fqn("kotlin.String") });
         var physical = new TypeNode.Fqn("Physical");
         var owners = new Dictionary<string, Owner> {
-            ["Logical"] = new Owner { Name = "Logical", ErasedName = "Physical", Needed = true },
+            ["Logical"] = new Owner { Name = "Logical", ErasedName = "Physical", Needed = true,
+                Def = JsonNode.Parse("""{"kind":"class","typeParams":["T"]}""").AsObject() },
         };
         var defs = new Dictionary<string, JsonObject>();
         var carriers = new HashSet<string>(StringComparer.Ordinal) { "Physical" };
@@ -94,6 +95,49 @@ static partial class FBoundStarProjectionErasure
             var normalized = arrays.ToJsonString();
             Normalize(arrays);
             Expect(arrays.ToJsonString() == normalized, "repeated normalization was not stable");
+
+            // These accesses are deliberately unbound until normalization updates their local receiver. In
+            // particular the late outer walk does not itself call BindProjectedFieldStorage: dropping field
+            // nodes from the worklist would leave these accesses on the logical generic owner.
+            foreach (var role in new[] { "get", "set" })
+            {
+                var parameters = role == "get" ? new JsonArray() : new JsonArray(new JsonObject {
+                    ["name"] = "value", ["type"] = TypeJson.Write(integer),
+                });
+                var result = role == "get" ? integer : new TypeNode.Fqn("kotlin.Unit");
+                var declaration = new JsonObject {
+                    ["name"] = "source_" + role, ["params"] = parameters, ["ret"] = TypeJson.Write(result),
+                    [KotlinPropertyAccessors.SourceNameKey] = "value", [KotlinPropertyAccessors.KindKey] = role,
+                    [KotlinPropertyAccessors.AssociationKey] = "Logical:field:value",
+                };
+                var slot = new JsonObject {
+                    ["name"] = "physical_" + role, ["params"] = parameters.DeepClone(), ["ret"] = TypeJson.Write(result),
+                };
+                owners["Logical"].Slots.Add(declaration, (slot, role == "get" ? Array.Empty<TypeNode>() : new[] { integer }));
+            }
+            foreach (var kind in new[] { "field", "lateinitGet", "setFieldExpr", "setField", "callInstance", "newBoundDelegate" })
+            {
+                var access = new JsonObject {
+                    ["k"] = kind, ["name"] = "value", ["ownerType"] = TypeJson.Write(logical),
+                    ["recv"] = Local("receiver", logical), ["ret"] = TypeJson.Write(integer),
+                    ["value"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(integer), ["value"] = 1 },
+                };
+                if (kind is "callInstance" or "newBoundDelegate")
+                {
+                    access["method"] = "source_get";
+                    access["args"] = new JsonArray();
+                    KotlinPropertyAccessors.PreserveCallIdentity(access, "value", "get");
+                }
+                var fields = Method(integer,
+                    Variable("receiver", logical, Local("physicalReceiver", physical)), access);
+                Normalize(fields);
+                var selected = kind == "setField" ? access["expr"] : access;
+                Expect(TypeJson.Read(selected["ownerType"]) == physical
+                    && Str(selected["method"]) == (kind is "setField" or "setFieldExpr" ? "physical_set" : "physical_get"),
+                    kind + " did not bind after receiver normalization");
+                if (kind == "newBoundDelegate")
+                    Expect(TypeJson.Read(selected["calleeOwner"]) == physical, "delegate target owner was not normalized");
+            }
         }
         finally { _valueSlots = previousSlots; }
     }
