@@ -96,6 +96,44 @@ static partial class FBoundStarProjectionErasure
             Normalize(arrays);
             Expect(arrays.ToJsonString() == normalized, "repeated normalization was not stable");
 
+            // With no new locals there is only one iteration: the outer type test must observe the inner cast
+            // after binding, rather than relying on an extra local-propagation iteration to repair its result.
+            var nested = new JsonObject {
+                ["k"] = "isInstRef", ["type"] = TypeJson.Write(logical), ["sty"] = TypeJson.Write(logical),
+                ["e"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(logical),
+                    ["e"] = Local("physical", physical) },
+            };
+            var nestedReturn = Method(logical, new JsonObject { ["k"] = "return", ["value"] = nested });
+            Normalize(nestedReturn);
+            Expect(TypeJson.Read(nested["type"]) == physical && TypeJson.Read(nestedReturn["ret"]) == physical,
+                "nested post-order binding required an extra iteration");
+
+            // The index stays Int, but its argument contains a local whose carrier becomes known only after
+            // the read has cloned that descendant. A stale first-iteration worklist updates the detached original.
+            var clonedRead = new JsonObject {
+                ["k"] = "arrayGet", ["array"] = Local("array", logicalArray), ["sty"] = TypeJson.Write(logical),
+                ["index"] = new JsonObject { ["k"] = "callStatic", ["ret"] = TypeJson.Write(integer),
+                    ["args"] = new JsonArray(Local("b", logical)) },
+            };
+            var clonedArray = array.DeepClone().AsObject();
+            clonedArray["type"] = TypeJson.Write(logicalArray);
+            var cloned = Method(integer, clonedArray, clonedRead,
+                Variable("b", logical, Local("a", logical)), Variable("a", logical, Local("physical", physical)));
+            Normalize(cloned);
+            Expect(Str(clonedRead["k"]) == "cast"
+                && TypeJson.Read(clonedRead["e"]["index"]["args"][0]["sty"]) == physical,
+                "next iteration failed to recollect a cloned descendant");
+
+            foreach (var (declared, result) in new (TypeNode, TypeNode)[] {
+                (new TypeNode.Nullable(logical), physical), (new TypeNode.Oblivious(logical), physical),
+                (new TypeNode.Array(new TypeNode.Projection("out", logical)), physicalArray),
+            })
+            {
+                var shaped = Method(declared, new JsonObject { ["k"] = "return", ["value"] = Local("physical", result) });
+                Normalize(shaped);
+                Expect(TypeJson.Read(shaped["ret"]) == result, "return eligibility dropped a projection/nullability shell");
+            }
+
             // These accesses are deliberately unbound until normalization updates their local receiver. In
             // particular the late outer walk does not itself call BindProjectedFieldStorage: dropping field
             // nodes from the worklist would leave these accesses on the logical generic owner.
