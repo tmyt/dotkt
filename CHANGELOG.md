@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Close suspend-lambda member owners in place using their explicit generic frame, avoiding temporary copies of executable bodies.
+
 - Reuse bir2cir's filtered physical type-name catalog within each local-declaration phase, preserving source precedence and late synthesized declarations.
 
 - Support explicit user-defined CLR event storage/dispatch with `ClrEventPolicy<H>` and `by clrEvent(policy)`, preserving native event slots and retained subscription tokens.
