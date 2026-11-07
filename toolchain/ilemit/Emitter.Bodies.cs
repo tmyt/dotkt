@@ -352,6 +352,7 @@ sealed partial class Emitter
     // type is unknown (could be value), and specializing it would be wrong for a value instantiation.
     void EmitStelem(Type elem)
     {
+        if (elem.IsPointer || elem.IsFunctionPointer) { _il.Emit(OpCodes.Stelem_I); return; }
         if (elem.IsGenericParameter) { _il.Emit(OpCodes.Stelem, elem); return; }
         if (!IsValueType(elem)) { _il.Emit(OpCodes.Stelem_Ref); return; }
         if (elem == Bcl("System.Boolean") || elem == Bcl("System.SByte") || elem == Bcl("System.Byte")) _il.Emit(OpCodes.Stelem_I1);
@@ -369,6 +370,7 @@ sealed partial class Emitter
     // (u1/u2 for unsigned+char+bool, i1/i2 for signed).
     void EmitLdelem(Type elem)
     {
+        if (elem.IsPointer || elem.IsFunctionPointer) { _il.Emit(OpCodes.Ldelem_I); return; }
         if (elem.IsGenericParameter) { _il.Emit(OpCodes.Ldelem, elem); return; }
         if (!IsValueType(elem)) { _il.Emit(OpCodes.Ldelem_Ref); return; }
         if (elem == Bcl("System.Boolean") || elem == Bcl("System.Byte")) _il.Emit(OpCodes.Ldelem_U1);

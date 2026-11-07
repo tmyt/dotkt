@@ -82,7 +82,12 @@ internal sealed partial class SignatureDecoder
         public SignatureType GetPinnedType(SignatureType element) => element;
         bool ContainsPointer(KType type) => type.HasClassName && decoder._names.ClassName(type.ClassName) == FunctionPointerVocabulary.Pointer
             || type.Argument.Any(argument => argument.Type is { } nested && ContainsPointer(nested));
-        public SignatureType GetPrimitiveType(PrimitiveTypeCode code) => new(decoder.GetPrimitiveType(code));
+        public SignatureType GetPrimitiveType(PrimitiveTypeCode code) => new(decoder.GetPrimitiveType(code), code switch {
+            PrimitiveTypeCode.IntPtr => decoder.Named("System.IntPtr"),
+            PrimitiveTypeCode.UIntPtr => decoder.Named("System.UIntPtr"),
+            PrimitiveTypeCode.TypedReference => decoder.Named("System.TypedReference"),
+            _ => null,
+        });
         public SignatureType GetGenericMethodParameter(GenericContext context, int index) => new(decoder.GetGenericMethodParameter(context, index));
         public SignatureType GetGenericTypeParameter(GenericContext context, int index) => new(decoder.GetGenericTypeParameter(context, index));
         public SignatureType GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte kind) => new(

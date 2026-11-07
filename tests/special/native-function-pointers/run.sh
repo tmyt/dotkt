@@ -31,12 +31,12 @@ dotnet "$ILEMIT_DLL" "$OUT/il" NativePointerConsumer \
 write_runtimeconfig "$OUT/il" NativePointerConsumer
 cp "$STDLIB_RT_DLL" "$implementation" "$OUT/il/"
 actual="$(dotnet "$OUT/il/NativePointerConsumer.dll")"
-[[ "$actual" == 252 ]] || die "native function-pointer consumer returned '$actual', expected 252"
+[[ "$actual" == 378 ]] || die "native function-pointer consumer returned '$actual', expected 378"
 echo "Native function-pointer DLL/KLIB/BIR/CIR/CIL execution: PASS"
 dotnet run --project "$ROOT/tests/special/native-function-pointers/consumer/Consumer.csproj" -c Release \
     -p:ConsumerAssembly="$OUT/il/NativePointerConsumer.dll"
 dotnet run --project "$ROOT/tests/special/native-function-pointers/metadata/Metadata.csproj" -c Release -- \
-    "$reference" "$OUT/il/NativePointerConsumer.dll"
+    "$reference" "$OUT/il/NativePointerConsumer.dll" "$implementation"
 bash "$ROOT/tests/special/native-function-pointers/run-diagnostics.sh"
 
 # Reconsume the Kotlin declaration metadata as well as the original C# API.

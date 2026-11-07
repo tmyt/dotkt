@@ -16,6 +16,10 @@ public static unsafe class Api
     public static delegate* managed<int*, void> DataPointer;
     public static delegate* managed<int, int>[,]? RectangularPointers;
     public static delegate* managed<int?, int?> NullableValue;
+    public static delegate* managed<nint, nint> GetNativeInt() => &NativeIdentity;
+    public static delegate* managed<nuint, nuint> GetNativeUInt() => &NativeUnsignedIdentity;
+    public static int CallNativeInt(delegate* managed<nint, nint> p) => checked((int)p(42));
+    public static int CallNativeUInt(delegate* managed<nuint, nuint> p) => checked((int)p(42));
     public static delegate* managed<int, int, int, int, int, int, int, int, int, int, int, int,
         int, int, int, int, int, int, int, int, int, int, int, int> Wide;
     public static delegate* managed<int, int> Get() => &Twice;
@@ -27,6 +31,11 @@ public static unsafe class Api
     public static int CallCdecl(delegate* unmanaged[Cdecl]<int, int> p, int value) => p(value);
     public static delegate* managed<int, int>[] GetArray() => [&Twice];
     public static delegate* managed<int, int>[] EchoArray(delegate* managed<int, int>[] p) => p;
+    public static delegate* managed<int, int> ArrayElement(delegate* managed<int, int>[] array, delegate* managed<int, int> value)
+    {
+        array[0] = value;
+        return array[0];
+    }
     public static int CallArray(delegate* managed<int, int>[] p, int value) => p[0](value);
     public static int CallOverride(CallbackBase value) => value.Echo(&Twice)(21);
     public static delegate* unmanaged[Cdecl, SuppressGCTransition]<int, int> GetModified() => &ModifiedTwice;
@@ -37,6 +46,8 @@ public static unsafe class Api
     public static delegate* managed<delegate* unmanaged[Stdcall]<int, int>, int> GetNested() => &IgnoreNested;
     static int IgnoreNested(delegate* unmanaged[Stdcall]<int, int> p) => 42;
     static int Twice(int value) => value * 2;
+    static nint NativeIdentity(nint value) => value;
+    static nuint NativeUnsignedIdentity(nuint value) => value;
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static int NativeTwice(int value) => value * 2;
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl), typeof(CallConvSuppressGCTransition)])]

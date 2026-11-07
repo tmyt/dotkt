@@ -21,6 +21,12 @@ fun wideSignature() = Api.Wide
 fun nullableValueSignature() = Api.EchoNullable(Api.NullableValue)
 fun nativeNullableGeneric(api: NullableApi<Int>) = api.Value
 fun annotatedGeneric(api: AnnotatedApi<Int>) = api.Value
+fun nativeIntSignature() = Api.GetNativeInt()
+fun nativeUIntSignature() = Api.GetNativeUInt()
+fun arrayElement(array: Array<ClrFunctionPointer<Managed, (Int) -> Int>>, value: ClrFunctionPointer<Managed, (Int) -> Int>): ClrFunctionPointer<Managed, (Int) -> Int> {
+    array[0] = value
+    return array[0]
+}
 
 fun choose(p: ClrFunctionPointer<Managed, (Int) -> Int>): Int = Api.Call(p, 21)
 fun choose(p: ClrFunctionPointer<Cdecl, (Int) -> Int>): Int = Api.CallCdecl(p, 21)
@@ -45,5 +51,6 @@ fun main() {
     val array = Api.EchoArray(Api.GetArray())
     Api.Array = array
     println(Api.Call(Api.Property, 21) + Api.CallCdecl(cdecl(Api.GetCdecl()), 21) + Api.CallArray(array, 21) +
-        choose(Api.Get()) + choose(Api.GetCdecl()) + Api.CallOverride(CallbackOverride()))
+        choose(Api.Get()) + choose(Api.GetCdecl()) + Api.CallOverride(CallbackOverride()) +
+        Api.Call(arrayElement(array, pointer), 21) + Api.CallNativeInt(nativeIntSignature()) + Api.CallNativeUInt(nativeUIntSignature()))
 }

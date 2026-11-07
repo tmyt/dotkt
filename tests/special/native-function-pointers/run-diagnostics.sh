@@ -29,13 +29,15 @@ if dotnet "$BIR2CIR_DLL" "$OUT/cir" \
 fi
 grep -q 'required/optional native modifier order is not supported' "$OUT/modifiers.log" \
     || die "Native modifier order failed outside its representability diagnostic boundary"
-"$KOTC" "$ROOT/tests/special/native-function-pointers/unsupported-box.kt" -no-stdlib \
-    -classpath "$FE_KLIB$separator$ROOT/build/tests-native-function-pointers/klib/NativePointers.klib" -d "$OUT/box-bir"
-if dotnet "$BIR2CIR_DLL" "$OUT/box-cir" \
-    --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$ROOT/tests/special/native-function-pointers/reference/obj/Release/net10.0/ref/NativePointers.dll")" \
-    "$OUT/box-bir/unsupported-box.bir.json" > "$OUT/box.log" 2>&1; then
-    die "A native function pointer was admitted to object storage"
-fi
-grep -q 'native function-pointer value requires its exact signature' "$OUT/box.log" \
-    || die "Native boxing failed outside its representation diagnostic boundary"
+for name in box concat; do
+    "$KOTC" "$ROOT/tests/special/native-function-pointers/unsupported-$name.kt" -no-stdlib \
+        -classpath "$FE_KLIB$separator$ROOT/build/tests-native-function-pointers/klib/NativePointers.klib" -d "$OUT/$name-bir"
+    if dotnet "$BIR2CIR_DLL" "$OUT/$name-cir" \
+        --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$ROOT/tests/special/native-function-pointers/reference/obj/Release/net10.0/ref/NativePointers.dll")" \
+        "$OUT/$name-bir/unsupported-$name.bir.json" > "$OUT/$name.log" 2>&1; then
+        die "A native function pointer was admitted to object storage ($name)"
+    fi
+    grep -q 'native function-pointer value requires its exact signature' "$OUT/$name.log" \
+        || die "Native $name failed outside its representation diagnostic boundary"
+done
 echo "Unsupported current native signatures: PASS"
