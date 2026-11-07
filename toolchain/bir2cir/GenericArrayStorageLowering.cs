@@ -7,7 +7,7 @@ using DotKt.Bir;
 // Open Kotlin arrays retain the allocation's runtime component, independently of the caller's T or star projection.
 // The physical value slot is System.Array; exact native array signatures remain separate facts.
 // All access is materialized here as ordinary CLR calls, not reconstructed by ilemit.
-static class GenericArrayStorageLowering
+static partial class GenericArrayStorageLowering
 {
     internal static bool NeedsStorage(TypeNode.Array array) =>
         array.SzArray && array.Rank == 1 && ContainsOpenComponent(array.Elem);
@@ -63,7 +63,8 @@ static class GenericArrayStorageLowering
         ["e"] = Call(refs, "GetValue", receiver, "object", new[] { "System.Int32" }, index),
     };
 
-    internal static bool LowerOperation(JsonObject node, ReferenceMetadataIndex refs, TypeNode receiverType = null)
+    internal static bool LowerOperation(JsonObject node, ReferenceMetadataIndex refs, FreshNames names,
+        TypeNode receiverType = null)
     {
         if (node["array"] is not JsonObject receiver) return false;
         receiverType ??= TypeJson.Read(receiver["sty"])
@@ -79,13 +80,13 @@ static class GenericArrayStorageLowering
                     TypeJson.Read(node["sty"]) ?? TypeJson.Read(node["elem"]));
                 break;
             case "arraySet":
-                replacement = Store(node, receiver, refs);
+                replacement = Store(node, receiver, refs, names);
                 break;
             case "arrayLen":
                 replacement = Call(refs, "get_Length", receiver, "System.Int32", Array.Empty<string>());
                 break;
             case "forArray":
-                replacement = Loop(node, receiver, refs);
+                replacement = Loop(node, receiver, refs, names);
                 break;
             default: return false;
         }
@@ -94,26 +95,40 @@ static class GenericArrayStorageLowering
         return true;
     }
 
-    static Func<string, string> FreshNames(JsonObject source)
+    // One explicit file/rewrite lifetime, never a cache keyed by mutable IR roots. Capture the file after
+    // declaration synthesis; seed on the first allocation, including declarations encountered later in the walk.
+    // Array-free files do not pay for an identifier walk. Release the file reference immediately after seeding.
+    // Existing user declarations are present at seeding. This allocator is the only writer of the array
+    // temporary stems; other lowering-generated locals use disjoint stems. A newly introduced subtree whose
+    // names can overlap these stems must be reserved before rewriting/attaching it. Detached rewrites use
+    // their destination's allocator. Reservations are monotonic, even when a rewrite removes a name.
+    internal sealed class FreshNames
     {
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        void Collect(JsonNode node)
+        readonly HashSet<string> names = new(StringComparer.Ordinal);
+        JsonNode seed;
+
+        internal FreshNames(JsonNode file) => seed = file;
+
+        internal void Reserve(JsonNode node)
         {
             if (node is JsonObject obj) {
                 if (Text(obj["name"]) is string name) names.Add(name);
                 if (Text(obj["var"]) is string variable) names.Add(variable);
-                foreach (var child in obj) Collect(child.Value);
-            } else if (node is JsonArray array) foreach (var child in array) Collect(child);
+                foreach (var child in obj) Reserve(child.Value);
+            } else if (node is JsonArray array) foreach (var child in array) Reserve(child);
         }
-        // Include surrounding lexical declarations, not just the loop body.
-        JsonNode scope = source;
-        while (scope.Parent != null) scope = scope.Parent;
-        Collect(scope);
-        return stem => {
+
+        internal string Next(string stem)
+        {
+            if (seed != null)
+            {
+                Reserve(seed);
+                seed = null;
+            }
             var index = 0;
             while (!names.Add(stem + index)) index++;
             return stem + index;
-        };
+        }
     }
 
     static JsonObject Var(string name, TypeNode type, JsonNode initial) => new() {
@@ -122,7 +137,7 @@ static class GenericArrayStorageLowering
 
     internal static void LowerTypeOperation(JsonObject operation, TypeNode target,
         JsonArray typeParameters, JsonArray methodParameters, ReferenceMetadataIndex refs,
-        Func<TypeNode, TypeNode> projectBound, Func<TypeNode, bool> isInterface)
+        Func<TypeNode, TypeNode> projectBound, Func<TypeNode, bool> isInterface, FreshNames names)
     {
         var nullable = target is TypeNode.Nullable;
         while (target is TypeNode.Nullable or TypeNode.Oblivious)
@@ -133,10 +148,9 @@ static class GenericArrayStorageLowering
         if (kind is not ("cast" or "isInstRef" or "isInst")
             || KotlinTypeWitness.NeedsWitness(operation) && ContainsVariable(array)) return;
         var safe = test || kind == "isInstRef";
-        var fresh = FreshNames(operation);
-        var arrayName = fresh("$arrayCast$");
-        var typeName = fresh("$arrayCastType$");
-        var inputName = test && nullable ? fresh("$arrayInput$") : null;
+        var arrayName = names.Next("$arrayCast$");
+        var typeName = names.Next("$arrayCastType$");
+        var inputName = test && nullable ? names.Next("$arrayInput$") : null;
         var arrayType = new TypeNode.Fqn("System.Array");
         var typeType = new TypeNode.Fqn("System.Type");
         JsonObject Bool(bool value) => new() { ["k"] = "const", ["type"] = Type("System.Boolean"), ["value"] = value };
@@ -281,6 +295,7 @@ static class GenericArrayStorageLowering
 
     internal static void SelfTest()
     {
+        FreshNamesSelfTest();
         var openComponents = new TypeNode[] {
             new TypeNode.Star(), new TypeNode.Tv("method", 0),
             new TypeNode.Projection("out", new TypeNode.Fqn("kotlin.Any")),
@@ -302,13 +317,12 @@ static class GenericArrayStorageLowering
         Console.WriteLine("[array component classifiers] self-test OK (exact opaque storage, retained native classifier)");
     }
 
-    static JsonObject Store(JsonObject store, JsonNode receiver, ReferenceMetadataIndex refs)
+    static JsonObject Store(JsonObject store, JsonNode receiver, ReferenceMetadataIndex refs, FreshNames names)
     {
-        var fresh = FreshNames(store);
-        var arrayName = fresh("$arrayStorage$");
-        var indexName = fresh("$arrayIndex$");
-        var valueName = fresh("$arrayValue$");
-        var componentName = fresh("$arrayComponent$");
+        var arrayName = names.Next("$arrayStorage$");
+        var indexName = names.Next("$arrayIndex$");
+        var valueName = names.Next("$arrayValue$");
+        var componentName = names.Next("$arrayComponent$");
         var arrayType = new TypeNode.Fqn("System.Array");
         var intType = new TypeNode.Fqn("System.Int32");
         var objectType = new TypeNode.Fqn("System.Object");
@@ -356,12 +370,11 @@ static class GenericArrayStorageLowering
         };
     }
 
-    static JsonObject Loop(JsonObject loop, JsonNode receiver, ReferenceMetadataIndex refs)
+    static JsonObject Loop(JsonObject loop, JsonNode receiver, ReferenceMetadataIndex refs, FreshNames names)
     {
-        var Fresh = FreshNames(loop);
-        var arrayName = Fresh("$arrayStorage$");
-        var indexName = Fresh("$arrayIndex$");
-        var lengthName = Fresh("$arrayLength$");
+        var arrayName = names.Next("$arrayStorage$");
+        var indexName = names.Next("$arrayIndex$");
+        var lengthName = names.Next("$arrayLength$");
         var arrayType = new TypeNode.Fqn("System.Array");
         var intType = new TypeNode.Fqn("System.Int32");
         var body = new JsonArray(Var(Text(loop["var"]), TypeJson.Read(loop["elem"]),

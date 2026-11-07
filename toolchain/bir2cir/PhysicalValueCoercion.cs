@@ -73,6 +73,7 @@ static class PhysicalValueCoercion
         internal JsonObject Document;
         internal bool ReferenceBuild;
         internal ReferenceMetadataIndex References;
+        internal GenericArrayStorageLowering.FreshNames ArrayNames;
 
         Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
         internal JsonObject UnitValue() => _unitValue();
@@ -497,6 +498,8 @@ static class PhysicalValueCoercion
     static void RewriteDocument(JsonObject root, Index index)
     {
         index.Document = root;
+        // This is a new structural phase; do not reuse the earlier FBound allocator's snapshot.
+        index.ArrayNames = new GenericArrayStorageLowering.FreshNames(root);
         var fileOwner = Str(root["fileClass"]);
         RewriteMembers(root, fileOwner == null ? null : new TypeNode.Fqn(fileOwner), index);
         if (root["types"] is JsonArray types)
@@ -533,7 +536,7 @@ static class PhysicalValueCoercion
                         .Concat(constructor["thisArgs"] as JsonArray ?? constructor["baseArgs"] as JsonArray ?? new JsonArray())
                         .Concat(constructor["body"] as JsonArray ?? new JsonArray()),
                         (constructor["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>(),
-                        prologue);
+                        prologue, index.ArrayNames);
                     if (constructor["preStmts"] == null && prologue.Count != 0) constructor["preStmts"] = prologue;
                 }
                 var scope = new Scope().Frame(constructor, owner, new TypeNode.Fqn("void"));
@@ -555,7 +558,8 @@ static class PhysicalValueCoercion
                 if (method["body"] is JsonArray body)
                 {
                     if (!index.ReferenceBuild) AllocateNativeLocals(body,
-                        (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>(), body);
+                        (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>(), body,
+                        index.ArrayNames);
                     RewriteArray(body, scope, index);
                 }
             }
@@ -567,7 +571,8 @@ static class PhysicalValueCoercion
     // reconciled by the value-flow walk below; no temporary copy or reference
     // lifetime tracking is involved, and repeated arguments name the same slot.
     internal static void AllocateNativeLocals(IEnumerable<JsonNode> body,
-        IEnumerable<JsonObject> parameterDeclarations, JsonArray prologue)
+        IEnumerable<JsonObject> parameterDeclarations, JsonArray prologue,
+        GenericArrayStorageLowering.FreshNames arrayNames = null)
     {
         var required = new Dictionary<JsonObject, TypeNode>();
         var parameters = parameterDeclarations.ToArray();
@@ -645,7 +650,13 @@ static class PhysicalValueCoercion
                 ["init"] = new JsonObject { ["k"] = "local", ["name"] = Str(declaration["name"]) },
             });
         }
-        for (var i = prefix.Count - 1; i >= 0; i--) prologue.Insert(0, prefix[i]);
+        for (var i = prefix.Count - 1; i >= 0; i--)
+        {
+            // Native-argument stems are disjoint from array temporaries today. Still register this explicit
+            // late declaration boundary rather than making the allocator depend on that implementation detail.
+            arrayNames?.Reserve(prefix[i]);
+            prologue.Insert(0, prefix[i]);
+        }
     }
 
     static JsonNode Rewrite(JsonNode node, Scope scope, Index index, bool resultUsed = true)
@@ -687,7 +698,7 @@ static class PhysicalValueCoercion
         // Late value blocks can lack a result stamp. The lexical storage and
         // resolved member slots above are authoritative for their array value.
         if (index.References != null && obj["array"] != null
-            && GenericArrayStorageLowering.LowerOperation(obj, index.References,
+            && GenericArrayStorageLowering.LowerOperation(obj, index.References, index.ArrayNames,
                 ExprType(obj["array"], scope, index)))
             return Rewrite(obj, scope, index, resultUsed);
 
