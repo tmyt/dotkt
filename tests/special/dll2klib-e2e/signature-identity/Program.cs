@@ -31,3 +31,5 @@ foreach (var other in new[] { Key(2, 1, "N", "T"), Key(1, 2, "N", "T"), Key(1, 1
 if (Key(1, 1, "N", "T", "A") == Key(1, 1, "N", "T", "B")) throw new Exception("Nested scopes collapsed");
 if (Key(1, 1, "A/B", "C") == Key(1, 1, "A", "B/C")) throw new Exception("Metadata name boundaries collapsed");
 Console.WriteLine("Scoped TypeRef identity: PASS");
+MetadataProjectionProbe.Run(tool);
+PackageFailureProbe.Run(tool);
