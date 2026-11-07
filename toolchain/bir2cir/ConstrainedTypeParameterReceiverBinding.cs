@@ -52,25 +52,25 @@ static partial class ConstrainedTypeParameterReceiverBinding
     // callInstance so the inherited-owner walk can still substitute the declaring type into it.
     public static void CloseOpenOwners(IEnumerable<JsonNode> roots)
     {
-        var rootList = roots.ToList();
-        var arity = CollectTypeArity(rootList);
-        foreach (var root in rootList) BindFile(root, arity, close: true);
+        // Closing selects the construction from the receiver's bound; only the later dispatch phase needs
+        // declaration arities to distinguish an already-closed bare owner from an open generic owner.
+        foreach (var root in roots) BindFile(root, arity: null, close: true);
     }
 
-    internal static void CloseMethodOwners(JsonObject method, JsonObject owner, IReadOnlyDictionary<string, int> arities,
+    internal static void CloseMethodOwners(JsonObject method, JsonObject owner,
         JsonArray methodParameters, ReferenceMetadataIndex refs)
     {
-        BindMethod(method, CloneTypeParametersWithErasedSourceBounds(owner), arities,
+        BindMethod(method, CloneTypeParametersWithErasedSourceBounds(owner), arity: null,
             close: true, isValue: null, resolvedPropertiesOnly: false, refs: refs,
             methodParametersOverride: methodParameters);
     }
 
-    internal static void CloseTypeOwners(JsonObject type, IReadOnlyDictionary<string, int> arities)
+    internal static void CloseTypeOwners(JsonObject type)
     {
         var parameters = CloneTypeParametersWithErasedSourceBounds(type);
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, parameters, arities, close: true, isValue: null,
+                BindMethod(method, parameters, arity: null, close: true, isValue: null,
                     resolvedPropertiesOnly: false, refs: null);
     }
 
@@ -103,10 +103,9 @@ static partial class ConstrainedTypeParameterReceiverBinding
 
     // name -> declared type-parameter count, for every type declared in this compilation. Only the ARITY is
     // needed: it says whether a bare owner token is already closed (0) or still has to be constructed.
-    // This is a value snapshot, not a cache of mutable roots. Callers may share it only across a phase that
-    // preserves declaration names and type-parameter counts; rebuild after adding/removing/renaming types or
-    // changing those counts. Constraint and method-body changes do not invalidate it.
-    internal static IReadOnlyDictionary<string, int> CollectTypeArity(IEnumerable<JsonNode> roots)
+    // Each dispatch phase takes a fresh snapshot, so declaration synthesis, renames and parameter-count changes
+    // between phases are observed without retaining mutable roots or an invalidatable compilation cache.
+    static Dictionary<string, int> CollectTypeArity(IEnumerable<JsonNode> roots)
     {
         var result = new Dictionary<string, int>(StringComparer.Ordinal);
         void Collect(JsonNode node)
@@ -123,7 +122,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
         return result;
     }
 
-    static void BindFile(JsonNode root, IReadOnlyDictionary<string, int> arity, bool close,
+    static void BindFile(JsonNode root, Dictionary<string, int> arity, bool close,
         ValueTypeOracle isValue = null, bool resolvedPropertiesOnly = false, ReferenceMetadataIndex refs = null,
         IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
@@ -140,7 +139,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                 BindType(type, arity, close, isValue, resolvedPropertiesOnly, refs, localExistentialOwners);
     }
 
-    static void BindType(JsonObject type, IReadOnlyDictionary<string, int> arity, bool close,
+    static void BindType(JsonObject type, Dictionary<string, int> arity, bool close,
         ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
@@ -163,7 +162,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                 BindType(child, arity, close, isValue, resolvedPropertiesOnly, refs, localExistentialOwners);
     }
 
-    static void BindAccessors(JsonArray properties, JsonArray typeParams, IReadOnlyDictionary<string, int> arity, bool close,
+    static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity, bool close,
         ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
@@ -175,7 +174,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                         localExistentialOwners: localExistentialOwners);
     }
 
-    static void BindMethod(JsonObject method, JsonArray typeParams, IReadOnlyDictionary<string, int> arity, bool close,
+    static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity, bool close,
         ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs,
         JsonArray methodParametersOverride = null, IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
@@ -640,7 +639,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
     // type says so by its arity, and a referenced one that phase 1 could not construct from the bound has no
     // generic construction to be missing. A locally declared GENERIC type still bare here was never closed by
     // either route, and a MemberRef cannot name it.
-    static TypeNode.Fqn ClosedOwner(TypeNode.Fqn owner, IReadOnlyDictionary<string, int> arity)
+    static TypeNode.Fqn ClosedOwner(TypeNode.Fqn owner, Dictionary<string, int> arity)
     {
         if (owner.Args != null) return owner;
         return arity.TryGetValue(owner.Name, out var count) && count > 0 ? null : owner;

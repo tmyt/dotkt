@@ -23,17 +23,18 @@ static partial class ConstrainedTypeParameterReceiverBinding
             || snapshot["Duplicate"] != 0 || snapshot["Receiver"] != 1)
             throw new InvalidOperationException("Declaration arities lost nested types or traversal-order overwrite");
 
-        // Multiple body/constraint rewrites can share the snapshot without changing their result.
+        // Closing needs only the receiver's bound, not declaration arities. All closing entry points agree,
+        // even when repeated, and run without collecting an index.
         var receiver = root["types"][3].AsObject();
         var expected = receiver.DeepClone().AsObject();
-        CloseTypeOwners(expected, CollectTypeArity(roots));
-        CloseTypeOwners(receiver, snapshot);
-        CloseTypeOwners(receiver, snapshot);
+        CloseOpenOwners(new[] { new JsonObject { ["types"] = new JsonArray(expected) } });
+        CloseTypeOwners(receiver);
+        CloseTypeOwners(receiver);
         var method = receiver["methods"][0].AsObject();
-        CloseMethodOwners(method, receiver, snapshot, new JsonArray(), refs: null);
+        CloseMethodOwners(method, receiver, new JsonArray(), refs: null);
         if (!JsonNode.DeepEquals(receiver, expected)
             || TypeJson.Read(method["body"][0]["ownerType"]) != new TypeNode.Fqn("Nested", new TypeNode[] { new TypeNode.Fqn("Plain") }))
-            throw new InvalidOperationException("Shared arities changed owner closing or its ordering");
+            throw new InvalidOperationException("Index-free owner closing changed its result or ordering");
 
         // Structural mutations end the lifetime. A new snapshot observes added/removed/renamed types and changed
         // parameter counts, while the old snapshot remains a value (no retained root or hidden cache).
@@ -41,17 +42,18 @@ static partial class ConstrainedTypeParameterReceiverBinding
         var nested = declarations[0]["types"][0].AsObject();
         nested["name"] = "Renamed";
         nested["typeParams"].AsArray().Add("U");
+        nested["capturedTypeParams"] = new JsonArray("Outer");
         declarations.RemoveAt(2);
         declarations.Add(new JsonObject { ["name"] = "Added", ["typeParams"] = new JsonArray("A") });
         var rebuilt = CollectTypeArity(roots);
         if (snapshot.ContainsKey("Renamed") || snapshot.ContainsKey("Added") || snapshot["Nested"] != 1
-            || rebuilt.ContainsKey("Nested") || rebuilt["Renamed"] != 2 || rebuilt["Added"] != 1
+            || rebuilt.ContainsKey("Nested") || rebuilt["Renamed"] != 3 || rebuilt["Added"] != 1
             || rebuilt["Duplicate"] != 1
             || ClosedOwner(new TypeNode.Fqn("Duplicate"), rebuilt) != null
             || ClosedOwner(new TypeNode.Fqn("Duplicate"), snapshot) == null)
             throw new InvalidOperationException("Declaration arity snapshot was not rebuilt across structural mutation");
         if (CollectTypeArity(Array.Empty<JsonNode>()).Any())
             throw new InvalidOperationException("Declaration arities leaked into a later compilation");
-        Console.WriteLine("[declaration arities] self-test OK (shared closing, nested/order, mutation/rebuild, isolation)");
+        Console.WriteLine("[declaration arities] self-test OK (index-free closing, nested/order, mutation/rebuild, isolation)");
     }
 }

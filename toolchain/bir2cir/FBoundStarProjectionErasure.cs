@@ -111,9 +111,6 @@ static partial class FBoundStarProjectionErasure
         var generatedMethodFrames = OwnerConstrainedMethodLowering.PropagateCapturedBounds(defs, ContainsOwnerTv,
             bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false), rootList);
         foreach (var root in rootList) EraseProjectedAliasConstraints(root, refs);
-        // Synthesis and captured-frame propagation above can add types or change their arities. The owner-closing
-        // phase below changes only constraints and bodies, so one post-synthesis declaration snapshot serves it all.
-        var closingArities = ConstrainedTypeParameterReceiverBinding.CollectTypeArity(rootList);
         foreach (var (name, definition) in defs)
         {
             if (!Bool(definition["generated"]) || definition["typeParams"] is not JsonArray parameters) continue;
@@ -154,9 +151,9 @@ static partial class FBoundStarProjectionErasure
             if (KotlinSupertypesRecord.ReadNullableFrame(definition) == null)
                 KotlinSupertypesRecord.Merge(definition, new JsonObject { ["bounds"] = bounds });
             definition[OwnerConstrainedMethodLowering.DispatchBoundsKey] = dispatch.ToJsonString();
-            ConstrainedTypeParameterReceiverBinding.CloseTypeOwners(definition, closingArities);
+            ConstrainedTypeParameterReceiverBinding.CloseTypeOwners(definition);
         }
-        OwnerConstrainedMethodLowering.CloseOwners(closingArities, ContainsOwnerTv,
+        OwnerConstrainedMethodLowering.CloseOwners(ContainsOwnerTv,
             bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
         foreach (var root in rootList.OfType<JsonObject>()) CloseSuspendLambdaOwners(root, root);
         void CloseSuspendLambdaOwners(JsonNode node, JsonObject owner)
@@ -189,7 +186,7 @@ static partial class FBoundStarProjectionErasure
                         ["body"] = obj["body"]?.DeepClone(),
                     };
                     OwnerConstrainedMethodLowering.CloseOwnerViews(declaration,
-                        new JsonObject { ["typeParams"] = typeFrame }, closingArities,
+                        new JsonObject { ["typeParams"] = typeFrame },
                         ContainsOwnerTv, bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
                     obj["body"] = declaration["body"]?.DeepClone();
                 }
@@ -1072,7 +1069,6 @@ static partial class FBoundStarProjectionErasure
         OwnerConstrainedMethodLowering.Record(dependentMethod, new JsonObject());
         var sourceMethodBounds = dependentMethod[NullableGenericErasure.MethodTypeParameterBoundsPre].DeepClone();
         OwnerConstrainedMethodLowering.CloseOwnerViews(dependentMethod, new JsonObject(),
-            ConstrainedTypeParameterReceiverBinding.CollectTypeArity(Array.Empty<JsonNode>()),
             ContainsOwnerTv, bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
         OwnerConstrainedMethodLowering.Apply(ContainsOwnerTv, bound => ProjectOwnerMethodBound(bound, owners, refs));
         var dependentSlot = EraseOwnerTypeParamConstraints(sourceMethodParameters, owners, refs, null, null);
