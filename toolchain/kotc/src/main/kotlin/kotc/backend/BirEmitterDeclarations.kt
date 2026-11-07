@@ -994,7 +994,7 @@ internal fun BirEmitter.instanceStorageFields(klass: IrClass): List<String> {
 	val propertyFields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { p ->
 		// A `by clrEvent()` property's fictional ClrEvent<T> field is replaced by the event synthesis, and a companion
 		// property's storage belongs to the enclosing type rather than each instance.
-		if (clrEventDelegateCall(p) != null || hasStaticPropertyStorage(klass, p)) return@mapNotNull null
+		if (isFieldLikeClrEvent(p) || hasStaticPropertyStorage(klass, p)) return@mapNotNull null
 		val bf = p.backingField ?: return@mapNotNull null
 		// Accessor-routed storage is an implementation detail. @ClrField / const retain their declared
 		// visibility; a plain field with a more restricted setter has a read-only projected surface.
@@ -1028,7 +1028,7 @@ internal fun BirEmitter.instanceInitializerStatements(klass: IrClass): List<Stri
 	val statements = ArrayList<String>()
 	klass.declarations.forEach { d ->
 		when (d) {
-			is IrProperty -> if (clrEventDelegateCall(d) == null && !hasStaticPropertyStorage(klass, d)) {
+			is IrProperty -> if (!isFieldLikeClrEvent(d) && !hasStaticPropertyStorage(klass, d)) {
 				d.backingField?.let { field -> field.initializer?.let { initializer ->
 					val expression = (initializer as IrExpressionBody).expression
 					sourcePointJson(expression)?.let(statements::add)
@@ -1286,6 +1286,11 @@ internal fun BirEmitter.clrEventDelegateCall(p: IrProperty): IrCall? {
 	return if (init.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.clr.clrEvent") init else null
 }
 
+/** Only the no-argument marker has fictional storage. A policy is a real
+ * delegate value, initialized once at the property's ordinary Kotlin position. */
+internal fun BirEmitter.isFieldLikeClrEvent(p: IrProperty): Boolean =
+	clrEventDelegateCall(p)?.let { call -> call.symbol.owner.parameters.none(::isValueParameter) } == true
+
 /** #187 missing-`by clrEvent()` diagnostic (kotc EMISSION time — the frontend can't enforce it via an abstract member:
  *  a .NET base that explicitly implements an interface event with a different-signature same-name public event can never
  *  satisfy an abstract slot, so an abstract interface event member would wrongly break `class MyApp : Avalonia.Application`).
@@ -1297,6 +1302,15 @@ internal fun BirEmitter.clrEventDelegateCall(p: IrProperty): IrCall? {
  *  is a false-NEGATIVE for `class X : UnrelatedNetBase(), IEvented` (kotc-purity forbids reading .NET metadata to know
  *  which interface a .NET base implements). */
 internal fun BirEmitter.checkUnimplementedClrEvents(klass: IrClass) {
+	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
+		if (!isClrEventProperty(p) || p.isFakeOverride || p.getter?.modality == Modality.ABSTRACT ||
+			clrEventDelegateCall(p) != null ||
+			p.origin == IrDeclarationOrigin.DELEGATED_MEMBER) continue
+		hadError = true
+		messageCollector?.report(CompilerMessageSeverity.ERROR,
+			"event '${p.name.asString()}' requires `by clrEvent()` or `by clrEvent(policy)`; " +
+				"an ordinary handle-valued property does not implement CLR event accessors", locationOf(p))
+	}
 	val hasNetBaseClass = klass.superTypes.any { st ->
 		(st.classifierOrNull?.owner as? IrClass)?.let { it.kind == ClassKind.CLASS && isExternalNetType(it) } == true
 	}
@@ -1324,7 +1338,7 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 	val methods = ArrayList<String>()
 	val unit = fqnJson("kotlin.Unit")
 	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
-		clrEventDelegateCall(p) ?: continue
+		val delegateCall = clrEventDelegateCall(p) ?: continue
 		val name = p.name.asString()
 		// `var E by clrEvent()` is a hard error — an event is a read-only handle (subscribe/unsubscribe/raise, never reassign).
 		if (p.isVar) {
@@ -1351,7 +1365,11 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 			""","overrides":[${overriddenOwners.joinToString(",") { o -> """{"owner":${fqnJson(o)},"member":${str(name)},"kind":${str(kind)},"arity":1}""" }}]"""
 		fun accessor(mname: String, virtual: Boolean, kind: String, ov: String) =
 			"""{"name":${str(mname)},"static":false,"override":false,"virtual":$virtual,"abstract":false,"objectOverride":false,"vis":"public","params":[{"name":"value","type":$handlerJson}],"ret":$unit,"body":[{"k":"clrEventAccessor","kind":${str(kind)},"event":${str(name)}}]$ov}"""
-		backings.add("""{"k":"clrEventBacking","name":${str(name)},"handlerType":$handlerJson}""")
+		val policyField = if (delegateCall.symbol.owner.parameters.any(::isValueParameter)) {
+			val field = p.backingField ?: error("custom CLR event '$name' has no Kotlin delegate field")
+			""","policyField":${str(field.name.asString())}"""
+		} else ""
+		backings.add("""{"k":"clrEventBacking","name":${str(name)},"handlerType":$handlerJson$policyField}""")
 		// add_/remove_: public VIRTUAL NEWSLOT (implicitly implements the interface add_/remove_ slot; bir2cir also wires the
 		// explicit MethodImpl). bir2cir rewrites the `value` param type to the concrete delegate `D` + the body to the CAS loop.
 		methods.add(accessor("add_$name", virtual = true, kind = "add", ov = overridesFor("event-add")))

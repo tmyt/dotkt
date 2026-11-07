@@ -105,7 +105,6 @@ import java.security.MessageDigest
 private val CLR_COMPILE_TIME_INTRINSIC_FUNCTIONS = setOf(
 	"kotlin.clr.byref",
 	"kotlin.clr.stackBuffer",
-	"kotlin.clr.clrEvent",
 )
 
 private val CLR_COMPILE_TIME_INTRINSIC_CLASSES = setOf(
@@ -1018,7 +1017,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			.filter {
 				it.origin.toString() == "DEFINED" &&
 					!isExternalNetType(it) &&
-					it.fqNameWhenAvailable?.asString() !in CLR_COMPILE_TIME_INTRINSIC_FUNCTIONS
+					it.fqNameWhenAvailable?.asString() !in CLR_COMPILE_TIME_INTRINSIC_FUNCTIONS &&
+					!(it.fqNameWhenAvailable?.asString() == "kotlin.clr.clrEvent" &&
+						it.parameters.none(::isValueParameter))
 			}
 		// Compile-time kotlin.clr types are BIR vocabulary or handles and have no physical CLR class.
 		// @ClrTypeAlias classes (collections/StringBuilder/unsigned/primitives/String/…) are emitted here as ORDINARY

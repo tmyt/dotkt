@@ -263,12 +263,17 @@ static class ClrEventImplBinding
             // The concrete delegate `D` + its Invoke param nodes (raise's signature).
             var (delegateNode, invokeParamNodes) = ResolveDelegate(name, addM, backing["handlerType"], refs);
 
-            var fieldName = name + "$delegate";
-            fields.Add(new JsonObject { ["name"] = fieldName, ["type"] = delegateNode.DeepClone(), ["vis"] = "private" });
-
-            RewriteFieldLike(addM, "add", fieldName, delegateNode);
-            RewriteFieldLike(remM, "remove", fieldName, delegateNode);
-            RewriteRaise(raiseM, fieldName, delegateNode, invokeParamNodes);
+            if (Str(backing["policyField"]) is string policyField)
+                RewritePolicy(type, fields, policyField, addM, remM, raiseM,
+                    delegateNode, invokeParamNodes, refs);
+            else
+            {
+                var fieldName = name + "$delegate";
+                fields.Add(new JsonObject { ["name"] = fieldName, ["type"] = delegateNode.DeepClone(), ["vis"] = "private" });
+                RewriteFieldLike(addM, "add", fieldName, delegateNode);
+                RewriteFieldLike(remM, "remove", fieldName, delegateNode);
+                RewriteRaise(raiseM, fieldName, delegateNode, invokeParamNodes);
+            }
 
             decls.Add(new JsonObject { ["k"] = "clrEventDecl", ["name"] = name, ["delegateType"] = delegateNode.DeepClone() });
         }
@@ -297,6 +302,74 @@ static class ClrEventImplBinding
             && body[0] is JsonObject marker
             && Str(marker["k"]) == "clrEventAccessor"
             && Str(marker["kind"]) == kind);
+
+    // The frontend names the actual Kotlin delegate field. Its initializer and ordering remain ordinary Kotlin;
+    // this pass only supplies the native event accessors. Calls carry the exact stdlib declaration identity, so
+    // the existing member/representation pipeline closes their frames and converts the native handler normally.
+    static void RewritePolicy(JsonObject type, JsonArray fields, string fieldName,
+        JsonObject add, JsonObject remove, JsonObject raise, JsonNode delegateType,
+        List<JsonNode> invokeParameters, ReferenceMetadataIndex refs)
+    {
+        var field = fields.OfType<JsonObject>().Single(f => Str(f["name"]) == fieldName);
+        var policyType = field["type"] ?? throw new InvalidOperationException("CLR event policy field has no type");
+        var ownerArguments = TypeParameterFrame.Declarations(type)
+            .Select((_, index) => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
+        var owner = new TypeNode.Fqn(Str(type["name"]), ownerArguments.Length == 0 ? null : ownerArguments);
+        JsonObject Receiver() => new()
+        {
+            ["k"] = "field", ["ownerType"] = TypeJson.Write(owner), ["name"] = fieldName,
+            ["recv"] = new JsonObject { ["k"] = "this", ["sty"] = TypeJson.Write(owner) },
+            ["sty"] = policyType.DeepClone(),
+        };
+        JsonObject Call(string name, TypeNode parameter, JsonNode argument)
+        {
+            var declaration = refs.AuthoredKotlinHelper("kotlin.clr.ClrEventPolicy", name, 0,
+                new[] { parameter }, isStatic: false);
+            return new JsonObject
+            {
+                ["k"] = "callInstance", ["ownerType"] = policyType.DeepClone(), ["recv"] = Receiver(),
+                ["method"] = name, ["virtual"] = true,
+                [DeclarationIdentityBinding.Key] = declaration.DeclarationId,
+                ["sig"] = new JsonArray(TypeJson.Write(parameter)), ["args"] = new JsonArray(argument),
+                ["ret"] = TypeJson.Fqn("kotlin.Unit"), ["sty"] = TypeJson.Fqn("kotlin.Unit"),
+            };
+        }
+        void Accessor(JsonObject method, string name)
+        {
+            method["params"][0]["type"] = delegateType.DeepClone();
+            method["body"] = new JsonArray(new JsonObject
+            {
+                ["k"] = "exprStmt", ["expr"] = Call(name, new TypeNode.Tv("type", 0), new JsonObject
+                {
+                    ["k"] = "local", ["name"] = "value", ["sty"] = delegateType.DeepClone(),
+                }),
+            });
+            method["specialName"] = true;
+            method.Remove("overrides");
+        }
+        Accessor(add, "addHandler");
+        Accessor(remove, "removeHandler");
+        var parameters = new JsonArray();
+        var arguments = new JsonArray();
+        for (var i = 0; i < invokeParameters.Count; i++)
+        {
+            parameters.Add(new JsonObject { ["name"] = "arg" + i, ["type"] = invokeParameters[i].DeepClone() });
+            arguments.Add(new JsonObject { ["k"] = "local", ["name"] = "arg" + i, ["sty"] = invokeParameters[i].DeepClone() });
+        }
+        var element = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+        var arrayType = new TypeNode.Array(element);
+        raise["params"] = parameters;
+        raise["body"] = new JsonArray(new JsonObject
+        {
+            ["k"] = "exprStmt", ["expr"] = Call("invoke", arrayType, new JsonObject
+            {
+                ["k"] = "newArray", ["elem"] = TypeJson.Write(element), ["elems"] = arguments,
+                ["sty"] = TypeJson.Write(arrayType),
+            }),
+        });
+        raise["specialName"] = true;
+        raise.Remove("overrides");
+    }
 
     // add_/remove_: param[0].type := D; body := the CAS-loop directive; drop the (consumed) overrides closure.
     static void RewriteFieldLike(JsonObject m, string kind, string fieldName, JsonNode delegateNode)

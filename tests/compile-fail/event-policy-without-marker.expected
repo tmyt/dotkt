@@ -1,0 +1,2 @@
+requires `by clrEvent()` or `by clrEvent(policy)`
+an ordinary handle-valued property does not implement CLR event accessors
