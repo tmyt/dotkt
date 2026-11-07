@@ -46,6 +46,8 @@
   <ItemGroup>
     <!-- Read the metadata-only reference stdlib (throw-stub bodies, kotlin.* signatures) WITHOUT a runtime load:
          Assembly.LoadFrom chokes (TypeLoadException) on it; MetadataLoadContext reads its metadata cleanly. -->
-    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" />
+    <!-- MetadataDeclaredMembers uses this version's internal declared-member readers.
+         Re-audit that adapter and its equivalence tests when upgrading this dependency. -->
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="[9.0.0]" />
   </ItemGroup>
 </Project>

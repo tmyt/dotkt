@@ -5118,6 +5118,7 @@ sealed partial class ReferenceMetadataIndex
 
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
     {
+        MetadataDeclaredMembers.EnsureAvailable();
         // bir2cir is a ref-READER: a consumed cross-module DotKt library references the RUNTIME stdlib
         // (DotKt.Stdlib) in its `[kotlin.clr.*]` round-trip metadata, but bir2cir carries only the REFERENCE
         // twin — alias so that reference resolves to DotKt.Private.Stdlib (same type shapes).
@@ -5353,7 +5354,7 @@ sealed partial class ReferenceMetadataIndex
                     metadata.TypeKinds[typeDeclarationIdentity] = declarationKind;
                     metadata.PhysicalTypeKinds[exactPhysicalOwner] = declarationKind;
                     if (type.IsValueType || !type.IsAbstract && !type.IsInterface &&
-                        type.GetConstructor(Type.EmptyTypes) is ConstructorInfo { IsPublic: true })
+                        MetadataDeclaredMembers.HasPublicParameterlessConstructor(type))
                     {
                         metadata.PublicParameterlessConstructibleOwners.Add(
                             typeDeclarationIdentity);
@@ -5478,8 +5479,6 @@ sealed partial class ReferenceMetadataIndex
                         }
                     }
 
-                    const BindingFlags declaredMemberFlags = BindingFlags.Public | BindingFlags.NonPublic
-                        | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
                     // MethodSemantics is an association table. Index it once per Type instead of rescanning every
                     // PropertyInfo for every MethodInfo below. A malformed/ambiguous method associated with more than
                     // one property states no source identity; never select whichever reflection happens to return first.
@@ -5494,14 +5493,14 @@ sealed partial class ReferenceMetadataIndex
                         else
                             propertyAccessors[accessor.MetadataToken] = association;
                     }
-                    foreach (var property in type.GetProperties(declaredMemberFlags))
+                    foreach (var property in MetadataDeclaredMembers.Properties(type))
                     {
                         var isIndexer = property.GetIndexParameters().Length > 0;
                         IndexPropertyAccessor(property.GetGetMethod(true), property.Name, "get", isIndexer);
                         IndexPropertyAccessor(property.GetSetMethod(true), property.Name, "set", isIndexer);
                     }
 
-                    foreach (var method in type.GetMethods(declaredMemberFlags))
+                    foreach (var method in MetadataDeclaredMembers.Methods(type))
                     {
                         propertyAccessors.TryGetValue(method.MetadataToken, out var owningProperty);
                         var carriedProperty = dotKtAuthored
@@ -5754,7 +5753,7 @@ sealed partial class ReferenceMetadataIndex
                     // A CONSTRUCTOR has no name of its own, so it is keyed by the `.ctor` pseudo-name (#235). Same scheme as
                     // the method scan above: the `new` carries its resolved ctor's declared parameter types in `argTypes`,
                     // the same ParamKey space, so same-arity ctor overloads resolve rather than collide.
-                    foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                    foreach (var ctor in MetadataDeclaredMembers.Constructors(type).Where(constructor => !constructor.IsStatic))
                     {
                         if (dotKtAuthored)
                         {
