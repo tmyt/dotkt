@@ -5,6 +5,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.21 (2026-11-07)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.21`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Reduce repeated bir2cir metadata-catalog generation, name/index scans and temporary
+  body copying without changing generated CIR.
+- Support native CLR function-pointer signatures and explicit CLR event storage/dispatch policies.
+- Improve enum identity/dispatch, suppressed exception handling and mixed-numeric lowering,
+  while preserving deterministic binaries and matching debug symbols.
+
+### Changed
+
+- Scope generic-array name allocation and inner-factory normalization to current work items, and remove unused declaration-arity indexing during owner closing.
+
 - Close suspend-lambda member owners in place using their explicit generic frame, avoiding temporary copies of executable bodies.
 
 - Reuse bir2cir's filtered physical type-name catalog within each local-declaration phase, preserving source precedence and late synthesized declarations.
