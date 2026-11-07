@@ -22,6 +22,7 @@ WORK="$ROOT/build/tests-msbuild"
 mkdir -p "$WORK"
 # Build the compiler launcher once (a plain Java app) so the MSBuild EnsureKotlinClrCompiler bootstrap is a no-op.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
+bash "$ROOT/tests/msbuild/klib-cache.sh"
 
 # ktproj_run <absolute-project> <stderr-logfile> — build+run a .ktproj; echo its noise-filtered stdout;
 # RETURN the run's exit status (0 iff `dotnet run` — build AND execution — succeeded). Status and stdout are

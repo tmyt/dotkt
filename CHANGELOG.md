@@ -8,6 +8,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ### Changed
 
 - Reduce bir2cir reference-index allocation by avoiding unnecessary per-type name-query caches when scanning declared CLR members.
+- Reuse KLIB ZIP files through the upstream bounded, compilation-scoped cache and honor its cache-limit option.
 
 ## 0.9.21 (2026-11-07)
 
