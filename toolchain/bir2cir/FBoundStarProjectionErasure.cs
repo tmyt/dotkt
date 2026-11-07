@@ -208,9 +208,13 @@ static partial class FBoundStarProjectionErasure
             .ToDictionary(owner => owner.Name, owner => (
                 Dependent: OwnerDependentInnerParameters(owner, InnerCapturedCount(owner.Def)),
                 Direct: DirectOwnerDependentInnerParameters(owner, InnerCapturedCount(owner.Def))), StringComparer.Ordinal);
+        // Carrier names are final before value rewriting; declaration bodies are not. Share only this exact
+        // physical-name index, never a cached normalization decision about a mutable or synthesized body.
+        var normalizationCarriers = owners.Values.Select(owner => owner.ErasedName)
+            .ToHashSet(StringComparer.Ordinal);
         foreach (var root in rootList)
             Rewrite(root, owners, defs, refs, new GenericArrayStorageLowering.FreshNames(root),
-                localClrAliases: localClrAliases);
+                normalizationCarriers, localClrAliases: localClrAliases);
         // A mutable cell's value writes now have physical types. Align its explicit storage before the existing
         // local/return propagation below, so nullable temporaries and separate read closures see the same slot.
         if (sharedCells is { Count: > 0 })
@@ -222,10 +226,10 @@ static partial class FBoundStarProjectionErasure
         // projected array read that flowed through a compiler-generated nullable temporary binds its member on the
         // existential carrier rather than retaining the frontend's exact constructed owner.
         foreach (var root in rootList)
-            RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
+            RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs, normalizationCarriers);
         while (CollectNormalizedInnerFactoryReturns(rootList, owners, refs, normalizedReturns))
             foreach (var root in rootList)
-                RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
+                RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs, normalizationCarriers);
         // Referenced accessor normalization can reveal the physical value only after the first
         // shared-cell walk. Its explicit storage contract must agree with that final initializer.
         if (sharedCells is { Count: > 0 })
@@ -234,7 +238,7 @@ static partial class FBoundStarProjectionErasure
                 owners.Values.Where(owner => owner.Needed).ToDictionary(
                     owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs);
             foreach (var root in rootList)
-                RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
+                RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs, normalizationCarriers);
         }
         // Projection-result facts are local to this walk. Exact cast roles survive late type/member rewriting;
         // RemoveTransientFacts consumes them after the late FBound rewriting passes have completed.
@@ -319,7 +323,7 @@ static partial class FBoundStarProjectionErasure
     static void RewriteNormalizedInnerFactoryCalls(JsonNode node,
         NormalizedReturnBindings normalizedReturns,
         IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, IReadOnlySet<string> normalizationCarriers)
     {
         switch (node)
         {
@@ -352,7 +356,7 @@ static partial class FBoundStarProjectionErasure
                 }
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RewriteNormalizedInnerFactoryCalls(
-                        value, normalizedReturns, owners, defs, refs);
+                        value, normalizedReturns, owners, defs, refs, normalizationCarriers);
                 BindProjectedArrayRead(obj, owners, refs);
                 BindProjectedArrayGenericCall(obj, owners, refs);
                 BindCarrierArgumentMerge(obj, owners, defs, refs);
@@ -360,12 +364,12 @@ static partial class FBoundStarProjectionErasure
                 BindDeclarationCarrierResult(obj, owners, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 if (obj["body"] is JsonArray && obj["params"] is JsonArray)
-                    NormalizeInnerFactoryLocals(obj, owners, defs, refs);
+                    NormalizeInnerFactoryLocals(obj, owners, defs, refs, normalizationCarriers);
                 break;
             case JsonArray array:
                 foreach (var value in array)
                     if (value != null) RewriteNormalizedInnerFactoryCalls(
-                        value, normalizedReturns, owners, defs, refs);
+                        value, normalizedReturns, owners, defs, refs, normalizationCarriers);
                 break;
         }
     }
@@ -1018,6 +1022,7 @@ static partial class FBoundStarProjectionErasure
 
     internal static void ProjectionConstraintSelfTest()
     {
+        InnerFactoryNormalizationSelfTest();
         FunctionRewriteTests.Check("F-bound rewrite", type => RewriteType(type,
             new Dictionary<string, Owner>(), ReferenceMetadataIndex.Build(Array.Empty<string>())));
         var variable = new TypeNode.Tv("method", 0);
@@ -3397,6 +3402,7 @@ static partial class FBoundStarProjectionErasure
     static void Rewrite(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
         GenericArrayStorageLowering.FreshNames arrayNames,
+        IReadOnlySet<string> normalizationCarriers,
         IReadOnlySet<int> existentialTypeParameters = null,
         IReadOnlySet<int> existentialMethodParameters = null,
         JsonArray typeParameterDeclarations = null,
@@ -3514,7 +3520,7 @@ static partial class FBoundStarProjectionErasure
                 var runtimeOperand = runtimeKind is "cast" or "isInstRef" ? obj["e"] : null;
                 var rewroteRuntimeOperand = runtimeOperand != null;
                 if (runtimeOperand != null)
-                    Rewrite(runtimeOperand, owners, defs, refs, arrayNames,
+                    Rewrite(runtimeOperand, owners, defs, refs, arrayNames, normalizationCarriers,
                         childTypeParameters, childMethodParameters,
                         childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType,
                         boundDeclaration, localClrAliases);
@@ -3605,7 +3611,7 @@ static partial class FBoundStarProjectionErasure
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
                     else
-                        Rewrite(value, owners, defs, refs, arrayNames,
+                        Rewrite(value, owners, defs, refs, arrayNames, normalizationCarriers,
                             childTypeParameters, childMethodParameters,
                             childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType,
                             childBoundDeclaration, localClrAliases, childArrayShape);
@@ -3633,7 +3639,7 @@ static partial class FBoundStarProjectionErasure
                         || refs.IsExistentialPhysicalOwner(erasedOwner.Name)))
                     obj["virtual"] = true;
                 if (obj["body"] is JsonArray && obj["params"] is JsonArray)
-                    NormalizeInnerFactoryLocals(obj, owners, defs, refs);
+                    NormalizeInnerFactoryLocals(obj, owners, defs, refs, normalizationCarriers);
                 break;
             case JsonArray arr:
                 for (var i = 0; i < arr.Count; i++)
@@ -3646,7 +3652,7 @@ static partial class FBoundStarProjectionErasure
                             preserveArrayShape: preserveArrayShape,
                             preserveConstructedHead: IsInterfaceDeclarationList(arr)));
                     else
-                        Rewrite(value, owners, defs, refs, arrayNames,
+                        Rewrite(value, owners, defs, refs, arrayNames, normalizationCarriers,
                             existentialTypeParameters, existentialMethodParameters,
                             typeParameterDeclarations, methodParameterDeclarations, currentThisType,
                             boundDeclaration, localClrAliases, preserveArrayShape);
@@ -4502,8 +4508,10 @@ static partial class FBoundStarProjectionErasure
 
     static void NormalizeInnerFactoryLocals(JsonObject declaration,
         IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, IReadOnlySet<string> physicalCarriers)
     {
+        if (declaration["body"] is not JsonArray { Count: > 0 } body) return;
+
         bool LogicalTypeMatchesPhysical(TypeNode logical, TypeNode physical)
         {
             if (logical is TypeNode.Array logicalArray && physical is TypeNode.Array physicalArray)
@@ -4522,7 +4530,7 @@ static partial class FBoundStarProjectionErasure
         bool TryCarrier(TypeNode type, out TypeNode.Fqn carrier)
         {
             var core = StripProjectionShell(type) as TypeNode.Fqn;
-            if (core != null && (owners.Values.Any(owner => owner.ErasedName == core.Name)
+            if (core != null && (physicalCarriers.Contains(core.Name)
                     || refs.IsExistentialPhysicalOwner(core.Name)))
             {
                 carrier = core;
@@ -4548,9 +4556,10 @@ static partial class FBoundStarProjectionErasure
             return false;
         }
 
-        var locals = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-        var projectedLocals = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
-        var projectedArrayLocals = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        Dictionary<string, TypeNode> locals = null;
+        Dictionary<string, TypeNode.Fqn> projectedLocals = null;
+        Dictionary<string, TypeNode> projectedArrayLocals = null;
+        var pending = new List<JsonObject>();
         void Collect(JsonNode node)
         {
             switch (node)
@@ -4566,15 +4575,22 @@ static partial class FBoundStarProjectionErasure
                         if (LogicalTypeMatchesPhysical(declared, result)
                             || projected != null || arrayProjection != null)
                         {
-                            locals[name] = result;
+                            (locals ??= new(StringComparer.Ordinal))[name] = result;
                             if (projected != null)
-                                projectedLocals[name] = projected;
+                                (projectedLocals ??= new(StringComparer.Ordinal))[name] = projected;
                             if (arrayProjection != null)
-                                projectedArrayLocals[name] = arrayProjection;
+                                (projectedArrayLocals ??= new(StringComparer.Ordinal))[name] = arrayProjection;
                         }
                     }
-                    foreach (var value in obj.Select(pair => pair.Value))
-                        if (value != null) Collect(value);
+                    foreach (var pair in obj)
+                        if (pair.Value != null) Collect(pair.Value);
+                    // Only these node kinds can change during normalization. Keep their original post-order:
+                    // binders may replace a node after its children, but do not revisit its new children in this
+                    // iteration. Rebuild the list on the next fixed-point iteration to see those children then.
+                    if (Str(obj["k"]) is "var" or "local" or "cast" or "isInstRef" or "arrayGet"
+                        or "callStatic" or "callInstance" or "newBoundDelegate"
+                        or "field" or "lateinitGet" or "setFieldExpr" or "setField")
+                        pending.Add(obj);
                     break;
                 case JsonArray array:
                     foreach (var value in array)
@@ -4582,64 +4598,64 @@ static partial class FBoundStarProjectionErasure
                     break;
             }
         }
-        void Normalize(JsonNode node)
+        void Normalize(JsonObject obj)
         {
-            switch (node)
+            if (locals != null && Str(obj["name"]) is string name
+                && locals.TryGetValue(name, out var carrier))
             {
-                case JsonObject obj:
-                    if (Str(obj["name"]) is string name && locals.TryGetValue(name, out var carrier))
-                    {
-                        if (Str(obj["k"]) == "var") obj["type"] = TypeJson.Write(carrier);
-                        else if (Str(obj["k"]) == "local")
-                        {
-                            obj["sty"] = TypeJson.Write(carrier);
-                            if (projectedLocals.TryGetValue(name, out var projected))
-                                obj[ExistentialResultProjectionKey] = TypeJson.Write(projected);
-                            if (projectedArrayLocals.TryGetValue(name, out var arrayProjection))
-                                obj[ExistentialArrayElementProjectionKey] = TypeJson.Write(arrayProjection);
-                        }
-                    }
-                    foreach (var value in obj.Select(pair => pair.Value).ToList())
-                        if (value != null) Normalize(value);
-                    // A nullable temporary may have been considered a concrete upcast before the cell's value
-                    // slot moved. Its now-physical carrier operand cannot justify narrowing back to G<T>.
-                    var castTarget = TypeJson.Read(obj["type"]);
-                    if (Str(obj["k"]) is "cast" or "isInstRef" && !Bool(obj["_exactBridgeCast"])
-                        && StripSourceNullability(castTarget) is TypeNode.Fqn { Args: { } } castType
-                        && TryCarrier(ExpressionType(obj["e"]), out var operandCarrier)
-                        && TryExistentialCarrier(castType.Name, owners, refs, out var castCarrier)
-                        && operandCarrier.Name == castCarrier)
-                    {
-                        obj["type"] = TypeJson.Write(ReplaceProjectionCore(
-                            castTarget, castType, new TypeNode.Fqn(castCarrier)));
-                        if (obj["sty"] != null) obj["sty"] = obj["type"].DeepClone();
-                    }
-                    BindProjectedArrayRead(obj, owners, refs);
-                    BindProjectedArrayGenericCall(obj, owners, refs);
-                    BindProjectedFieldStorage(obj, owners, defs, refs);
-                    BindInheritedStarMember(obj, owners, defs, refs);
-                    break;
-                case JsonArray array:
-                    foreach (var value in array)
-                        if (value != null) Normalize(value);
-                    break;
+                if (Str(obj["k"]) == "var") obj["type"] = TypeJson.Write(carrier);
+                else if (Str(obj["k"]) == "local")
+                {
+                    obj["sty"] = TypeJson.Write(carrier);
+                    if (projectedLocals != null && projectedLocals.TryGetValue(name, out var projected))
+                        obj[ExistentialResultProjectionKey] = TypeJson.Write(projected);
+                    if (projectedArrayLocals != null && projectedArrayLocals.TryGetValue(name, out var arrayProjection))
+                        obj[ExistentialArrayElementProjectionKey] = TypeJson.Write(arrayProjection);
+                }
             }
+            // A nullable temporary may have been considered a concrete upcast before the cell's value
+            // slot moved. Its now-physical carrier operand cannot justify narrowing back to G<T>.
+            var castTarget = TypeJson.Read(obj["type"]);
+            if (Str(obj["k"]) is "cast" or "isInstRef" && !Bool(obj["_exactBridgeCast"])
+                && StripSourceNullability(castTarget) is TypeNode.Fqn { Args: { } } castType
+                && TryCarrier(ExpressionType(obj["e"]), out var operandCarrier)
+                && TryExistentialCarrier(castType.Name, owners, refs, out var castCarrier)
+                && operandCarrier.Name == castCarrier)
+            {
+                obj["type"] = TypeJson.Write(ReplaceProjectionCore(
+                    castTarget, castType, new TypeNode.Fqn(castCarrier)));
+                if (obj["sty"] != null) obj["sty"] = obj["type"].DeepClone();
+            }
+            BindProjectedArrayRead(obj, owners, refs);
+            BindProjectedArrayGenericCall(obj, owners, refs);
+            BindProjectedFieldStorage(obj, owners, defs, refs);
+            BindInheritedStarMember(obj, owners, defs, refs);
         }
         while (true)
         {
-            var priorLocals = locals.Count;
-            var priorProjections = projectedLocals.Count;
-            Collect(declaration["body"]);
-            Normalize(declaration["body"]);
-            if (locals.Count == priorLocals && projectedLocals.Count == priorProjections) break;
+            var priorLocals = locals?.Count ?? 0;
+            var priorProjections = projectedLocals?.Count ?? 0;
+            pending.Clear();
+            Collect(body);
+            foreach (var node in pending) Normalize(node);
+            if ((locals?.Count ?? 0) == priorLocals && (projectedLocals?.Count ?? 0) == priorProjections) break;
         }
+
+        // Return inference can only replace a logical owner with its physical carrier (possibly an array).
+        // Do not walk every unrelated method body just to rediscover that its declared return cannot match.
+        bool CanNormalizeReturn(TypeNode type) => type is TypeNode.Array array
+            ? CanNormalizeReturn(array.Elem is TypeNode.Projection projection ? projection.Of : array.Elem)
+            : StripProjectionShell(type) is TypeNode.Fqn named
+                && (owners.ContainsKey(named.Name) || refs.TryExistentialPhysicalOwner(named.Name, out _));
+        if (_valueSlots?.HasNativeMethodSignature(declaration) == true
+            || !CanNormalizeReturn(TypeJson.Read(declaration["ret"]))) return;
 
         TypeNode ResultCarrier(JsonNode expression) => expression switch
         {
             JsonObject obj when ExpressionType(obj) is TypeNode result
                 && TryPhysicalExistential(result, out var physical) => physical,
             JsonObject obj when Str(obj["k"]) == "local" && Str(obj["name"]) is string name
-                && locals.TryGetValue(name, out var carrier) => carrier,
+                && locals != null && locals.TryGetValue(name, out var carrier) => carrier,
             JsonObject obj when Str(obj["k"]) == "valueBlock" => ResultCarrier(obj["result"]),
             JsonObject obj when Str(obj["k"]) == "cond" =>
                 ResultCarrier(obj["then"]) is TypeNode thenCarrier
@@ -4669,8 +4685,8 @@ static partial class FBoundStarProjectionErasure
                         else hasNonCarrierReturn = true;
                         return;
                     }
-                    foreach (var value in obj.Select(pair => pair.Value))
-                        if (value != null) CollectReturns(value);
+                    foreach (var pair in obj)
+                        if (pair.Value != null) CollectReturns(pair.Value);
                     break;
                 case JsonArray array:
                     foreach (var value in array)
@@ -4678,10 +4694,9 @@ static partial class FBoundStarProjectionErasure
                     break;
             }
         }
-        CollectReturns(declaration["body"]);
+        CollectReturns(body);
         var distinctReturns = returned.Distinct().ToArray();
-        if (_valueSlots?.HasNativeMethodSignature(declaration) != true
-            && !hasNonCarrierReturn && distinctReturns.Length == 1
+        if (!hasNonCarrierReturn && distinctReturns.Length == 1
             && TypeJson.Read(declaration["ret"]) is TypeNode originalReturn
             && originalReturn != distinctReturns[0]
             && LogicalTypeMatchesPhysical(originalReturn, distinctReturns[0]))
