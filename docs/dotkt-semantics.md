@@ -2923,8 +2923,10 @@ Current deliberate limits are:
   plain Unit native return means CLR void. Native pointers cannot occupy CLR
   generic arguments, but arrays of pointers remain array types. Generic/vararg/
   instance function pointers, bounded native arrays and unrepresentable modifier
-  orders produce diagnostics. Persisted function-pointer emission requires the
-  .NET runtime 10.0.12 or later;
+  orders produce diagnostics. The compiler's emitter requires the .NET runtime
+  10.0.12 or later for persisted function-pointer emission; because this is its
+  process-wide runtime requirement, it applies to all DotKt builds, including
+  those that do not use function pointers;
 - native callable signatures retain the nominal CLR `Nullable<T>` constructor
   separately from NRT annotations on generic variables. A nullable Kotlin type
   variable alone is not an exact native signature description;

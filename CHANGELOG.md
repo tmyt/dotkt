@@ -11,11 +11,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - All five packages and SDK defaults use `0.9.21`; the embedded Kotlin compiler and
   upstream common standard-library baseline remain **2.4.21**.
+- Building a DotKt project requires the .NET 10 SDK and a .NET runtime of **10.0.12 or later**.
 - Reduce repeated bir2cir metadata-catalog generation, name/index scans and temporary
-  body copying without changing generated CIR.
+  body copying.
 - Support native CLR function-pointer signatures and explicit CLR event storage/dispatch policies.
-- Improve enum identity/dispatch, suppressed exception handling and mixed-numeric lowering,
-  while preserving deterministic binaries and matching debug symbols.
+- Improve enum identity/dispatch, suppressed exception handling and mixed-numeric lowering.
+- Honor the SDK `Deterministic` setting for implementation/reference DLLs and matching Portable PDBs.
 
 ### Changed
 

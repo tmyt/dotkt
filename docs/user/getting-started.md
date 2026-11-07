@@ -12,7 +12,9 @@ Next steps after this page:
 
 ## 1. Prerequisites
 
-- **.NET SDK 10**. The packaged SDK targets the `net10.0` family, including platform-qualified targets.
+- **.NET SDK 10**, with **.NET runtime 10.0.12 or later** installed for the compiler tools
+  (`dotnet --list-runtimes`). This build-time requirement applies to every DotKt project.
+  The packaged SDK targets the `net10.0` family, including platform-qualified targets.
 - **A Java runtime on your `PATH`** — a JDK or JRE, **version 21 or newer** (`java -version`). The
   DotKt Kotlin compiler front-end (`kotc`) runs on the JVM, so a Java runtime is required to *build*
   a DotKt project. (Nothing Java is needed to *run* the emitted assembly — it is plain .NET IL.)
