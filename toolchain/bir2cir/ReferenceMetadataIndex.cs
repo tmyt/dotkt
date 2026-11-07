@@ -5118,6 +5118,7 @@ sealed partial class ReferenceMetadataIndex
 
     public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
     {
+        MetadataDeclaredMembers.EnsureAvailable();
         // bir2cir is a ref-READER: a consumed cross-module DotKt library references the RUNTIME stdlib
         // (DotKt.Stdlib) in its `[kotlin.clr.*]` round-trip metadata, but bir2cir carries only the REFERENCE
         // twin — alias so that reference resolves to DotKt.Private.Stdlib (same type shapes).
@@ -5478,6 +5479,9 @@ sealed partial class ReferenceMetadataIndex
                         }
                     }
 
+                    // MethodSemantics is an association table. Index it once per Type instead of rescanning every
+                    // PropertyInfo for every MethodInfo below. A malformed/ambiguous method associated with more than
+                    // one property states no source identity; never select whichever reflection happens to return first.
                     var propertyAccessors = new Dictionary<int, (string Name, string Kind, bool IsIndexer)?>();
                     void IndexPropertyAccessor(MethodInfo accessor, string propertyName, string kind, bool isIndexer)
                     {
@@ -5486,7 +5490,8 @@ sealed partial class ReferenceMetadataIndex
                         if (propertyAccessors.TryGetValue(accessor.MetadataToken, out var existing)
                             && existing != association)
                             propertyAccessors[accessor.MetadataToken] = null;
-                        else propertyAccessors[accessor.MetadataToken] = association;
+                        else
+                            propertyAccessors[accessor.MetadataToken] = association;
                     }
                     foreach (var property in MetadataDeclaredMembers.Properties(type))
                     {

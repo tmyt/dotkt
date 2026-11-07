@@ -8,13 +8,28 @@ static class MetadataDeclaredMembers
 {
     static readonly Type MetadataType = typeof(MetadataLoadContext).Assembly
         .GetType("System.Reflection.TypeLoading.RoType", throwOnError: true);
-    static readonly MethodInfo MethodsReader = Reader("GetMethodsCore");
-    static readonly MethodInfo PropertiesReader = Reader("GetPropertiesCore");
-    static readonly MethodInfo ConstructorsReader = Reader("GetConstructorsCore");
+    static readonly Type NameFilter = typeof(MetadataLoadContext).Assembly
+        .GetType("System.Reflection.NameFilter", throwOnError: true);
+    static readonly MethodInfo MethodsReader = Reader<MethodInfo>("GetMethodsCore", true);
+    static readonly MethodInfo PropertiesReader = Reader<PropertyInfo>("GetPropertiesCore", true);
+    static readonly MethodInfo ConstructorsReader = Reader<ConstructorInfo>("GetConstructorsCore", false);
 
-    static MethodInfo Reader(string name) => MetadataType.GetMethod(name,
-        BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new MissingMethodException(MetadataType.FullName, name);
+    static MethodInfo Reader<T>(string name, bool reflectedType) where T : MemberInfo
+    {
+        var reader = MetadataType.GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic,
+            null, reflectedType ? new[] { NameFilter, typeof(Type) } : new[] { NameFilter }, null);
+        if (reader?.ReturnType != typeof(IEnumerable<T>))
+            throw new MissingMethodException(MetadataType.FullName, name);
+        return reader;
+    }
+
+    internal static void EnsureAvailable()
+    {
+        // Force the internal dependency contract check outside per-reference/type catches.
+        _ = MethodsReader;
+        _ = PropertiesReader;
+        _ = ConstructorsReader;
+    }
 
     static IEnumerable<T> Read<T>(MethodInfo reader, Type type, bool reflectedType) where T : MemberInfo
     {
@@ -22,8 +37,10 @@ static class MetadataDeclaredMembers
             throw new ArgumentException("A MetadataLoadContext type is required", nameof(type));
         try
         {
-            return (IEnumerable<T>)reader.Invoke(type,
-                reflectedType ? new object[] { null, type } : new object[] { null });
+            // Public GetMembers materializes before the caller mutates its index. Preserve
+            // that failure boundary if a later metadata row cannot be enumerated.
+            return ((IEnumerable<T>)reader.Invoke(type,
+                reflectedType ? new object[] { null, type } : new object[] { null })).ToArray();
         }
         catch (TargetInvocationException exception) when (exception.InnerException != null)
         {
