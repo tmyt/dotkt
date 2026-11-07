@@ -44,7 +44,7 @@ using DotKt.Bir;
 //
 // Both phases run after the suspend lowerings, so the state-machine bodies are already in their final type
 // vocabulary and an SM field's `T` is the SM class's own type parameter.
-static class ConstrainedTypeParameterReceiverBinding
+static partial class ConstrainedTypeParameterReceiverBinding
 {
     const string ErasedConstraintDispatchKey = "_erasedConstraintDispatch";
 
@@ -52,26 +52,25 @@ static class ConstrainedTypeParameterReceiverBinding
     // callInstance so the inherited-owner walk can still substitute the declaring type into it.
     public static void CloseOpenOwners(IEnumerable<JsonNode> roots)
     {
-        var rootList = roots.ToList();
-        var arity = CollectTypeArity(rootList);
-        foreach (var root in rootList) BindFile(root, arity, close: true);
+        // Closing selects the construction from the receiver's bound; only the later dispatch phase needs
+        // declaration arities to distinguish an already-closed bare owner from an open generic owner.
+        foreach (var root in roots) BindFile(root, arity: null, close: true);
     }
 
-    internal static void CloseMethodOwners(JsonObject method, JsonObject owner, IEnumerable<JsonNode> roots,
+    internal static void CloseMethodOwners(JsonObject method, JsonObject owner,
         JsonArray methodParameters, ReferenceMetadataIndex refs)
     {
-        BindMethod(method, CloneTypeParametersWithErasedSourceBounds(owner), CollectTypeArity(roots),
+        BindMethod(method, CloneTypeParametersWithErasedSourceBounds(owner), arity: null,
             close: true, isValue: null, resolvedPropertiesOnly: false, refs: refs,
             methodParametersOverride: methodParameters);
     }
 
-    internal static void CloseTypeOwners(JsonObject type, IEnumerable<JsonNode> roots)
+    internal static void CloseTypeOwners(JsonObject type)
     {
         var parameters = CloneTypeParametersWithErasedSourceBounds(type);
-        var arities = CollectTypeArity(roots);
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, parameters, arities, close: true, isValue: null,
+                BindMethod(method, parameters, arity: null, close: true, isValue: null,
                     resolvedPropertiesOnly: false, refs: null);
     }
 
@@ -104,6 +103,8 @@ static class ConstrainedTypeParameterReceiverBinding
 
     // name -> declared type-parameter count, for every type declared in this compilation. Only the ARITY is
     // needed: it says whether a bare owner token is already closed (0) or still has to be constructed.
+    // Each dispatch phase takes a fresh snapshot, so declaration synthesis, renames and parameter-count changes
+    // between phases are observed without retaining mutable roots or an invalidatable compilation cache.
     static Dictionary<string, int> CollectTypeArity(IEnumerable<JsonNode> roots)
     {
         var result = new Dictionary<string, int>(StringComparer.Ordinal);

@@ -151,9 +151,9 @@ static partial class FBoundStarProjectionErasure
             if (KotlinSupertypesRecord.ReadNullableFrame(definition) == null)
                 KotlinSupertypesRecord.Merge(definition, new JsonObject { ["bounds"] = bounds });
             definition[OwnerConstrainedMethodLowering.DispatchBoundsKey] = dispatch.ToJsonString();
-            ConstrainedTypeParameterReceiverBinding.CloseTypeOwners(definition, rootList);
+            ConstrainedTypeParameterReceiverBinding.CloseTypeOwners(definition);
         }
-        OwnerConstrainedMethodLowering.CloseOwners(rootList, ContainsOwnerTv,
+        OwnerConstrainedMethodLowering.CloseOwners(ContainsOwnerTv,
             bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
         foreach (var root in rootList.OfType<JsonObject>()) CloseSuspendLambdaOwners(root, root);
         void CloseSuspendLambdaOwners(JsonNode node, JsonObject owner)
@@ -186,7 +186,7 @@ static partial class FBoundStarProjectionErasure
                         ["body"] = obj["body"]?.DeepClone(),
                     };
                     OwnerConstrainedMethodLowering.CloseOwnerViews(declaration,
-                        new JsonObject { ["typeParams"] = typeFrame }, rootList,
+                        new JsonObject { ["typeParams"] = typeFrame },
                         ContainsOwnerTv, bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
                     obj["body"] = declaration["body"]?.DeepClone();
                 }
@@ -1068,7 +1068,7 @@ static partial class FBoundStarProjectionErasure
         var sourceMethodParameters = (JsonArray)dependentMethod["typeParams"].DeepClone();
         OwnerConstrainedMethodLowering.Record(dependentMethod, new JsonObject());
         var sourceMethodBounds = dependentMethod[NullableGenericErasure.MethodTypeParameterBoundsPre].DeepClone();
-        OwnerConstrainedMethodLowering.CloseOwnerViews(dependentMethod, new JsonObject(), Array.Empty<JsonObject>(),
+        OwnerConstrainedMethodLowering.CloseOwnerViews(dependentMethod, new JsonObject(),
             ContainsOwnerTv, bound => ProjectOwnerMethodBound(bound, owners, refs, physical: false));
         OwnerConstrainedMethodLowering.Apply(ContainsOwnerTv, bound => ProjectOwnerMethodBound(bound, owners, refs));
         var dependentSlot = EraseOwnerTypeParamConstraints(sourceMethodParameters, owners, refs, null, null);

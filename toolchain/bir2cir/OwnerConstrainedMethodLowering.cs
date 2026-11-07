@@ -554,19 +554,19 @@ static class OwnerConstrainedMethodLowering
         return changed;
     }
 
-    internal static void CloseOwners(IEnumerable<JsonNode> roots, Func<TypeNode, bool> dependsOnOwner,
+    internal static void CloseOwners(Func<TypeNode, bool> dependsOnOwner,
         Func<TypeNode, TypeNode> projectedBound)
     {
         foreach (var (method, owner) in Methods)
-            CloseOwnerViews(method, owner, roots, dependsOnOwner, projectedBound);
+            CloseOwnerViews(method, owner, dependsOnOwner, projectedBound);
     }
 
-    internal static void CloseOwnerViews(JsonObject method, JsonObject owner, IEnumerable<JsonNode> roots,
+    internal static void CloseOwnerViews(JsonObject method, JsonObject owner,
         Func<TypeNode, bool> dependsOnOwner, Func<TypeNode, TypeNode> projectedBound)
     {
         var parameters = (method["typeParams"] as JsonArray)?.DeepClone().AsArray() ?? new JsonArray();
         RewriteConstraints(method, owner, parameters, dependsOnOwner, projectedBound);
-        ConstrainedTypeParameterReceiverBinding.CloseMethodOwners(method, owner, roots, parameters, References);
+        ConstrainedTypeParameterReceiverBinding.CloseMethodOwners(method, owner, parameters, References);
     }
 
     internal static void Apply(Func<TypeNode, bool> dependsOnOwner, Func<TypeNode, TypeNode> projectedBound)
