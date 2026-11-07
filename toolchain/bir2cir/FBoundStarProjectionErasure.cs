@@ -208,7 +208,9 @@ static partial class FBoundStarProjectionErasure
             .ToDictionary(owner => owner.Name, owner => (
                 Dependent: OwnerDependentInnerParameters(owner, InnerCapturedCount(owner.Def)),
                 Direct: DirectOwnerDependentInnerParameters(owner, InnerCapturedCount(owner.Def))), StringComparer.Ordinal);
-        foreach (var root in rootList) Rewrite(root, owners, defs, refs, localClrAliases: localClrAliases);
+        foreach (var root in rootList)
+            Rewrite(root, owners, defs, refs, new GenericArrayStorageLowering.FreshNames(root),
+                localClrAliases: localClrAliases);
         // A mutable cell's value writes now have physical types. Align its explicit storage before the existing
         // local/return propagation below, so nullable temporaries and separate read closures see the same slot.
         if (sharedCells is { Count: > 0 })
@@ -3394,6 +3396,7 @@ static partial class FBoundStarProjectionErasure
 
     static void Rewrite(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
+        GenericArrayStorageLowering.FreshNames arrayNames,
         IReadOnlySet<int> existentialTypeParameters = null,
         IReadOnlySet<int> existentialMethodParameters = null,
         JsonArray typeParameterDeclarations = null,
@@ -3511,7 +3514,7 @@ static partial class FBoundStarProjectionErasure
                 var runtimeOperand = runtimeKind is "cast" or "isInstRef" ? obj["e"] : null;
                 var rewroteRuntimeOperand = runtimeOperand != null;
                 if (runtimeOperand != null)
-                    Rewrite(runtimeOperand, owners, defs, refs,
+                    Rewrite(runtimeOperand, owners, defs, refs, arrayNames,
                         childTypeParameters, childMethodParameters,
                         childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType,
                         boundDeclaration, localClrAliases);
@@ -3602,7 +3605,7 @@ static partial class FBoundStarProjectionErasure
                                 || IsTypeDefinition(obj) && key == "base"
                                 || IsDeclarationOwnerDescriptor(obj) && key == "owner"));
                     else
-                        Rewrite(value, owners, defs, refs,
+                        Rewrite(value, owners, defs, refs, arrayNames,
                             childTypeParameters, childMethodParameters,
                             childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType,
                             childBoundDeclaration, localClrAliases, childArrayShape);
@@ -3617,8 +3620,8 @@ static partial class FBoundStarProjectionErasure
                             ? new TypeNode.Fqn(classifier)
                             : RewriteType(type, owners, refs, localClrAliases: localClrAliases),
                         type => type is TypeNode.Fqn named && (defs.TryGetValue(named.Name, out var bound)
-                            ? Str(bound["kind"]) == "interface" : refs.IsInterfaceType(named)));
-                GenericArrayStorageLowering.LowerOperation(obj, refs);
+                            ? Str(bound["kind"]) == "interface" : refs.IsInterfaceType(named)), arrayNames);
+                GenericArrayStorageLowering.LowerOperation(obj, refs, arrayNames);
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
                 // receiver seam is visible.  The initial pass above is still required for ordinary star receivers.
@@ -3643,7 +3646,7 @@ static partial class FBoundStarProjectionErasure
                             preserveArrayShape: preserveArrayShape,
                             preserveConstructedHead: IsInterfaceDeclarationList(arr)));
                     else
-                        Rewrite(value, owners, defs, refs,
+                        Rewrite(value, owners, defs, refs, arrayNames,
                             existentialTypeParameters, existentialMethodParameters,
                             typeParameterDeclarations, methodParameterDeclarations, currentThisType,
                             boundDeclaration, localClrAliases, preserveArrayShape);
