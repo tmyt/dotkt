@@ -1,9 +1,20 @@
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 
-if (args.Length != 1)
+if (args is ["--resolver"])
 {
-    Console.Error.WriteLine("usage: MetadataProbe <raw.dll>");
+    ResolverProbe.Run();
+    return 0;
+}
+if (args is ["--merge", var emitterPath])
+{
+    ResolverProbe.CheckMerge(emitterPath);
+    return 0;
+}
+
+if (args.Length is not (1 or 2))
+{
+    Console.Error.WriteLine("usage: MetadataProbe <raw.dll> [ilemit.dll]");
     return 2;
 }
 
@@ -27,6 +38,12 @@ RequireAppliedAttribute(raw, "System.Runtime.CompilerServices.NullableAttribute"
 RequireAppliedAttribute(raw, "System.Runtime.CompilerServices.NullableContextAttribute");
 
 RejectScope(raw, "System.Private.CoreLib");
+
+if (args.Length == 2)
+{
+    ResolverProbe.Run();
+    ResolverProbe.CheckMerge(args[1]);
+}
 
 Console.WriteLine("PASS  target-universe emission: raw scopes are target contracts; target framework and nullable " +
                   "attributes are target-BCL references (primitive, generic, delegate, inheritance/interface, external signature)");

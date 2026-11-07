@@ -40,7 +40,7 @@ actual="$(dotnet "$probe_dir/TargetUniverseProbe.dll")"
 [[ "$actual" == "target-universe" ]] || die "raw emitted probe returned '$actual'"
 
 dotnet run --project "$ROOT/tests/target-universe/MetadataProbe.csproj" -c Release -- \
-    "$raw"
+    "$raw" "$ILEMIT_DLL"
 
 # Preserve all physical generic-constraint rows, independently of Kotlin lowering choices.
 cir_sources=("$OUT"/obj/Release/net10.0/cir/*.cir.json)

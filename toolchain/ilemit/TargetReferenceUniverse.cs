@@ -1,3 +1,4 @@
+#nullable disable
 using System.Reflection;
 using DotKt.Toolchain;
 
@@ -8,6 +9,7 @@ sealed class TargetReferenceUniverse : IDisposable
 {
     readonly MetadataLoadContext _context;
     readonly Assembly[] _assemblies;
+    readonly MetadataTypeCandidates _typeCandidates;
     readonly HashSet<Assembly> _assemblySet;
     readonly HashSet<string> _runtimeAssemblyIdentities;
     readonly Dictionary<string, Type> _types = new(StringComparer.Ordinal);
@@ -30,6 +32,7 @@ sealed class TargetReferenceUniverse : IDisposable
         ReferencePaths = catalog.Paths.ToArray();
         _assemblies = catalog.Paths.Select(LoadExact).ToArray();
         _assemblySet = new HashSet<Assembly>(_assemblies);
+        _typeCandidates = new MetadataTypeCandidates(_assemblies);
 
         // MetadataLoadContext accepts a core assembly name before any type is requested. Force the fundamental
         // identity now so a malformed/incomplete target set fails at the CLI boundary, not halfway through emit.
@@ -54,7 +57,7 @@ sealed class TargetReferenceUniverse : IDisposable
     {
         if (_types.TryGetValue(fullName, out var cached)) return cached;
         var matches = new List<Type>();
-        foreach (var assembly in _assemblies)
+        foreach (var assembly in _typeCandidates.For(fullName))
         {
             Type type;
             try { type = assembly.GetType(fullName, throwOnError: false, ignoreCase: false); }
