@@ -21,34 +21,45 @@ sealed class MetadataTypeCandidates
         _assemblies = assemblies;
         foreach (var assembly in assemblies)
         {
-            var reader = (MetadataReader)ReaderProperty.GetValue(assembly);
-            // Non-public definitions in additional modules need not have ExportedType rows.
-            // Let the context search those modules itself rather than assuming manifest completeness.
-            if (reader.AssemblyFiles.Any(handle => reader.GetAssemblyFile(handle).ContainsMetadata))
+            try { AddAssembly(assembly); }
+            catch (Exception error)
             {
-                _multiModule.Add(assembly);
-                foreach (var candidates in _byNamespace.Values) candidates.Add(assembly);
-                continue;
+                throw new InvalidOperationException(
+                    $"ilemit target: could not index physical namespaces from compile reference '{assembly.Location}': " +
+                    $"{error.GetType().Name}: {error.Message}", error);
             }
-            var names = new HashSet<StringHandle>();
-            foreach (var handle in reader.TypeDefinitions)
-            {
-                var definition = reader.GetTypeDefinition(handle);
-                if (!definition.IsNested) names.Add(definition.Namespace);
-            }
-            foreach (var handle in reader.ExportedTypes)
-            {
-                var exported = reader.GetExportedType(handle);
-                if (exported.Implementation.Kind != HandleKind.ExportedType)
-                    names.Add(exported.Namespace);
-            }
-            foreach (var handle in names)
-            {
-                var name = reader.GetString(handle);
-                if (!_byNamespace.TryGetValue(name, out var candidates))
-                    _byNamespace[name] = candidates = new(_multiModule);
-                if (!candidates.Contains(assembly)) candidates.Add(assembly);
-            }
+        }
+    }
+
+    void AddAssembly(Assembly assembly)
+    {
+        var reader = (MetadataReader)ReaderProperty.GetValue(assembly);
+        // Non-public definitions in additional modules need not have ExportedType rows.
+        // Let the context search those modules itself rather than assuming manifest completeness.
+        if (reader.AssemblyFiles.Any(handle => reader.GetAssemblyFile(handle).ContainsMetadata))
+        {
+            _multiModule.Add(assembly);
+            foreach (var candidates in _byNamespace.Values) candidates.Add(assembly);
+            return;
+        }
+        var names = new HashSet<StringHandle>();
+        foreach (var handle in reader.TypeDefinitions)
+        {
+            var definition = reader.GetTypeDefinition(handle);
+            if (!definition.IsNested) names.Add(definition.Namespace);
+        }
+        foreach (var handle in reader.ExportedTypes)
+        {
+            var exported = reader.GetExportedType(handle);
+            if (exported.Implementation.Kind != HandleKind.ExportedType)
+                names.Add(exported.Namespace);
+        }
+        foreach (var handle in names)
+        {
+            var name = reader.GetString(handle);
+            if (!_byNamespace.TryGetValue(name, out var candidates))
+                _byNamespace[name] = candidates = new(_multiModule);
+            if (!candidates.Contains(assembly)) candidates.Add(assembly);
         }
     }
 

@@ -32,7 +32,12 @@ sealed class TargetReferenceUniverse : IDisposable
         ReferencePaths = catalog.Paths.ToArray();
         _assemblies = catalog.Paths.Select(LoadExact).ToArray();
         _assemblySet = new HashSet<Assembly>(_assemblies);
-        _typeCandidates = new MetadataTypeCandidates(_assemblies);
+        try { _typeCandidates = new MetadataTypeCandidates(_assemblies); }
+        catch
+        {
+            _context.Dispose();
+            throw;
+        }
 
         // MetadataLoadContext accepts a core assembly name before any type is requested. Force the fundamental
         // identity now so a malformed/incomplete target set fails at the CLI boundary, not halfway through emit.

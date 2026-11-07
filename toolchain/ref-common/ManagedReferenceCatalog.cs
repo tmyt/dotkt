@@ -523,7 +523,7 @@ sealed class ManagedReferenceCatalog
                 // Read the identity from the same open image. Keep identity failures distinct from
                 // header classification: even runtime copy-local sets must reject malformed CLI metadata.
                 try { identity = pe.GetMetadataReader().GetAssemblyDefinition().GetAssemblyName(); }
-                catch (Exception ex) when (ex is BadImageFormatException or IOException or FileLoadException)
+                catch (Exception ex) when (ex is BadImageFormatException or IOException or FileLoadException or InvalidOperationException)
                 {
                     identityError = ex;
                 }

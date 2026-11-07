@@ -11,6 +11,11 @@ if (args is ["--merge", var emitterPath])
     ResolverProbe.CheckMerge(emitterPath);
     return 0;
 }
+if (args is ["--identities", var referenceList])
+{
+    ResolverProbe.CheckIdentities(File.ReadAllLines(referenceList));
+    return 0;
+}
 
 if (args.Length is not (1 or 2))
 {

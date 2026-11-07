@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
@@ -89,14 +90,7 @@ static class ResolverProbe
             }
 
             // Compare the authoritative framework path API with the single-open metadata identity API.
-            foreach (var path in Directory.GetFiles(Path.GetDirectoryName(Core)!, "*.dll").Concat([first, second, forward]))
-            {
-                var catalog = ManagedReferenceCatalog.Create([path], "identity probe");
-                var expected = AssemblyName.GetAssemblyName(path);
-                if (catalog.Entries.Single().Identity.FullName != expected.FullName
-                    || !catalog.Entries.Single().Identity.GetPublicKey()!.SequenceEqual(expected.GetPublicKey()!))
-                    throw new Exception("Assembly identity changed: " + path);
-            }
+            CheckIdentities(Directory.GetFiles(Path.GetDirectoryName(Core)!, "*.dll").Concat([first, second, forward]));
             var valid = File.ReadAllBytes(first);
             using var pe = new PEReader(new MemoryStream(valid));
             string Mutate(string name, Action<byte[]> change)
@@ -121,7 +115,20 @@ static class ResolverProbe
                     throw new Exception("Header corruption classification changed");
                 if (CaptureCatalog(badIdentity, runtime)?.Contains("unreadable CLI metadata / assembly identity") != true)
                     throw new Exception("Identity corruption must remain fatal, including runtime sets");
+                if (CaptureCatalog(module, runtime)?.Contains("unreadable CLI metadata / assembly identity") != true)
+                    throw new Exception("A netmodule cannot stand in for an assembly reference");
             }
+            var reader = pe.GetMetadataReader();
+            if (reader.GetHeapSize(HeapIndex.String) > ushort.MaxValue) throw new Exception("Unexpected fixture heap size");
+            var namespaceOffset = pe.PEHeaders.MetadataStartOffset + reader.GetTableMetadataOffset(TableIndex.TypeDef)
+                + reader.GetTableRowSize(TableIndex.TypeDef) + 4 + 2; // second TypeDef, after flags/name
+            var badNamespace = Mutate("BadNamespace", bytes =>
+                BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(namespaceOffset, 2), 0x7fff));
+            string? namespaceError = null;
+            try { using var invalid = new TargetReferenceUniverse([Core, badNamespace]); }
+            catch (Exception error) { namespaceError = error.Message; }
+            if (namespaceError?.Contains(badNamespace, StringComparison.Ordinal) != true)
+                throw new Exception("Namespace-index error lost its reference path: " + namespaceError);
             var optionsPath = Path.Combine(directory.FullName, "options.json");
             const string optionsText = """
                 {"outputFileName":"Example.dll","OutputTYPE":"Library","deterministic":true,
@@ -140,6 +147,22 @@ static class ResolverProbe
             Console.WriteLine("PASS resolver candidates: full-scan parity, forwarding/chains, duplicate definers/runtime selection, nested/private/escaped/module types, exact owners and identity/corruption classifications");
         }
         finally { directory.Delete(recursive: true); }
+    }
+
+    public static void CheckIdentities(IEnumerable<string> paths)
+    {
+        var count = 0;
+        foreach (var path in paths.Distinct())
+        {
+            var catalog = ManagedReferenceCatalog.Create([path], "identity probe");
+            if (catalog.Entries.Count == 0) continue; // Windows runtime folders also contain native DLLs.
+            var expected = AssemblyName.GetAssemblyName(path);
+            if (catalog.Entries.Single().Identity.FullName != expected.FullName
+                || !catalog.Entries.Single().Identity.GetPublicKey()!.SequenceEqual(expected.GetPublicKey()!))
+                throw new Exception("Assembly identity changed: " + path);
+            count++;
+        }
+        Console.WriteLine($"PASS assembly identities: {count} managed images match the framework path API");
     }
 
     public static void CheckMerge(string emitterPath)
@@ -175,7 +198,12 @@ static class ResolverProbe
     static string? CaptureCatalog(string path, bool runtime)
     {
         try { ManagedReferenceCatalog.Create([path], "corruption probe", runtimeSelection: runtime); return null; }
-        catch (ArgumentException error) { return error.Message; }
+        catch (ArgumentException error)
+        {
+            if (!error.Message.Contains(path, StringComparison.Ordinal))
+                throw new Exception("Catalog error lost its reference path", error);
+            return error.Message;
+        }
     }
 
     static (Type? type, Type? error) Capture(Func<Type> action)
