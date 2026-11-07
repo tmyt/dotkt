@@ -636,7 +636,8 @@ member would be two members to it. The rules, all validator-enforced:
 - `.ctor` names a constructor and nothing else;
 - `mod` is CIR-only declaration-signature vocabulary: it can appear in emitted declaration signatures,
   exact local linkage descriptors, and `memberRef`. It does not change a value's storage type.
-  `array.rank` distinguishes exact foreign array signatures inside a `memberRef`.
+  `array.rank` distinguishes exact general-array signatures and retained native
+  array values, including ordinary CIR declaration, local and result slots.
   `ptr` is also CIR-only but may appear in ordinary declaration, local, operand,
   and result slots: bir2cir materializes the KLIB/BIR `kotlin.clr.ClrPointer<T>` vocabulary into that physical type,
   and ilemit emits it one-to-one.

@@ -29,12 +29,15 @@ if dotnet "$BIR2CIR_DLL" "$OUT/cir" \
 fi
 grep -q 'required/optional native modifier order is not supported' "$OUT/modifiers.log" \
     || die "Native modifier order failed outside its representability diagnostic boundary"
-for name in box concat; do
-    "$KOTC" "$ROOT/tests/special/native-function-pointers/unsupported-$name.kt" -no-stdlib \
-        -classpath "$FE_KLIB$separator$ROOT/build/tests-native-function-pointers/klib/NativePointers.klib" -d "$OUT/$name-bir"
+"$KOTC" "$ROOT/tests/special/native-function-pointers/unsupported-box.kt" \
+    "$ROOT/tests/special/native-function-pointers/unsupported-concat.kt" \
+    "$ROOT/tests/special/native-function-pointers/unsupported-object.kt" \
+    "$ROOT/tests/special/native-function-pointers/unsupported-safe-cast.kt" -no-stdlib \
+    -classpath "$FE_KLIB$separator$ROOT/build/tests-native-function-pointers/klib/NativePointers.klib" -d "$OUT/value-bir"
+for name in box concat object safe-cast; do
     if dotnet "$BIR2CIR_DLL" "$OUT/$name-cir" \
         --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$ROOT/tests/special/native-function-pointers/reference/obj/Release/net10.0/ref/NativePointers.dll")" \
-        "$OUT/$name-bir/unsupported-$name.bir.json" > "$OUT/$name.log" 2>&1; then
+        "$OUT/value-bir/unsupported-$name.bir.json" > "$OUT/$name.log" 2>&1; then
         die "A native function pointer was admitted to object storage ($name)"
     fi
     grep -q 'native function-pointer value requires its exact signature' "$OUT/$name.log" \

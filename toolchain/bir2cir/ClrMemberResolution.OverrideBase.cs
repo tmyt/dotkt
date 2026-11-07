@@ -48,7 +48,7 @@ static partial class ClrMemberResolution
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
         var cands = new List<MethodInfo>();
         try { cands.AddRange(open.GetMethods(flags).Where(m => m.Name == slotName && m.IsVirtual && m.GetParameters().Length == argNodes.Count)); } catch { }
-        var win = PickOverrideBase(cands, argNodes, returnNode,
+        var win = PickOverrideBase(cands, argNodes, returnNode, open, ownerSpec.Args,
             $"override base={owner}.{slotName}({DescArgs(argNodes)}):{returnNode}");
         // The incoming return describes the implementation's resolved Kotlin/constructed-owner view and is used
         // above to select the slot.  ilemit links against the declaration in the reference assembly, so carry the
@@ -76,10 +76,12 @@ static partial class ClrMemberResolution
     // `create(Any,Cont)` / `create(Any[],Cont)` ambiguous). Require exactly one after §12.8.10.2 most-derived shadowing;
     // 0 = hard ABI error, >1 = malformed. NEVER a first-pick.
     static MethodInfo PickOverrideBase(List<MethodInfo> cands, List<TypeNode> argNodes, TypeNode returnNode,
+        Type open, TypeNode[] ownerArgs,
         string desc)
     {
-        var hits = MostDerived(cands.Where(c => OverrideMatch(c.GetParameters(), argNodes)
-            && OverrideParamMatch(returnNode, c.ReturnType)).ToList());
+        var hits = MostDerived(cands.Where(c => NativeSignatures.Method(c) != null
+            ? ExternalMethodImplSlotMatches(c, open, ownerArgs, argNodes, returnNode)
+            : OverrideMatch(c.GetParameters(), argNodes) && OverrideParamMatch(returnNode, c.ReturnType)).ToList());
         if (hits.Count == 0) throw NoMatch(desc, cands);
         if (hits.Count == 1) return hits[0];
         throw Malformed(desc, hits);

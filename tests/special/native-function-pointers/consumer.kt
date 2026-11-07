@@ -16,13 +16,16 @@ fun unitValueSignature() = Api.UnitValue
 fun unitVoidSignature() = Api.UnitVoid
 fun rectangularSignature() = Api.Rectangular
 fun dataPointerSignature() = Api.DataPointer
-fun rectangularPointers() = Api.RectangularPointers
+fun rectangularPointers() = Api.EchoRectangularPointers(Api.RectangularPointers)
 fun wideSignature() = Api.Wide
 fun nullableValueSignature() = Api.EchoNullable(Api.NullableValue)
 fun nativeNullableGeneric(api: NullableApi<Int>) = api.Value
 fun annotatedGeneric(api: AnnotatedApi<Int>) = api.Value
 fun nativeIntSignature() = Api.GetNativeInt()
 fun nativeUIntSignature() = Api.GetNativeUInt()
+fun genericListSignature() = Api.GenericList
+fun nestedTypeSignature() = Api.NestedType
+fun delegateParameterSignature() = Api.DelegateParameter
 fun arrayElement(array: Array<ClrFunctionPointer<Managed, (Int) -> Int>>, value: ClrFunctionPointer<Managed, (Int) -> Int>): ClrFunctionPointer<Managed, (Int) -> Int> {
     array[0] = value
     return array[0]
@@ -33,6 +36,7 @@ fun choose(p: ClrFunctionPointer<Cdecl, (Int) -> Int>): Int = Api.CallCdecl(p, 2
 
 class CallbackOverride : CallbackBase() {
     override fun Echo(value: ClrFunctionPointer<Managed, (Int) -> Int>): ClrFunctionPointer<Managed, (Int) -> Int> = value
+    override val Callback: ClrFunctionPointer<Managed, (Int) -> Int> get() = Api.Get()
 }
 
 fun <T, U> generic(api: GenericApi<T>, p: ClrFunctionPointer<Managed, (T, U) -> U>): ClrFunctionPointer<Managed, (T, U) -> U> =
@@ -52,5 +56,6 @@ fun main() {
     Api.Array = array
     println(Api.Call(Api.Property, 21) + Api.CallCdecl(cdecl(Api.GetCdecl()), 21) + Api.CallArray(array, 21) +
         choose(Api.Get()) + choose(Api.GetCdecl()) + Api.CallOverride(CallbackOverride()) +
-        Api.Call(arrayElement(array, pointer), 21) + Api.CallNativeInt(nativeIntSignature()) + Api.CallNativeUInt(nativeUIntSignature()))
+        Api.Call(arrayElement(array, pointer), 21) + Api.CallNativeInt(nativeIntSignature()) + Api.CallNativeUInt(nativeUIntSignature()) +
+        Api.CallPropertyOverride(CallbackOverride()))
 }

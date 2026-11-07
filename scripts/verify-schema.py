@@ -552,14 +552,12 @@ class V:
             if t == "array" and "rank" in o:
                 self.err(f, path, "array.rank is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
         # Custom modifiers also belong to local MethodDef/linkage signatures, but not value storage.
-        # General-array ranks remain confined to member references. `ptr` is different:
+        # General-array ranks are physical CIR types, including retained native
+        # array values outside member references. `ptr` likewise:
         # dll2klib exposes an opaque ClrPointer<T> value to Kotlin, so bir2cir
         # must materialize `ptr` in ordinary declaration, local, operand, and result slots as well as memberRefs.
-        if (((t == "mod" and not declaration_signature) or (t == "array" and "rank" in o))
-                and not native_signature and not in_member_ref(path)):
-            carrier = "array.rank" if t == "array" else t
-            location = "a declaration/memberRef signature" if t == "mod" else "a memberRef signature"
-            self.err(f, path, f"type {carrier} requires {location}, not an ordinary type slot")
+        if (t == "mod" and not declaration_signature and not native_signature and not in_member_ref(path)):
+            self.err(f, path, "type mod requires a declaration/memberRef signature, not an ordinary type slot")
         # The other direction: a member reference is a PHYSICAL identity, so the Kotlin type-system facts have
         # no place in one. `oblivious` is a nullability annotation the CLR signature does not carry, and `star`
         # is a Kotlin projection; either inside a signature would be a second spelling of a physical shape, and

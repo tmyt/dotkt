@@ -5526,6 +5526,7 @@ sealed partial class ReferenceMetadataIndex
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
+                        var nativeSignature = NativeSignatures.Method(method);
                         var countRange = CountRangeOf(method);
                         var collectionFactoryKind = isFileClass && method.IsStatic
                             ? AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrCollectionFactory")
@@ -5581,9 +5582,9 @@ sealed partial class ReferenceMetadataIndex
                             suspend,
                             isConv,
                             convTo,
-                            TypeNodeOf(method.ReturnType),
+                            nativeSignature?.Return ?? TypeNodeOf(method.ReturnType),
                             method.GetGenericArguments().Length,
-                            method.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray(),
+                            method.GetParameters().Select((p, i) => nativeSignature?.Parameters[i] ?? DeclarationTypeNode(p.ParameterType)).ToArray(),
                             method.IsVirtual,
                             dotKtAuthored ? KotlinTypeOf(method.ReturnParameter.GetCustomAttributesData(), method.DeclaringType?.Assembly) : null,
                             suspendReturn,
@@ -5594,7 +5595,7 @@ sealed partial class ReferenceMetadataIndex
                             dotKtAuthored
                                 ? method.GetParameters().Select(p => CarrierTypeOf(p.GetCustomAttributesData(), method.DeclaringType?.Assembly, KotlinNullableGenericAttr)).ToArray()
                                 : null,
-                            DeclarationTypeNode(method.ReturnType),
+                            nativeSignature?.Return ?? DeclarationTypeNode(method.ReturnType),
                             method.MetadataToken,
                             carriedProperty?.Name ?? owningProperty?.Name,
                             carriedProperty?.Kind ?? owningProperty?.Kind,

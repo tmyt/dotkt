@@ -894,6 +894,19 @@ static class PhysicalValueCoercion
         if (index.ReferenceBuild && !(kind == "binOp" && Str(node["op"]) == "===")) return;
         switch (kind)
         {
+            case "objMethod":
+                ValidateNativePointerConversion(ExprType(node["recv"], scope, index), new TypeNode.Fqn("System.Object"));
+                ValidateNativePointerConversion(ExprType(node["arg"], scope, index), new TypeNode.Fqn("System.Object"));
+                break;
+            case "objEq":
+                ValidateNativePointerConversion(ExprType(node["lhs"], scope, index), new TypeNode.Fqn("System.Object"));
+                ValidateNativePointerConversion(ExprType(node["rhs"], scope, index), new TypeNode.Fqn("System.Object"));
+                break;
+            case "isInst": case "isInstRef":
+                var checkedValue = ExprType(node["e"], scope, index);
+                ValidateNativePointerConversion(checkedValue, new TypeNode.Fqn("System.Object"));
+                ValidateNativePointerConversion(checkedValue, TypeJson.Read(node["type"]));
+                break;
             case "concat":
                 if (node["parts"] is JsonArray parts)
                     foreach (var part in parts)

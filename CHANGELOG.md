@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve CLR function-pointer signatures across DLL/KLIB import and CIL emission, including calling conventions, nested modifiers, generic frames and native arrays. Opaque handles interoperate through CLR APIs; object conversions are diagnosed.
+
 - Author mixed-numeric operand conversions in CIR instead of inferring arithmetic widths during IL emission.
 
 - Include stored suppressed exceptions in Kotlin stack-trace text and printing, including cause-side suppression and cyclic graphs.

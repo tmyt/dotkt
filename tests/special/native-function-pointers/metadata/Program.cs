@@ -53,7 +53,7 @@ foreach (var handle in consumer.MemberReferences)
 }
 foreach (var name in new[] { "Echo", "Get", "Call", "Value", "get_Property", "set_Property", "NullableSignature",
     "GetCdecl", "EchoCdecl", "CallCdecl", "GetArray", "EchoArray", "CallArray", "Array", "GetModified", "Modified", "GetNested", "NestedEcho", "UnitValue", "UnitVoid", "Rectangular", "DataPointer", "RectangularPointers", "Wide", "NullableValue", "EchoNullable",
-    "GetNativeInt", "GetNativeUInt", "CallNativeInt", "CallNativeUInt" })
+    "GetNativeInt", "GetNativeUInt", "CallNativeInt", "CallNativeUInt", "GenericList", "NestedType", "DelegateParameter", "EchoRectangularPointers", "CallPropertyOverride" })
     if (!seen.Contains("NativePointers.Api." + name)) throw new Exception("Native MemberRef not exercised: " + name);
 if (!seen.Contains("NativePointers.GenericApi`1.Echo")) throw new Exception("Generic native MemberRef not exercised");
 foreach (var name in new[] { "Value", "get_Property", "set_Property" })
@@ -64,6 +64,14 @@ var annotated = consumer.MethodDefinitions.Select(consumer.GetMethodDefinition)
     .Single(method => consumer.GetString(method.Name) == "annotatedGeneric").DecodeSignature(decoder, consumer);
 if (annotated.ReturnType != declarations[("NativePointers.Api", "Value")])
     throw new Exception("NRT changed the closed native generic ABI to a nullable value ABI");
+foreach (var (methodName, fieldName) in new[] {
+    ("genericListSignature", "GenericList"), ("nestedTypeSignature", "NestedType"), ("delegateParameterSignature", "DelegateParameter") })
+{
+    var method = consumer.MethodDefinitions.Select(consumer.GetMethodDefinition)
+        .Single(method => consumer.GetString(method.Name) == methodName).DecodeSignature(decoder, consumer);
+    if (method.ReturnType != declarations[("NativePointers.Api", fieldName)])
+        throw new Exception("A named type changed inside a native signature: " + methodName);
+}
 // ILVerify rejects native-pointer array instructions even in C# output. Compare
 // the physical instructions to a C# control instead of suppressing findings.
 foreach (var (pe, reader, name) in new[] {

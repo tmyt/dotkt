@@ -31,6 +31,9 @@ static partial class BirTypeLowering
         if (Lower(nested) is not TypeNode.FnPtr { CallingConvention: 1,
                 Params: [TypeNode.Array { Rank: 2, SzArray: false, Elem: TypeNode.FnPtr }] })
             throw new Exception("Nested native function-pointer/array shape changed");
+        var rectangularPointers = TypeNode.Array.General(expected, 2);
+        if (Lower(rectangularPointers) != rectangularPointers || Lower(Lower(rectangularPointers)) != rectangularPointers)
+            throw new Exception("Repeated physical lowering changed a native array rank");
         var unit = Named("kotlin.Unit");
         var unitValue = Named(FunctionPointerVocabulary.Value, unit);
         if (Lower(Named(FunctionPointerVocabulary.Pointer, convention, new TypeNode.Fn(false, unitValue, [unitValue])))

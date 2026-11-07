@@ -544,7 +544,7 @@ static partial class BirTypeLowering
                     return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
                 }
             case TypeNode.Array a:
-                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
+                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false), a.Rank, a.SzArray);
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
             case TypeNode.Mod modifier:

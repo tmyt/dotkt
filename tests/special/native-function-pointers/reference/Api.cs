@@ -16,6 +16,10 @@ public static unsafe class Api
     public static delegate* managed<int*, void> DataPointer;
     public static delegate* managed<int, int>[,]? RectangularPointers;
     public static delegate* managed<int?, int?> NullableValue;
+    public static delegate* managed<System.Collections.Generic.List<string>, int> GenericList;
+    public static delegate* managed<Container.Leaf, int> NestedType;
+    public static delegate* managed<System.Action<int>, int> DelegateParameter;
+    public static delegate* managed<int, int>[,]? EchoRectangularPointers(delegate* managed<int, int>[,]? array) => array;
     public static delegate* managed<nint, nint> GetNativeInt() => &NativeIdentity;
     public static delegate* managed<nuint, nuint> GetNativeUInt() => &NativeUnsignedIdentity;
     public static int CallNativeInt(delegate* managed<nint, nint> p) => checked((int)p(42));
@@ -38,6 +42,7 @@ public static unsafe class Api
     }
     public static int CallArray(delegate* managed<int, int>[] p, int value) => p[0](value);
     public static int CallOverride(CallbackBase value) => value.Echo(&Twice)(21);
+    public static int CallPropertyOverride(CallbackBase value) => value.Callback(21);
     public static delegate* unmanaged[Cdecl, SuppressGCTransition]<int, int> GetModified() => &ModifiedTwice;
     public static delegate* unmanaged[Cdecl, SuppressGCTransition]<int, int> Modified(
         delegate* unmanaged[Cdecl, SuppressGCTransition]<int, int> p) => p;
@@ -64,7 +69,11 @@ public unsafe class GenericApi<T>
 public unsafe class CallbackBase
 {
     public virtual delegate* managed<int, int> Echo(delegate* managed<int, int> value) => value;
+    public virtual delegate* managed<int, int> Callback => &Identity;
+    static int Identity(int value) => value;
 }
+
+public class Container { public class Leaf { } }
 
 public unsafe class NullableApi<T> where T : struct
 {

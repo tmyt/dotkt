@@ -859,7 +859,7 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Tv { Scope: "type" } tv when args != null && tv.I >= 0 && tv.I < args.Length => args[tv.I],
         DotKt.Bir.TypeNode.Fqn { Args: { } fa } f => new DotKt.Bir.TypeNode.Fqn(f.Name, fa.Select(a => SubstTv(a, args)).ToArray()),
         DotKt.Bir.TypeNode.Nullable n => new DotKt.Bir.TypeNode.Nullable(SubstTv(n.Of, args)),
-        DotKt.Bir.TypeNode.Array a => new DotKt.Bir.TypeNode.Array(SubstTv(a.Elem, args)),
+        DotKt.Bir.TypeNode.Array a => new DotKt.Bir.TypeNode.Array(SubstTv(a.Elem, args), a.Rank, a.SzArray),
         DotKt.Bir.TypeNode.ByRef b => new DotKt.Bir.TypeNode.ByRef(SubstTv(b.Of, args)),
         DotKt.Bir.TypeNode.Ptr pointer => new DotKt.Bir.TypeNode.Ptr(SubstTv(pointer.Of, args)),
         DotKt.Bir.TypeNode.FnPtr pointer => pointer with {
