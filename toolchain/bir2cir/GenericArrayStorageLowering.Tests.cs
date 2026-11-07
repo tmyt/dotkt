@@ -71,6 +71,10 @@ static partial class GenericArrayStorageLowering
         Expect(names.Next("$arrayStorage$") == "$arrayStorage$6", "removed/generated reservations were reused");
         var secondFile = new FreshNames(new JsonObject());
         Expect(secondFile.Next("$arrayStorage$") == "$arrayStorage$0", "allocator leaked across files");
+        var lazyFile = new JsonObject();
+        var lazyNames = new FreshNames(lazyFile);
+        lazyFile["name"] = "$arrayStorage$0";
+        Expect(lazyNames.Next("$arrayStorage$") == "$arrayStorage$1", "file was not seeded at first allocation");
         var nextPhase = new FreshNames(file);
         Expect(nextPhase.Next("$arrayStorage$") == "$arrayStorage$1", "new phase retained removed names");
         Console.WriteLine("[array fresh names] self-test OK (file lifetime, later declarations, detached rewrites, reservations, evaluation order)");

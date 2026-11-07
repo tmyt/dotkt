@@ -536,7 +536,7 @@ static class PhysicalValueCoercion
                         .Concat(constructor["thisArgs"] as JsonArray ?? constructor["baseArgs"] as JsonArray ?? new JsonArray())
                         .Concat(constructor["body"] as JsonArray ?? new JsonArray()),
                         (constructor["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>(),
-                        prologue);
+                        prologue, index.ArrayNames);
                     if (constructor["preStmts"] == null && prologue.Count != 0) constructor["preStmts"] = prologue;
                 }
                 var scope = new Scope().Frame(constructor, owner, new TypeNode.Fqn("void"));

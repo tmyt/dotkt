@@ -95,15 +95,17 @@ static partial class GenericArrayStorageLowering
         return true;
     }
 
-    // One explicit file/rewrite lifetime, never a cache keyed by mutable IR roots. Seed after declaration
-    // synthesis and before visiting any operations, including declarations encountered later in the walk.
+    // One explicit file/rewrite lifetime, never a cache keyed by mutable IR roots. Capture the file after
+    // declaration synthesis; seed on the first allocation, including declarations encountered later in the walk.
+    // Array-free files do not pay for an identifier walk. Release the file reference immediately after seeding.
     // Reserve newly introduced subtrees before rewriting/attaching them; detached rewrites use the same
     // allocator as their destination. Reservations are monotonic, even when a rewrite removes a name.
     internal sealed class FreshNames
     {
         readonly HashSet<string> names = new(StringComparer.Ordinal);
+        JsonNode seed;
 
-        internal FreshNames(JsonNode file) => Reserve(file);
+        internal FreshNames(JsonNode file) => seed = file;
 
         internal void Reserve(JsonNode node)
         {
@@ -116,6 +118,11 @@ static partial class GenericArrayStorageLowering
 
         internal string Next(string stem)
         {
+            if (seed != null)
+            {
+                Reserve(seed);
+                seed = null;
+            }
             var index = 0;
             while (!names.Add(stem + index)) index++;
             return stem + index;
