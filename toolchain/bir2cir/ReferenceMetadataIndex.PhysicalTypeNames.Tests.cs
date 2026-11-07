@@ -28,12 +28,12 @@ sealed partial class ReferenceMetadataIndex
 
         var localNames = new HashSet<string>(StringComparer.Ordinal) { "Published.Collision" };
         index.SetLocalEmittedTypes(localNames);
+        localNames.Add("Published.Other");
         var initial = index.PhysicalTypeNames;
         if (initial.Count != 4 || initial.ContainsKey("Published.Collision")
             || initial["published.collision"] != "Physical.LowerCase"
             || ReferenceEquals(original, initial) || !ReferenceEquals(initial, index.PhysicalTypeNames))
             throw new InvalidOperationException("Initial local inventory lost ordinal source precedence or snapshot reuse");
-        localNames.Add("Published.Other");
         if (!initial.ContainsKey("Published.Other") || !ReferenceEquals(initial, index.PhysicalTypeNames))
             throw new InvalidOperationException("Caller mutation changed the copied local inventory");
 
