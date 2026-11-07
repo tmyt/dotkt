@@ -204,10 +204,7 @@ internal static class Program
         try
         {
             var parallelism = jobs == 0 ? stale.Length : Math.Max(1, jobs);
-            // Share one worker budget across assemblies and their package-local NameTables. Larger assemblies start
-            // first; reserving at most four package lanes prevents one large reference from becoming a serial tail.
-            var packageParallelism = Math.Min(4, parallelism);
-            var assemblyParallelism = Math.Min(stale.Length, Math.Max(1, parallelism / packageParallelism));
+            using var workers = new SemaphoreSlim(parallelism, parallelism);
             var typeCounts = inputMetadata.ToDictionary(input => input.Path, input => input.PublicArities.Length,
                 StringComparer.Ordinal);
             Console.WriteLine($"dll2klib: converting {stale.Length}/{work.Length} reference(s), jobs={parallelism}");
@@ -216,9 +213,10 @@ internal static class Program
             var inheritedArityClashes = string.Join(';', arityClashes);
             await Parallel.ForEachAsync(
                 stale.OrderByDescending(item => typeCounts[item.Input]),
-                new ParallelOptions { MaxDegreeOfParallelism = assemblyParallelism },
-                (item, _) =>
+                new ParallelOptions { MaxDegreeOfParallelism = parallelism },
+                async (item, cancellation) =>
                 {
+                    await workers.WaitAsync(cancellation);
                     try
                     {
                         Convert(
@@ -230,14 +228,14 @@ internal static class Program
                             innerCatalog,
                             publicTypeCatalog,
                             sourceViews,
-                            packageParallelism);
+                            workers);
                     }
                     catch (Exception ex)
                     {
                         lock (failureLock)
                             failures.Add($"{item.Input}: {ex.Message}");
                     }
-                    return ValueTask.CompletedTask;
+                    finally { workers.Release(); }
                 });
             if (failures.Count != 0)
                 throw new InvalidOperationException(
@@ -280,7 +278,7 @@ internal static class Program
         Console.Error.WriteLine(
             "usage:\n" +
             "  dll2klib --out <directory> [--jobs <N>] @<references.rsp>\n" +
-            "  --jobs 0 converts all stale references concurrently");
+            "  --jobs 0 uses the stale-reference count as the worker budget");
         return 2;
     }
 
@@ -301,7 +299,7 @@ internal static class Program
         InnerReferenceCatalog innerCatalog,
         PublicTypeCatalog publicTypeCatalog,
         SourceInterfaceViews sourceViews,
-        int packageParallelism)
+        SemaphoreSlim workers)
     {
         using var file = File.OpenRead(input);
         // C# 14 extension grouping declarations are signature-only stubs whose non-callable ldnull/throw body is
@@ -317,7 +315,7 @@ internal static class Program
         using var scanner = new AssemblyScanner(
             input, pe, md, arityNames, inheritedArityClashes,
             delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog, sourceViews);
-        var fragments = scanner.Scan(packageParallelism);
+        var fragments = scanner.Scan(workers);
         var hasUtf16PackageConstants = scanner.HasUtf16StringConstants &&
             fragments.Any(fragment => fragment.Message.Package?.Property.Any(property =>
                 property.CompileTimeValue?.Type == Annotation.Types.Argument.Types.Value.Types.Type.Array) == true);
@@ -1762,7 +1760,7 @@ internal sealed class AssemblyScanner : IDisposable
             ValidateCompanionExtensionPhysicalMembers(handle, md.GetTypeDefinition(handle));
     }
 
-    public IReadOnlyList<Fragment> Scan(int parallelism)
+    public IReadOnlyList<Fragment> Scan(SemaphoreSlim workers)
     {
         var visible = _md.TypeDefinitions
             .Select(h => (Handle: h, Definition: _md.GetTypeDefinition(h)))
@@ -1778,16 +1776,42 @@ internal sealed class AssemblyScanner : IDisposable
             .OrderBy(name => name, StringComparer.Ordinal).ToArray();
         var projected = new Fragment?[packages.Length];
         var failures = new Exception?[packages.Length];
-        Parallel.For(0, packages.Length, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, index =>
-        {
-            try { projected[index] = ProjectPackage(packages[index]); }
-            catch (Exception error) { failures[index] = error; }
-        });
+        var helpers = new List<Task>(3);
+        var next = -1;
+        try { RunPackages(borrowWorkers: true); }
+        finally { Task.WaitAll(helpers.ToArray()); }
         if (failures.FirstOrDefault(error => error is not null) is { } failure)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+
+        void RunPackages(bool borrowWorkers)
+        {
+            for (var index = Interlocked.Increment(ref next); index < packages.Length;
+                 index = Interlocked.Increment(ref next))
+            {
+                // The caller owns one worker. Borrow only currently spare tokens, never wait for a child token:
+                // single-package assemblies keep the full assembly-level budget, and late large inputs can use it.
+                if (borrowWorkers)
+                    while (helpers.Count < 3 && Volatile.Read(ref next) + 1 < packages.Length && workers.Wait(0))
+                    {
+                        try
+                        {
+                            helpers.Add(Task.Run(() =>
+                            {
+                                try { RunPackages(borrowWorkers: false); }
+                                finally { workers.Release(); }
+                            }));
+                        }
+                        catch { workers.Release(); throw; }
+                    }
+                try { projected[index] = ProjectPackage(packages[index]); }
+                catch (Exception error) { failures[index] = error; }
+            }
+        }
         var result = projected.OfType<Fragment>().ToList();
         // The KLIB reader probes root_package while resolving ordinary source,
-        // even when this assembly has no root-package declarations.
+        // even when this assembly has no root-package declarations. A packed
+        // KLIB cannot represent an empty directory unless an entry is written,
+        // so keep an explicit empty root fragment in every output.
         if (!result.Any(x => x.PackageName.Length == 0))
         {
             var names = new NameTable();
@@ -5700,31 +5724,33 @@ internal sealed class AssemblyScanner : IDisposable
             return (carrier.Name, carrier.Kind);
         var typeHandle = _md.GetMethodDefinition(methodHandle).GetDeclaringType();
         if (typeHandle.IsNil) return null;
-        var associations = _propertyAccessorAssociations.GetOrAdd(typeHandle, IndexType);
+        var associations = _propertyAccessorAssociations.GetOrAdd(typeHandle,
+            static (owner, reader) => IndexPropertyAccessorAssociations(reader, owner), _md);
         return associations.GetValueOrDefault(methodHandle);
+    }
 
-        ImmutableDictionary<MethodDefinitionHandle, (string Name, int Kind)?> IndexType(TypeDefinitionHandle owner)
+    private static ImmutableDictionary<MethodDefinitionHandle, (string Name, int Kind)?> IndexPropertyAccessorAssociations(
+        MetadataReader reader, TypeDefinitionHandle owner)
+    {
+        var result = ImmutableDictionary.CreateBuilder<MethodDefinitionHandle, (string Name, int Kind)?>();
+        void Index(MethodDefinitionHandle accessor, string propertyName, int kind)
         {
-            var result = ImmutableDictionary.CreateBuilder<MethodDefinitionHandle, (string Name, int Kind)?>();
-            void Index(MethodDefinitionHandle accessor, string propertyName, int kind)
-            {
-                if (accessor.IsNil) return;
-                var association = (propertyName, kind);
-                result[accessor] = result.TryGetValue(accessor, out var existing) && existing != association
-                    ? null : association;
-            }
-
-            var type = _md.GetTypeDefinition(owner);
-            foreach (var propertyHandle in type.GetProperties())
-            {
-                var property = _md.GetPropertyDefinition(propertyHandle);
-                var accessors = property.GetAccessors();
-                var propertyName = _md.GetString(property.Name);
-                Index(accessors.Getter, propertyName, 1);
-                Index(accessors.Setter, propertyName, 2);
-            }
-            return result.ToImmutable();
+            if (accessor.IsNil) return;
+            var association = (propertyName, kind);
+            result[accessor] = result.TryGetValue(accessor, out var existing) && existing != association
+                ? null : association;
         }
+
+        var type = reader.GetTypeDefinition(owner);
+        foreach (var propertyHandle in type.GetProperties())
+        {
+            var property = reader.GetPropertyDefinition(propertyHandle);
+            var accessors = property.GetAccessors();
+            var propertyName = reader.GetString(property.Name);
+            Index(accessors.Getter, propertyName, 1);
+            Index(accessors.Setter, propertyName, 2);
+        }
+        return result.ToImmutable();
     }
 
     private void AddCompanion(

@@ -424,9 +424,11 @@ universe in memory; public-type definitions needed by an actual stale conversion
 path.
 
 `--jobs N` shares a worker budget across assemblies and their namespace fragments.
-Each assembly uses at most four package lanes, and the assembly/package limits multiply
-to at most the budget. Larger assemblies start first. Each package retains its own
-name table and signature decoder; output and failure ordering remain deterministic.
+Larger assemblies start first. A conversion owns one worker and may borrow up to three
+currently spare workers for its remaining packages, without waiting for a child token.
+Single-package assemblies therefore retain assembly-level concurrency; the total remains
+within the budget. Each package retains its own name table and signature decoder, and
+output and failure ordering remain deterministic.
 `--jobs 1` is serial; `--jobs 0` uses the number of stale inputs as its budget.
 The normal MSBuild default is the processor count.
 

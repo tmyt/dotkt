@@ -3,6 +3,7 @@ using System.Collections;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
+using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -61,6 +62,92 @@ internal static class MetadataProjectionProbe
         using (var image = Build(tool, wrongTarget: true))
             Invalid(() => validate.Invoke(Attributes(image), [Carrier, new[] { HandleKind.TypeDefinition }]));
         Console.WriteLine("Metadata attribute trust, reader isolation and static ownership: PASS");
+        AccessorAssociations(tool);
+        SourceOwnership(tool);
+    }
+
+    private static void AccessorAssociations(Assembly tool)
+    {
+        var md = new MetadataBuilder();
+        StringHandle S(string name) => md.GetOrAddString(name);
+        BlobHandle B(params byte[] bytes) => md.GetOrAddBlob(bytes);
+        md.AddModule(0, S("Accessors"), md.GetOrAddGuid(Guid.NewGuid()), default, default);
+        var firstField = MetadataTokens.FieldDefinitionHandle(1);
+        var firstMethod = MetadataTokens.MethodDefinitionHandle(1);
+        md.AddTypeDefinition(0, default, S("<Module>"), default, firstField, firstMethod);
+        var owner = md.AddTypeDefinition(TypeAttributes.Public, S("Fixture"), S("Owner"),
+            default, firstField, firstMethod);
+        var getter = md.AddMethodDefinition(MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.SpecialName,
+            MethodImplAttributes.IL, S("get_Shared"), B(0, 0, 8), 0, MetadataTokens.ParameterHandle(1));
+        var setter = md.AddMethodDefinition(MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.SpecialName,
+            MethodImplAttributes.IL, S("set_Shared"), B(0, 1, 1, 8), 0, MetadataTokens.ParameterHandle(1));
+        md.AddPropertyMap(owner, MetadataTokens.PropertyDefinitionHandle(1));
+        foreach (var name in new[] { "A", "B", "C" })
+        {
+            var property = md.AddProperty(0, S(name), B(8, 0, 8));
+            md.AddMethodSemantics(property, MethodSemanticsAttributes.Getter, getter);
+            if (name == "A") md.AddMethodSemantics(property, MethodSemanticsAttributes.Setter, setter);
+        }
+        var image = new BlobBuilder();
+        new MetadataRootBuilder(md).Serialize(image, 0, 0);
+        using var provider = MetadataReaderProvider.FromMetadataImage(image.ToImmutableArray());
+        var index = tool.GetType("AssemblyScanner", true)!.GetMethod("IndexPropertyAccessorAssociations",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        var associations = (IReadOnlyDictionary<MethodDefinitionHandle, (string Name, int Kind)?>)
+            index.Invoke(null, [provider.GetMetadataReader(), owner])!;
+        Check(associations.Count == 2 && associations[getter] is null && associations[setter] == ("A", 2),
+            "a third property resurrected an ambiguous getter or poisoned an independent setter");
+        Console.WriteLine("Property accessor ambiguity stays unresolved after further rows: PASS");
+    }
+
+    private static void SourceOwnership(Assembly tool)
+    {
+        var cacheType = tool.GetType("ExternalSignatureDecoderCache", true)!;
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var constructor = cacheType.GetConstructor(flags, null, [typeof(string)], null)!;
+        var ownedGet = cacheType.GetMethod("Get", flags, null, [typeof(string)], null)!;
+        var borrowedGet = cacheType.GetMethod("Get", flags, null, [typeof(string), typeof(MetadataReader)], null)!;
+        IDisposable Cache() => (IDisposable)constructor.Invoke([null]);
+        FileStream? OwnedFile(object source) => (FileStream?)source.GetType().GetField("_file", flags)!.GetValue(source);
+        var path = tool.Location;
+        using var stream = File.OpenRead(path);
+        using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
+        var reader = pe.GetMetadataReader();
+        foreach (var seed in new[] { "race", "owned", "borrowed" })
+        {
+            var cache = Cache();
+            object? expected = seed switch
+            {
+                "owned" => ownedGet.Invoke(cache, [path]),
+                "borrowed" => borrowedGet.Invoke(cache, [path, reader]),
+                _ => null,
+            };
+            var values = new object[128];
+            try
+            {
+                Parallel.For(0, values.Length, index => values[index] = index % 2 == 0
+                    ? ownedGet.Invoke(cache, [path])! : borrowedGet.Invoke(cache, [path, reader])!);
+                expected ??= values[0];
+                Check(values.All(value => ReferenceEquals(value, expected)), "competing source lookups disagreed");
+                var file = OwnedFile(expected);
+                Check(seed != "owned" || file is not null, "owned source lost its file ownership");
+                Check(seed != "borrowed" || file is null, "borrowed source opened an owned PE");
+                cache.Dispose();
+                Check(file is null || file.SafeFileHandle.IsClosed, "owned source file survived cache disposal");
+                reader.GetModuleDefinition();
+            }
+            finally { cache.Dispose(); }
+        }
+        var malformed = Path.GetTempFileName();
+        try
+        {
+            using var cache = Cache();
+            try { ownedGet.Invoke(cache, [malformed]); throw new Exception("empty PE unexpectedly loaded"); }
+            catch (TargetInvocationException error) when (error.InnerException is BadImageFormatException or InvalidDataException) { }
+            using var exclusive = File.Open(malformed, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        }
+        finally { File.Delete(malformed); }
+        Console.WriteLine("Concurrent owned/borrowed decoder sources and failed-source cleanup: PASS");
     }
 
     private static Image Build(Assembly tool, bool compiler = true, bool generated = true, int copies = 1,
