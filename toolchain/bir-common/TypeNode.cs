@@ -137,6 +137,22 @@ public abstract record TypeNode
     public sealed record Ptr(TypeNode Of) : TypeNode;
 
     /// <summary>
+    /// `fnPtr`: an exact ECMA function-pointer signature, not a Kotlin function or CLR delegate.
+    /// The raw signature header, generic arity and required parameter count retain calling-convention
+    /// and sentinel facts independently of the recursively modifier-bearing return and parameter types.
+    /// CIR-only: bir2cir resolves the corresponding Kotlin interop vocabulary into this physical type.
+    /// </summary>
+    public sealed record FnPtr(int CallingConvention, int GenericArity, int RequiredParams,
+        TypeNode Ret, TypeNode[] Params) : TypeNode
+    {
+        public bool Equals(FnPtr? other) => other is not null
+            && CallingConvention == other.CallingConvention && GenericArity == other.GenericArity
+            && RequiredParams == other.RequiredParams && Ret == other.Ret && SeqEq(Params, other.Params);
+        public override int GetHashCode() => System.HashCode.Combine(
+            CallingConvention, GenericArity, RequiredParams, Ret, Params.Length);
+    }
+
+    /// <summary>
     /// `mod`: an ECMA custom modifier applied AT ITS SIGNATURE POSITION (II.7.1.1). <c>Req</c> selects
     /// modreq (true) from modopt (false), <c>M</c> is the modifier type and <c>Of</c> the modified type.
     /// CIR-only, and part of member identity: <c>void V(in DateTime)</c> and <c>void V(DateTime)</c> differ
@@ -216,6 +232,9 @@ public abstract record TypeNode
                 return new ByRef(Read(e.GetProperty("of")));
             case "ptr":
                 return new Ptr(Read(e.GetProperty("of")));
+            case "fnPtr":
+                return ReadFunctionPointer(e.GetProperty("cc").GetInt32(), e.GetProperty("genericArity").GetInt32(),
+                    e.GetProperty("requiredParams").GetInt32(), Read(e.GetProperty("ret")), ReadArray(e.GetProperty("params")));
             case "mod":
                 return new Mod(e.GetProperty("req").GetBoolean(), Read(e.GetProperty("m")), Read(e.GetProperty("of")));
             default:
@@ -286,11 +305,21 @@ public abstract record TypeNode
                 return new ByRef(Read(Required(e, "of")));
             case "ptr":
                 return new Ptr(Read(Required(e, "of")));
+            case "fnPtr":
+                return ReadFunctionPointer(ReadInt32(Required(e, "cc")), ReadInt32(Required(e, "genericArity")),
+                    ReadInt32(Required(e, "requiredParams")), Read(Required(e, "ret")), ReadArray(Required(e, "params")));
             case "mod":
                 return new Mod(ReadBoolean(Required(e, "req")), Read(Required(e, "m")), Read(Required(e, "of")));
             default:
                 throw new FormatException($"unknown Type discriminator `t`=\"{t}\"");
         }
+    }
+
+    private static FnPtr ReadFunctionPointer(int convention, int arity, int required, TypeNode result, TypeNode[] parameters)
+    {
+        if (convention is < 0 or > 255 || arity < 0 || required < 0 || required > parameters.Length)
+            throw new FormatException("Function-pointer header, arity or required parameter count is malformed");
+        return new FnPtr(convention, arity, required, result, parameters);
     }
 
     private static JsonNode? Required(JsonObject e, string name) =>
@@ -415,6 +444,15 @@ public abstract record TypeNode
                 return new JsonObject { ["t"] = "byRef", ["of"] = Write(b.Of) };
             case Ptr p:
                 return new JsonObject { ["t"] = "ptr", ["of"] = Write(p.Of) };
+            case FnPtr pointer:
+                if (pointer.CallingConvention is < 0 or > 255 || pointer.GenericArity < 0
+                    || pointer.RequiredParams < 0 || pointer.RequiredParams > pointer.Params.Length)
+                    throw new ArgumentException("Function-pointer header, arity or required parameter count is malformed");
+                return new JsonObject {
+                    ["t"] = "fnPtr", ["cc"] = pointer.CallingConvention,
+                    ["genericArity"] = pointer.GenericArity, ["requiredParams"] = pointer.RequiredParams,
+                    ["ret"] = Write(pointer.Ret), ["params"] = WriteArray(pointer.Params),
+                };
             case Mod m:
                 return new JsonObject { ["t"] = "mod", ["req"] = m.Req, ["m"] = Write(m.M), ["of"] = Write(m.Of) };
             default:
@@ -511,6 +549,8 @@ public static class TypeNodeSelfTest
         // cross-language fixture above: only bir2cir authors them and only ilemit reads them.
         var cirOnly = new (TypeNode node, string json)[]
         {
+            (new TypeNode.FnPtr(0, 0, 1, new TypeNode.Tv("method", 0), [new TypeNode.Tv("type", 0)]),
+                """{"t":"fnPtr","cc":0,"genericArity":0,"requiredParams":1,"ret":{"t":"tv","scope":"method","i":0},"params":[{"t":"tv","scope":"type","i":0}]}"""),
             (new TypeNode.Ptr(new TypeNode.Fqn("System.Int32")),
                 "{\"t\":\"ptr\",\"of\":{\"t\":\"fqn\",\"name\":\"System.Int32\"}}"),
             // int[,] — a DIFFERENT member signature from int[]; rank is absent for an SZ array.

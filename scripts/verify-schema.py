@@ -23,7 +23,7 @@
 import json, re, sys, glob, os
 from typealias_schema import validate_aliases
 
-TYPE_TAGS = {"fqn", "tv", "star", "projection", "fn", "nullable", "oblivious", "array", "byRef", "ptr", "mod"}
+TYPE_TAGS = {"fqn", "tv", "star", "projection", "fn", "nullable", "oblivious", "array", "byRef", "ptr", "fnPtr", "mod"}
 
 # #370: the document keys that carry a scalar `memberRef` — ONE complete, already-resolved reference to a
 # member of another assembly. Frozen like KINDS/TYPE_TAGS, so a new carrier key is a deliberate vocabulary
@@ -472,7 +472,7 @@ class V:
                           ("attrs" in entry and not isinstance(entry["attrs"], list))):
                         self.err(f, where, "explicit CIR enum entry must carry its name, declaration ordinal, underlying type, and physical value")
 
-    def type_node(self, f, path, o, declaration_signature=False):
+    def type_node(self, f, path, o, declaration_signature=False, native_signature=False):
         """Validate a {t:...} type node: known tag + required fields (§1)."""
         t = o.get("t")
         if t not in TYPE_TAGS:
@@ -483,6 +483,7 @@ class V:
             "star": [], "projection": ["variance", "of"],
             "nullable": ["of"], "oblivious": ["of"], "array": ["elem"], "byRef": ["of"],
             "ptr": ["of"], "mod": ["req", "m", "of"],
+            "fnPtr": ["cc", "genericArity", "requiredParams", "ret", "params"],
         }[t]
         for r in req:
             if r not in o:
@@ -533,12 +534,20 @@ class V:
                 self.err(f, path, f"array.rank must be an integer between 1 and 32, got {o['rank']!r}")
         if t == "mod" and not isinstance(o.get("req"), bool):
             self.err(f, path, f"mod.req must be bool (true=modreq, false=modopt), got {o.get('req')!r}")
+        if t == "fnPtr":
+            if type(o.get("cc")) is not int or not 0 <= o["cc"] <= 255:
+                self.err(f, path, "fnPtr.cc must be an integer between 0 and 255")
+            if type(o.get("genericArity")) is not int or o["genericArity"] < 0:
+                self.err(f, path, "fnPtr.genericArity must be a non-negative integer")
+            if (not isinstance(o.get("params"), list) or type(o.get("requiredParams")) is not int
+                    or not 0 <= o["requiredParams"] <= len(o["params"])):
+                self.err(f, path, "fnPtr.requiredParams must index its parameter vector")
         if t == "star" and f.endswith(".cir.json"):
             self.err(f, path, "Kotlin star projection must be lowered by bir2cir before CIR")
         # The three ECMA signature carriers are bir2cir-authored CIR facts: Kotlin source cannot spell a
         # pointer, a multi-dimensional array or a custom modifier, so one in kotc's BIR is a producer defect.
         if f.endswith(".bir.json"):
-            if t in ("ptr", "mod"):
+            if t in ("ptr", "fnPtr", "mod"):
                 self.err(f, path, f"type {t!r} is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
             if t == "array" and "rank" in o:
                 self.err(f, path, "array.rank is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
@@ -546,7 +555,8 @@ class V:
         # General-array ranks remain confined to member references. `ptr` is different:
         # dll2klib exposes an opaque ClrPointer<T> value to Kotlin, so bir2cir
         # must materialize `ptr` in ordinary declaration, local, operand, and result slots as well as memberRefs.
-        if ((t == "mod" and not declaration_signature) or (t == "array" and "rank" in o)) and not in_member_ref(path):
+        if (((t == "mod" and not declaration_signature) or (t == "array" and "rank" in o))
+                and not native_signature and not in_member_ref(path)):
             carrier = "array.rank" if t == "array" else t
             location = "a declaration/memberRef signature" if t == "mod" else "a memberRef signature"
             self.err(f, path, f"type {carrier} requires {location}, not an ordinary type slot")
@@ -805,7 +815,7 @@ class V:
             for i, x in enumerate(o):
                 self.plan_scope(f, x, path + f"[{i}]", bound)
 
-    def walk(self, f, o, path, is_type_decl=False, role=None):
+    def walk(self, f, o, path, is_type_decl=False, role=None, native_signature=False):
         if isinstance(o, dict):
             if "encoding" in o:
                 if (not path.endswith(("/value", "/constant")) or set(o) != {"encoding", "units"}
@@ -846,7 +856,8 @@ class V:
                 # an object carrying BOTH is ill-formed and must not slip past as either.
                 self.err(f, path, f"object carries BOTH k={o.get('k')!r} and t={o.get('t')!r} (node/type roles are disjoint)")
             elif "t" in o:
-                self.type_node(f, path, o, declaration_signature=role == "signature" and f.endswith(".cir.json"))
+                self.type_node(f, path, o, declaration_signature=role == "signature" and f.endswith(".cir.json"),
+                               native_signature=native_signature)
             # #370, two independent triggers, because either one alone leaves a hole. The KEY is authoritative:
             # whatever sits under a frozen carrier is a member reference and is checked as one, so a reference
             # that dropped a required field cannot escape validation by no longer looking like one. And
@@ -1379,12 +1390,14 @@ class V:
                         if isinstance(x, str) and key not in STRARR_OK:
                             self.err(f, p + f"[{i}]", f"bare STRING in type-array {key!r}: {x!r} (must be a {{t:...}} node)")
                         else:
-                            self.walk(f, x, p + f"[{i}]", children_are_type_decls, child_role)
+                            self.walk(f, x, p + f"[{i}]", children_are_type_decls, child_role,
+                                      native_signature or o.get("t") == "fnPtr")
                 else:
-                    self.walk(f, val, p, role=child_role)
+                    self.walk(f, val, p, role=child_role,
+                              native_signature=native_signature or o.get("t") == "fnPtr")
         elif isinstance(o, list):
             for i, x in enumerate(o):
-                self.walk(f, x, path + f"[{i}]", role=role)
+                self.walk(f, x, path + f"[{i}]", role=role, native_signature=native_signature)
 
 
 def main(argv):

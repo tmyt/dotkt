@@ -108,6 +108,7 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `array` | `elem:T`, `rank?:1..32` | `Array<T>`; an absent `rank` is the SZ vector `T[]`. A **CIR-only** stated rank names the general ECMA ARRAY: ≥2 is `T[,…]`, and 1 is the non-vector `T[*]`, a distinct type from `T[]` | `array:X` |
 | `byRef` | `of:T` | a CLR by-ref `ref T` | `byRef:X` |
 | `ptr` | `of:T` | **CIR-only**: a CLR unmanaged pointer `T*`; BIR uses the semantic `kotlin.clr.ClrPointer<T>` vocabulary | no old physical form |
+| `fnPtr` | `cc:byte`, `genericArity:int`, `requiredParams:int`, `ret:T`, `params:[T…]` | **CIR-only**: exact ECMA function-pointer header and callable signature; nested modifiers remain attached to their signature positions | — |
 | `mod` | `req:bool`, `m:T`, `of:T` | **CIR-only**: an ECMA custom modifier (II.7.1.1) at its signature position — `req` selects modreq from modopt | no Kotlin form |
 
 Notes:

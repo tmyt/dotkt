@@ -37,7 +37,7 @@
 
     "//== TYPE (§1) — the universal type representation ==//": null,
     "type": {
-      "description": "A Type is ALWAYS an object with a `t` discriminator. There is NO bare-string type. Readers dispatch(t); they never split/scan a string. Ten variants; `star` is BIR-only and bir2cir must eliminate it before CIR. `ptr`, `mod` and tArray.rank are CIR-only physical carriers; `mod` and ranked arrays are confined to resolved signatures, while `ptr` also materializes BIR's semantic kotlin.clr.ClrPointer<T> in ordinary CIR slots.",
+      "description": "A Type is ALWAYS an object with a `t` discriminator. There is NO bare-string type. Readers dispatch(t). Kotlin projections must be consumed before CIR; ptr, fnPtr, mod and array ranks are CIR signature facts. Modifiers and ranked arrays also occur inside a function pointer's callable signature even when the pointer occupies an ordinary value slot.",
       "oneOf": [
         { "$ref": "#/$defs/tFqn" },
         { "$ref": "#/$defs/tTv" },
@@ -48,6 +48,7 @@
         { "$ref": "#/$defs/tArray" },
         { "$ref": "#/$defs/tByRef" },
         { "$ref": "#/$defs/tPtr" },
+        { "$ref": "#/$defs/tFnPtr" },
         { "$ref": "#/$defs/tMod" }
       ]
     },
@@ -155,6 +156,20 @@
         "of": { "$ref": "#/$defs/type" }
       },
       "required": ["t", "of"],
+      "additionalProperties": false
+    },
+    "tFnPtr": {
+      "type": "object",
+      "description": "CIR-only exact ECMA function-pointer signature, distinct from Kotlin functions and CLR delegates.",
+      "properties": {
+        "t": { "const": "fnPtr" },
+        "cc": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "genericArity": { "type": "integer", "minimum": 0 },
+        "requiredParams": { "type": "integer", "minimum": 0 },
+        "ret": { "$ref": "#/$defs/type" },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+      },
+      "required": ["t", "cc", "genericArity", "requiredParams", "ret", "params"],
       "additionalProperties": false
     },
     "tMod": {

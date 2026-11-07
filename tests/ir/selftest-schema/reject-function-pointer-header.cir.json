@@ -1,0 +1,1 @@
+{"fields":[{"name":"callback","type":{"t":"fnPtr","cc":256,"genericArity":0,"requiredParams":0,"ret":{"t":"fqn","name":"System.Void"},"params":[]}}]}

@@ -148,10 +148,12 @@ if (args[0] == "generate")
             ["baseCtorRef"] = source["wellKnownRefs"]!["Object.ctor"]!.DeepClone()
         })
     });
+    FunctionPointerSignatures.Add(root.AsObject());
     File.WriteAllText(args[2], root.ToJsonString());
     return;
 }
 var emitted = Assembly.LoadFrom(Path.GetFullPath(args[1])).GetType("ModifiedMethods")!;
+FunctionPointerSignatures.Verify(emitted.Assembly);
 if ((int)emitted.GetMethod("CallInt")!.Invoke(null, null)! != 1
     || (int)emitted.GetMethod("CallText")!.Invoke(null, null)! != 2)
     throw new Exception("CIR modifier-selected call bound to the wrong overload body");
