@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Changed
+
+- Reduce bir2cir reference-index allocation by enumerating declared CLR members without per-type name-query caches.
+
 ## 0.9.21 (2026-11-07)
 
 ### Release highlights

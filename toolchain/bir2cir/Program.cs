@@ -81,6 +81,7 @@ static class Bir2Cir
                 RoundtripMetadata.RuntimeLinkageSelfTest();
                 SuspendColdLowering.DeclarationRegistrySelfTest();
                 ReferenceMetadataIndex.SelfTest();
+                MetadataDeclaredMembersTests.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
                 MapVarianceRealign.SelfTest();
                 return 0;
