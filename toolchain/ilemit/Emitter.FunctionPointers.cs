@@ -3,6 +3,36 @@ using DotKt.Bir;
 
 sealed partial class Emitter
 {
+    static Type RebuildSignatureElement(Type shape, Type element) => NativeSignatureReader.ContainsPointer(element)
+        ? new NativeElementType(shape, element)
+        : shape.IsArray ? (shape.IsSZArray ? element.MakeArrayType() : element.MakeArrayType(shape.GetArrayRank()))
+            : shape.IsByRef ? element.MakeByRefType() : element.MakePointerType();
+
+    static Type RemapFunctionPointer(Type type, Func<Type, Type> map)
+    {
+        var originalReturn = type.GetFunctionPointerReturnType();
+        var originalParameters = type.GetFunctionPointerParameterTypes();
+        var result = map(originalReturn);
+        var parameters = originalParameters.Select(map).ToArray();
+        return ReferenceEquals(result, originalReturn) && parameters.Zip(originalParameters, ReferenceEquals).All(same => same)
+            ? type : new NativeRemappedFunctionPointerType(type, result, parameters);
+    }
+
+    // Mechanical frame substitution on an already-selected declaration. Its
+    // convention and modifiers belong to that declaration and are not inferred.
+    sealed class NativeRemappedFunctionPointerType(Type source, Type result, Type[] parameters) : TypeDelegator(source)
+    {
+        public override Type UnderlyingSystemType => this;
+        public override bool IsFunctionPointer => true;
+        public override bool IsUnmanagedFunctionPointer => typeImpl.IsUnmanagedFunctionPointer;
+        public override bool ContainsGenericParameters => result.ContainsGenericParameters || parameters.Any(p => p.ContainsGenericParameters);
+        public override Type GetFunctionPointerReturnType() => result;
+        public override Type[] GetFunctionPointerParameterTypes() => parameters;
+        public override Type[] GetFunctionPointerCallingConventions() => typeImpl.GetFunctionPointerCallingConventions();
+        public override Type[] GetRequiredCustomModifiers() => typeImpl.GetRequiredCustomModifiers();
+        public override Type[] GetOptionalCustomModifiers() => typeImpl.GetOptionalCustomModifiers();
+    }
+
     Type FunctionPointerType(TypeNode.FnPtr signature)
     {
         // These are already-resolved CIR facts. Unsupported headers must have been rejected by bir2cir.
@@ -87,7 +117,16 @@ sealed partial class Emitter
     sealed class NativeGenericType(Type shape, Type[] arguments) : TypeDelegator(shape)
     {
         public override Type UnderlyingSystemType => this;
+        public override bool IsGenericType => true;
+        public override bool IsGenericTypeDefinition => false;
+        public override bool IsConstructedGenericType => true;
+        public override Type GetGenericTypeDefinition() => typeImpl.GetGenericTypeDefinition();
+        public override Assembly Assembly => GetGenericTypeDefinition().Assembly;
+        public override Module Module => GetGenericTypeDefinition().Module;
+        protected override TypeAttributes GetAttributeFlagsImpl() => GetGenericTypeDefinition().Attributes;
+        protected override bool IsValueTypeImpl() => GetGenericTypeDefinition().IsValueType;
         public override Type[] GetGenericArguments() => arguments;
+        public override Type[] GenericTypeArguments => arguments;
         public override bool ContainsGenericParameters => arguments.Any(argument => argument.ContainsGenericParameters);
     }
 }

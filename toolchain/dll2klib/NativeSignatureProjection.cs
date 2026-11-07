@@ -33,18 +33,20 @@ internal sealed partial class SignatureDecoder
         {
             var supported = shape.Sizes.Length == 0 && shape.LowerBounds.All(bound => bound == 0)
                 && FunctionPointerVocabulary.Arrays.ContainsKey(shape.Rank);
-            return new(decoder.GetArrayType(element.Surface, shape), supported
+            return new(supported && ContainsPointer(element.Surface)
+                ? Applied(FunctionPointerVocabulary.Arrays[shape.Rank], element.Exact)
+                : decoder.GetArrayType(element.Surface, shape), supported
                 ? Applied(FunctionPointerVocabulary.Arrays[shape.Rank], element.Exact) : null,
                 element.Unsupported ?? (supported ? null : "Unsupported bounded CLR array in function-pointer signature"));
         }
         public SignatureType GetSZArrayType(SignatureType element) => new(
-            decoder.GetSZArrayType(element.Surface),
+            decoder.GetSZArrayType(ContainsPointer(element.Surface) ? element.Exact : element.Surface),
             element.Native is null ? null : decoder.GetSZArrayType(element.Exact), element.Unsupported);
         public SignatureType GetByReferenceType(SignatureType element) => new(
-            decoder.GetByReferenceType(element.Surface),
+            decoder.GetByReferenceType(ContainsPointer(element.Surface) ? element.Exact : element.Surface),
             element.Native is null ? null : decoder.GetByReferenceType(element.Exact), element.Unsupported);
         public SignatureType GetPointerType(SignatureType element) => new(
-            decoder.GetPointerType(element.Surface),
+            decoder.GetPointerType(ContainsPointer(element.Surface) ? element.Exact : element.Surface),
             element.Native is null ? null : decoder.GetPointerType(element.Exact), element.Unsupported);
         public SignatureType GetFunctionPointerType(MethodSignature<SignatureType> signature)
         {
@@ -60,6 +62,16 @@ internal sealed partial class SignatureDecoder
         public SignatureType GetGenericInstantiation(SignatureType generic, ImmutableArray<SignatureType> arguments)
         {
             var surface = decoder.GetGenericInstantiation(generic.Surface, arguments.Select(t => t.Surface).ToImmutableArray());
+            // A real CLR Nullable<T> is not a Kotlin NRT annotation on T. Keep
+            // its nominal constructor in native signatures, including open T.
+            if (generic.Surface.HasClassName && decoder._names.ClassName(generic.Surface.ClassName) is "System.Nullable" or "System.Nullable1")
+            {
+                var exact = generic.Surface.Clone();
+                exact.Argument.Add(arguments.Select(argument => new KType.Types.Argument {
+                    Projection = KType.Types.Argument.Types.Projection.Inv, Type = argument.Exact,
+                }));
+                return new(surface, exact, arguments.FirstOrDefault(t => t.Unsupported != null).Unsupported);
+            }
             return new(surface, generic.Native is null && arguments.All(t => t.Native is null) ? null
                 : decoder.GetGenericInstantiation(generic.Exact, arguments.Select(t => t.Exact).ToImmutableArray()),
                 generic.Unsupported ?? arguments.FirstOrDefault(t => t.Unsupported != null).Unsupported);
@@ -68,11 +80,20 @@ internal sealed partial class SignatureDecoder
             type.Surface, Applied(required ? FunctionPointerVocabulary.Required : FunctionPointerVocabulary.Optional,
                 decoder.AsNonNull(modifier.Exact), type.Exact), type.Unsupported ?? modifier.Unsupported);
         public SignatureType GetPinnedType(SignatureType element) => element;
+        bool ContainsPointer(KType type) => type.HasClassName && decoder._names.ClassName(type.ClassName) == FunctionPointerVocabulary.Pointer
+            || type.Argument.Any(argument => argument.Type is { } nested && ContainsPointer(nested));
         public SignatureType GetPrimitiveType(PrimitiveTypeCode code) => new(decoder.GetPrimitiveType(code));
         public SignatureType GetGenericMethodParameter(GenericContext context, int index) => new(decoder.GetGenericMethodParameter(context, index));
         public SignatureType GetGenericTypeParameter(GenericContext context, int index) => new(decoder.GetGenericTypeParameter(context, index));
-        public SignatureType GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte kind) => new(decoder.GetTypeFromDefinition(reader, handle, kind));
-        public SignatureType GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte kind) => new(decoder.GetTypeFromReference(reader, handle, kind));
+        public SignatureType GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte kind) => new(
+            decoder.GetTypeFromDefinition(reader, handle, kind),
+            NativeNamed(decoder.DefinitionKotlinClassName(reader, handle), kind));
+        public SignatureType GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte kind) => new(
+            decoder.GetTypeFromReference(reader, handle, kind),
+            NativeNamed(decoder.ReferenceKotlinClassName(reader, handle), kind));
+        KType? NativeNamed(int name, byte kind) => decoder._names.ClassName(name) == "kotlin.Unit"
+            ? Applied(FunctionPointerVocabulary.Value, SignatureDecoder.Named(name))
+            : kind == (byte)SignatureTypeKind.Unknown ? SignatureDecoder.Named(name) : null;
         public SignatureType GetTypeFromSpecification(MetadataReader reader, GenericContext context, TypeSpecificationHandle handle, byte kind) =>
             reader.GetTypeSpecification(handle).DecodeSignature(this, context);
     }

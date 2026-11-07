@@ -25,7 +25,7 @@ internal sealed record Dll2KlibProjectionInput(
 
 internal static class Program
 {
-    private const int ProjectionStateVersion = 4;
+    private const int ProjectionStateVersion = 5;
 
     public static async Task<int> Main(string[] args)
     {
@@ -8393,16 +8393,21 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
         var index = 0;
         return Walk(source);
 
-        KType Walk(KType type)
+        KType Walk(KType type, bool nativeSignature = false)
         {
             var copy = type.Clone();
             var name = copy.HasClassName ? _names.ClassName(copy.ClassName) : null;
-            if (name is FunctionPointerVocabulary.Required or FunctionPointerVocabulary.Optional)
+            if (name == FunctionPointerVocabulary.Value)
             {
-                copy.Argument[1].Type = Walk(copy.Argument[1].Type);
+                copy.Argument[0].Type = Walk(copy.Argument[0].Type, nativeSignature);
                 return copy;
             }
-            var consumes = ConsumesNullability(copy);
+            if (name is FunctionPointerVocabulary.Required or FunctionPointerVocabulary.Optional)
+            {
+                copy.Argument[1].Type = Walk(copy.Argument[1].Type, nativeSignature);
+                return copy;
+            }
+            var consumes = !(nativeSignature && name is "System.Nullable" or "System.Nullable1") && ConsumesNullability(copy);
             var byteValue = consumes
                 ? flags is { Length: 1 } ? flags[0]
                 : flags is not null && index < flags.Length ? flags[index]
@@ -8414,14 +8419,17 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
                 // Roslyn visits the native return before its parameters. The
                 // convention and Kotlin FunctionN wrapper consume no NRT bytes.
                 var signature = copy.Argument[1].Type;
-                signature.Argument[^1].Type = Walk(signature.Argument[^1].Type);
+                signature.Argument[^1].Type = Walk(signature.Argument[^1].Type, nativeSignature: true);
                 for (var i = 0; i < signature.Argument.Count - 1; i++)
-                    signature.Argument[i].Type = Walk(signature.Argument[i].Type);
+                    signature.Argument[i].Type = Walk(signature.Argument[i].Type, nativeSignature: true);
                 return copy;
             }
             for (var i = 0; i < copy.Argument.Count; i++)
                 if (copy.Argument[i].Type is { } arg)
-                    copy.Argument[i].Type = Walk(arg);
+                    copy.Argument[i].Type = Walk(arg, nativeSignature);
+            // NRT on a native generic variable does not construct Nullable<T>.
+            // Otherwise closing T at Int would change the callable ABI to int?.
+            if (nativeSignature && copy.HasTypeParameter) return AsNonNull(copy);
             // A VALUE type holds a byte position but never an annotation: its byte is always 0 (oblivious), and its
             // one nullable form is the structural `System.Nullable<T>` already folded in by the decoder. Reading the
             // byte — or, worse, the enclosing declaration's `[NullableContext]` — as an annotation is what turned

@@ -5,4 +5,7 @@
     <Nullable>enable</Nullable>
     <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
   </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="DotKt.Stdlib"><HintPath>../../../../build/clr-stdlib-rt/dll/DotKt.Stdlib.dll</HintPath></Reference>
+  </ItemGroup>
 </Project>

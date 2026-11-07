@@ -14,6 +14,9 @@ static partial class BirTypeLowering
         TypeNode Lower(TypeNode type) => LowerPhysicalType(type, new Dictionary<string, string>(), _ => false, null, false);
         var expected = new TypeNode.FnPtr(0, 0, 2, methodVariable, [typeVariable, methodVariable]);
         if (Lower(callback) != expected) throw new Exception("Function pointer lost its exact generic frame");
+        var nullableConstructor = Named("System.Nullable`1", methodVariable);
+        if (CanonicalPhysicalSlotType(nullableConstructor) != new TypeNode.Nullable(methodVariable))
+            throw new Exception("Native Nullable constructor and physical nullable signature disagree");
         var source = TypeNode.Write(callback);
         FunctionValueRepresentation.Apply(source, _ => false);
         if (TypeJson.Read(source) != callback || FunctionValueRepresentation.ContainsOrdinaryFunction(source)
@@ -28,8 +31,24 @@ static partial class BirTypeLowering
         if (Lower(nested) is not TypeNode.FnPtr { CallingConvention: 1,
                 Params: [TypeNode.Array { Rank: 2, SzArray: false, Elem: TypeNode.FnPtr }] })
             throw new Exception("Nested native function-pointer/array shape changed");
+        var unit = Named("kotlin.Unit");
+        var unitValue = Named(FunctionPointerVocabulary.Value, unit);
+        if (Lower(Named(FunctionPointerVocabulary.Pointer, convention, new TypeNode.Fn(false, unitValue, [unitValue])))
+                is not TypeNode.FnPtr { Ret: TypeNode.Fqn { Name: "kotlin.Unit" }, Params: [TypeNode.Fqn { Name: "kotlin.Unit" }] }
+            || Lower(Named(FunctionPointerVocabulary.Pointer, convention, new TypeNode.Fn(false, unit, [])))
+                is not TypeNode.FnPtr { Ret: TypeNode.Fqn { Name: "void" } })
+            throw new Exception("Native Unit value and void return were conflated");
+        var modifiedUnit = Named(FunctionPointerVocabulary.Optional, Named("Marker"), unit);
+        if (Lower(Named(FunctionPointerVocabulary.Pointer, convention, new TypeNode.Fn(false, modifiedUnit, [modifiedUnit])))
+                is not TypeNode.FnPtr {
+                    Ret: TypeNode.Mod { Of: TypeNode.Fqn { Name: "void" } },
+                    Params: [TypeNode.Mod { Of: TypeNode.Fqn { Name: "kotlin.Unit" } }],
+                })
+            throw new Exception("A signature modifier changed the Unit value/return position");
         foreach (var invalid in new[] {
             Named(FunctionPointerVocabulary.Pointer, convention, new TypeNode.Star()),
+            Named(FunctionPointerVocabulary.Pointer, convention,
+                new TypeNode.Fn(false, new TypeNode.Nullable(methodVariable), [methodVariable])),
             Named("System.Collections.Generic.List", callback),
         })
         {
@@ -38,5 +57,16 @@ static partial class BirTypeLowering
             throw new Exception("Inexact or generic-argument function-pointer signature was accepted");
         }
         ValidatePointerVocabulary(TypeNode.Write(new TypeNode.Array(callback)), "function-pointer-array-selftest");
+        foreach (var invalid in new[] {
+            expected with { CallingConvention = 5 },
+            expected with { GenericArity = 1 },
+            expected with { RequiredParams = 1 },
+            expected with { Ret = new TypeNode.Mod(false, Named("Opt"), new TypeNode.Mod(true, Named("Req"), methodVariable)) },
+        })
+        {
+            try { ValidateNativePointer(invalid); }
+            catch (InvalidDataException) { continue; }
+            throw new Exception("Unsupported native function-pointer signature escaped its diagnostic boundary");
+        }
     }
 }

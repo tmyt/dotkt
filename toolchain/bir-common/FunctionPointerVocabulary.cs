@@ -8,6 +8,7 @@ public static class FunctionPointerVocabulary
     public const string Pointer = "kotlin.clr.ClrFunctionPointer";
     public const string Required = "kotlin.clr.signature.Required";
     public const string Optional = "kotlin.clr.signature.Optional";
+    public const string Value = "kotlin.clr.signature.Value";
     public static readonly IReadOnlyDictionary<int, string> Conventions = new Dictionary<int, string> {
         [0] = "kotlin.clr.signature.Managed",
         [1] = "kotlin.clr.signature.Cdecl",

@@ -92,6 +92,9 @@ static partial class BirTypeLowering
                 case TypeNode.Fqn { Name: FunctionPointerVocabulary.Required or FunctionPointerVocabulary.Optional, Args: [_, var modified] }:
                     ValidateType(modified, directGenericArgument);
                     return;
+                case TypeNode.Fqn { Name: FunctionPointerVocabulary.Value, Args: [var value] }:
+                    ValidateType(value, directGenericArgument);
+                    return;
                 case TypeNode.Fqn { Name: var name, Args: [var element] } when FunctionPointerVocabulary.ArrayRanks.ContainsKey(name):
                     ValidateType(element, directGenericArgument: false);
                     return;
@@ -479,9 +482,7 @@ static partial class BirTypeLowering
                         if (f.Args[0] is TypeNode.Star)
                             throw new InvalidDataException(
                                 $"bir2cir: {_file}: {PointerIntrinsicFqn}<*> has no exact CLR pointee signature");
-                        var pointee = f.Args[0] is TypeNode.Fqn { Name: "kotlin.Unit", Args: null }
-                            ? VoidType
-                            : LowerType(f.Args[0], refBuild, force, typeArg: false);
+                        var pointee = LowerNativeSlot(f.Args[0], refBuild, force, voidPosition: true);
                         return new TypeNode.Ptr(pointee);
                     }
                     // `kotlin.clr.Span<T>` -> the real `System.Span<T>` in EVERY build (ref included). A synthetic interop
@@ -725,6 +726,8 @@ static partial class BirTypeLowering
             "ushort" => "System.UInt16",
             _ => f.Name,
         }),
+        TypeNode.Fqn { Name: "System.Nullable" or "System.Nullable`1", Args: [var value] } =>
+            new TypeNode.Nullable(CanonicalPhysicalSlotType(value)),
         TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(
             f.Name, args.Select(CanonicalPhysicalSlotType).ToArray()),
         TypeNode.Array a => new TypeNode.Array(

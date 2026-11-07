@@ -234,7 +234,10 @@ sealed partial class Emitter
     // (`Holder<E>` referenced from inside another generic). Recursive, NOT Type.ContainsGenericParameters (unreliable
     // on un-baked builder instantiations); GenericTypeParameterBuilder reports IsGenericParameter reliably.
     static bool ContainsGenericParam(Type t) =>
-        t.IsGenericParameter || (t.IsGenericType && t.GetGenericArguments().Any(ContainsGenericParam));
+        t.IsGenericParameter || (t.IsGenericType && t.GetGenericArguments().Any(ContainsGenericParam))
+        || t.HasElementType && ContainsGenericParam(t.GetElementType())
+        || t.IsFunctionPointer && (ContainsGenericParam(t.GetFunctionPointerReturnType())
+            || t.GetFunctionPointerParameterTypes().Any(ContainsGenericParam));
 
     // Substitute an open TYPE's own generic parameters (positionally = `typeArgs`) throughout a member reference as
     // declared on that open def — including CONSTRUCTED args (`ICollection<KeyValuePair<K,V>>` with
@@ -250,12 +253,12 @@ sealed partial class Emitter
     static Type SubstituteIfaceArgs(Type t, Type[] typeArgs)
     {
         if (t.IsGenericParameter) return t.DeclaringMethod == null ? typeArgs[t.GenericParameterPosition] : t;
+        if (t.IsFunctionPointer) return RemapFunctionPointer(t, child => SubstituteIfaceArgs(child, typeArgs));
         if (t.HasElementType)
         {
             var e = SubstituteIfaceArgs(t.GetElementType(), typeArgs);
             if (ReferenceEquals(e, t.GetElementType())) return t;
-            return t.IsArray ? (t.GetArrayRank() == 1 ? e.MakeArrayType() : e.MakeArrayType(t.GetArrayRank()))
-                : t.IsByRef ? e.MakeByRefType() : t.IsPointer ? e.MakePointerType() : t;
+            return RebuildSignatureElement(t, e);
         }
         if (!t.IsGenericType) return t;
         var args = t.GetGenericArguments().Select(a => SubstituteIfaceArgs(a, typeArgs)).ToArray();
@@ -272,12 +275,12 @@ sealed partial class Emitter
         for (int i = 0; i < from.Length && i < to.Length; i++) if (ReferenceEquals(t, from[i])) return to[i];
         if (t.IsGenericParameter)
             return t.DeclaringMethod != null && t.GenericParameterPosition < to.Length ? to[t.GenericParameterPosition] : t;
+        if (t.IsFunctionPointer) return RemapFunctionPointer(t, child => SubstituteMethodArgs(child, from, to));
         if (t.HasElementType)
         {
             var e = SubstituteMethodArgs(t.GetElementType(), from, to);
             if (ReferenceEquals(e, t.GetElementType())) return t;
-            return t.IsArray ? (t.GetArrayRank() == 1 ? e.MakeArrayType() : e.MakeArrayType(t.GetArrayRank()))
-                : t.IsByRef ? e.MakeByRefType() : t.IsPointer ? e.MakePointerType() : t;
+            return RebuildSignatureElement(t, e);
         }
         var ga = t.GetGenericArguments();
         if (ga.Length == 0) return t;
@@ -292,12 +295,12 @@ sealed partial class Emitter
     {
         if (t == null) return null;
         if (map.TryGetValue(t, out var direct)) return direct;
+        if (t.IsFunctionPointer) return RemapFunctionPointer(t, child => SubstituteTypeMap(child, map));
         if (t.HasElementType)
         {
             var elem = SubstituteTypeMap(t.GetElementType(), map);
             if (ReferenceEquals(elem, t.GetElementType())) return t;
-            return t.IsArray ? (t.GetArrayRank() == 1 ? elem.MakeArrayType() : elem.MakeArrayType(t.GetArrayRank()))
-                : t.IsByRef ? elem.MakeByRefType() : t.IsPointer ? elem.MakePointerType() : t;
+            return RebuildSignatureElement(t, elem);
         }
         var args = t.GetGenericArguments();
         if (args.Length == 0) return t;
@@ -796,6 +799,8 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Fqn f => f.Args == null ? SigFqn(f.Name) : SigFqn(f.Name) + "[" + string.Join(",", f.Args.Select(SigCanon)) + "]",
         DotKt.Bir.TypeNode.Tv => "gp:T",
         DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + SigCanon(fn.Ret) + ":" + string.Join(",", fn.DelegateParams.Select(SigCanon)),
+        DotKt.Bir.TypeNode.FnPtr pointer => FunctionPointerKey(pointer, SigCanon),
+        DotKt.Bir.TypeNode.Ptr pointer => "ptr:" + SigCanon(pointer.Of),
         // Reference nullability is metadata-only and not part of ECMA-335 member identity. Value nullability is the
         // physical `System.Nullable<T>` type and therefore must remain in the key: `Compare(Int?, Int?)` and the
         // synthesized `Compare(Int, Int)` interface bridge are real overloads, not duplicate declarations.
@@ -803,7 +808,7 @@ sealed partial class Emitter
             ? "nullable[" + SigCanon(n.Of) + "]"
             : SigCanon(n.Of),
         DotKt.Bir.TypeNode.Oblivious o => SigCanon(o.Of),
-        DotKt.Bir.TypeNode.Array a => "array:" + SigCanon(a.Elem),
+        DotKt.Bir.TypeNode.Array a => "array:" + a.Rank + ":" + a.SzArray + ":" + SigCanon(a.Elem),
         DotKt.Bir.TypeNode.ByRef b => "byref:" + SigCanon(b.Of),
         _ => "object",
     };
@@ -816,14 +821,20 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Tv tv => "gp:" + tv.Scope + ":" + tv.I,
         DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + DefinitionSigCanon(fn.Ret) + ":" +
             string.Join(",", fn.DelegateParams.Select(DefinitionSigCanon)),
+        DotKt.Bir.TypeNode.FnPtr pointer => FunctionPointerKey(pointer, DefinitionSigCanon),
+        DotKt.Bir.TypeNode.Ptr pointer => "ptr:" + DefinitionSigCanon(pointer.Of),
         DotKt.Bir.TypeNode.Nullable n => IsSignatureValueType(n.Of)
             ? "nullable[" + DefinitionSigCanon(n.Of) + "]"
             : DefinitionSigCanon(n.Of),
         DotKt.Bir.TypeNode.Oblivious o => DefinitionSigCanon(o.Of),
-        DotKt.Bir.TypeNode.Array a => "array:" + DefinitionSigCanon(a.Elem),
+        DotKt.Bir.TypeNode.Array a => "array:" + a.Rank + ":" + a.SzArray + ":" + DefinitionSigCanon(a.Elem),
         DotKt.Bir.TypeNode.ByRef b => "byref:" + DefinitionSigCanon(b.Of),
         _ => "object",
     };
+
+    static string FunctionPointerKey(DotKt.Bir.TypeNode.FnPtr signature, Func<DotKt.Bir.TypeNode, string> encode) =>
+        "fnPtr:" + signature.CallingConvention + ":" + signature.GenericArity + ":" + signature.RequiredParams
+        + "[" + string.Join(";", signature.Params.Select(encode)) + "]->" + encode(signature.Ret);
 
     // Signature indexing precedes creation of the MethodDef's generic-parameter builders. A constructed
     // type's value/reference classification belongs to its TypeDef, independent of its arguments. Resolve
@@ -850,6 +861,10 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Nullable n => new DotKt.Bir.TypeNode.Nullable(SubstTv(n.Of, args)),
         DotKt.Bir.TypeNode.Array a => new DotKt.Bir.TypeNode.Array(SubstTv(a.Elem, args)),
         DotKt.Bir.TypeNode.ByRef b => new DotKt.Bir.TypeNode.ByRef(SubstTv(b.Of, args)),
+        DotKt.Bir.TypeNode.Ptr pointer => new DotKt.Bir.TypeNode.Ptr(SubstTv(pointer.Of, args)),
+        DotKt.Bir.TypeNode.FnPtr pointer => pointer with {
+            Ret = SubstTv(pointer.Ret, args), Params = pointer.Params.Select(p => SubstTv(p, args)).ToArray(),
+        },
         DotKt.Bir.TypeNode.Fn fn => new DotKt.Bir.TypeNode.Fn(
             fn.Suspend,
             SubstTv(fn.Ret, args),
@@ -1069,6 +1084,9 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Tv => true,
         DotKt.Bir.TypeNode.Fn { Suspend: true } => true,
         DotKt.Bir.TypeNode.Fn fn => MentionsOpen(fn.Ret) || fn.DelegateParams.Any(MentionsOpen),
+        DotKt.Bir.TypeNode.FnPtr pointer => MentionsOpen(pointer.Ret) || pointer.Params.Any(MentionsOpen),
+        DotKt.Bir.TypeNode.Mod modifier => MentionsOpen(modifier.M) || MentionsOpen(modifier.Of),
+        DotKt.Bir.TypeNode.Ptr pointer => MentionsOpen(pointer.Of),
         DotKt.Bir.TypeNode.Fqn { Args: { } fa } => fa.Any(MentionsOpen),
         DotKt.Bir.TypeNode.Nullable n => MentionsOpen(n.Of),
         DotKt.Bir.TypeNode.Oblivious ob => MentionsOpen(ob.Of),
@@ -1247,6 +1265,9 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Nullable n => ContainsTv(n.Of),
         DotKt.Bir.TypeNode.Oblivious o => ContainsTv(o.Of),
         DotKt.Bir.TypeNode.Fn fn => ContainsTv(fn.Ret) || fn.DelegateParams.Any(ContainsTv),
+        DotKt.Bir.TypeNode.FnPtr pointer => ContainsTv(pointer.Ret) || pointer.Params.Any(ContainsTv),
+        DotKt.Bir.TypeNode.Mod modifier => ContainsTv(modifier.M) || ContainsTv(modifier.Of),
+        DotKt.Bir.TypeNode.Ptr pointer => ContainsTv(pointer.Of),
         DotKt.Bir.TypeNode.Fqn f => f.Args != null && f.Args.Any(ContainsTv),
         _ => false,
     };

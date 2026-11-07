@@ -25,13 +25,20 @@ internal static unsafe class FunctionPointerSignatures
         var typePointer = Pointer(0, Variable("type"), Variable("type"));
         var methodPointer = Pointer(0, Variable("method"), Variable("type"), Variable("method"));
         var cdecl = Pointer(1, Named("System.Int32"), Named("System.Int32"));
+        JsonObject List(JsonNode element) => new() { ["t"] = "fqn", ["name"] = "System.Collections.Generic.List",
+            ["args"] = new JsonArray(element.DeepClone()) };
+        var listPointer = Pointer(0, List(Variable("method")), List(Variable("type")));
         var echo = Method("Echo", methodPointer,
             new JsonArray(new JsonObject { ["name"] = "p", ["type"] = methodPointer.DeepClone() }),
             new JsonObject { ["k"] = "var", ["name"] = "copy", ["type"] = methodPointer.DeepClone(), ["init"] = Local("p") },
             new JsonObject { ["k"] = "return", ["value"] = Local("copy") });
         echo["typeParams"] = new JsonArray("U");
+        var listEcho = Method("EchoList", listPointer,
+            new JsonArray(new JsonObject { ["name"] = "p", ["type"] = listPointer.DeepClone() }),
+            new JsonObject { ["k"] = "return", ["value"] = Local("p") });
+        listEcho["typeParams"] = new JsonArray("U");
         var fields = new JsonArray();
-        var methods = new JsonArray(echo);
+        var methods = new JsonArray(echo, listEcho);
         foreach (var (name, pointer) in new[] { ("Pointer", typePointer), ("Cdecl", cdecl) })
         {
             fields.Add(new JsonObject { ["name"] = name, ["vis"] = "public", ["static"] = true, ["type"] = pointer.DeepClone() });
@@ -56,12 +63,14 @@ internal static unsafe class FunctionPointerSignatures
     }
 
     delegate delegate* managed<string, int, int> Echo(delegate* managed<string, int, int> callback);
+    delegate delegate* managed<List<string>, List<int>> ListEcho(delegate* managed<List<string>, List<int>> callback);
     delegate void SetManaged(delegate* managed<string, string> callback);
     delegate delegate* managed<string, string> GetManaged();
     delegate void SetCdecl(delegate* unmanaged[Cdecl]<int, int> callback);
     delegate delegate* unmanaged[Cdecl]<int, int> GetCdecl();
     static int Add(string value, int n) => value.Length + n;
     static string Identity(string value) => value;
+    static List<int> Lengths(List<string> values) => values.Select(value => value.Length).ToList();
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     static int Twice(int n) => n * 2;
 
@@ -71,6 +80,8 @@ internal static unsafe class FunctionPointerSignatures
         var owner = definition.MakeGenericType(typeof(string));
         var echo = (Echo)owner.GetMethod("Echo")!.MakeGenericMethod(typeof(int)).CreateDelegate(typeof(Echo));
         if (echo(&Add)("abc", 39) != 42) throw new Exception("Function-pointer method/local generic frames changed");
+        var listEcho = (ListEcho)owner.GetMethod("EchoList")!.MakeGenericMethod(typeof(int)).CreateDelegate(typeof(ListEcho));
+        if (listEcho(&Lengths)(["signature"])[0] != 9) throw new Exception("Nested generic function-pointer frames changed");
         ((SetManaged)owner.GetMethod("SetPointer")!.CreateDelegate(typeof(SetManaged)))(&Identity);
         var getter = (GetManaged)owner.GetProperty("Value")!.GetMethod!.CreateDelegate(typeof(GetManaged));
         if (getter()("ok") != "ok") throw new Exception("Function-pointer field/property identity changed");

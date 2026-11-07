@@ -640,6 +640,11 @@ member would be two members to it. The rules, all validator-enforced:
   `ptr` is also CIR-only but may appear in ordinary declaration, local, operand,
   and result slots: bir2cir materializes the KLIB/BIR `kotlin.clr.ClrPointer<T>` vocabulary into that physical type,
   and ilemit emits it one-to-one.
+  `fnPtr` likewise represents ordinary native values, but retains an entire
+  callable signature rather than a pointee. Its BIR vocabulary is
+  `kotlin.clr.ClrFunctionPointer<C,F>` with signature-only types from
+  `kotlin.clr.signature`; bir2cir resolves the convention, modifiers and generic
+  frame before writing CIR. The emitter consumes those physical facts directly.
 
 Same-emission-unit members are NOT memberRefs: they have no assembly identity yet (their MethodDefs are being
 built by this compilation) and stay on the internal linkage (`localCtorIndex`, the emitted type's own signature

@@ -11,6 +11,8 @@ public class Fastcall private constructor()
 public class Unmanaged private constructor()
 public class Required<M, T> private constructor()
 public class Optional<M, T> private constructor()
+// Explicit value position: Value<Unit> denotes the Unit class, never CLR void.
+public class Value<T> private constructor()
 public class Array1<T> private constructor()
 public class Array2<T> private constructor()
 public class Array3<T> private constructor()

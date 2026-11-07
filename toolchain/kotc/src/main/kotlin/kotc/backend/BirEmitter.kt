@@ -114,7 +114,7 @@ private val CLR_COMPILE_TIME_INTRINSIC_CLASSES = setOf(
 	"kotlin.clr.ClrFunctionPointer",
 	"kotlin.clr.StackBuffer",
 	"kotlin.clr.Span",
-) + setOf("Managed", "Cdecl", "Stdcall", "Thiscall", "Fastcall", "Unmanaged", "Required", "Optional")
+) + setOf("Managed", "Cdecl", "Stdcall", "Thiscall", "Fastcall", "Unmanaged", "Required", "Optional", "Value")
 	.map { "kotlin.clr.signature.$it" } + (1..32).map { "kotlin.clr.signature.Array$it" }
 
 class BirEmitter(internal val messageCollector: MessageCollector? = null, internal val irBuiltIns: IrBuiltIns? = null) {
