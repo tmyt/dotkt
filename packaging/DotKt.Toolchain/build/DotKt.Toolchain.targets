@@ -21,7 +21,7 @@
     <!-- CLR targeting packs exceed the upstream CLI's 64-entry ZIP cache. Keep project builds bounded but avoid
          reopening the usual reference universe on every metadata query; zero disables caching. -->
     <DotKtKlibZipFileAccessorCacheLimit Condition="'$(DotKtKlibZipFileAccessorCacheLimit)' == ''">256</DotKtKlibZipFileAccessorCacheLimit>
-    <!-- Non-file compile options (raw kotc flags + MPP config) hashed into a manifest file so a change to an OPTION
+    <!-- Non-file compile options (raw kotc flags, KLIB cache limit and MPP config) hashed into a manifest so a change to an OPTION
          (not a source) still flips a timestamp and retriggers the incremental KotlinCompile (#50). -->
     <!-- ilemit emits real CIL (Reflection.Emit) and must load each referenced type's RUNTIME (implementation)
          assembly — it takes its refs from @(ReferenceCopyLocalPaths) (the runtime set), NOT @(ReferencePath) (which

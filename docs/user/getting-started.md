@@ -129,7 +129,8 @@ plain public IL — a C# project can `<ProjectReference>` it directly.
 The SDK caches up to 256 KLIB ZIP readers per compilation to avoid repeatedly opening the
 CLR reference libraries. Set `DotKtKlibZipFileAccessorCacheLimit` to adjust this bound, or `0` to
 disable caching. Direct `kotc` invocation retains Kotlin's upstream default of 64 and accepts
-`-Xklib-zip-file-accessor-cache-limit`.
+`-Xklib-zip-file-accessor-cache-limit`. Projects with more than 256 reference KLIBs can raise
+the SDK bound to avoid cache churn.
 
 `Optimize` controls the emitted assembly's JIT optimization policy. The normal SDK defaults are
 `false` for Debug and `true` for Release; explicit overrides such as
