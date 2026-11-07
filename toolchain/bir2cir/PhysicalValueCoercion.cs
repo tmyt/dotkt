@@ -652,6 +652,8 @@ static class PhysicalValueCoercion
         }
         for (var i = prefix.Count - 1; i >= 0; i--)
         {
+            // Native-argument stems are disjoint from array temporaries today. Still register this explicit
+            // late declaration boundary rather than making the allocator depend on that implementation detail.
             arrayNames?.Reserve(prefix[i]);
             prologue.Insert(0, prefix[i]);
         }

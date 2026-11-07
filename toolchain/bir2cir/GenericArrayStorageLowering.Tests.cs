@@ -77,6 +77,41 @@ static partial class GenericArrayStorageLowering
         Expect(lazyNames.Next("$arrayStorage$") == "$arrayStorage$1", "file was not seeded at first allocation");
         var nextPhase = new FreshNames(file);
         Expect(nextPhase.Next("$arrayStorage$") == "$arrayStorage$1", "new phase retained removed names");
+        EntryPointFreshNamesSelfTest(refs);
         Console.WriteLine("[array fresh names] self-test OK (file lifetime, later declarations, detached rewrites, reservations, evaluation order)");
+    }
+
+    static void EntryPointFreshNamesSelfTest(ReferenceMetadataIndex refs)
+    {
+        JsonObject File(string fileClass, string lateName) => new() {
+            ["fileClass"] = fileClass, ["types"] = new JsonArray(),
+            ["methods"] = new JsonArray(new JsonObject {
+                ["name"] = "probe", ["ret"] = Type("void"),
+                ["params"] = new JsonArray(new JsonObject { ["name"] = "array", ["type"] = Type("System.Array") }),
+                ["body"] = new JsonArray(new JsonObject {
+                    ["k"] = "forArray", ["array"] = Local("array", new TypeNode.Fqn("System.Array")),
+                    ["var"] = "element", ["elem"] = Type("System.Object"), ["body"] = new JsonArray(),
+                }, Var(lateName, new TypeNode.Fqn("System.Int32"), Int(0))),
+            }),
+        };
+        foreach (var physical in new[] { false, true })
+        {
+            var first = File("FirstArrayFile", "$arrayIndex$0");
+            var second = File("SecondArrayFile", "$arrayStorage$1");
+            var roots = new JsonNode[] { first, second };
+            if (physical)
+                PhysicalValueCoercion.ApplyAll(roots,
+                    () => throw new InvalidOperationException("Unexpected array Unit conversion"),
+                    type => type.Name == "System.Int32", references: refs);
+            else
+                FBoundStarProjectionErasure.ApplyAll(roots, refs);
+            var firstBody = first["methods"]?[0]?["body"]?[0]?["body"];
+            var secondBody = second["methods"]?[0]?["body"]?[0]?["body"];
+            if (Text(firstBody?[0]?["name"]) != "$arrayStorage$0"
+                || Text(firstBody?[2]?["var"]) != "$arrayIndex$1"
+                || Text(secondBody?[0]?["name"]) != "$arrayStorage$0")
+                throw new InvalidOperationException("Array allocator entrypoint lost file lifetime or later declarations: "
+                    + (physical ? "physical coercion" : "FBound"));
+        }
     }
 }

@@ -98,8 +98,10 @@ static partial class GenericArrayStorageLowering
     // One explicit file/rewrite lifetime, never a cache keyed by mutable IR roots. Capture the file after
     // declaration synthesis; seed on the first allocation, including declarations encountered later in the walk.
     // Array-free files do not pay for an identifier walk. Release the file reference immediately after seeding.
-    // Reserve newly introduced subtrees before rewriting/attaching them; detached rewrites use the same
-    // allocator as their destination. Reservations are monotonic, even when a rewrite removes a name.
+    // Existing user declarations are present at seeding. This allocator is the only writer of the array
+    // temporary stems; other lowering-generated locals use disjoint stems. A newly introduced subtree whose
+    // names can overlap these stems must be reserved before rewriting/attaching it. Detached rewrites use
+    // their destination's allocator. Reservations are monotonic, even when a rewrite removes a name.
     internal sealed class FreshNames
     {
         readonly HashSet<string> names = new(StringComparer.Ordinal);
