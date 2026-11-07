@@ -252,7 +252,7 @@ generic delegate error.
 **New-event handler type is explicit.** For an override (`override val E by clrEvent()`), kotc reads
 the handler function type off the overridden interface slot (frontend-resolved; bir2cir maps it to the
 concrete delegate). For a **new** declaration there is no slot to infer from, so the author annotates
-`ClrEvent<D>` explicitly (`val clicked: ClrEvent<Action> by clrEvent()`, or `by clrEvent<Action>()`);
+`ClrEvent<D>` explicitly (`val clicked: ClrEvent<Action> by clrEvent()`);
 kotc carries `D` as the handler Kotlin function type and bir2cir resolves/synthesizes the concrete
 delegate. A bare `val clicked by clrEvent()` with no inferable `T` is a diagnostic ("cannot infer the
 event handler type; annotate `ClrEvent<…>`").
@@ -281,6 +281,19 @@ the compiler does not implement weak references or infer a payload type. Its pro
 connected by stdlib-internal bridges to native `add_Changed`/`remove_Changed`; `raise_Changed`
 packs the native delegate's arguments into the policy's argument array. A policy exception propagates
 normally. Consumer subscription remains exclusively `subscribe`/`EventSubscription.close`.
+Hooks are protected in the Kotlin API and on the policy's class declaration. Compiler-generated
+existential views are internal ABI, not additional supported subscription APIs or a security boundary
+against C# callers deliberately inspecting representation carriers or using reflection.
+The policy's argument-array contract requires boxable native argument types. Managed references,
+unmanaged pointers/function pointers and byref-like values cannot enter that array; a custom-policy
+declaration with such an argument is a compilation error, not a copied-reference approximation or
+undefined behavior. This restriction does not change the existing field-like event path.
+Like field-like declarations, custom-policy declarations currently use instance accessors. Ordinary
+objects and companion objects are instances and work normally. Kotlin 2.4 receiverless companion-block
+event declarations are not implemented and are diagnosed for either factory overload; this does not
+restrict consuming static events imported from CLR libraries.
+Top-level native event declarations are likewise diagnosed rather than silently emitted as ordinary
+delegated properties. An ordinary `val handle by policy` remains supported at top level.
 
 kotc retains the real Kotlin delegate field and its original initializer, including source order and
 single evaluation. `clrEventBacking.policyField` explicitly identifies that declaration. bir2cir

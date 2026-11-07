@@ -7,6 +7,9 @@ import CustomEvents.PolicyEvidence
 import dotkt.support.events.CustomNotifyingSource
 import dotkt.support.events.CustomGenericSource
 import dotkt.support.events.CustomResultSource
+import dotkt.support.events.CustomCompanionSource
+import dotkt.support.events.ConcreteFunctionSource
+import dotkt.support.events.NullablePayloadSource
 import dotkt.support.events.WeakPolicySource
 
 class CustomEventPolicyTests {
@@ -73,6 +76,31 @@ class CustomEventPolicyTests {
         resultToken.close()
         CustomResultSource.fire(100, "closed")
         assertEquals(42, CustomResultSource.result)
+
+        var companionCalls = 0
+        val companionToken = CustomCompanionSource.Changed.subscribe { companionCalls++ }
+        CustomCompanionSource.fire()
+        companionToken.close()
+        CustomCompanionSource.fire()
+        assertEquals(1, companionCalls)
+
+        val concrete = ConcreteFunctionSource()
+        var concreteValue = 0
+        val concreteToken = concrete.handle().subscribe { concreteValue = it }
+        concrete.fire(42)
+        concreteToken.close()
+        concrete.fire(100)
+        assertEquals(42, concreteValue)
+
+        val nullable = NullablePayloadSource()
+        var nullableValue = "initial"
+        val nullableToken = nullable.Changed.subscribe { nullableValue = it?.toString() ?: "null" }
+        nullable.fire(7)
+        assertEquals("7", nullableValue)
+        nullable.fire(null)
+        nullableToken.close()
+        nullable.fire(100)
+        assertEquals("null", nullableValue)
     }
 
     @TestAttribute

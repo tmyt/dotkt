@@ -349,7 +349,7 @@ KINDS = {
     # The dialect node never reaches ilemit/CIR; the ordinary runtime ClrEvent class does.
     "clrEventGet",
     # kotc-dialect CLR-only-vocab for the .NET-event IMPLEMENT/RAISE feature (§4.2/§4.3, #187). BIR-only (kotc -> bir2cir):
-    #   clrEventBacking  — a per-event `by clrEvent()` backing directive (in a type's `clrEvents` array; carries the handler
+    #   clrEventBacking  — a per-event `by clrEvent(...)` directive (in a type's `clrEvents`; optional policyField names Kotlin storage; carries the handler
     #                      Kotlin fn type). bir2cir ClrEventImplBinding -> a real `<E>$delegate` field + a `clrEventDecl`.
     #   clrEventAccessor — the tagged body of a synthesized add_/remove_/raise_<E> accessor. bir2cir -> clrEventAccessorImpl.
     #   clrEventRaise    — a Kotlin-declared event handle `.invoke(...)`. bir2cir -> a `callInstance raise_<E>`.

@@ -316,6 +316,13 @@ static class KotlinOverrideSlotBridge
                             PhysicalSlotType(slotIdentity.M), PhysicalSlotType(declaredIdentity)))
                         fit[i] = Fit.Bridge;
                 }
+                else if (fit[i] == Fit.Same
+                    && declParams[i]?[FunctionSignatureIdentity.Key] != null)
+                {
+                    // Specializing an ancestor's bare T as a Kotlin function adds a discriminator only to
+                    // the authored body. Even equal value carriers need a bridge to the unmodified base slot.
+                    fit[i] = Fit.Bridge;
+                }
             }
             // A parameter difference this erasure did not create belongs to whatever pass did create it.
             if (fit == null || fit.Contains(Fit.Foreign)) return;

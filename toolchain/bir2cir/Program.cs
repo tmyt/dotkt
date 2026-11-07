@@ -802,7 +802,8 @@ sealed class Pipeline
             // .NET EVENT IMPLEMENT/RAISE (§4.2/§4.3): a Kotlin class implementing/declaring a CLR event via `by clrEvent()`.
             // kotc synthesized add_/remove_/raise_<E> + a `clrEvents` backing directive (pure-Kotlin identities); this pass —
             // the ref.dll-reading layer — resolves the concrete delegate `D` (the interface event's EventHandlerType) and
-            // rewrites the accessor bodies to CIR `clrEventAccessorImpl` directives + inserts the `<E>$delegate : D` field +
+            // rewrites field-like accessor bodies to CIR `clrEventAccessorImpl` directives + inserts `<E>$delegate : D`,
+            // or routes custom accessors through ordinary calls on the retained Kotlin policy field, plus
             // a type-level `clrEventDecl`. It also binds `clrEventRaise` to a `raise_<E>` call. App/rt only (no .NET events
             // in the ref/rt stdlib self-build).
             if (!_options.RefBuild) hoisted = ClrEventImplBinding.BindImplementations(hoisted, refs);

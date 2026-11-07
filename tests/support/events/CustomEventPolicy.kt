@@ -65,6 +65,33 @@ object CustomResultSource {
     fun fire(number: Int, text: String) { Requested(number, text) }
 }
 
+class CustomCompanionSource {
+    companion object {
+        val policy = RecordingEventPolicy<System.Action> { handler, _ -> handler() }
+        val Changed: ClrEvent<System.Action> by clrEvent(policy)
+        fun fire() { Changed() }
+    }
+}
+
+class IntFunctionPolicy : ClrEventPolicy<(Int) -> Unit>() {
+    private var handler: ((Int) -> Unit)? = null
+    override fun add(handler: (Int) -> Unit) { this.handler = handler }
+    override fun remove(handler: (Int) -> Unit) { this.handler = null }
+    override fun invoke(vararg args: Any?) { handler?.invoke(args[0] as Int) }
+}
+
+class ConcreteFunctionSource {
+    val Changed: ClrEvent<(Int) -> Unit> by clrEvent(IntFunctionPolicy())
+    fun fire(value: Int) { Changed(value) }
+    fun handle(): ClrEvent<(Int) -> Unit> = Changed
+}
+
+class NullablePayloadSource {
+    val policy = RecordingEventPolicy<System.Action1<Int?>> { handler, args -> handler(args[0] as Int?) }
+    val Changed: ClrEvent<System.Action1<Int?>> by clrEvent(policy)
+    fun fire(value: Int?) { Changed(value) }
+}
+
 class WeakActionPolicy : ClrEventPolicy<System.Action1<Any>>() {
     private val handlers = ArrayList<System.WeakReference>()
     val count: Int get() = handlers.size

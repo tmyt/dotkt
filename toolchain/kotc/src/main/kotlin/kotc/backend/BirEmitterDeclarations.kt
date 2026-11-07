@@ -992,7 +992,7 @@ internal fun BirEmitter.enumSuperCall(cc: IrClass): EnumSuperCall {
  * declaration rule; only their constructor/base-call shapes differ. */
 internal fun BirEmitter.instanceStorageFields(klass: IrClass): List<String> {
 	val propertyFields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { p ->
-		// A `by clrEvent()` property's fictional ClrEvent<T> field is replaced by the event synthesis, and a companion
+		// The no-argument `by clrEvent()` marker's fictional field is replaced by event synthesis, and a companion
 		// property's storage belongs to the enclosing type rather than each instance.
 		if (isFieldLikeClrEvent(p) || hasStaticPropertyStorage(klass, p)) return@mapNotNull null
 		val bf = p.backingField ?: return@mapNotNull null
@@ -1275,11 +1275,11 @@ internal fun BirEmitter.isClrEventProperty(p: IrProperty): Boolean {
 	return event(p)
 }
 
-/** The `clrEvent()` delegate-initializer call of a `by clrEvent()` property (§4.2/§5 of design-clr-event-model.md), or
+/** The direct `clrEvent(...)` delegate-initializer call (§4.2/§5 of design-clr-event-model.md), or
  *  null. A DELEGATED property whose delegate expression is a call to `kotlin.clr.clrEvent` — the marker "synthesize the
  *  field-like .NET event impl here" (a backing delegate field + add_/remove_/raise_ accessors). Distinguished from the
  *  ELIDE case (isClrEventProperty, a CONCRETE fake-override inherited from a .NET base) by BEING delegated with this
- *  initializer: a fake-override is not delegated and has no clrEvent() initializer. */
+ *  initializer: a fake-override is not delegated and has no clrEvent() initializer. A supplied policy is real storage. */
 internal fun BirEmitter.clrEventDelegateCall(p: IrProperty): IrCall? {
 	if (!p.isDelegated) return null
 	val init = (p.backingField?.initializer as? IrExpressionBody)?.expression as? IrCall ?: return null
@@ -1340,6 +1340,15 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
 		val delegateCall = clrEventDelegateCall(p) ?: continue
 		val name = p.name.asString()
+		// Declaration-bound events currently have instance accessors (including ordinary companion objects).
+		// A Kotlin 2.4 companion block is instead a receiverless static surface, not another singleton instance.
+		if (isKotlinStaticProperty(p)) {
+			hadError = true
+			messageCollector?.report(CompilerMessageSeverity.ERROR,
+				"CLR event declarations in companion blocks are not supported; " +
+					"declare the event on an instance or companion object", locationOf(p))
+			continue
+		}
 		// `var E by clrEvent()` is a hard error — an event is a read-only handle (subscribe/unsubscribe/raise, never reassign).
 		if (p.isVar) {
 			hadError = true

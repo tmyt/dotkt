@@ -2159,6 +2159,8 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   declaration position. Its protected add/remove hooks receive the exact native handler; its
   `invoke(vararg Any?)` receives the native raise arguments. Native metadata and interface slots
   remain compiler-owned. `val handle by policy` without the explicit factory is an ordinary property.
+  Native raise arguments must fit the policy's `Any?` array; managed references, native pointers and
+  byref-like arguments are diagnosed rather than boxed or silently copied.
 - `subscribe(handler)` adds the handler and returns `kotlin.clr.EventSubscription<H>`, an `AutoCloseable`.
   `close()` atomically claims removal and removes the **same handler instance** exactly once, including concurrent
   or reentrant close calls. It does not wait for callbacks already in flight; a Flow adapter's channel owns delivery
