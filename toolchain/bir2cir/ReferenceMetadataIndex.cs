@@ -608,6 +608,7 @@ sealed partial class ReferenceMetadataIndex
     // argument belongs to an outer or inner TypeDef from the flattened total arity.
     readonly Dictionary<OwnerTypeIdentity, string> _exactPhysicalTypeByDottedName = new();
     readonly Dictionary<string, string> _physicalTypeBySemanticName = new(StringComparer.Ordinal);
+    IReadOnlyDictionary<string, string> _physicalTypeNamesSnapshot;
     readonly Dictionary<string, int> _innerCapturedCount = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _innerSemanticOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
@@ -668,16 +669,19 @@ sealed partial class ReferenceMetadataIndex
     // "source wins" fix: ResolveNetType refuses to bind a locally-emitted FQN to the ref, so every sibling resolution
     // routes to the this-assembly-emitted type — `new` stays a local `new` (not `newClr`), and a
     // callInstance/callStatic/field/boundDelegate stays owner-local (NetInteropBinding leaves it for the emitted-type
-    // path) instead of reshaping to a `clr*` node against the ref. Set once by the Driver before the transform loop.
+    // path) instead of reshaping to a `clr*` node against the ref. Replaced before transformation and after late synthesis.
     // SCOPE: this filters both reflection-backed resolver axes. The ref.dll's DotKt sidecar indexes (TypeKinds/IsValueType,
     // owner arity, ctor param types) are NOT filtered by this set — in the #15 layout they are populated from the SAME
     // source that produced the local decl, so they agree; a genuinely divergent stale-dll is out of scope (source-wins
     // is still the right precedence there, matching Roslyn CS0436). `@ClrTypeAlias`/`@ClrIntrinsic` maps are empty for a
     // user lib, so TryResolveClrOwner never mis-binds a local user type.
     IReadOnlySet<string> _localEmittedTypes = new HashSet<string>(StringComparer.Ordinal);
-    public void SetLocalEmittedTypes(IReadOnlySet<string> fqns) => _localEmittedTypes = fqns
-        .Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
-        .ToHashSet(StringComparer.Ordinal);
+    public void SetLocalEmittedTypes(IReadOnlySet<string> fqns)
+    {
+        _localEmittedTypes = fqns.Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
+            .ToHashSet(StringComparer.Ordinal);
+        _physicalTypeNamesSnapshot = null;
+    }
 
     bool IsLocalEmittedType(string fqn) =>
         _localEmittedTypes.Contains(DottedFqn(BareOwnerFqn(fqn)));
@@ -2560,8 +2564,9 @@ sealed partial class ReferenceMetadataIndex
 
     // Exact CLR metadata identity for a trusted external DotKt classifier. Local source declarations remain
     // authoritative and therefore never rewrite through a same-named reference.
+    // Reference mappings are complete at construction; replacing the local inventory starts a new snapshot lifetime.
     public IReadOnlyDictionary<string, string> PhysicalTypeNames =>
-        _physicalTypeBySemanticName
+        _physicalTypeNamesSnapshot ??= _physicalTypeBySemanticName
             .Where(kv => !IsLocalEmittedType(kv.Key))
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
 
@@ -7882,6 +7887,7 @@ sealed partial class ReferenceMetadataIndex
 
     internal static void SelfTest()
     {
+        SelfTestPhysicalTypeNameSnapshots();
         SelfTestRichEnumSelection();
         var nativeDescriptors = Build(new[] { typeof(object).Assembly.Location });
         nativeDescriptors._ownerAlias["ProofObject"] = "System.Object";
