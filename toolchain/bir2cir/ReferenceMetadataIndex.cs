@@ -239,6 +239,8 @@ sealed partial class ReferenceMetadataIndex
 
     static TypeNode DeclarationSignatureSlot(ParameterInfo parameter)
     {
+        if (parameter.Member is MethodBase method && NativeSignatures.Method(method) is { } native)
+            return parameter.Position < 0 ? native.Return : native.Parameters[parameter.Position];
         TypeNode type = DeclarationTypeNode(parameter.ParameterType);
         foreach (var modifier in parameter.GetOptionalCustomModifiers().Reverse())
             type = new TypeNode.Mod(false, DeclarationTypeNode(modifier), type);
@@ -246,6 +248,8 @@ sealed partial class ReferenceMetadataIndex
             type = new TypeNode.Mod(true, DeclarationTypeNode(modifier), type);
         return type;
     }
+
+    static readonly NativeSignatureReader NativeSignatures = new();
 
     internal ConstructorInfo SelectConstructorDeclaration(IEnumerable<ConstructorInfo> constructors, string identity) =>
         SelectDeclarationTwin(constructors, constructor => KotlinDeclarationIdentityPayload(
@@ -5951,7 +5955,8 @@ sealed partial class ReferenceMetadataIndex
         public TypeNode GetArrayType(TypeNode elementType, ArrayShape shape) => new TypeNode.Array(elementType);
         public TypeNode GetByReferenceType(TypeNode elementType) => new TypeNode.ByRef(elementType);
         public TypeNode GetFunctionPointerType(MethodSignature<TypeNode> signature) =>
-            new TypeNode.Fqn("System.IntPtr");
+            new TypeNode.FnPtr(signature.Header.RawValue, signature.GenericParameterCount,
+                signature.RequiredParameterCount, signature.ReturnType, signature.ParameterTypes.ToArray());
         public TypeNode GetGenericInstantiation(TypeNode genericType, ImmutableArray<TypeNode> typeArguments) =>
             genericType is TypeNode.Fqn f ? new TypeNode.Fqn(f.Name, typeArguments.ToArray()) : genericType;
         public TypeNode GetGenericMethodParameter(MethodImplGenericContext genericContext, int index) =>

@@ -848,6 +848,9 @@ static class DeclarationIdentityBinding
         TypeNode.Array a => "array:" + PhysicalTypeSignature(a.Elem),
         TypeNode.ByRef b => "byref:" + PhysicalTypeSignature(b.Of),
         TypeNode.Ptr pointer => "ptr:" + PhysicalTypeSignature(pointer.Of),
+        TypeNode.FnPtr pointer => "fnPtr:" + pointer.CallingConvention + ":" + pointer.GenericArity
+            + ":" + pointer.RequiredParams + "[" + string.Join(";", pointer.Params.Select(PhysicalTypeSignature))
+            + "]->" + PhysicalTypeSignature(pointer.Ret),
         TypeNode.Star => throw new InvalidOperationException(
             "bir2cir: unresolved star projection reached final CLR MethodDef signature allocation"),
         _ => throw new InvalidOperationException(

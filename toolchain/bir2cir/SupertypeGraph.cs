@@ -214,6 +214,9 @@ static class SupertypeGraph
         TypeNode.ByRef r => new TypeNode.ByRef(SubstOwnerTvs(r.Of, args)),
         TypeNode.Ptr p => new TypeNode.Ptr(SubstOwnerTvs(p.Of, args)),
         TypeNode.Mod m => new TypeNode.Mod(m.Req, SubstOwnerTvs(m.M, args), SubstOwnerTvs(m.Of, args)),
+        TypeNode.FnPtr pointer => pointer with {
+            Ret = SubstOwnerTvs(pointer.Ret, args), Params = pointer.Params.Select(p => SubstOwnerTvs(p, args)).ToArray(),
+        },
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstOwnerTvs(fn.Ret, args),
             fn.Params.Select(p => SubstOwnerTvs(p, args)).ToArray(),
             fn.Recv == null ? null : SubstOwnerTvs(fn.Recv, args), fn.Clr,

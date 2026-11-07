@@ -108,7 +108,7 @@ sealed class NullableRepresentationTypes
         // NullableGenericErasure owns the later physical projection; doing it here destroys member identity.
         if (position == NullableGenericErasure.Pos.Bound)
             return type;
-        if (type is TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn }) return type;
+        if (type is TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn or FunctionPointerVocabulary.Pointer }) return type;
         if (type is TypeNode.Nullable { Of: TypeNode.Tv variable })
         {
             if (position == NullableGenericErasure.Pos.Slot) return new TypeNode.Fqn("object");

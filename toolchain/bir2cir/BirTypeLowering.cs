@@ -20,7 +20,7 @@ using DotKt.Bir;
 // string (see TypeKeys + the `sig` comma-list + the `attrs`/attribute-class force path), not just the signature
 // keys — a primitive left un-lowered in an expression position reaches ilemit as `kotlin.Byte` and fails to
 // resolve ("cannot resolve .NET type kotlin.Byte").
-static class BirTypeLowering
+static partial class BirTypeLowering
 {
     // A synthesized declaration/MethodImpl may fill a value-returning generic CLR slot even when its closed
     // Kotlin type is Unit. This representation fact is consumed here, never serialized into final CIR.
@@ -82,6 +82,19 @@ static class BirTypeLowering
         {
             switch (type)
             {
+                case TypeNode.Fqn { Name: FunctionPointerVocabulary.Pointer } pointer:
+                    if (directGenericArgument)
+                        Refuse("A CLR function pointer cannot occupy a CLR generic argument");
+                    var shape = FunctionPointerShape(pointer);
+                    ValidateType(shape.Ret, directGenericArgument: false);
+                    foreach (var parameter in shape.Params) ValidateType(parameter, directGenericArgument: false);
+                    return;
+                case TypeNode.Fqn { Name: FunctionPointerVocabulary.Required or FunctionPointerVocabulary.Optional, Args: [_, var modified] }:
+                    ValidateType(modified, directGenericArgument);
+                    return;
+                case TypeNode.Fqn { Name: var name, Args: [var element] } when FunctionPointerVocabulary.ArrayRanks.ContainsKey(name):
+                    ValidateType(element, directGenericArgument: false);
+                    return;
                 case TypeNode.Fqn { Name: PointerIntrinsicFqn } pointer:
                     if (pointer.Args is not { Length: 1 })
                         Refuse($"{PointerIntrinsicFqn} requires exactly one pointee type");
@@ -445,6 +458,7 @@ static class BirTypeLowering
         {
             case TypeNode.Fqn f:
                 {
+                    if (TryLowerNativeSignature(f, refBuild, force, typeArg, out var native)) return native;
                     // A SIGNED primitive array (`kotlin.IntArray`) -> `Array(elem)` in EVERY build (ref included): this is
                     // the array REPRESENTATION, not a primitive substitution, so it fires before the refBuild passthrough.
                     // The element then lowers on the recursive call (kotlin.Int -> System.Int32 in app/rt, verbatim in ref).
@@ -721,6 +735,10 @@ static class BirTypeLowering
         TypeNode.Ptr p => new TypeNode.Ptr(CanonicalPhysicalSlotType(p.Of)),
         TypeNode.Mod m => new TypeNode.Mod(m.Req,
             CanonicalPhysicalSlotType(m.M), CanonicalPhysicalSlotType(m.Of)),
+        TypeNode.FnPtr pointer => pointer with {
+            Ret = CanonicalPhysicalSlotType(pointer.Ret),
+            Params = pointer.Params.Select(CanonicalPhysicalSlotType).ToArray(),
+        },
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
             CanonicalPhysicalSlotType(fn.Ret),
             fn.Params.Select(CanonicalPhysicalSlotType).ToArray(),

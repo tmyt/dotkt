@@ -253,7 +253,7 @@ static partial class ClrMemberResolution
     static TypeNode ShippedFieldType(FieldInfo field)
     {
         var shipped = _refs.PhysicalTwinOf(field, DeclaringDefOf(field)) ?? field;
-        return Modified(RefTypeOf(shipped.FieldType),
+        return NativeSignatures.Field(shipped) ?? Modified(RefTypeOf(shipped.FieldType),
             shipped.GetRequiredCustomModifiers(), shipped.GetOptionalCustomModifiers());
     }
 
@@ -376,13 +376,14 @@ static partial class ClrMemberResolution
     // ---- signature ----------------------------------------------------------------------------------
 
     static TypeNode[] RefParamsOf(MethodBase member) =>
-        member.GetParameters()
+        NativeSignatures.Method(member)?.Parameters ?? member.GetParameters()
             .Select(p => Modified(RefTypeOf(p.ParameterType),
                 p.GetRequiredCustomModifiers(), p.GetOptionalCustomModifiers()))
             .ToArray();
 
     static TypeNode RefReturnOf(MethodInfo method)
     {
+        if (NativeSignatures.Method(method) is { } native) return native.Return;
         var ret = method.ReturnType;
         // `void` is the canonical spelling of System.Void and nothing else. A member that genuinely returns
         // kotlin.Unit returns a CLASS, and normalizing it here would erase the very distinction a return type
@@ -394,6 +395,8 @@ static partial class ClrMemberResolution
         return rp == null ? node
             : Modified(node, rp.GetRequiredCustomModifiers(), rp.GetOptionalCustomModifiers());
     }
+
+    static readonly NativeSignatureReader NativeSignatures = new();
 
     // Custom modifiers wrap the position they modify: `in DateTime` is modreq(InAttribute) around a by-ref
     // DateTime, and dropping it makes that member identical to the by-value overload next to it.

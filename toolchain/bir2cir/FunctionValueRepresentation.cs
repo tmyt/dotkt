@@ -71,6 +71,7 @@ static class FunctionValueRepresentation
     {
         if (node is JsonObject obj)
         {
+            if (IsNativeSignature(obj)) return false;
             if (obj["t"] is JsonValue tag && tag.TryGetValue<string>(out var kind) && kind == "fn"
                 && TypeJson.Read(obj) is TypeNode.Fn { Suspend: false, Clr: null }) return true;
             return obj.Any(pair => pair.Value != null && ContainsOrdinaryFunction(pair.Value));
@@ -97,6 +98,9 @@ static class FunctionValueRepresentation
     {
         if (node is JsonObject obj)
         {
+            // A FunctionN nested here describes a native callable signature,
+            // not a stored Kotlin function value. Its slots cannot be erased.
+            if (IsNativeSignature(obj)) return;
             if (obj["k"] is JsonValue callTag && callTag.TryGetValue<string>(out var callKind)
                 && callKind is "callStatic" or "callInstance" or "constrainedCall"
                 && obj[FunctionSignatureIdentity.CallKey] == null
@@ -149,4 +153,9 @@ static class FunctionValueRepresentation
         else if (node is JsonArray array)
             foreach (var child in array) if (child != null) Walk(child, isByRefLike);
     }
+
+    static bool IsNativeSignature(JsonObject type) => type["t"] is JsonValue tag
+        && tag.TryGetValue<string>(out var kind) && kind == "fqn"
+        && type["name"] is JsonValue name && name.TryGetValue<string>(out var fqn)
+        && fqn == FunctionPointerVocabulary.Pointer;
 }

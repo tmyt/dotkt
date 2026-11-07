@@ -390,7 +390,7 @@ static partial class NullableRepresentationDemand
             case TypeNode.Projection projection:
                 Visit(projection.Of, argument, result, frames, policy, storage);
                 break;
-            case TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn }:
+            case TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn or FunctionPointerVocabulary.Pointer }:
                 break;
             case TypeNode.Fqn { Args: { } arguments } named:
                 foreach (var item in arguments) Visit(item, true, result, frames, policy,

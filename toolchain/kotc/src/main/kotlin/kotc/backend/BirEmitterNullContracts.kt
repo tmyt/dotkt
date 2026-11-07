@@ -40,7 +40,7 @@ import org.jetbrains.kotlin.ir.util.parentClassOrNull
  *  - `Unit`/`Nothing`.
  * These exclusions are Kotlin-language facts (the value-type-ness is read from the IR, not a CLR/BCL FQN table).
  */
-private val CLR_NON_REFERENCE_INTRINSIC_CLASSES = setOf("kotlin.clr.ClrRef", "kotlin.clr.ClrPointer")
+private val CLR_NON_REFERENCE_INTRINSIC_CLASSES = setOf("kotlin.clr.ClrRef", "kotlin.clr.ClrPointer", "kotlin.clr.ClrFunctionPointer")
 
 internal fun BirEmitter.needsNonNullCheck(t: IrType): Boolean {
 	if (t.isMarkedNullable()) return false
