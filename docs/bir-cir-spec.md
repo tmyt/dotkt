@@ -674,6 +674,12 @@ Every emitted event accessor call also carries `handlerExact:true`: bir2cir has 
 the accessor's nominal delegate and reuses that same object for add/remove. ilemit must not infer or rebuild a
 conversion from the handler's shape.
 
+A BIR event-member read retains `memberVisibility:"private"|"protected"` when its source declaration
+is restricted, including when an inline/default carrier moves the read to another assembly. Callback
+materialization preserves that fact; bir2cir resolves restricted accessors to ordinary exact calls so
+the existing lexical-access lowering can bridge illegal physical edges. The visibility fact never
+reaches CIR. Public event accesses do not require this extra binding path.
+
 For a BIR `new`, `memberSignature` is the frontend-selected OPEN constructor declaration vector (including any
 compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. Kotlin-authored
 constructors additionally carry `declarationId`; their selected construction and delegation edges carry

@@ -166,6 +166,7 @@ static partial class UnsafeAccessorLowering
 
         var kind = Str(obj["k"]);
         if (kind is "clrEventAdd" or "clrEventRemove"
+            && Str(obj["memberVisibility"]) is "private" or "protected"
             && ClrMemberResolution.RestrictedEventCall(obj, refs) is JsonObject eventCall)
         {
             obj.Clear();

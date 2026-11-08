@@ -129,6 +129,13 @@ Event-member reads use BIR `clrEventGet{type,name,static,recv,sty}`. The result 
 `ClrEvent<H>` type, distinct from the event owner's type. Accessor calls use CIR
 `clrEventAdd`/`clrEventRemove{type,event,static,recv,handler}`.
 
+Restricted reads also carry the Kotlin `memberVisibility:"private"|"protected"` fact into their
+callbacks, including inline/default carriers. Accessor shells retain the property's source visibility
+and `PublishedApi` annotation. bir2cir applies normal PublishedApi promotion while preserving the
+source visibility carrier for KLIB reimport. Generated callbacks use ordinary exact member calls and
+the existing lexical-access bridge machinery when direct CLR access is illegal; neither the native
+event nor its backing storage is widened. Public events retain their direct accessor path.
+
 ### 4.1 CONSUME — retained handles
 
 kotc projects event declaration identity, the source expression and H, with no access-mode restriction on the
@@ -320,9 +327,11 @@ accessor *accessibility* is emitter-controlled — a public raise method is enti
 is choosing an accessibility C# declines to expose. The user's MVVM pattern raises
 `vm.PropertyChanged.invoke(vm, args)` from **outside** — inside `ViewModelProperty.setValue`, a
 *different* type. DotKt **relaxes the C# convention** for event declarations. Concretely (§4.2/§4.3), the synthesized
-`raise_<E>` accessor is emitted **public** (the `.event`'s `.fire`), and declaration-bound `vm.E.invoke(...)` lowers to it.
-The operation is not available on an arbitrary saved handle. Thus `vm.PropertyChanged.invoke(...)`
-from any type is legal and simply calls `vm.raise_PropertyChanged(...)`.
+`raise_<E>` accessor retains the event's visibility (the `.event`'s `.fire`), and declaration-bound
+`vm.E.invoke(...)` lowers to it. A public event therefore exposes a public raiser; private, protected,
+and internal events keep their corresponding access restrictions. The operation is not available on an
+arbitrary saved handle. Thus a public `vm.PropertyChanged.invoke(...)` from another type is legal
+and simply calls `vm.raise_PropertyChanged(...)`.
 
 This passes all three conditions of the acceptance test (`docs/dotkt-semantics.md`): **consistent** (consumer handles
 subscribe; event declarations may raise), **documented** (§8d + this note), and

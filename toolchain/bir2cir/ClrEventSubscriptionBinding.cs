@@ -141,6 +141,8 @@ static class ClrEventSubscriptionBinding
                     ["static"] = isStatic, ["recv"] = receiver,
                     ["handler"] = Local("handler", closureHandlerType), ["handlerExact"] = true,
                 };
+                if (eventGet["memberVisibility"] is JsonNode visibility)
+                    operation["memberVisibility"] = visibility.DeepClone();
                 var synthClass = new JsonObject
                 {
                     ["name"] = closureName, ["fields"] = fields,
