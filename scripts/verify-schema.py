@@ -175,7 +175,7 @@ STR_OK = {
     "entry",                                    # enumValue's Kotlin entry-name identity
     "underlying", "physicalValue",              # resolved external-enum underlying CLR type + invariant integral
                                                 # spelling (string preserves the full signed/unsigned 64-bit domain)
-    "vis", "variance", "kind",                  # visibility / variance / decl-kind enums
+    "vis", "variance", "kind", "modality",      # visibility / variance / decl-kind / source modality enums
     "clr",                                      # fn.clr: CIR-only physical delegate-family decision authored by
                                                 # bir2cir; validated structurally + by BIR/CIR phase in type_node
     "receiverMode",                              # CLR generic instance receiver: address or value, authored by bir2cir.
@@ -1201,6 +1201,8 @@ class V:
                     self.err(f, path, "capturedTypeParams is a bir2cir-authored nested CLR declaration fact and must not appear in BIR")
                 if "nestedIn" in o:
                     self.err(f, path, "nestedIn is a bir2cir-authored physical CLR ownership fact and must not appear in BIR")
+                if "clrFinal" in o:
+                    self.err(f, path, "clrFinal is a bir2cir-authored physical slot fact and must not appear in BIR")
                 for method_impl_key in ("clrInterfaceImpls", "clrBaseImpls"):
                     if method_impl_key in o:
                         self.err(f, path, f"{method_impl_key} is a bir2cir-authored MethodImpl fact and must not appear in BIR")

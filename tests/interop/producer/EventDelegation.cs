@@ -1,6 +1,11 @@
 using System;
 
 namespace EventDelegation {
+    public class NativeEventBase<T> {
+        public virtual event Action<T> Changed;
+        public int BaseCount => Changed?.GetInvocationList().Length ?? 0;
+    }
+
     public interface IEventSource<T> {
         event Action<T> Changed;
         void Fire(T value);

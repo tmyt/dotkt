@@ -285,6 +285,21 @@ static class ClrEventImplBinding
             if (addM == null || remM == null || raiseM == null)
                 throw new InvalidOperationException($"bir2cir: clrEvent '{name}' is missing a synthesized add/remove/raise accessor — kotc synthesis defect");
 
+            var interfaceImplementation = addM["overrides"] is JsonArray { Count: > 0 };
+            var classOwner = TypeJson.Read(backing["classOverrideOwner"]) as TypeNode.Fqn;
+            var openEvent = Str(backing["modality"]) switch
+            {
+                "open" => true,
+                "final" => false,
+                _ => throw new InvalidOperationException($"bir2cir: clrEvent '{name}' has no concrete source modality"),
+            };
+            var baseType = classOwner == null ? null : ClrMemberResolution.ResolveOwnerType(classOwner, refs);
+            EventInfo baseEvent = null;
+            if (baseType != null
+                && !TryResolveDeclaredEvent(baseType, classOwner.Args ?? Array.Empty<TypeNode>(), name,
+                    out baseEvent, out _))
+                throw new InvalidOperationException($"bir2cir: overridden class event '{classOwner.Name}.{name}' was not found");
+
             // The concrete delegate `D` + its Invoke param nodes (raise's signature).
             var (delegateNode, invokeParamNodes) = ResolveDelegate(name, addM, backing["handlerType"], refs,
                 policyArguments: backing["policyField"] != null);
@@ -300,6 +315,28 @@ static class ClrEventImplBinding
                 RewriteFieldLike(remM, "remove", fieldName, delegateNode);
                 RewriteRaise(raiseM, fieldName, delegateNode, invokeParamNodes);
             }
+
+            void Slot(JsonObject method, MethodInfo externalSlot, bool reusesSlot, bool needsInterfaceSlot)
+            {
+                var isVirtual = reusesSlot || openEvent || needsInterfaceSlot;
+                method["override"] = reusesSlot;
+                method["virtual"] = isVirtual;
+                method["clrFinal"] = isVirtual && !openEvent;
+                if (externalSlot == null) return;
+                // A MethodImpl owner is a declaration, not an ordinary covariant value-view type. Keep it in the
+                // existing descriptor path so carrier projection preserves the exact native declaring class.
+                method["clrBaseImpls"] = new JsonArray(new JsonObject
+                {
+                    ["owner"] = TypeJson.Write(classOwner), ["member"] = externalSlot.Name, ["arity"] = 0,
+                    ["params"] = new JsonArray(((JsonArray)method["params"]).OfType<JsonObject>()
+                        .Select(parameter => parameter["type"].DeepClone()).ToArray()),
+                    ["ret"] = TypeJson.Write(NetTypeToNode(externalSlot.ReturnType)),
+                });
+            }
+            Slot(addM, baseEvent?.GetAddMethod(true), classOwner != null, interfaceImplementation);
+            Slot(remM, baseEvent?.GetRemoveMethod(true), classOwner != null, interfaceImplementation);
+            var baseRaise = baseEvent?.GetRaiseMethod(true);
+            Slot(raiseM, baseRaise, classOwner != null && (baseType == null || baseRaise != null), false);
 
             decls.Add(new JsonObject { ["k"] = "clrEventDecl", ["name"] = name, ["delegateType"] = delegateNode.DeepClone() });
         }
@@ -510,8 +547,8 @@ static class ClrEventImplBinding
                 else
                 {
                     var overrideSpec = TypeJson.Read(o["owner"]) as TypeNode.Fqn;
-                    var ownerArity = overrideSpec?.Args?.Length ?? 0;
-                    iface = refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(owner), ownerArity);
+                    iface = ClrMemberResolution.ResolveOwnerType(
+                        overrideSpec ?? new TypeNode.Fqn(owner), refs);
                     ownerArgs = overrideSpec?.Args;
                 }
                 // Kotlin's override closure can name the immediate delegated interface even when the event is inherited
@@ -625,7 +662,7 @@ static class ClrEventImplBinding
                 ? candidate.GetGenericTypeDefinition()
                 : candidate;
             var declared = definition.GetEvent(
-                member, BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                member, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
             if (declared != null)
             {
                 found = declared;

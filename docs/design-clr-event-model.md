@@ -163,7 +163,8 @@ relation; ilemit emits pure CLR codegen):
 - **kotc** (`BirEmitter*`): on the implementing type, emit
   1. a backing field member `clrEventBacking{name:"<E>", handlerType:<Kotlin fn type>}` (kotc does not
      name `MulticastDelegate` — it carries the *handler Kotlin function type*; bir2cir resolves the
-     concrete delegate);
+     concrete delegate). The backing also carries the source `modality` and, for class overrides,
+     `classOverrideOwner` with the frontend-selected constructed declaring supertype;
   2. three accessor method declarations `add_<E>`/`remove_<E>`/`raise_<E>`, each with an empty body
      tagged `{"k":"clrEventAccessor","kind":"add"|"remove"|"raise","event":"<E>"}` and an `overrides`
      closure (the existing `overridesJson` shape, `BirEmitterDeclarations.kt:423`) naming the interface
@@ -180,9 +181,16 @@ relation; ilemit emits pure CLR codegen):
   ilemit emits the `.event` metadata.
 - **ilemit** (`Emitter.ClrInterop.cs`, `EmitClrEventAccessorImpl`): pure CLR codegen — emit the CAS
   loop of §1 (`Delegate.Combine`/`Remove` + `Interlocked.CompareExchange<D>`) for add/remove, the
-  `field?.Invoke(args)` for raise, mark the accessors `specialname newslot virtual final` + wire the
+  `field?.Invoke(args)` for raise, emit bir2cir's resolved slot flags + wire the
   interface `MethodImpl`, and emit the `.event D <E> { .addon; .removeon; .fire }` row from
   `clrEventDecl`. ilemit knows no Kotlin — it consumes the resolved delegate type + field.
+
+New open declarations introduce virtual slots; class overrides reuse the base slots rather than
+introducing new ones. Final overrides seal those slots. Interface implementations introduce their own
+slots, sealed only when the source property is final. A synthesized raise follows the same source
+modality, but only overrides a referenced event's raise slot when its MethodSemantics actually declares
+one. Foreign add/remove/raise slots are selected by EventInfo and carried as exact MethodImpl operands,
+not inferred from accessor naming conventions.
 
 ### 4.3 RAISE — `vm.E.invoke(sender, args)`
 

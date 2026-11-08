@@ -642,6 +642,7 @@
         "pinvoke":    { "$ref": "#/$defs/pinvoke", "$comment": "CIR-only normalized CLR MethodImport descriptor; requires extern:true and a bodyless static non-generic declaration." },
         "bodyTerminates": { "type": "boolean", "$comment": "CIR-only proof that the authored body cannot fall through. ilemit therefore emits no synthetic trailing return." },
         "virtual":    { "type": "boolean" },
+        "clrFinal":   { "type": "boolean", "$comment": "CIR-only physical MethodAttributes.Final flag for a sealed virtual slot; authored by bir2cir from declaration modality." },
         "abstract":   { "type": "boolean", "$comment": "Declaration modality fact. In particular, a concrete interface Unit method may have an empty body array, so consumers must never derive abstractness from body presence." },
         "objectOverride": { "type": "boolean" },
         "_syntheticTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "BIR-only correspondence from a lexical local function's dense parameters to its enclosing frame. LocalFunctionLowering uses it to partition physical owner and method slots, then removes it." },
