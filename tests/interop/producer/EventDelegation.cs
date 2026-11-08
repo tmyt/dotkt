@@ -6,6 +6,12 @@ namespace EventDelegation {
         public int BaseCount => Changed?.GetInvocationList().Length ?? 0;
     }
 
+    public abstract class AbstractEventBase<T> {
+        public abstract event Action<T> Changed;
+    }
+
+    public abstract class AbstractEventMiddle<T> : AbstractEventBase<T> { }
+
     public interface IEventSource<T> {
         event Action<T> Changed;
         void Fire(T value);

@@ -27,6 +27,46 @@ using DotKt.Bir;
 // with the §6 guard: raise is legal ONLY for a Kotlin-DECLARED event (one that has a synthesized `raise_<E>`).
 static class ClrEventImplBinding
 {
+    // Snapshot declaration recipes before per-file lowering mutates their bodies. A local override uses the base
+    // delegate ABI, even when its covariant ClrEvent handler is narrower or inferred as Nothing. Input file order
+    // must not decide which delegate is selected. Hoisting may add newly materialized owners to the same index.
+    public sealed class LocalEvents
+    {
+        readonly Dictionary<(string Owner, string Event), (JsonObject Backing, JsonObject Add)> declarations = new();
+        readonly ValueTypeOracle isByRefLike;
+
+        public LocalEvents(IEnumerable<JsonNode> roots, ValueTypeOracle isByRefLike)
+        {
+            this.isByRefLike = isByRefLike;
+            foreach (var root in roots) Index(root);
+        }
+
+        public void Index(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["name"]) is string owner && obj["clrEvents"] is JsonArray events
+                    && obj["methods"] is JsonArray methods)
+                    foreach (var backing in events.OfType<JsonObject>())
+                        if (Str(backing["k"]) == "clrEventBacking" && Str(backing["name"]) is string name
+                            && FindAccessor(methods, "add_" + name, "add") is JsonObject add)
+                        {
+                            if (declarations.ContainsKey((owner, name))) continue;
+                            var recipe = (JsonObject)backing.DeepClone();
+                            // Event binding follows ordinary function-value representation. Snapshot the same ABI
+                            // here, not a new Action/Func allocation from the un-erased source function signature.
+                            FunctionValueRepresentation.Apply(recipe, isByRefLike);
+                            declarations.Add((owner, name), (recipe, (JsonObject)add.DeepClone()));
+                        }
+                if (obj["types"] is JsonArray nested) foreach (var value in nested) if (value != null) Index(value);
+            }
+            else if (node is JsonArray array) foreach (var value in array) if (value != null) Index(value);
+        }
+
+        public bool TryGet(TypeNode.Fqn owner, string name, out (JsonObject Backing, JsonObject Add) declaration) =>
+            declarations.TryGetValue((owner.Name, name), out declaration);
+    }
+
     sealed record LocalEventBinding(
         TypeNode DelegateType,
         TypeNode.Fqn AccessorOwner,
@@ -37,11 +77,12 @@ static class ClrEventImplBinding
         string AddVisibility,
         string RemoveVisibility);
 
-    public static JsonNode BindImplementations(JsonNode root, ReferenceMetadataIndex refs)
+    public static JsonNode BindImplementations(JsonNode root, ReferenceMetadataIndex refs, LocalEvents locals)
     {
+        locals.Index(root);
         if (root is JsonObject obj && obj["types"] is JsonArray types)
             foreach (var t in types.OfType<JsonObject>())
-                BindType(t, refs);
+                BindType(t, refs, locals);
         return root;
     }
 
@@ -266,7 +307,7 @@ static class ClrEventImplBinding
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
     // Resolve field-like/custom-policy `clrEvents` and class-delegation `clrEventForwarders` on one type.
-    static void BindType(JsonObject type, ReferenceMetadataIndex refs)
+    static void BindType(JsonObject type, ReferenceMetadataIndex refs, LocalEvents locals)
     {
         var backings = type["clrEvents"] as JsonArray;
         var forwarders = type["clrEventForwarders"] as JsonArray;
@@ -285,7 +326,6 @@ static class ClrEventImplBinding
             if (addM == null || remM == null || raiseM == null)
                 throw new InvalidOperationException($"bir2cir: clrEvent '{name}' is missing a synthesized add/remove/raise accessor — kotc synthesis defect");
 
-            var interfaceImplementation = addM["overrides"] is JsonArray { Count: > 0 };
             var classOwner = TypeJson.Read(backing["classOverrideOwner"]) as TypeNode.Fqn;
             var openEvent = Str(backing["modality"]) switch
             {
@@ -301,8 +341,7 @@ static class ClrEventImplBinding
                 throw new InvalidOperationException($"bir2cir: overridden class event '{classOwner.Name}.{name}' was not found");
 
             // The concrete delegate `D` + its Invoke param nodes (raise's signature).
-            var (delegateNode, invokeParamNodes) = ResolveDelegate(name, addM, backing["handlerType"], refs,
-                policyArguments: backing["policyField"] != null);
+            var (delegateNode, invokeParamNodes, parameterSignature) = ResolveImplementationDelegate(name, addM, backing, refs, locals);
 
             if (Str(backing["policyField"]) is string policyField)
                 RewritePolicy(type, fields, name, policyField, addM, remM, raiseM,
@@ -333,10 +372,28 @@ static class ClrEventImplBinding
                     ["ret"] = TypeJson.Write(NetTypeToNode(externalSlot.ReturnType)),
                 });
             }
-            Slot(addM, baseEvent?.GetAddMethod(true), classOwner != null, interfaceImplementation);
-            Slot(remM, baseEvent?.GetRemoveMethod(true), classOwner != null, interfaceImplementation);
-            var baseRaise = baseEvent?.GetRaiseMethod(true);
-            Slot(raiseM, baseRaise, classOwner != null && (baseType == null || baseRaise != null), false);
+            MethodInfo Overridable(MethodInfo method) => baseEvent?.DeclaringType?.IsInterface == false
+                && method is { IsVirtual: true, IsFinal: false }
+                && (method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly) ? method : null;
+            var localBase = classOwner != null && baseType == null;
+            if (localBase)
+                foreach (var method in new[] { addM, remM })
+                {
+                    // Optional source-function signature discriminators are part of the declared native slot too.
+                    // A covariant handler or Nothing inference must not allocate a different override signature.
+                    var parameter = (JsonObject)method["params"][0];
+                    parameter.Remove(FunctionSignatureIdentity.Key);
+                    if (parameterSignature != null)
+                        parameter[FunctionSignatureIdentity.Key] = TypeJson.Write(parameterSignature);
+                }
+            var baseAdd = Overridable(baseEvent?.GetAddMethod(true));
+            var baseRemove = Overridable(baseEvent?.GetRemoveMethod(true));
+            var baseRaise = Overridable(baseEvent?.GetRaiseMethod(true));
+            // Even a final new declaration can satisfy an interface introduced by a future subclass. CLR requires
+            // virtual accessors for that inherited implementation; final seals source overrides without losing it.
+            Slot(addM, baseAdd, localBase || baseAdd != null, true);
+            Slot(remM, baseRemove, localBase || baseRemove != null, true);
+            Slot(raiseM, baseRaise, localBase || baseRaise != null, false);
 
             decls.Add(new JsonObject { ["k"] = "clrEventDecl", ["name"] = name, ["delegateType"] = delegateNode.DeepClone() });
         }
@@ -355,6 +412,27 @@ static class ClrEventImplBinding
         }
         type["clrEvents"] = decls;
         type.Remove("clrEventForwarders");
+    }
+
+    static (JsonNode Delegate, List<JsonNode> Parameters, TypeNode Signature) ResolveImplementationDelegate(
+        string name, JsonObject add, JsonObject backing, ReferenceMetadataIndex refs, LocalEvents locals)
+    {
+        if (TypeJson.Read(backing["classOverrideOwner"]) is TypeNode.Fqn owner
+            && locals.TryGet(owner, name, out var declaration))
+        {
+            var (type, parameters, signature) = ResolveImplementationDelegate(name, declaration.Add, declaration.Backing, refs, locals);
+            var arguments = owner.Args ?? Array.Empty<TypeNode>();
+            JsonNode Substitute(JsonNode node) => TypeJson.Write(SubstituteOwnerTypeVariables(TypeJson.Read(node), arguments));
+            return (Substitute(type), parameters.Select(Substitute).ToList(),
+                signature == null ? null : SubstituteOwnerTypeVariables(signature, arguments));
+        }
+        var (delegateType, invokeParameters) = ResolveDelegate(name, add, backing["handlerType"], refs,
+            policyArguments: backing["policyField"] != null);
+        var parameter = add["params"]?[0] as JsonObject;
+        var sourceType = parameter?[FunctionSignatureIdentity.Key] ?? parameter?["type"];
+        var discriminator = FunctionValueRepresentation.ContainsOrdinaryFunction(sourceType)
+            ? FunctionSignatureIdentity.DeclarationType(TypeJson.Read(sourceType)) : null;
+        return (delegateType, invokeParameters, discriminator);
     }
 
     // Select the kotc-synthesized shell by its semantic marker, never a user overload that merely shares `add_E`.

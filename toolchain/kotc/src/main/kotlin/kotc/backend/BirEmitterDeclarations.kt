@@ -68,6 +68,7 @@ import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
+import org.jetbrains.kotlin.ir.util.collectRealOverrides
 import org.jetbrains.kotlin.ir.util.primaryConstructor
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
@@ -1369,7 +1370,7 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 		// The `overrides` closure: the interface event slot(s) this member implements, by Kotlin identity (owner FQN +
 		// event name). bir2cir derives the concrete add_/remove_ slot + delegate `D` off the ref.dll from it. Empty for a
 		// NEW event (no override), where bir2cir instead maps the handler function type to a delegate.
-		val overridden = p.overriddenSymbols.mapNotNull { it.owner.getter?.resolveFakeOverride() }
+		val overridden = p.overriddenSymbols.flatMap { it.owner.getter?.collectRealOverrides().orEmpty() }
 			.distinctBy { it.symbol }
 		val classOwner = overridden.mapNotNull { it.parent as? IrClass }
 			.firstOrNull { it.kind == ClassKind.CLASS || it.kind == ClassKind.ENUM_CLASS }

@@ -189,8 +189,11 @@ New open declarations introduce virtual slots; class overrides reuse the base sl
 introducing new ones. Final overrides seal those slots. Interface implementations introduce their own
 slots, sealed only when the source property is final. A synthesized raise follows the same source
 modality, but only overrides a referenced event's raise slot when its MethodSemantics actually declares
-one. Foreign add/remove/raise slots are selected by EventInfo and carried as exact MethodImpl operands,
-not inferred from accessor naming conventions.
+an accessible virtual non-final class slot. Final new add/remove accessors remain virtual-final so a later
+subclass can satisfy an interface with that inherited event. Local class overrides use the base declaration's
+delegate ABI and function-signature discriminator, substituted through the constructed owner, rather than
+allocating a delegate again from a covariant or inferred handler type. Foreign add/remove/raise slots are
+selected by EventInfo and carried as exact MethodImpl operands, not inferred from accessor naming conventions.
 
 ### 4.3 RAISE — `vm.E.invoke(sender, args)`
 

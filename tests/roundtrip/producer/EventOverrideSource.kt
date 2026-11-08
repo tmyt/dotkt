@@ -40,7 +40,22 @@ private open class FunctionEventBase {
 }
 
 private class FunctionEventDerived : FunctionEventBase() {
-    override val Changed: ClrEvent<(Int) -> Unit> by clrEvent()
+    override val Changed by clrEvent()
+    fun fire(value: Int) { Changed(value) }
+}
+
+private class WideFunctionEvent : FunctionEventBase() {
+    override val Changed: ClrEvent<(Any) -> Unit> by clrEvent()
+    fun fire(value: Int) { Changed(value) }
+}
+
+private open class ResultEventBase<R> {
+    open val Requested: ClrEvent<() -> R> by clrEvent()
+    fun fire() { Requested() }
+}
+
+private class UnitResultEvent : ResultEventBase<Unit>() {
+    override val Requested: ClrEvent<() -> Unit> by clrEvent()
 }
 
 fun localPolicyDispatch(): Int {
@@ -48,9 +63,24 @@ fun localPolicyDispatch(): Int {
     var functionValue = 0
     val functionToken = (functionSource as FunctionEventBase).Changed.subscribe { functionValue = it }
     functionSource.fireFromBase(42)
+    functionSource.fire(42)
     functionToken.close()
     functionSource.fireFromBase(100)
     check(functionValue == 42)
+    val wide = WideFunctionEvent()
+    val wideToken = (wide as FunctionEventBase).Changed.subscribe { functionValue = it }
+    wide.fireFromBase(43)
+    wide.fire(43)
+    wideToken.close()
+    wide.fireFromBase(100)
+    check(functionValue == 43)
+    val result = UnitResultEvent()
+    var calls = 0
+    val resultToken = (result as ResultEventBase<Unit>).Requested.subscribe { calls++ }
+    result.fire()
+    resultToken.close()
+    result.fire()
+    check(calls == 1)
     val source = LocalPolicyEvent()
     var received = 0
     val token = (source as PolicyEventBase).Changed.subscribe { received += it }
