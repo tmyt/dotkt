@@ -118,7 +118,7 @@ class MaterializedEventTests {
     @TestAttribute
     fun kotlinDeclaredEventAndOrdinaryHandlePropertySurviveReimport() {
         val source = LocalSource()
-        val event = EventBox(source.handle()).event
+        val event = EventBox(source.Changed).event
         var sum = 0
         val subscription = event.subscribe { sum += it }
         source.Changed.invoke(42)
@@ -132,11 +132,17 @@ class MaterializedEventTests {
         val source = GenericSource<String, Int>()
         val wrapper = ReorderedSource<Int, String>(source)
         var value = 0
-        val subscription = wrapper.handle().subscribe { value = it }
+        val handler: (Int) -> Unit = { value = it }
+        val subscription = wrapper.handle().subscribe(handler)
+        val direct = source.Changed.subscribe(handler)
         source.Changed(42)
-        subscription.close()
-        source.Changed(99)
         assertEquals(42, value)
+        subscription.close()
+        source.Changed(43)
+        assertEquals(43, value)
+        direct.close()
+        source.Changed(99)
+        assertEquals(43, value)
     }
 
     @TestAttribute
