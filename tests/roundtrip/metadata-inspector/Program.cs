@@ -1673,11 +1673,9 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
     Require(!accessors.Any(pair => md.GetString(pair.Definition.Name).Contains("$secretValue", StringComparison.Ordinal)),
         "source-associated callable should not acquire a second caller-side accessor");
 
-    var wrappers = md.TypeDefinitions
+    var holderMethods = md.TypeDefinitions
         .Where(handle => DefinitionName(md, handle).StartsWith("dotkt$unsafe$holder$", StringComparison.Ordinal))
-        .SelectMany(handle => md.GetTypeDefinition(handle).GetMethods())
-        .Select(md.GetMethodDefinition)
-        .Where(method => md.GetString(method.Name).EndsWith("$invoke", StringComparison.Ordinal))
+        .Select(handle => md.GetTypeDefinition(handle).GetMethods().ToArray())
         .ToArray();
     // Follow the selected getter's explicit state edge, not the query helper's generated spelling.
     var lateinitOwner = producerMd.TypeDefinitions.Single(handle =>
@@ -1722,13 +1720,20 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
         Require((capture.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Private,
             $"inner member-default fixture widened its lexical capture on {name}");
     }
-    // Three legal generic-owner family edges are now direct; two new genuine arbitrary-base crossings still
-    // need accessors. Their exact replacement/retained contracts are checked by the family CIR guards.
-    Require(wrappers.Length == 11 && wrappers.All(method =>
-            (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
-            (method.Attributes & MethodAttributes.Static) != 0 && method.RelativeVirtualAddress != 0),
-        $"generic UnsafeAccessor holders do not expose only compiler-generated internal wrappers " +
-        $"(found {wrappers.Length}, expected 11)");
+    // Each selected generic crossing owns one private extern and one generated internal entry. Assert that
+    // relationship, not an assembly-wide total that changes when an unrelated fixture needs another bridge.
+    Require(holderMethods.Length > 0 && holderMethods.All(methods =>
+    {
+        var externs = methods.Where(handle => HasMethodAttribute(md, handle,
+            "System.Runtime.CompilerServices.UnsafeAccessorAttribute")).ToArray();
+        var entries = methods.Where(handle => md.GetString(md.GetMethodDefinition(handle).Name)
+            .EndsWith("$invoke", StringComparison.Ordinal)).ToArray();
+        if (externs.Length != 1 || entries.Length != 1) return false;
+        var entry = md.GetMethodDefinition(entries[0]);
+        return (entry.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
+            (entry.Attributes & MethodAttributes.Static) != 0 && entry.RelativeVirtualAddress != 0 &&
+            HasMethodAttribute(md, entries[0], "System.Runtime.CompilerServices.CompilerGeneratedAttribute");
+    }), "generic UnsafeAccessor holder must pair its private extern with one compiler-generated internal wrapper");
 }
 
 static void VerifyLayerBoundary(string birPath, string cirPath)
