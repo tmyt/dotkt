@@ -44,6 +44,7 @@ These documents describe current implementation decisions or approved work that 
 
 ## Maintainer guide
 
+- [agent-workflow.md](agent-workflow.md) — task, review, validation, merge, cleanup, and release runbook
 - [kotlin-frontend-bump-playbook.md](kotlin-frontend-bump-playbook.md)
 
 ## Maintenance policy

@@ -80,10 +80,19 @@ linker, generated-binary, or runtime result for the undefined forms.
 
 # Pull Request Workflow
 
+- Follow [the operational runbook](docs/agent-workflow.md) for commands,
+  checkpoints, and completion checks. The current user request determines the
+  authorized scope; this document does not authorize a milestone loop or release.
+- Keep each pull request bounded to its issue. Check the current implementation
+  rather than trusting an old diagnosis. Track validated out-of-scope findings
+  separately instead of expanding the pull request. Give issues appropriate
+  labels and the agreed milestone; do not assign milestones to pull requests.
 - Begin each issue in a dedicated Git worktree rather than changing the primary
   working tree.
 - Open a draft pull request once the focused tests for the changed behavior are
   green. State every outstanding review and validation step in its description.
+  Keep the description concise: scope, approach, validation, and pending steps,
+  not a growing status diary.
 - Run the independent Claude review read-only with network access outside the
   sandbox. Do not impose a short API timeout or force a model override; allow
   20--30 minutes for a long review, and follow the review budget below.
@@ -99,6 +108,15 @@ linker, generated-binary, or runtime result for the undefined forms.
   reported anything other than no comments, or when the new work crosses a
   semantic milestone. Do not request it for an ordinary push that satisfies
   neither condition.
+- Allow several minutes for Copilot to arrive; absence of a review is not a
+  completed review with no comments. Report unavailable checks explicitly.
+  Service outages and quota exceptions require a current, scoped user decision;
+  do not turn a temporary exception into a permanent policy or bypass controls.
+- Validate findings before accepting them. For a finding not adopted, explain
+  the evidence in a reply and resolve the thread when authorized.
+- When merging is in scope, complete the merge rather than leaving it implicitly
+  to the user. Check CI, review disposition, and the final head SHA, and merge
+  only that revision through the normal repository rules, without an admin bypass.
 
 # Implementation Review
 
@@ -161,3 +179,24 @@ request description.
   the build or gates do not require another full run.
 - If a budgeted review cannot be run, report that explicitly rather than
   silently skipping it.
+
+# Execution State and Cleanup
+
+- Keep one compact current checkpoint with scope, worktree, branch, base/head
+  commits, issue/PR, validation results, review budget already spent, live process
+  handles, and the next action. On resume, reconcile it with actual Git, GitHub,
+  and process state; do not restart completed reviews or old work from history.
+- Launch long-running gates and reviews with resumable process handles and
+  durable logs. An observation timeout or silence is not process failure or
+  completion. Wait on the existing process; do not duplicate it or cut it off
+  because a shell observation window expired. Report completion only with its
+  exit status and final result.
+- After merge, preserve compact validation/review/CI evidence outside the
+  disposable worktree, then remove the task's clean worktree and used probes.
+  Check for uncommitted and untracked work first. Do not force removal, archive
+  whole worktrees, or remove other tasks' files. Report material cleanup and
+  whether the removed data is reproducible or preserved.
+- A requested release is complete only after the matching tag, publication,
+  GitHub Release, and isolated public-feed smoke are confirmed. A version bump,
+  local package, or successful upload alone is not the release completion proof;
+  use the runbook's release checklist.
