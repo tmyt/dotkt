@@ -198,7 +198,7 @@ selected by EventInfo and carried as exact MethodImpl operands, not inferred fro
 ### 4.3 RAISE — `vm.E.invoke(sender, args)`
 
 - **kotc**: `invoke` resolved on `kotlin.clr.ClrEvent<T>` (`operator fun invoke`) whose
-  receiver is a `clrEventGet` → a dedicated dialect node `clrEventRaise{type,event,static,recv,args}`
+  receiver is a `clrEventGet` → a dedicated dialect node `clrEventRaise{type,event,super,recv,args}`
   (parallel to `clrEventGet`; emitted in `BirEmitterCalls.kt`). This declaration-bound raise does not
   construct a consumer handle. Because raise is `operator fun invoke`, **`vm.E.invoke(s, a)` and `vm.E(s, a)` desugar
   to the identical call** (Kotlin's invoke convention) → both produce `clrEventRaise`; the author
@@ -209,6 +209,8 @@ selected by EventInfo and carried as exact MethodImpl operands, not inferred fro
   an ordinary instance call of its actual raise accessor. A local event record identifies its compiler-authored
   MethodDef; a referenced Kotlin event supplies its exact EventInfo raise method and constructed owner.
   The reference call carries the already-selected scalar `memberRef`, not a generated-name lookup in ilemit.
+  `super` remains non-virtual, including through lifted callbacks. Restricted accessor calls retain their
+  visibility facts for the ordinary lexical-access lowering; neither the event nor its storage is widened.
   **Guard:** raise is legal only for a **Kotlin-implemented** event, whether local or from a DLL.
   A consumed foreign .NET event remains non-raisable; a similarly named method or a native `.fire`
   association alone does not authorize it.

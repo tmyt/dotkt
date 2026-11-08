@@ -1,6 +1,7 @@
 package roundtrip.eventraise
 
 import kotlin.clr.ClrEvent
+import kotlin.clr.ClrEventPolicy
 import kotlin.clr.clrEvent
 import roundtrip.eventoverride.RecordingEventPolicy
 
@@ -27,7 +28,30 @@ private class LocalPolicyChild : PolicyPublisher() {
     fun fire(value: Int) { Changed(value) }
 }
 
+class RaiseCountingPolicy : ClrEventPolicy<System.Action1<Int>>() {
+    var total = 0
+    override fun add(handler: System.Action1<Int>) {}
+    override fun remove(handler: System.Action1<Int>) {}
+    override fun invoke(vararg args: Any?) { total += args[0] as Int }
+}
+
+open class SuperPublisher {
+    val basePolicy = RaiseCountingPolicy()
+    open val Changed: ClrEvent<System.Action1<Int>> by clrEvent(basePolicy)
+}
+
+private class LocalSuperChild : SuperPublisher() {
+    val policy = RaiseCountingPolicy()
+    override val Changed: ClrEvent<System.Action1<Int>> by clrEvent(policy)
+    fun fireBase(value: Int) { super.Changed(value) }
+    fun later(value: Int): () -> Unit = { super.Changed(value) }
+}
+
 fun localInheritedRaises(): Int {
+    val base = LocalSuperChild()
+    base.fireBase(20)
+    base.later(22)()
+    check(base.basePolicy.total == 42 && base.policy.total == 0)
     val source = LocalChild()
     var result = 0
     val token = source.Changed.subscribe { result += it }

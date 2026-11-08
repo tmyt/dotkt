@@ -89,7 +89,7 @@ static partial class ClrMemberResolution
                 declaringOwner.Args, typeArg: false)), ["e"] = argument.DeepClone(),
         }).ToArray());
         var result = PhysicalTypeOf(method.ReturnType, declaringOwner.Args, typeArg: false);
-        return new JsonObject {
+        var call = new JsonObject {
             ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(reference.DeclaringType),
             ["method"] = method.Name, ["virtual"] = true,
             ["recv"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(reference.DeclaringType), ["e"] = receiver },
@@ -99,6 +99,19 @@ static partial class ClrMemberResolution
             ["ret"] = TypeJson.Write(result), ["sty"] = TypeJson.Write(result),
             ["args"] = adapted, ["memberRef"] = reference.Write(), [DeclarationIdentityBoundKey] = true,
         };
+        var visibility = method.IsPrivate ? "private" : method.IsAssembly ? "internal"
+            : method.IsFamily || method.IsFamilyOrAssembly || method.IsFamilyAndAssembly ? "protected" : null;
+        if (visibility != null)
+        {
+            call["memberVisibility"] = visibility;
+            call["memberOwnerTypeParams"] = refs.OwnerTypeParamDeclarations(((TypeNode.Fqn)reference.DeclaringType).Name)?.DeepClone();
+            call["memberReturnType"] = TypeJson.Write(reference.ReturnType);
+            // Keep the verifier-visible derived `this` for a legal direct family call. Lifted receivers still
+            // use lexical-access lowering; no protected target or backing storage is widened.
+            if (visibility == "protected" && receiver?["k"]?.GetValue<string>() == "this")
+                call["recv"] = receiver.DeepClone();
+        }
+        return call;
     }
 
     /// <summary>The scalar reference for a resolved field.</summary>

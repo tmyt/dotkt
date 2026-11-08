@@ -6,9 +6,27 @@ import roundtrip.eventraise.Publisher
 import roundtrip.eventraise.PublisherOuter
 import roundtrip.eventraise.PolicyPublisher
 import roundtrip.eventraise.localInheritedRaises
+import roundtrip.eventraise.SuperPublisher
+import roundtrip.eventraise.RaiseCountingPolicy
+import roundtrip.eventvisibility.EventVisibilitySource
+import kotlin.clr.ClrEvent
+import kotlin.clr.clrEvent
 
 private class ImportedChild : Publisher<String, Int>()
 private class ImportedPolicyChild : PolicyPublisher()
+
+private class ImportedProtectedChild : EventVisibilitySource<Int>() {
+    fun handle() = Family
+    fun fireFamily(value: Int) { Family(value) }
+    fun later(value: Int): () -> Unit = { Family(value) }
+}
+
+private class ImportedSuperChild : SuperPublisher() {
+    val policy = RaiseCountingPolicy()
+    override val Changed: ClrEvent<System.Action1<Int>> by clrEvent(policy)
+    fun fireBase(value: Int) { super.Changed(value) }
+    fun later(value: Int): () -> Unit = { super.Changed(value) }
+}
 
 private fun <A, B> raiseGeneric(source: Publisher<A, B>, value: B) { source.Changed(value) }
 
@@ -51,5 +69,20 @@ class EventRaiseTests {
         assertEquals(42, result)
         assertEquals(1, custom.policy.adds)
         assertEquals(1, custom.policy.removes)
+
+        val family = ImportedProtectedChild()
+        var familyResult = 0
+        val familyToken = family.handle().subscribe { familyResult += it }
+        family.fireFamily(20)
+        family.later(22)()
+        familyToken.close()
+        family.fireFamily(100)
+        assertEquals(42, familyResult)
+
+        val base = ImportedSuperChild()
+        base.fireBase(20)
+        base.later(22)()
+        assertEquals(42, base.basePolicy.total)
+        assertEquals(0, base.policy.total)
     }
 }

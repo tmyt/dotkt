@@ -807,7 +807,7 @@ sealed class Pipeline
             // the ref.dll-reading layer — resolves the concrete delegate `D` (the interface event's EventHandlerType) and
             // rewrites field-like accessor bodies to CIR `clrEventAccessorImpl` directives + inserts `<E>$delegate : D`,
             // or routes custom accessors through ordinary calls on the retained Kotlin policy field, plus
-            // a type-level `clrEventDecl`. It also binds `clrEventRaise` to a `raise_<E>` call. App/rt only (no .NET events
+            // a type-level `clrEventDecl`. Raise sites bind module-wide after inner owner projection. App/rt only (no .NET events
             // in the ref/rt stdlib self-build).
             if (!_options.RefBuild) hoisted = ClrEventImplBinding.BindImplementations(hoisted, refs, localEventDeclarations);
             // Consume CharSequence property semantics while calls still carry the explicit Kotlin property name and

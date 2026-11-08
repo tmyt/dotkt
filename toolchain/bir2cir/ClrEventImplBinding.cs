@@ -851,6 +851,7 @@ static class ClrEventImplBinding
                 var name = Str(obj["event"]);
                 var recv = obj["recv"]?.DeepClone();
                 var args = (JsonArray)(obj["args"]?.DeepClone() ?? new JsonArray());
+                var superCall = obj["super"]?.GetValue<bool>() == true;
                 JsonObject call;
                 if (signatures.TryGetValue((owner.Name, name), out var local))
                     call = new JsonObject {
@@ -870,6 +871,13 @@ static class ClrEventImplBinding
                     var raise = declaration?.GetRaiseMethod(true)
                         ?? throw new InvalidOperationException($"bir2cir: referenced Kotlin event '{owner.Name}.{name}' has no raise declaration");
                     call = ClrMemberResolution.ExactInstanceCall(refs, raise, owner, recv, args);
+                }
+                if (superCall)
+                {
+                    call["super"] = true;
+                    call["virtual"] = false;
+                    // A base cast hides the enclosing derived receiver from the existing lifted-super forwarder.
+                    call["recv"] = obj["recv"]?.DeepClone();
                 }
                 foreach (var k in obj.Select(kv => kv.Key).ToList()) obj.Remove(k);
                 foreach (var pair in call) obj[pair.Key] = pair.Value?.DeepClone();

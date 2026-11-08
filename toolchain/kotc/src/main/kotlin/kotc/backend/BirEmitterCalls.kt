@@ -1111,7 +1111,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val rawArgs = regularArgs(call)
 		val argExprs = if (rawArgs.size == 1 && rawArgs[0] is IrVararg)
 			(rawArgs[0] as IrVararg).elements.filterIsInstance<IrExpression>() else rawArgs
-		return """{"k":"clrEventRaise","type":${eventOwnerType(prop, eventRecv)},"event":${str(prop.name.asString())},"recv":${expr(eventRecv)},"args":[${argExprs.joinToString(",") { expr(it) }}]}"""
+		return """{"k":"clrEventRaise","type":${eventOwnerType(prop, eventRecv)},"event":${str(prop.name.asString())},"super":${eventAccess.superQualifierSymbol != null},"recv":${expr(eventRecv)},"args":[${argExprs.joinToString(",") { expr(it) }}]}"""
 	}
 	// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 	((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }
