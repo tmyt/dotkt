@@ -51,6 +51,7 @@ class ExcRtErr(m: String) : RuntimeException(m)
 // RuntimeException(cause) is an @ClrTypeAlias constructor adapter carried by the stdlib ref DLL. A consuming module
 // must expand its declaration-authored `(cause?.toString(), cause)` vector before resolving System.Exception::.ctor.
 class ExcCauseErr(cause: Throwable) : RuntimeException(cause)
+class ExcNestedCauseErr(message: () -> String, cause: () -> Throwable) : RuntimeException(message(), RuntimeException(cause()))
 
 fun excDirectCause(cause: Throwable): RuntimeException = RuntimeException(cause)
 fun excRepeatedDirectCauses(cause: Throwable): List<RuntimeException> = listOf(
@@ -167,6 +168,14 @@ class ExceptionTests {
         val repeated = excRepeatedDirectCauses(cause)
         assertEquals(8, repeated.size)
         assertTrue(repeated.all { it.cause?.message == "inner" }) // caller/adapter temp namespaces cannot collide
+        val evaluation = mutableListOf<String>()
+        val nested = ExcNestedCauseErr(
+            { evaluation.add("message"); "outer" },
+            { evaluation.add("cause"); cause },
+        )
+        assertEquals("outer", nested.message)
+        assertTrue(nested.cause?.cause === cause)
+        assertEquals("message|cause", evaluation.joinToString("|"))
         assertEquals(42, excCustomRisky(21))         // 42
     }
 
