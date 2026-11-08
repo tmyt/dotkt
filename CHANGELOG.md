@@ -5,6 +5,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.22 (2026-11-08)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.22`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Improve compiler performance across reference KLIB generation, Kotlin compilation,
+  BIR-to-CIR lowering and IL emission without dropping validation, native resources or Portable PDBs.
+- Same-host Hello clean-build measurements during development fell from about **49s to 32s**;
+  all four inclusive compiler phases met half of the original reference-binlog budget.
+  Results depend on the project, host and caches; the ideal 10s toolchain total is not yet reached.
+- Continue to require the .NET 10 SDK and a .NET runtime of **10.0.12 or later**.
+
 ### Changed
 
 - Reduce bir2cir reference-index allocation by avoiding unnecessary per-type name-query caches when scanning declared CLR members.
