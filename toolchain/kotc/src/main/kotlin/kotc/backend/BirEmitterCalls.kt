@@ -1013,7 +1013,7 @@ private fun topLevelJsonStringFieldEquals(json: String, field: String, encodedVa
 
 private fun BirEmitter.eventVisibilityFact(property: IrProperty): String {
 	val visibility = visOf(property)
-	return if (visibility == "private" || visibility == "protected")
+	return if (visibility == "private" || visibility == "protected" || visibility == "internal")
 		""","memberVisibility":${str(visibility)}""" else ""
 }
 
@@ -1065,8 +1065,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	}
 	val selectedEventProp = callee.correspondingPropertySymbol?.owner
 	// An inherited field-like event is selected through a frontend fake override.  Its wrapper is intentionally not
-	// emitted as a property/getter, so classify the event from the real Kotlin declaration while retaining the selected
-	// receiver type below.  Otherwise `Derived().pulse.subscribe { ... }` falls through to an ordinary call of the
+	// emitted as a property/getter, so classify the event from the real Kotlin declaration and close its owner through
+	// the receiver's frontend supertype. Otherwise `Derived().pulse.subscribe { ... }` falls through to an ordinary call of the
 	// deliberately omitted fake getter instead of producing the same event handle as a direct base-typed access.
 	val localEventProp = selectedEventProp?.let { selected ->
 		if (selected.isFakeOverride)
@@ -1079,8 +1079,13 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		&& isClrEventProperty(localEventProp)
 		&& localEventOwner != null && !isExternalNetType(localEventOwner)) {
 		val eventRecv = dispatchReceiver(call)
-		if (eventRecv != null)
-			return """{"k":"clrEventGet","type":${eventOwnerType(localEventProp, eventRecv)},"name":${str(localEventProp.name.asString())},"static":false,"recv":${expr(eventRecv)},"sty":${birType(call.type).toJson()}${eventVisibilityFact(localEventProp)}${overridesJson(callee)}}"""
+		if (eventRecv != null) {
+			// A moved default must still address the selected declaration, not an inheriting receiver's class.
+			val declaredOwner = if (anonNames.containsKey(localEventOwner)) ownerSpec(localEventOwner, eventRecv.type)
+				else correspondingSupertypeInstantiation(eventRecv.type, localEventOwner)?.let(::birType)
+					?: error("selected event '${localEventProp.name}' has no declaring receiver supertype")
+			return """{"k":"clrEventGet","type":${declaredOwner.toJson()},"name":${str(localEventProp.name.asString())},"static":false,"recv":${expr(eventRecv)},"sty":${birType(call.type).toJson()}${eventVisibilityFact(localEventProp)}${overridesJson(callee)}}"""
+		}
 	}
 	// RAISE: `handle.invoke(sender, args)` / `handle(sender, args)` (both desugar to `ClrEvent.invoke`). The event handle
 	// is a member read `vm.<E>` (a `ClrEvent<T>` property); raise is legal only for a KOTLIN-DECLARED event (one with a

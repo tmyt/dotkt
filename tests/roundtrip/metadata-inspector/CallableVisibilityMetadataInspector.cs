@@ -71,13 +71,6 @@ internal static class CallableVisibilityMetadataInspector
         VerifyEvents(md, klibPath);
     }
 
-    public static void VerifyEvents(string dllPath, string klibPath)
-    {
-        using var stream = File.OpenRead(dllPath);
-        using var pe = new PEReader(stream);
-        VerifyEvents(pe.GetMetadataReader(), klibPath);
-    }
-
     static void VerifyEvents(MetadataReader md, string klibPath)
     {
         const string package = "roundtrip.eventvisibility";

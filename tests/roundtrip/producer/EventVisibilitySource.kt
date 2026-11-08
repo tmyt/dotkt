@@ -15,9 +15,14 @@ open class EventVisibilitySource<T> {
     fun assemblyHandle(): ClrEvent<System.Action1<T>> = Assembly
     fun publishedHandle(): ClrEvent<System.Action1<T>> = Published
     fun defaultHandle(event: ClrEvent<System.Action1<T>> = Secret): ClrEvent<System.Action1<T>> = event
+    fun internalDefaultHandle(event: ClrEvent<System.Action1<T>> = Assembly): ClrEvent<System.Action1<T>> = event
     fun fire(value: T) {
         Secret(value); Family(value); Assembly(value); Published(value); Visible(value)
     }
+}
+
+class InheritedDefaultVisibilitySource : EventVisibilitySource<Int>() {
+    fun defaultFamilyHandle(event: ClrEvent<System.Action1<Int>> = Family): ClrEvent<System.Action1<Int>> = event
 }
 
 private class VisibilityPolicy : ClrEventPolicy<System.Action1<Int>>() {

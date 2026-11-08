@@ -3,6 +3,7 @@ package roundtriptests.eventvisibility
 import NUnit.Framework.TestAttribute
 import System.Reflection.BindingFlags
 import roundtrip.eventvisibility.EventVisibilitySource
+import roundtrip.eventvisibility.InheritedDefaultVisibilitySource
 import roundtrip.eventvisibility.PolicyVisibilitySource
 
 private class DerivedVisibilitySource : EventVisibilitySource<Int>() {
@@ -33,21 +34,28 @@ class EventVisibilityTests {
     fun restrictedRetainedHandlesAndMovedDefaultsKeepExactGenericAccess() {
         val source = DerivedVisibilitySource()
         val handles = listOf(source.secretHandle(), source.familyHandle(), source.assemblyHandle(),
-            source.publishedHandle(), source.Visible, source.defaultHandle())
+            source.publishedHandle(), source.Visible, source.defaultHandle(), source.internalDefaultHandle())
         var sum = 0
         val tokens = handles.map { event -> event.subscribe(System.Action1<Int> { sum += it }) }
         source.fire(7)
-        check(sum == 42)
+        check(sum == 49)
         for (token in tokens) token.close()
         source.fire(99)
-        check(sum == 42)
+        check(sum == 49)
+
+        val inherited = InheritedDefaultVisibilitySource()
+        val inheritedToken = inherited.defaultFamilyHandle().subscribe { sum += it }
+        inherited.fire(3)
+        inheritedToken.close()
+        inherited.fire(99)
+        check(sum == 52)
 
         val custom = PolicyVisibilitySource()
         val token = custom.handle().subscribe { sum += it }
         custom.fire(8)
         token.close()
         custom.fire(99)
-        check(sum == 50)
+        check(sum == 60)
         val type = PolicyVisibilitySource::class as System.Type
         check(type.GetEvent("Secret") == null)
     }

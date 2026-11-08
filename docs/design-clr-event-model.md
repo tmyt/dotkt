@@ -129,7 +129,7 @@ Event-member reads use BIR `clrEventGet{type,name,static,recv,sty}`. The result 
 `ClrEvent<H>` type, distinct from the event owner's type. Accessor calls use CIR
 `clrEventAdd`/`clrEventRemove{type,event,static,recv,handler}`.
 
-Restricted reads also carry the Kotlin `memberVisibility:"private"|"protected"` fact into their
+Restricted reads also carry the Kotlin `memberVisibility:"private"|"protected"|"internal"` fact into their
 callbacks, including inline/default carriers. Accessor shells retain the property's source visibility
 and `PublishedApi` annotation. bir2cir applies normal PublishedApi promotion while preserving the
 source visibility carrier for KLIB reimport. Generated callbacks use ordinary exact member calls and

@@ -344,7 +344,7 @@ static partial class ClrMemberResolution
             | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
         var accessor = FindEventAccessor(declaration, node["event"]?.GetValue<string>(),
             kind == "clrEventAdd", flags, allowNonPublic: true);
-        if (accessor == null || !(accessor.IsPrivate || accessor.IsFamily || accessor.IsFamilyOrAssembly)) return null;
+        if (accessor == null || !(accessor.IsPrivate || accessor.IsFamily || accessor.IsFamilyOrAssembly || accessor.IsAssembly)) return null;
         RetargetToBaseInterface(node, "type", declaration, accessor, owner);
         return new JsonObject
         {
@@ -354,7 +354,7 @@ static partial class ClrMemberResolution
                 .Select(parameter => TypeJson.Write(MemberSigOf(parameter.ParameterType))).ToArray()),
             ["recv"] = node["recv"]?.DeepClone(), ["args"] = new JsonArray(node["handler"]?.DeepClone()),
             ["virtual"] = accessor.IsVirtual, ["ret"] = TypeJson.Fqn("void"), ["sty"] = TypeJson.Fqn("void"),
-            ["memberVisibility"] = accessor.IsPrivate ? "private" : "protected",
+            ["memberVisibility"] = accessor.IsPrivate ? "private" : accessor.IsAssembly ? "internal" : "protected",
         };
     }
 
