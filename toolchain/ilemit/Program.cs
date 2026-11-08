@@ -155,6 +155,14 @@ static class IlEmit
     static readonly List<JsonDocument> _mergedDocs = new();
     static List<JsonElement> MergeByFileClass(List<JsonDocument> docs)
     {
+        // Most physical containers already have distinct file classes. Keep those immutable documents
+        // intact instead of reparsing and serializing their complete bodies through a mutable DOM.
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var document in docs)
+            if (document.RootElement.TryGetProperty("fileClass", out var fileClass)
+                && fileClass.GetString() is { Length: > 0 } name)
+                counts[name] = counts.GetValueOrDefault(name) + 1;
+        if (counts.Values.All(count => count == 1)) return docs.Select(document => document.RootElement).ToList();
         var byFc = new Dictionary<string, System.Text.Json.Nodes.JsonObject>();
         var order = new List<string>();
         var synthetic = 0;

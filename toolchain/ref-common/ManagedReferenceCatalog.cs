@@ -1,8 +1,10 @@
+#nullable disable
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -124,7 +126,7 @@ sealed class ManagedReferenceCatalog
             // so a corrupt one is a real error that must name the file + stage instead of silently dropping a type). The
             // RUNTIME copy-local set (ilemit, runtimeSelection) legitimately mixes managed + foreign-OS native assets
             // named `*.dll`, so there a non-loadable image is a loud WARN + skip, not a hard fail.
-            switch (ClassifyReference(full, out var detail))
+            switch (ClassifyReference(full, out var detail, out var identity, out var identityError))
             {
                 case RefLoadKind.Managed:
                     break;
@@ -146,14 +148,12 @@ sealed class ManagedReferenceCatalog
                         $"{toolName}: reference could not be read (I/O error): {full} — {detail}.");
             }
 
-            AssemblyName identity;
-            try { identity = AssemblyName.GetAssemblyName(full); }
-            catch (Exception ex) when (ex is BadImageFormatException or IOException or FileLoadException)
+            if (identityError != null)
             {
                 // The PE opened + carried a COR header (else ClassifyReference would have diverted above), yet the
                 // CLI metadata / assembly-identity blob is unreadable — a distinct, still-fatal corruption class.
                 throw new ArgumentException(
-                    $"{toolName}: reference has unreadable CLI metadata / assembly identity: {full} — {ex.Message}.");
+                    $"{toolName}: reference has unreadable CLI metadata / assembly identity: {full} — {identityError.Message}.");
             }
             if (string.IsNullOrEmpty(identity.Name))
                 throw new ArgumentException($"{toolName}: reference has no assembly name: {full}");
@@ -488,9 +488,12 @@ sealed class ManagedReferenceCatalog
     // leaves CorHeader null WITHOUT throwing). Only a PE whose CorHeaderTableDirectory is truly empty (RVA==0 && Size==0)
     // is native (a legitimate silent skip). A PE-header parse failure (BadImageFormatException — a truncated/corrupt
     // image, e.g. a partial concurrent write) is Broken; an open/read failure (sharing violation / EndOfStream) is IoError.
-    static RefLoadKind ClassifyReference(string path, out string detail)
+    static RefLoadKind ClassifyReference(string path, out string detail, out AssemblyName identity,
+        out Exception identityError)
     {
         detail = null;
+        identity = null;
+        identityError = null;
         FileStream stream;
         try { stream = File.OpenRead(path); }
         catch (IOException ex) { detail = ex.Message; return RefLoadKind.IoError; }
@@ -516,6 +519,13 @@ sealed class ManagedReferenceCatalog
                 {
                     detail = "CLI/COR directory advertised but unresolvable";
                     return RefLoadKind.Broken;
+                }
+                // Read the identity from the same open image. Keep identity failures distinct from
+                // header classification: even runtime copy-local sets must reject malformed CLI metadata.
+                try { identity = pe.GetMetadataReader().GetAssemblyDefinition().GetAssemblyName(); }
+                catch (Exception ex) when (ex is BadImageFormatException or IOException or FileLoadException or InvalidOperationException)
+                {
+                    identityError = ex;
                 }
                 return RefLoadKind.Managed;
             }

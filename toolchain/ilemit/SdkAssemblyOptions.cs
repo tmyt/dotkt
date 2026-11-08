@@ -2,6 +2,7 @@
 using System.Globalization;
 using System.Reflection.Metadata;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 // These are physical build-driver facts, independent of Kotlin declarations and the CIR vocabulary.
 sealed class SdkAssemblyOptions
@@ -18,8 +19,8 @@ sealed class SdkAssemblyOptions
     public List<AttributeValue> Attributes { get; set; } = [];
     public sealed record AttributeValue(string Type, string Value, string IsLiteral, string TypeName);
 
-    public static SdkAssemblyOptions Read(string path) => JsonSerializer.Deserialize<SdkAssemblyOptions>(
-        File.ReadAllText(path), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+    public static SdkAssemblyOptions Read(string path) => JsonSerializer.Deserialize(
+        File.ReadAllText(path), SdkAssemblyOptionsJsonContext.Default.SdkAssemblyOptions)
         ?? throw new InvalidDataException($"Empty SDK assembly options: {path}");
 
     public string Attribute(string name)
@@ -82,3 +83,7 @@ sealed class SdkAssemblyOptions
         return new Version(values[0], values[1], values[2], values[3]);
     }
 }
+
+[JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
+[JsonSerializable(typeof(SdkAssemblyOptions))]
+sealed partial class SdkAssemblyOptionsJsonContext : JsonSerializerContext;

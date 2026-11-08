@@ -35,6 +35,7 @@ printf '%s\n' 'fun main() { println("Kotlin manifest app") }' > "$kt/Program.kt"
 printf '%s\n' 'public static class Program { public static void Main() => System.Console.WriteLine("CSharp manifest control"); }' > "$cs/Program.cs"
 dotnet build "$FIXTURE/ManifestInspector.csproj" -o "$ws/inspector" -v:q --nologo > "$ws/inspector.log" 2>&1
 inspect() { dotnet "$ws/inspector/ManifestInspector.dll" "$@"; }
+inspect --writer
 build() {
   local project="$1" stage="$2"; shift 2
   local no_csc=()

@@ -6,4 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../toolchain/ilemit/TargetReferenceUniverse.cs" Link="TargetReferenceUniverse.cs" />
+    <Compile Include="../../toolchain/ilemit/MetadataTypeCandidates.cs" Link="MetadataTypeCandidates.cs" />
+    <Compile Include="../../toolchain/ref-common/ManagedReferenceCatalog.cs" Link="ManagedReferenceCatalog.cs" />
+    <Compile Include="../../toolchain/ilemit/SdkAssemblyOptions.cs" Link="SdkAssemblyOptions.cs" />
+    <Compile Include="../../toolchain/ilemit/AssemblyVersions.cs" Link="AssemblyVersions.cs" />
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" />
+  </ItemGroup>
 </Project>

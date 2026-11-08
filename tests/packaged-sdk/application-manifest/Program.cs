@@ -6,6 +6,11 @@ using System.Xml.Linq;
 
 try
 {
+    if (args is ["--writer"])
+    {
+        ResourceWriterProbe.Run();
+        return 0;
+    }
     uint resourceId = 1;
     if (args[0] == "--library") { resourceId = 2; args = args.Skip(1).ToArray(); }
     if (args[0] == "--managed-match")
