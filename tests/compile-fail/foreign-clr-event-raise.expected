@@ -1,0 +1,2 @@
+cannot raise the .NET event 'ProcessExit' on 'System.AppDomain'
+not a consumed foreign .NET event

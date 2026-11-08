@@ -121,9 +121,9 @@ class MaterializedEventTests {
         val event = EventBox(source.handle()).event
         var sum = 0
         val subscription = event.subscribe { sum += it }
-        source.fire(42)
+        source.Changed.invoke(42)
         subscription.close()
-        source.fire(99)
+        source.Changed(99)
         assertEquals(42, sum)
     }
 
@@ -133,9 +133,9 @@ class MaterializedEventTests {
         val wrapper = ReorderedSource<Int, String>(source)
         var value = 0
         val subscription = wrapper.handle().subscribe { value = it }
-        source.fire(42)
+        source.Changed(42)
         subscription.close()
-        source.fire(99)
+        source.Changed(99)
         assertEquals(42, value)
     }
 
