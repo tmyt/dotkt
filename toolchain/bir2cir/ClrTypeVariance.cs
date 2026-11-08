@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
@@ -16,8 +15,9 @@ static class ClrTypeVariance
             byName.TryAdd(Str(definition["name"]), definition);
 
         // Compute before mutating: recursive local edges must see the same declarations regardless
-        // of source file or type order. A cycle provisionally retains its declaration variance;
-        // every edge and signature on the path is still checked before that result can escape.
+        // of source file or type order. Invalidity propagates over dependencies rather than
+        // enumerating every simple path through mutually recursive declarations.
+        var analysis = new Analysis(byName, refs);
         var removals = new List<JsonObject>();
         foreach (var definition in definitions)
         {
@@ -27,7 +27,7 @@ static class ClrTypeVariance
             var offset = (definition["capturedTypeParams"] as JsonArray)?.Count ?? 0;
             for (var index = 0; index < parameters.Count; index++)
                 if (parameters[index] is JsonObject parameter && Str(parameter["variance"]) is "in" or "out"
-                    && Get(Str(definition["name"]), offset + parameters.Count, offset + index, byName, refs) == null)
+                    && analysis.Get(Str(definition["name"]), offset + parameters.Count, offset + index) == null)
                     removals.Add(parameter);
         }
         foreach (var parameter in removals) parameter.Remove("variance");
@@ -45,98 +45,148 @@ static class ClrTypeVariance
 
     internal static string Get(string name, int arity, int index,
         IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs) =>
-        Variance(name, arity, index, definitions, refs, new HashSet<string>(StringComparer.Ordinal)) switch
-        {
-            1 => "out",
-            -1 => "in",
-            _ => null,
-        };
+        new Analysis(definitions, refs).Get(name, arity, index);
 
-    static int Variance(string name, int arity, int index,
-        IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs, HashSet<string> visiting)
+    sealed class Analysis(IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs)
     {
-        if (definitions.TryGetValue(name, out var local))
+        sealed class Candidate(JsonObject definition, int position, int variance)
         {
-            var offset = (local["capturedTypeParams"] as JsonArray)?.Count ?? 0;
-            var ownIndex = index - offset;
-            if (Str(local["kind"]) is not ("interface" or "delegate")
-                || local["typeParams"] is not JsonArray parameters
-                || ownIndex < 0 || ownIndex >= parameters.Count
-                || parameters[ownIndex] is not JsonObject parameter)
-                return 0;
-            var declared = Str(parameter["variance"]) switch { "out" => 1, "in" => -1, _ => 0 };
-            if (declared == 0) return 0;
-            var key = name + "\0" + index;
-            if (!visiting.Add(key)) return declared;
-            var conflict = Conflicts(local, index, declared, definitions, refs, visiting);
-            visiting.Remove(key);
-            return conflict ? 0 : declared;
+            public readonly JsonObject Definition = definition;
+            public readonly int Position = position, Variance = variance;
+            public readonly HashSet<Candidate> Dependents = new();
+            public bool Invalid;
         }
-        var reflected = refs.ResolveNetType(name, arity);
-        var arguments = reflected?.IsGenericTypeDefinition == true ? reflected.GetGenericArguments() : null;
-        if (arguments == null || index < 0 || index >= arguments.Length) return 0;
-        return (arguments[index].GenericParameterAttributes & GenericParameterAttributes.VarianceMask) switch
+
+        readonly Dictionary<(string, int), Candidate> candidates = new();
+        readonly Dictionary<(string, int, int), int> external = new();
+        readonly Queue<Candidate> pending = new(), invalid = new();
+
+        int Declared(string name, int arity, int index)
         {
-            GenericParameterAttributes.Covariant => 1,
-            GenericParameterAttributes.Contravariant => -1,
-            _ => 0,
-        };
+            if (definitions.TryGetValue(name, out var local))
+            {
+                var ownIndex = index - ((local["capturedTypeParams"] as JsonArray)?.Count ?? 0);
+                if (Str(local["kind"]) is not ("interface" or "delegate")
+                    || local["typeParams"] is not JsonArray parameters
+                    || ownIndex < 0 || ownIndex >= parameters.Count
+                    || parameters[ownIndex] is not JsonObject parameter) return 0;
+                return Str(parameter["variance"]) switch { "out" => 1, "in" => -1, _ => 0 };
+            }
+            var key = (name, arity, index);
+            if (!external.TryGetValue(key, out var value))
+                external[key] = value = refs?.PhysicalOwnerTypeParameterVariance(name, arity, index) switch
+                { "out" => 1, "in" => -1, _ => 0 };
+            return value;
+        }
+
+        Candidate Require(string name, int position, int variance)
+        {
+            var key = (name, position);
+            if (!candidates.TryGetValue(key, out var candidate))
+            {
+                candidates.Add(key, candidate = new Candidate(definitions[name], position, variance));
+                pending.Enqueue(candidate);
+            }
+            return candidate;
+        }
+
+        void Invalidate(Candidate candidate)
+        {
+            if (candidate.Invalid) return;
+            candidate.Invalid = true;
+            invalid.Enqueue(candidate);
+        }
+
+        public string Get(string name, int arity, int index)
+        {
+            var variance = Declared(name, arity, index);
+            if (variance == 0) return null;
+            if (definitions.ContainsKey(name))
+            {
+                var root = Require(name, index, variance);
+                while (pending.TryDequeue(out var candidate))
+                    if (!candidate.Invalid && Conflicts(candidate)) Invalidate(candidate);
+                while (invalid.TryDequeue(out var candidate))
+                    foreach (var dependent in candidate.Dependents) Invalidate(dependent);
+                if (root.Invalid) return null;
+            }
+            return variance == 1 ? "out" : "in";
+        }
+
+        bool Conflicts(Candidate candidate)
+        {
+            var definition = candidate.Definition;
+            bool Slot(JsonNode slot, int context) => TypeJson.Read(slot) is TypeNode type && Conflicts(type, candidate, context);
+            if (Slot(definition["base"], 1)) return true;
+            if (definition["interfaces"] is JsonArray interfaces && interfaces.Any(type => Slot(type, 1))) return true;
+            var methods = (definition["methods"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>();
+            if (Str(definition["kind"]) == "delegate") methods = methods.Prepend(definition);
+            foreach (var method in methods)
+            {
+                if (method["static"]?.GetValue<bool>() == true
+                    && method["virtual"]?.GetValue<bool>() != true && method["abstract"]?.GetValue<bool>() != true) continue;
+                if (method["params"] is JsonArray parameters
+                    && parameters.OfType<JsonObject>().Any(parameter => Slot(parameter["type"], -1))) return true;
+                if (Slot(method["ret"], 1)) return true;
+                // ECMA-335 II.9.7: method generic constraints are input positions; the type's own
+                // generic constraints impose no variance restriction.
+                if (method["typeParams"] is JsonArray genericParameters
+                    && genericParameters.OfType<JsonObject>().Any(parameter =>
+                        parameter["constraints"] is JsonArray constraints && constraints.Any(type => Slot(type, -1)))) return true;
+            }
+            return false;
+        }
+
+        bool Conflicts(TypeNode type, Candidate candidate, int context)
+        {
+            if (!Mentions(type, candidate.Position)) return false;
+            if (context == 0) return true;
+            bool Nested(TypeNode slot, int nestedContext) => Conflicts(slot, candidate, nestedContext);
+            switch (type)
+            {
+                case TypeNode.Tv: return context != candidate.Variance;
+                case TypeNode.Fqn { Args: { } arguments } application:
+                    for (var index = 0; index < arguments.Length; index++)
+                    {
+                        if (!Mentions(arguments[index], candidate.Position)) continue;
+                        var variance = Declared(application.Name, arguments.Length, index);
+                        if (variance == 0 || Nested(arguments[index], context * variance)) return true;
+                        if (definitions.ContainsKey(application.Name))
+                        {
+                            var dependency = Require(application.Name, index, variance);
+                            dependency.Dependents.Add(candidate);
+                            if (dependency.Invalid) Invalidate(candidate);
+                        }
+                    }
+                    return false;
+                case TypeNode.Projection projection: return Nested(projection.Of, context);
+                case TypeNode.Nullable nullable: return Nested(nullable.Of, context);
+                case TypeNode.Oblivious oblivious: return Nested(oblivious.Of, context);
+                case TypeNode.Array array: return Nested(array.Elem, 0);
+                case TypeNode.ByRef byRef: return Nested(byRef.Of, 0);
+                case TypeNode.Ptr pointer: return Nested(pointer.Of, 0);
+                case TypeNode.Mod modifier: return Nested(modifier.Of, context);
+                case TypeNode.Fn function:
+                    return Nested(function.Ret, context) || function.DelegateParams.Any(parameter => Nested(parameter, -context));
+                default: return false;
+            }
+        }
     }
 
-    static bool Conflicts(JsonObject definition, int position, int declared,
-        IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs, HashSet<string> visiting)
+    static bool Mentions(TypeNode type, int position) => type switch
     {
-        bool Slot(JsonNode slot, int context) => TypeJson.Read(slot) is TypeNode type
-            && Conflicts(type, position, context, declared, definitions, refs, visiting);
-
-        if (Slot(definition["base"], 1)) return true;
-        if (definition["interfaces"] is JsonArray interfaces && interfaces.Any(type => Slot(type, 1))) return true;
-        var methods = (definition["methods"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>();
-        if (Str(definition["kind"]) == "delegate") methods = methods.Prepend(definition);
-        foreach (var method in methods)
-        {
-            if (method["static"]?.GetValue<bool>() == true
-                && method["virtual"]?.GetValue<bool>() != true && method["abstract"]?.GetValue<bool>() != true)
-                continue;
-            if (method["params"] is JsonArray parameters
-                && parameters.OfType<JsonObject>().Any(parameter => Slot(parameter["type"], -1))) return true;
-            if (Slot(method["ret"], 1)) return true;
-            // ECMA-335 II.9.7: method generic constraints are input positions; the type's own
-            // generic constraints impose no variance restriction.
-            if (method["typeParams"] is JsonArray genericParameters
-                && genericParameters.OfType<JsonObject>().Any(parameter =>
-                    parameter["constraints"] is JsonArray constraints && constraints.Any(type => Slot(type, -1))))
-                return true;
-        }
-        return false;
-    }
-
-    static bool Conflicts(TypeNode type, int position, int context, int declared,
-        IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs, HashSet<string> visiting)
-    {
-        bool Nested(TypeNode slot, int nestedContext) =>
-            Conflicts(slot, position, nestedContext, declared, definitions, refs, visiting);
-        switch (type)
-        {
-            case TypeNode.Tv variable:
-                return variable.Scope == "type" && variable.I == position && (context == 0 || context != declared);
-            case TypeNode.Fqn { Args: { } arguments } application:
-                for (var index = 0; index < arguments.Length; index++)
-                    if (Nested(arguments[index], context * Variance(application.Name, arguments.Length, index,
-                            definitions, refs, visiting))) return true;
-                return false;
-            case TypeNode.Projection projection: return Nested(projection.Of, context);
-            case TypeNode.Nullable nullable: return Nested(nullable.Of, context);
-            case TypeNode.Oblivious oblivious: return Nested(oblivious.Of, context);
-            case TypeNode.Array array: return Nested(array.Elem, 0);
-            case TypeNode.ByRef byRef: return Nested(byRef.Of, 0);
-            case TypeNode.Ptr pointer: return Nested(pointer.Of, 0);
-            case TypeNode.Mod modifier: return Nested(modifier.Of, context);
-            case TypeNode.Fn function:
-                return Nested(function.Ret, context) || function.DelegateParams.Any(parameter => Nested(parameter, -context));
-            default: return false;
-        }
-    }
+        TypeNode.Tv variable => variable.Scope == "type" && variable.I == position,
+        TypeNode.Fqn { Args: { } arguments } => arguments.Any(argument => Mentions(argument, position)),
+        TypeNode.Projection projection => Mentions(projection.Of, position),
+        TypeNode.Nullable nullable => Mentions(nullable.Of, position),
+        TypeNode.Oblivious oblivious => Mentions(oblivious.Of, position),
+        TypeNode.Array array => Mentions(array.Elem, position),
+        TypeNode.ByRef byRef => Mentions(byRef.Of, position),
+        TypeNode.Ptr pointer => Mentions(pointer.Of, position),
+        TypeNode.Mod modifier => Mentions(modifier.Of, position),
+        TypeNode.Fn function => Mentions(function.Ret, position) || function.DelegateParams.Any(parameter => Mentions(parameter, position)),
+        _ => false,
+    };
 
     internal static void SelfTest()
     {
@@ -178,7 +228,35 @@ static class ClrTypeVariance
                     throw new InvalidOperationException($"CLR variance self-test failed for {name} (reverse={reverse})");
             }
         }
-        Console.WriteLine("[CLR variance] self-test OK (inherited/native-shaped invariance, transitive signatures, source order, recursion, method constraints)");
+        // A dense, legal recursive graph must be checked as dependencies, not factorially many
+        // simple paths. One invalid input in the same graph must invalidate every dependent.
+        foreach (var broken in new[] { false, true })
+        {
+            var types = new JsonArray();
+            for (var index = 0; index < 12; index++)
+            {
+                var methods = new JsonArray();
+                for (var target = 0; target < 12; target++)
+                    if (target != index) methods.Add(new JsonObject
+                    {
+                        ["ret"] = TypeJson.Write(new TypeNode.Fqn("Cycle" + target, new TypeNode[] { new TypeNode.Tv("type", 0) })),
+                    });
+                if (broken && index == 11) methods.Add(new JsonObject
+                {
+                    ["params"] = new JsonArray(new JsonObject { ["type"] = TypeJson.Write(new TypeNode.Tv("type", 0)) }),
+                });
+                types.Add(new JsonObject
+                {
+                    ["name"] = "Cycle" + index, ["kind"] = "interface",
+                    ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T", ["variance"] = "out" }),
+                    ["methods"] = methods,
+                });
+            }
+            ApplyAll(new[] { new JsonObject { ["types"] = types } }, null);
+            if (types.Any(type => Str(type["typeParams"][0]["variance"]) != (broken ? null : "out")))
+                throw new InvalidOperationException("CLR variance dense recursive graph self-test failed");
+        }
+        Console.WriteLine("[CLR variance] self-test OK (inherited invariance, transitive signatures, order, dense recursion, method constraints)");
     }
 
     static string Str(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;

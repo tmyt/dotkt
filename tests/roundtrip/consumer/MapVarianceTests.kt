@@ -4,7 +4,22 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.mapvariance.*
 
+interface ImportedSource<out T> : CovariantSource<T>
+interface ImportedSink<in T> : ContravariantSink<T>
+
 class MapVarianceTests {
+    @TestAttribute
+    fun physicalFlagsRetainLegalImportedVarianceButNotInvariantMapVariance() {
+        val producer = System.Reflection.Assembly.Load("RoundtripProducer")
+        val map = producer.GetType("roundtrip.mapvariance.ProjectedMap`4", true)!!
+        assertTrue(map.GetGenericArguments()[1].GenericParameterAttributes == System.Reflection.GenericParameterAttributes.None)
+        val consumer = System.Reflection.Assembly.GetExecutingAssembly()
+        val source = consumer.GetType("roundtriptests.mapvariance.ImportedSource`1", true)!!
+        val sink = consumer.GetType("roundtriptests.mapvariance.ImportedSink`1", true)!!
+        assertTrue(source.GetGenericArguments()[0].GenericParameterAttributes == System.Reflection.GenericParameterAttributes.Covariant)
+        assertTrue(sink.GetGenericArguments()[0].GenericParameterAttributes == System.Reflection.GenericParameterAttributes.Contravariant)
+    }
+
     @TestAttribute
     fun inheritedInvariantNativeFaceRetainsKotlinCovarianceAcrossDlls() {
         System.Reflection.Assembly.Load("RoundtripProducer").GetTypes()

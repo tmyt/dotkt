@@ -17,6 +17,9 @@ fun castMap(value: Any): Map<String, Any> = value as Map<String, Any>
 
 interface ProjectedMap<K, out V> : Map<K, V>
 
+interface CovariantSource<out T> { fun read(): T }
+interface ContravariantSink<in T> { fun accept(value: T) }
+
 class CovariantTextMap<out V>(source: Map<String, V>) :
     ProjectedMap<String, V>, Map<String, V> by source
 
