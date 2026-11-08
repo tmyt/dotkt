@@ -33,7 +33,9 @@ static class ClrEventImplBinding
         JsonArray AddSignature,
         JsonArray RemoveSignature,
         string AddIdentity,
-        string RemoveIdentity);
+        string RemoveIdentity,
+        string AddVisibility,
+        string RemoveVisibility);
 
     public static JsonNode BindImplementations(JsonNode root, ReferenceMetadataIndex refs)
     {
@@ -103,7 +105,7 @@ static class ClrEventImplBinding
                 foreach (var type in types.OfType<JsonObject>()) IndexType(type);
         }
 
-        (JsonArray Signature, string Identity) AccessorSignature(SupertypeGraph.Def definition, string name)
+        (JsonArray Signature, string Identity, string Visibility) AccessorSignature(SupertypeGraph.Def definition, string name)
         {
             var candidates = definition.Methods.OfType<JsonObject>()
                 .Where(method => Str(method["name"]) == name
@@ -122,7 +124,7 @@ static class ClrEventImplBinding
             selected[DeclarationIdentityBinding.Key] ??= DeclarationIdentityBinding.PhysicalOnlyId(
                 "clr-event-accessor:" + new JsonArray(definition.Name, name).ToJsonString(), "accessor");
             return (FunctionSignatureIdentity.Signature((JsonArray)selected["params"]),
-                Str(selected[DeclarationIdentityBinding.Key]));
+                Str(selected[DeclarationIdentityBinding.Key]), Str(selected["vis"]) ?? "public");
         }
 
         LocalEventBinding ResolveFromOwner(TypeNode.Fqn owner, string eventName)
@@ -158,7 +160,8 @@ static class ClrEventImplBinding
                         matches.Add(new LocalEventBinding(
                             SupertypeGraph.SubstOwnerTvs(declaredDelegate, ownerArgs),
                             spec,
-                            add.Signature, remove.Signature, add.Identity, remove.Identity));
+                            add.Signature, remove.Signature, add.Identity, remove.Identity,
+                            add.Visibility, remove.Visibility));
                     }
                     foreach (var parent in definition.Interfaces)
                         if (SupertypeGraph.SubstOwnerTvs(parent, ownerArgs) is TypeNode.Fqn constructed)
@@ -226,6 +229,27 @@ static class ClrEventImplBinding
                         // A type-parameter receiver requires an address plus constrained. dispatch.  A concrete local
                         // owner uses the synthesized public-virtual accessor normally.
                         obj["dispatch"] = TypeJson.Read(obj["type"]) is TypeNode.Tv ? "constrained" : "callvirt";
+                        var visibility = kind == "clrEventAdd" ? binding.AddVisibility : binding.RemoveVisibility;
+                        if (visibility is "private" or "protected")
+                        {
+                            // Retained handles put this call on a generated callback TypeDef. Use the ordinary exact
+                            // member-call path so lexical-access lowering can bridge it without widening the event.
+                            var constrained = TypeJson.Read(obj["type"]) is TypeNode.Tv;
+                            var call = new JsonObject
+                            {
+                                ["k"] = constrained ? "constrainedCall" : "callInstance",
+                                [constrained ? "iface" : "ownerType"] = obj["accessorOwner"]!.DeepClone(),
+                                ["method"] = obj["accessor"]!.DeepClone(),
+                                [DeclarationIdentityBinding.Key] = obj[DeclarationIdentityBinding.Key]!.DeepClone(),
+                                ["sig"] = obj["sig"]!.DeepClone(), ["recv"] = obj["recv"]?.DeepClone(),
+                                ["args"] = new JsonArray(obj["handler"]?.DeepClone()),
+                                ["virtual"] = true, ["ret"] = TypeJson.Fqn("kotlin.Unit"),
+                                ["sty"] = TypeJson.Fqn("kotlin.Unit"),
+                            };
+                            if (constrained) call["recvType"] = obj["type"]!.DeepClone();
+                            obj.Clear();
+                            foreach (var pair in call) obj[pair.Key] = pair.Value?.DeepClone();
+                        }
                     }
                 }
                 foreach (var child in obj.ToList())

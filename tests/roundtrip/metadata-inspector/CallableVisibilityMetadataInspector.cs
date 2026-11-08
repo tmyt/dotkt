@@ -68,6 +68,42 @@ internal static class CallableVisibilityMetadataInspector
         Require((fragment.Package.Function.Single(function => Name(fragment, function.Name) == "publicEntry").Flags & 14) == 6,
             "public function control changed");
         VerifyOverrides(md, klibPath);
+        VerifyEvents(md, klibPath);
+    }
+
+    public static void VerifyEvents(string dllPath, string klibPath)
+    {
+        using var stream = File.OpenRead(dllPath);
+        using var pe = new PEReader(stream);
+        VerifyEvents(pe.GetMetadataReader(), klibPath);
+    }
+
+    static void VerifyEvents(MetadataReader md, string klibPath)
+    {
+        const string package = "roundtrip.eventvisibility";
+        var native = md.GetTypeDefinition(md.TypeDefinitions.Single(handle =>
+            TypeName(md, handle) == package + ".EventVisibilitySource"));
+        var published = native.GetEvents().Select(md.GetEventDefinition)
+            .Single(declaration => md.GetString(declaration.Name) == "Published").GetAccessors();
+        foreach (var handle in new[] { published.Adder, published.Remover, published.Raiser })
+        {
+            Require(!handle.IsNil && (md.GetMethodDefinition(handle).Attributes & MethodAttributes.MemberAccessMask)
+                == MethodAttributes.Public, "PublishedApi event lost native public access");
+            CheckCarrier(md, handle);
+        }
+        foreach (var field in native.GetFields().Select(md.GetFieldDefinition))
+            Require((field.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Private,
+                "event visibility must not widen backing storage");
+
+        var fragment = Fragment(klibPath, package);
+        var source = fragment.Class.Single(type => QualifiedName(fragment, type.FqName) == package + ".EventVisibilitySource");
+        Require(!source.Property.Any(property => Name(fragment, property.Name) is "Secret" or "Assembly"),
+            "private/internal native events leaked into the imported surface");
+        foreach (var (name, visibility) in new[] { ("Family", 4), ("Published", 0), ("Visible", 6) })
+        {
+            var property = source.Property.Single(property => Name(fragment, property.Name) == name);
+            Require((property.Flags & 14) == visibility, name + ": event source visibility changed in KLIB");
+        }
     }
 
     static void VerifyOverrides(MetadataReader md, string klibPath)

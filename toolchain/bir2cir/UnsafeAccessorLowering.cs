@@ -165,6 +165,13 @@ static partial class UnsafeAccessorLowering
                 Rewrite(pair.Value, caller, hosts, accessors, refs, inner, family);
 
         var kind = Str(obj["k"]);
+        if (kind is "clrEventAdd" or "clrEventRemove"
+            && ClrMemberResolution.RestrictedEventCall(obj, refs) is JsonObject eventCall)
+        {
+            obj.Clear();
+            foreach (var pair in eventCall) obj[pair.Key] = pair.Value?.DeepClone();
+            kind = Str(obj["k"]);
+        }
         if (kind is "callInstance" or "callStatic" or "constrainedCall")
             RewriteMethod(obj, kind, caller, hosts, accessors, refs, inner, family);
         else if (kind == "newBoundDelegate") RewriteBoundDelegate(obj, caller, hosts, accessors, refs, inner, family);

@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 3 && args[0] == "--event-visibility")
+{
+    CallableVisibilityMetadataInspector.VerifyEvents(args[1], args[2]);
+    Console.WriteLine("event visibility in native accessors and projected KLIB: OK");
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--external-awaiters")
 {
     ExternalAwaitMetadataInspector.Verify(args[1]);

@@ -1372,18 +1372,20 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 		val overriddenOwners = p.overriddenSymbols.mapNotNull { (it.owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() }
 		fun overridesFor(kind: String) = if (overriddenOwners.isEmpty()) "" else
 			""","overrides":[${overriddenOwners.joinToString(",") { o -> """{"owner":${fqnJson(o)},"member":${str(name)},"kind":${str(kind)},"arity":1}""" }}]"""
+		val visibility = str(visOf(p))
+		val publishedApi = attrsJson(p.annotations.filter { it.type.classFqName?.asString() == "kotlin.PublishedApi" })
 		fun accessor(mname: String, virtual: Boolean, kind: String, ov: String) =
-			"""{"name":${str(mname)},"static":false,"override":false,"virtual":$virtual,"abstract":false,"objectOverride":false,"vis":"public","params":[{"name":"value","type":$handlerJson}],"ret":$unit,"body":[{"k":"clrEventAccessor","kind":${str(kind)},"event":${str(name)}}]$ov}"""
+			"""{"name":${str(mname)},"static":false,"override":false,"virtual":$virtual,"abstract":false,"objectOverride":false,"vis":$visibility,"params":[{"name":"value","type":$handlerJson}],"ret":$unit,"body":[{"k":"clrEventAccessor","kind":${str(kind)},"event":${str(name)}}],"attrs":[$publishedApi]$ov}"""
 		val policyField = if (delegateCall.symbol.owner.parameters.any(::isValueParameter)) {
 			val field = p.backingField ?: error("custom CLR event '$name' has no Kotlin delegate field")
 			""","policyField":${str(field.name.asString())}"""
 		} else ""
 		backings.add("""{"k":"clrEventBacking","name":${str(name)},"handlerType":$handlerJson$policyField}""")
-		// add_/remove_: public VIRTUAL NEWSLOT (implicitly implements the interface add_/remove_ slot; bir2cir also wires the
+		// add_/remove_: VIRTUAL NEWSLOT (implicitly implements the interface add_/remove_ slot; bir2cir also wires the
 		// explicit MethodImpl). bir2cir rewrites the `value` param type to the concrete delegate `D` + the body to the CAS loop.
 		methods.add(accessor("add_$name", virtual = true, kind = "add", ov = overridesFor("event-add")))
 		methods.add(accessor("remove_$name", virtual = true, kind = "remove", ov = overridesFor("event-remove")))
-		// raise_: public NON-virtual (not an interface member; the raise-from-outside deviation, §6). bir2cir sets its params
+		// raise_: NON-virtual (not an interface member; the raise-from-outside deviation, §6). bir2cir sets its params
 		// to the delegate's Invoke params + the body to `field?.Invoke(args)`; the `value` placeholder param is overwritten.
 		methods.add(accessor("raise_$name", virtual = false, kind = "raise", ov = ""))
 	}
