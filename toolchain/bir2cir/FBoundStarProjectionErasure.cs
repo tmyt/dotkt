@@ -4779,7 +4779,9 @@ static partial class FBoundStarProjectionErasure
     static void BindInheritedStarMember(JsonObject call, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool alignResult = true)
     {
-        if (Bool(call[ExactBridgeOwnerCallKey])) return;
+        // A scalar MemberRef already selects a physical MethodDef. Rebinding it to a Kotlin existential
+        // slot would leave its operand and access facts naming different declarations.
+        if (Bool(call[ExactBridgeOwnerCallKey]) || call["memberRef"] != null) return;
         var useKind = Str(call["k"]);
         if (useKind is not ("callInstance" or "newBoundDelegate")
             || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn { Args: { } args } f

@@ -807,7 +807,7 @@ sealed class Pipeline
             // the ref.dll-reading layer — resolves the concrete delegate `D` (the interface event's EventHandlerType) and
             // rewrites field-like accessor bodies to CIR `clrEventAccessorImpl` directives + inserts `<E>$delegate : D`,
             // or routes custom accessors through ordinary calls on the retained Kotlin policy field, plus
-            // a type-level `clrEventDecl`. It also binds `clrEventRaise` to a `raise_<E>` call. App/rt only (no .NET events
+            // a type-level `clrEventDecl`. Raise sites bind module-wide after inner owner projection. App/rt only (no .NET events
             // in the ref/rt stdlib self-build).
             if (!_options.RefBuild) hoisted = ClrEventImplBinding.BindImplementations(hoisted, refs, localEventDeclarations);
             // Consume CharSequence property semantics while calls still carry the explicit Kotlin property name and
@@ -872,12 +872,11 @@ sealed class Pipeline
             staged.Add((substituted, outputName));
         }
 
-        // Event raises and subscriptions can target a Kotlin-declared event in a sibling source file. Every
+        // Event subscriptions can target a Kotlin-declared event in a sibling source file. Every
         // implementation now has its concrete delegate-derived declaration, so bind all call sites to those exact
         // module-wide facts before type lowering.
         if (!_options.RefBuild)
         {
-            ClrEventImplBinding.BindRaisesAll(staged.Select(s => s.Root), refs);
             ClrEventImplBinding.BindLocalSubscriptionsAll(staged.Select(s => s.Root));
         }
 
@@ -905,6 +904,9 @@ sealed class Pipeline
         TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList(), refs);
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
         NullableTvErasureCallRealign.ProjectDeclarationApplications(nullableTvDeclRets);
+        // A referenced raise's exact native signature is in flattened CLR order. Resolve it only after the
+        // declaring owner's Kotlin inner application has been projected, before later value-view erasure.
+        if (!_options.RefBuild) ClrEventImplBinding.BindRaisesAll(staged.Select(s => s.Root), refs);
 
         // Preserve open array elements as ordinary erased values before array materialization
         // and constrained-receiver binding. Exact native locations are allocated separately by

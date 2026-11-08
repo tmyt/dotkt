@@ -210,6 +210,10 @@ static partial class UnsafeAccessorLowering
         access.Remove("memberMethodTypeParams");
         access.Remove("memberSignature");
         access.Remove("memberReturnType");
+        // An already-selected external operand owns its native declaration identity. A value-view projection on
+        // ownerType must not redirect lexical-access checking to an existential facade with no such accessor.
+        if (access["memberRef"]?["declaringType"] is JsonObject nativeOwner)
+            access["ownerType"] = nativeOwner.DeepClone();
         // UnsafeAccessorKind.Method always performs virtual dispatch. A frontend-authorized `super.X()` is instead
         // a lexical non-virtual edge. It may stay direct only when the call consumes THIS method's `this`; verified IL
         // rejects a non-virtual base call on a captured outer receiver (`ThisMismatch`). A lifted carrier therefore
@@ -433,6 +437,14 @@ static partial class UnsafeAccessorLowering
             var targetCall = (JsonObject)access.DeepClone();
             targetCall["recv"] = new JsonObject { ["k"] = "this" };
             targetCall["ownerType"] = TypeJson.Write(resolvedOwner);
+            if (targetCall["memberRef"]?["declaringType"] is JsonObject referencedOwner)
+            {
+                // The forwarder runs in the enclosing class frame, not the lifted carrier's frame. Keep the exact
+                // selected MethodDef and rebind only its constructed owner arguments through that class graph.
+                if (resolvedOwner.Args is { Length: > 0 })
+                    referencedOwner["args"] = TypeJson.Write(ClrMemberResolution.PhysicalInstanceView(refs, resolvedOwner))["args"]?.DeepClone();
+                else referencedOwner.Remove("args");
+            }
             targetCall["sig"] = declarationSignature.DeepClone();
             targetCall["args"] = new JsonArray(parameters.OfType<JsonObject>().Select(parameter =>
                 (JsonNode)new JsonObject { ["k"] = "local", ["name"] = parameter["name"]?.DeepClone() }).ToArray());

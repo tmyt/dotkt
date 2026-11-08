@@ -198,19 +198,23 @@ selected by EventInfo and carried as exact MethodImpl operands, not inferred fro
 ### 4.3 RAISE — `vm.E.invoke(sender, args)`
 
 - **kotc**: `invoke` resolved on `kotlin.clr.ClrEvent<T>` (`operator fun invoke`) whose
-  receiver is a `clrEventGet` → a dedicated dialect node `clrEventRaise{type,event,static,recv,args}`
+  receiver is a `clrEventGet` → a dedicated dialect node `clrEventRaise{type,event,super,recv,args}`
   (parallel to `clrEventGet`; emitted in `BirEmitterCalls.kt`). This declaration-bound raise does not
   construct a consumer handle. Because raise is `operator fun invoke`, **`vm.E.invoke(s, a)` and `vm.E(s, a)` desugar
   to the identical call** (Kotlin's invoke convention) → both produce `clrEventRaise`; the author
   writes whichever form (`.invoke` = explicit/C#-`Invoke`-parallel, `E(…)` = idiomatic sugar),
-  ABI-identical.
+  ABI-identical. The owner is the frontend-selected event declaration instantiated through the receiver,
+  not an inheriting receiver's class. The receiver and arguments retain their ordinary evaluation order.
 - **bir2cir** (`ClrEventImplBinding`): bind `clrEventRaise` to
-  a call of the declaring type's `raise_<E>` accessor: `clrRaiseCall{recv, accessor:"raise_<E>", args}`.
-  **Guard:** raise is legal only for a **Kotlin-implemented** event (one that has a synthesized
-  `raise_<E>`); `clrEventRaise` against a *consumed* foreign .NET event (no `raise_`) is a bir2cir
-  hard error ("cannot raise a .NET event you do not declare") — the correct CLR rule (you raise on the
-  declaring instance).
-- **ilemit**: emit the call to `raise_<E>` (§4.2 emitted its body as `field?.Invoke(args)` — the
+  an ordinary instance call of its actual raise accessor. A local event record identifies its compiler-authored
+  MethodDef; a referenced Kotlin event supplies its exact EventInfo raise method and constructed owner.
+  The reference call carries the already-selected scalar `memberRef`, not a generated-name lookup in ilemit.
+  `super` remains non-virtual, including through lifted callbacks. Restricted accessor calls retain their
+  visibility facts for the ordinary lexical-access lowering; neither the event nor its storage is widened.
+  **Guard:** raise is legal only for a **Kotlin-implemented** event, whether local or from a DLL.
+  A consumed foreign .NET event remains non-raisable; a similarly named method or a native `.fire`
+  association alone does not authorize it.
+- **ilemit**: emit the resolved ordinary call (§4.2 emitted its body as `field?.Invoke(args)` — the
   null-conditional makes **raise with zero subscribers a safe no-op**, matching a C# field-like event;
   the backing delegate is null until the first subscription, so `vm.E(s, a)` on an unsubscribed event does
   nothing rather than NPE-ing).
