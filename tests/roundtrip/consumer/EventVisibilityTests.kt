@@ -5,6 +5,8 @@ import System.Reflection.BindingFlags
 import roundtrip.eventvisibility.EventVisibilitySource
 import roundtrip.eventvisibility.InheritedDefaultVisibilitySource
 import roundtrip.eventvisibility.PolicyVisibilitySource
+import roundtrip.eventvisibility.readStarEvent
+import roundtrip.eventvisibility.readBoundEvent
 
 private class DerivedVisibilitySource : EventVisibilitySource<Int>() {
     fun familyHandle() = Family
@@ -33,6 +35,8 @@ class EventVisibilityTests {
     @TestAttribute
     fun restrictedRetainedHandlesAndMovedDefaultsKeepExactGenericAccess() {
         val source = DerivedVisibilitySource()
+        readStarEvent(source)
+        readBoundEvent(source)
         val handles = listOf(source.secretHandle(), source.familyHandle(), source.assemblyHandle(),
             source.publishedHandle(), source.Visible, source.defaultHandle(), source.internalDefaultHandle())
         var sum = 0

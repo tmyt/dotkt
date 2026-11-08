@@ -25,6 +25,9 @@ class InheritedDefaultVisibilitySource : EventVisibilitySource<Int>() {
     fun defaultFamilyHandle(event: ClrEvent<System.Action1<Int>> = Family): ClrEvent<System.Action1<Int>> = event
 }
 
+fun readStarEvent(source: EventVisibilitySource<*>) { source.Visible }
+fun <S : EventVisibilitySource<Int>> readBoundEvent(source: S) { source.Visible }
+
 private class VisibilityPolicy : ClrEventPolicy<System.Action1<Int>>() {
     private var handler: System.Action1<Int>? = null
     override fun add(handler: System.Action1<Int>) { this.handler = handler }

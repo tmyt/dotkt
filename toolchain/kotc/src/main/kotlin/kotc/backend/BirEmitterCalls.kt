@@ -1082,7 +1082,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		if (eventRecv != null) {
 			// A moved default must still address the selected declaration, not an inheriting receiver's class.
 			val declaredOwner = if (anonNames.containsKey(localEventOwner)) ownerSpec(localEventOwner, eventRecv.type)
-				else correspondingSupertypeInstantiation(eventRecv.type, localEventOwner)?.let(::birType)
+				else correspondingSupertypeInstantiation(eventRecv.type, localEventOwner, allowCapturedArguments = true)?.let(::birType)
 					?: error("selected event '${localEventProp.name}' has no declaring receiver supertype")
 			return """{"k":"clrEventGet","type":${declaredOwner.toJson()},"name":${str(localEventProp.name.asString())},"static":false,"recv":${expr(eventRecv)},"sty":${birType(call.type).toJson()}${eventVisibilityFact(localEventProp)}${overridesJson(callee)}}"""
 		}
