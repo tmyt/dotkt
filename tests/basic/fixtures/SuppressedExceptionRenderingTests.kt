@@ -21,8 +21,7 @@ private class RenderOpaqueException(cause: Throwable) : RuntimeException("opaque
 class SuppressedExceptionRenderingTests {
     @TestAttribute
     fun keepsNativeDetailsAndRendersSuppressionInOrder() {
-        val cause = RuntimeException("native-cause")
-        val plain = try { throw IllegalStateException("native-primary", cause) }
+        val plain = try { throw IllegalStateException("native-primary", RuntimeException("native-cause")) }
             catch (failure: Throwable) { failure }
         val nativeException = plain as System.Exception
         val native = nativeException.ToString()

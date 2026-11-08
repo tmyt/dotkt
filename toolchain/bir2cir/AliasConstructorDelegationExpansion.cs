@@ -240,6 +240,8 @@ sealed class AliasConstructorDelegationExpansion
                     $"bir2cir: constructor delegation into alias '{owner}' carries {actualArguments.Count} arguments "
                     + $"for a {adapter.Parameters.Length}-parameter declaration");
 
+            // Finish nested arguments before reserving their names for the enclosing base-call temporaries.
+            RewriteConstructions(actualArguments);
             var replacements = MaterializeArguments(
                 ctor, actualArguments, adapter.Parameters, adapter.Signature,
                 adapter.Statements, adapter.Arguments);
@@ -382,6 +384,8 @@ sealed class AliasConstructorDelegationExpansion
     {
         var used = new HashSet<string>(StringComparer.Ordinal);
         CollectNames(ctor, used);
+        // Initializers can contain already-expanded adapters with their own serialized local names.
+        CollectNames(arguments, used);
         // Substitution copies these consumer temps into the serialized adapter before FreshenLocals runs.  Reserve
         // every adapter spelling up front so that the subsequent name-based alpha conversion can never mistake an
         // inserted consumer read for a declaration-owned read merely because two compiler processes restarted the
@@ -395,12 +399,16 @@ sealed class AliasConstructorDelegationExpansion
             var basis = $"cir$alias${System.Threading.Interlocked.Increment(ref _localCounter)}";
             var name = basis;
             for (var suffix = 1; !used.Add(name); suffix++) name = $"{basis}${suffix}";
+            // Move completed argument trees: cloning would lose the identity of terminal constructions and
+            // cause the later walk to expand them again, after their enclosing names have already been reserved.
+            var argument = arguments[i];
+            arguments[i] = null;
             pre.Add(new JsonObject
             {
                 ["k"] = "var",
                 ["name"] = name,
                 ["type"] = TypeJson.Write(signature[i]),
-                ["init"] = arguments[i]?.DeepClone(),
+                ["init"] = argument,
             });
             replacements[parameters[i]] = new JsonObject
             {
@@ -764,6 +772,119 @@ sealed class AliasConstructorDelegationExpansion
         if (caught != "caught$1" || range != "consumer" || loop != "item$1" || parameter != "argument")
             throw new InvalidOperationException(
                 "AliasConstructorDelegationExpansion self-test: substitution/freshening composition changed lexical ownership");
+
+        // An incoming value block may carry names minted by the producer of an adapter. Its
+        // locals must not shadow a newly materialized outer argument, even across compiler processes.
+        var nestedArgumentName = $"cir$alias${_localCounter + 1}";
+        var argumentHost = new JsonObject();
+        var nestedArgument = new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray(new JsonObject
+            {
+                ["k"] = "var", ["name"] = nestedArgumentName,
+                ["type"] = TypeJson.Fqn("System.Object"),
+                ["init"] = new JsonObject { ["k"] = "const", ["value"] = null },
+            }),
+            ["result"] = new JsonObject { ["k"] = "const", ["value"] = "argument" },
+        };
+        var argumentReads = MaterializeArguments(argumentHost, new JsonArray(nestedArgument),
+            new[] { "argument" }, new TypeNode[] { new TypeNode.Fqn("System.String") });
+        var argumentTemporary = Str(argumentHost["preStmts"]?[0]?["name"]);
+        if (argumentTemporary == nestedArgumentName || Str(argumentReads["argument"]?["name"]) != argumentTemporary
+            || Str(argumentHost["preStmts"]?[0]?["init"]?["stmts"]?[0]?["name"]) != nestedArgumentName)
+            throw new InvalidOperationException(
+                "AliasConstructorDelegationExpansion self-test: argument temporary captured an incoming argument local");
+        SelfTestNestedConstructions();
         Console.WriteLine("[C# alias constructor expansion] self-test OK (params + catch + loop binders; freshening)");
+    }
+
+    static void SelfTestNestedConstructions()
+    {
+        var text = new TypeNode.Fqn("System.String");
+        var value = new TypeNode.Fqn("System.Object");
+        var innerType = new TypeNode.Fqn("Probe.InnerAlias");
+        var outerSignature = new TypeNode[] { text, innerType };
+        var terminalSignature = new TypeNode[] { text, value };
+        static JsonObject Read(string name) => new() { ["k"] = "local", ["name"] = name };
+        static JsonObject Constant(string text) => new() { ["k"] = "const", ["value"] = text };
+        static JsonObject Constructor(TypeNode[] signature) => new()
+        {
+            ["params"] = new JsonArray(signature.Select((type, index) => (JsonNode)new JsonObject
+            {
+                ["name"] = $"p{index}", ["type"] = TypeJson.Write(type),
+            }).ToArray()),
+        };
+        JsonObject InnerConstruction() => new()
+        {
+            ["k"] = "new", ["type"] = TypeJson.Write(innerType),
+            ["argTypes"] = TypeArray(new[] { text }), ["args"] = new JsonArray(Constant("inner")),
+        };
+
+        foreach (var baseDelegation in new[] { false, true })
+        {
+            // Model adapters from a separate producer, whose retained names overlap this consumer's next temps.
+            var adapterLocal = $"cir$alias${_localCounter + (baseDelegation ? 1 : 2)}";
+            var expansion = new AliasConstructorDelegationExpansion(new Dictionary<string, JsonObject>
+            {
+                ["Probe.InnerAlias"] = new() { ["ctors"] = new JsonArray(
+                    Constructor(new[] { text }), Constructor(terminalSignature)) },
+                ["Probe.OuterAlias"] = new() { ["ctors"] = new JsonArray(Constructor(outerSignature)) },
+            }, null);
+            JsonArray AdapterStatements() => new(new JsonObject
+            {
+                ["k"] = "var", ["name"] = adapterLocal, ["type"] = TypeJson.Write(text), ["init"] = Read("p0"),
+            });
+            expansion._memo[("Probe.InnerAlias", 0)] = new AliasConstructorAdapter(
+                new[] { "p0" }, new[] { text }, baseDelegation ? AdapterStatements() : new JsonArray(),
+                new JsonArray(Read(baseDelegation ? adapterLocal : "p0"), Constant(null)), terminalSignature);
+            expansion._memo[("Probe.InnerAlias", 1)] = new AliasConstructorAdapter(
+                new[] { "p0", "p1" }, terminalSignature,
+                baseDelegation ? new JsonArray() : AdapterStatements(),
+                new JsonArray(Read(baseDelegation ? "p0" : adapterLocal), Read("p1")), terminalSignature);
+            expansion._memo[("Probe.OuterAlias", 0)] = new AliasConstructorAdapter(
+                new[] { "p0", "p1" }, outerSignature, new JsonArray(),
+                new JsonArray(Read("p0"), Read("p1")), terminalSignature);
+
+            var arguments = new JsonArray(Constant("outer"), InnerConstruction());
+            var root = baseDelegation ? new JsonObject
+            {
+                ["types"] = new JsonArray(new JsonObject
+                {
+                    ["name"] = "Probe.Consumer", ["base"] = TypeJson.Fqn("Probe.OuterAlias"),
+                    ["ctors"] = new JsonArray(new JsonObject
+                    {
+                        ["params"] = new JsonArray(), ["baseArgs"] = arguments,
+                        ["delegationSig"] = TypeArray(outerSignature),
+                    }),
+                }),
+            } : new JsonObject
+            {
+                ["expression"] = new JsonObject
+                {
+                    ["k"] = "new", ["type"] = TypeJson.Fqn("Probe.OuterAlias"),
+                    ["args"] = arguments, ["argTypes"] = TypeArray(outerSignature),
+                },
+            };
+            expansion.Apply(root);
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            var terminalCount = 0;
+            void Inspect(JsonNode node)
+            {
+                if (node is JsonObject obj)
+                {
+                    if (Str(obj["k"]) == "var" && !names.Add(Str(obj["name"])))
+                        throw new InvalidOperationException(
+                            $"AliasConstructorDelegationExpansion self-test: nested {(baseDelegation ? "base delegation" : "construction")} shadows an argument");
+                    if (Str(obj["k"]) == "new" && TypeJson.OwnerName(obj["type"]) == innerType.Name) terminalCount++;
+                    foreach (var child in obj.Select(pair => pair.Value)) Inspect(child);
+                }
+                else if (node is JsonArray array) foreach (var child in array) Inspect(child);
+            }
+            Inspect(root);
+            if (terminalCount != 1 || names.Count != (baseDelegation ? 4 : 3))
+                throw new InvalidOperationException(
+                    "AliasConstructorDelegationExpansion self-test: a completed nested argument was expanded again");
+        }
     }
 }
