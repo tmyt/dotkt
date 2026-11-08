@@ -446,6 +446,7 @@ sealed class Pipeline
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
         var staged = new List<(JsonNode Root, string OutputName)>();
+        var localEventDeclarations = new ClrEventImplBinding.LocalEvents(birFiles.Select(file => file.Root), refs.IsByRefLikeFqn);
         var sharedCells = new List<SharedSyntheticSynthesis.CellStorage>();
         foreach (var bir in birFiles)
         {
@@ -808,7 +809,7 @@ sealed class Pipeline
             // or routes custom accessors through ordinary calls on the retained Kotlin policy field, plus
             // a type-level `clrEventDecl`. It also binds `clrEventRaise` to a `raise_<E>` call. App/rt only (no .NET events
             // in the ref/rt stdlib self-build).
-            if (!_options.RefBuild) hoisted = ClrEventImplBinding.BindImplementations(hoisted, refs);
+            if (!_options.RefBuild) hoisted = ClrEventImplBinding.BindImplementations(hoisted, refs, localEventDeclarations);
             // Consume CharSequence property semantics while calls still carry the explicit Kotlin property name and
             // accessor role. MemberCallSubstitution is the physical binding boundary for those calls; no later pass may
             // recover `length` from the allocated MethodRef spelling.

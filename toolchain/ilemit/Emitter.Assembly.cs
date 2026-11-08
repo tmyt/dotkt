@@ -1094,6 +1094,7 @@ sealed partial class Emitter
         else if (m.GetProperty("virtual").GetBoolean()) attrs |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
         // An `abstract fun` (no body) -> a CLR abstract method: Virtual|Abstract, no IL body (subclasses override).
         if (m.TryGetProperty("abstract", out var amb) && amb.GetBoolean()) attrs |= MethodAttributes.Abstract | MethodAttributes.Virtual;
+        if (m.TryGetProperty("clrFinal", out var finalSlot) && finalSlot.GetBoolean()) attrs |= MethodAttributes.Final;
         // A synthesized event accessor (add_/remove_/raise_<E>, §4.2) is `specialname` (the ECMA-335 event-accessor
         // convention) so the emitted `.event` is a clean reflectable member. bir2cir stamps the flag on the rewritten accessor.
         if (m.TryGetProperty("specialName", out var spn) && spn.GetBoolean()) attrs |= MethodAttributes.SpecialName;

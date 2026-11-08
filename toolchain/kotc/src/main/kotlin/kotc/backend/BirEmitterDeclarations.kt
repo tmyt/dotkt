@@ -68,6 +68,7 @@ import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.name.CallableId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
+import org.jetbrains.kotlin.ir.util.collectRealOverrides
 import org.jetbrains.kotlin.ir.util.primaryConstructor
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
@@ -1369,25 +1370,30 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 		// The `overrides` closure: the interface event slot(s) this member implements, by Kotlin identity (owner FQN +
 		// event name). bir2cir derives the concrete add_/remove_ slot + delegate `D` off the ref.dll from it. Empty for a
 		// NEW event (no override), where bir2cir instead maps the handler function type to a delegate.
-		val overriddenOwners = p.overriddenSymbols.mapNotNull { (it.owner.parent as? IrClass)?.fqNameWhenAvailable?.asString() }
-		fun overridesFor(kind: String) = if (overriddenOwners.isEmpty()) "" else
-			""","overrides":[${overriddenOwners.joinToString(",") { o -> """{"owner":${fqnJson(o)},"member":${str(name)},"kind":${str(kind)},"arity":1}""" }}]"""
+		val overridden = p.overriddenSymbols.flatMap { it.owner.getter?.collectRealOverrides().orEmpty() }
+			.distinctBy { it.symbol }
+		val classOwner = overridden.mapNotNull { it.parent as? IrClass }
+			.firstOrNull { it.kind == ClassKind.CLASS || it.kind == ClassKind.ENUM_CLASS }
+		val classOverride = classOwner?.let { ""","classOverrideOwner":${overrideOwnerJson(p.getter!!, it)}""" }.orEmpty()
+		fun overridesFor(kind: String) = if (overridden.isEmpty()) "" else
+			""","overrides":[${overridden.joinToString(",") { target ->
+				val owner = target.parent as IrClass
+				"""{"owner":${overrideOwnerJson(p.getter!!, owner)},"member":${str(target.correspondingPropertySymbol!!.owner.name.asString())},"kind":${str(kind)},"arity":1}"""
+			}}]"""
 		val visibility = str(visOf(p))
 		val publishedApi = attrsJson(p.annotations.filter { it.type.classFqName?.asString() == "kotlin.PublishedApi" })
-		fun accessor(mname: String, virtual: Boolean, kind: String, ov: String) =
-			"""{"name":${str(mname)},"static":false,"override":false,"virtual":$virtual,"abstract":false,"objectOverride":false,"vis":$visibility,"params":[{"name":"value","type":$handlerJson}],"ret":$unit,"body":[{"k":"clrEventAccessor","kind":${str(kind)},"event":${str(name)}}],"attrs":[$publishedApi]$ov}"""
+		fun accessor(mname: String, kind: String, ov: String) =
+			"""{"name":${str(mname)},"static":false,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":$visibility,"params":[{"name":"value","type":$handlerJson}],"ret":$unit,"body":[{"k":"clrEventAccessor","kind":${str(kind)},"event":${str(name)}}],"attrs":[$publishedApi]$ov}"""
 		val policyField = if (delegateCall.symbol.owner.parameters.any(::isValueParameter)) {
 			val field = p.backingField ?: error("custom CLR event '$name' has no Kotlin delegate field")
 			""","policyField":${str(field.name.asString())}"""
 		} else ""
-		backings.add("""{"k":"clrEventBacking","name":${str(name)},"handlerType":$handlerJson$policyField}""")
-		// add_/remove_: VIRTUAL NEWSLOT (implicitly implements the interface add_/remove_ slot; bir2cir also wires the
-		// explicit MethodImpl). bir2cir rewrites the `value` param type to the concrete delegate `D` + the body to the CAS loop.
-		methods.add(accessor("add_$name", virtual = true, kind = "add", ov = overridesFor("event-add")))
-		methods.add(accessor("remove_$name", virtual = true, kind = "remove", ov = overridesFor("event-remove")))
-		// raise_: NON-virtual (not an interface member; the raise-from-outside deviation, §6). bir2cir sets its params
-		// to the delegate's Invoke params + the body to `field?.Invoke(args)`; the `value` placeholder param is overwritten.
-		methods.add(accessor("raise_$name", virtual = false, kind = "raise", ov = ""))
+		backings.add("""{"k":"clrEventBacking","name":${str(name)},"handlerType":$handlerJson,"modality":${str(p.modality.name.lowercase())}$classOverride$policyField}""")
+		// Preserve source override owners and modality; bir2cir selects native slot reuse, delegate signatures and
+		// whether a referenced event has a raise slot at all. These shells do not choose that physical representation.
+		methods.add(accessor("add_$name", kind = "add", ov = overridesFor("event-add")))
+		methods.add(accessor("remove_$name", kind = "remove", ov = overridesFor("event-remove")))
+		methods.add(accessor("raise_$name", kind = "raise", ov = ""))
 	}
 	return backings to methods
 }
