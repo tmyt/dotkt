@@ -165,6 +165,18 @@ static class EnumIntrinsicLowering
             || NodeType.Of(new JsonObject { ["k"] = "enumParse", ["type"] = ordinary.DeepClone() })
                 != TypeJson.Read(ordinary))
             throw new System.InvalidOperationException("Enum intrinsic lost its selected source argument frame");
+        var richType = new TypeNode.Fqn("MappedEntry");
+        var richValues = RichEnumCall(TypeJson.Write(richType), "chosenEntriesApi", null);
+        var richParse = RichEnumCall(TypeJson.Write(richType), "chosenParseApi",
+            new JsonObject { ["k"] = "const", ["value"] = "ENTRY" });
+        var loop = new JsonObject
+        {
+            ["k"] = "forArray", ["var"] = "entry", ["array"] = richValues, ["body"] = new JsonArray(),
+        };
+        ArrayConstructionLowering.Apply(loop);
+        if (NodeType.Of(richValues) != new TypeNode.Array(richType)
+            || NodeType.Of(richParse) != richType || TypeJson.Read(loop["elem"]) != richType)
+            throw new System.InvalidOperationException("Rich enum API result lost its exact type before array lowering");
         System.Console.WriteLine("[enum intrinsic frame] self-test OK (ordinary role, physical permutation, exact arity)");
     }
 
@@ -180,11 +192,15 @@ static class EnumIntrinsicLowering
     static JsonObject RichEnumCall(JsonNode owner, string method, JsonNode valueOfArg)
     {
         var valueOf = valueOfArg != null;
+        var enumType = TypeJson.Read(owner);
         return new JsonObject
         {
             ["k"] = "callStatic",
             ["owner"] = owner?.DeepClone(),
             ["method"] = method,
+            // This replacement owns the result fact. Array/loop and suspend lowering run before external
+            // member binding, so they cannot recover it later from the selected MethodDef's memberRef.
+            ["ret"] = TypeJson.Write(valueOf ? enumType : new TypeNode.Array(enumType)),
             ["args"] = valueOf ? new JsonArray(valueOfArg.DeepClone()) : new JsonArray(),
             ["sig"] = valueOf
                 ? new JsonArray(TypeJson.Fqn("System.String"))
