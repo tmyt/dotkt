@@ -1058,10 +1058,15 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	if (callee.fqNameWhenAvailable?.asString() == "kotlin.clr.stackBuffer")
 		return emitStackBuffer(call)
 	fun eventOwnerType(p: IrProperty, recv: IrExpression): String {
-		val declarationOwner = p.parent as? IrClass
-		return if (declarationOwner != null && anonNames.containsKey(declarationOwner))
-			ownerSpec(declarationOwner, recv.type).toJson()
-		else birType(recv.type).toJson()
+		val declaration = if (p.isFakeOverride)
+			p.getter?.resolveFakeOverride()?.correspondingPropertySymbol?.owner ?: p
+		else p
+		val declarationOwner = declaration.parent as? IrClass
+			?: error("selected event '${declaration.name}' has no declaring class")
+		return if (anonNames.containsKey(declarationOwner)) ownerSpec(declarationOwner, recv.type).toJson()
+		else correspondingSupertypeInstantiation(recv.type, declarationOwner, allowCapturedArguments = true)
+			?.let(::birType)?.toJson()
+			?: error("selected event '${declaration.name}' has no declaring receiver supertype")
 	}
 	val selectedEventProp = callee.correspondingPropertySymbol?.owner
 	// An inherited field-like event is selected through a frontend fake override.  Its wrapper is intentionally not
@@ -1081,16 +1086,13 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val eventRecv = dispatchReceiver(call)
 		if (eventRecv != null) {
 			// A moved default must still address the selected declaration, not an inheriting receiver's class.
-			val declaredOwner = if (anonNames.containsKey(localEventOwner)) ownerSpec(localEventOwner, eventRecv.type)
-				else correspondingSupertypeInstantiation(eventRecv.type, localEventOwner, allowCapturedArguments = true)?.let(::birType)
-					?: error("selected event '${localEventProp.name}' has no declaring receiver supertype")
-			return """{"k":"clrEventGet","type":${declaredOwner.toJson()},"name":${str(localEventProp.name.asString())},"static":false,"recv":${expr(eventRecv)},"sty":${birType(call.type).toJson()}${eventVisibilityFact(localEventProp)}${overridesJson(callee)}}"""
+			return """{"k":"clrEventGet","type":${eventOwnerType(localEventProp, eventRecv)},"name":${str(localEventProp.name.asString())},"static":false,"recv":${expr(eventRecv)},"sty":${birType(call.type).toJson()}${eventVisibilityFact(localEventProp)}${overridesJson(callee)}}"""
 		}
 	}
 	// RAISE: `handle.invoke(sender, args)` / `handle(sender, args)` (both desugar to `ClrEvent.invoke`). The event handle
 	// is a member read `vm.<E>` (a `ClrEvent<T>` property); raise is legal only for a KOTLIN-DECLARED event (one with a
-	// synthesized `raise_<E>`). kotc lowers this to a dedicated dialect node `clrEventRaise` carrying the RECEIVER's static
-	// type (the type that declares `raise_<E>`) + the event name + the invoke args — bir2cir's ClrEventImplBinding binds it
+	// synthesized raise accessor). Carry the frontend-selected declaring owner, constructed through the receiver,
+	// plus the event name and invoke args — bir2cir's ClrEventImplBinding binds it
 	// to a `raise_<E>` call (and hard-errors a raise on a CONSUMED foreign event). The ClrEvent<T> value is consumed, never
 	// materialized — we emit the underlying receiver `vm`, not the handle read.
 	if (callee.name.asString() == "invoke"

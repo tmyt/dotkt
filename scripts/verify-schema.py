@@ -115,6 +115,7 @@ WELL_KNOWN_ROLES = frozenset({
 BIR2CIR_INTERNAL_MEMBER_FACTS = (
     "resolvedMemberParams", "resolvedMemberReturn",
     "pendingOverrideOwner", "pendingOverrideMember", "pendingOverrideReturn",
+    "eventRaiseDeclarationId",
 )
 
 # Temporary facts used while bir2cir is reshaping generic declarations. They may be represented in the shared
