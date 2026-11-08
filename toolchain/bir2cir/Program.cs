@@ -30,6 +30,7 @@ static class Bir2Cir
                 ForeignStarProjectionBinding.SelfTest();
                 MemberCallSubstitution.StaticCollectionPreferenceSelfTest();
                 FunctionSignatureIdentity.SelfTest();
+                ClrTypeVariance.SelfTest();
                 PhysicalValueCoercion.SelfTest();
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
@@ -1611,6 +1612,10 @@ sealed class Pipeline
                         && (type["name"] as JsonValue)?.TryGetValue<string>(out var name) == true
                         && externalCanonicalTypes.Contains(name))
                         types.RemoveAt(i);
+
+        // Kotlin variance has already been saved in round-trip metadata. Resolve the legal physical GenericParam
+        // flags over the complete final graph, including inherited interfaces; ilemit only emits these flags.
+        ClrTypeVariance.ApplyAll(loweredRoots.Select(file => file.Root), refs);
 
         // SERIALIZATION IS THE LAST THING, and not the tail of the loop above. The check that just ran asks each
         // Kotlin body which slot it fills, and the answer is a pass-to-pass record on the declaration that must not

@@ -315,7 +315,7 @@ sealed partial class Emitter
             if (ti.IsGeneric && ti.Def.TryGetProperty("capturedTypeParams", out var capturedTps2))
                 ApplyConstraints(capturedTps2, ti.TypeParams, false);
             if (ti.IsGeneric && ti.Def.TryGetProperty("typeParams", out var tps2))
-                ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface || ti.IsDelegate, ti.Def,
+                ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface || ti.IsDelegate,
                     ti.Def.TryGetProperty("capturedTypeParams", out var captured) ? captured.GetArrayLength() : 0);
             if (ti.BaseName != null)
             {
@@ -1222,121 +1222,19 @@ sealed partial class Emitter
 
     // Apply generic constraints (`<T : Comparable<T>>` -> `T : IComparable<T>`) to already-defined params. The
     // constraint context map (type or method params) must be current so a `gp:T` inside a bound resolves.
-    // True if the type string mentions the type param `gp:<pname>` (token-exact, so `gp:E` doesn't match `gp:E2`).
-    // Does a structured type SLOT mention the type-scope type param at position `pos` (variance-conflict check)?
-    static bool MentionsTv(JsonElement e, int pos) =>
-        DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode t && MentionsTv(t, pos);
-
-    static bool MentionsTv(DotKt.Bir.TypeNode t, int pos) => t switch
-    {
-        DotKt.Bir.TypeNode.Tv tv => tv.Scope == "type" && tv.I == pos,
-        DotKt.Bir.TypeNode.Fqn { Args: { } a } => a.Any(x => MentionsTv(x, pos)),
-        DotKt.Bir.TypeNode.Nullable n => MentionsTv(n.Of, pos),
-        DotKt.Bir.TypeNode.Array ar => MentionsTv(ar.Elem, pos),
-        DotKt.Bir.TypeNode.ByRef b => MentionsTv(b.Of, pos),
-        DotKt.Bir.TypeNode.Fn fn => MentionsTv(fn.Ret, pos) || fn.DelegateParams.Any(p => MentionsTv(p, pos)),
-        _ => false,
-    };
-
-    // Whether an occurrence of an interface type parameter is illegal for its declared CLR variance. Kotlin permits
-    // `out T` in a suspend return, but the CLR bridge is `Task<T>` and Task is invariant: the nested occurrence is
-    // therefore both input and output from the CLR verifier's perspective. Walk the actual generic variance of each
-    // containing type instead of treating every method return as automatically covariant.
-    bool VarianceConflict(DotKt.Bir.TypeNode t, int pos, int context, int declared)
-    {
-        switch (t)
-        {
-            case DotKt.Bir.TypeNode.Tv tv:
-                return tv.Scope == "type" && tv.I == pos && (context == 0 || context != declared);
-            case DotKt.Bir.TypeNode.Fqn { Args: { } args } f:
-                for (var i = 0; i < args.Length; i++)
-                {
-                    var variance = GenericArgVariance(f.Name, args.Length, i);
-                    var nested = context == 0 || variance == 0 ? 0 : context * variance;
-                    if (VarianceConflict(args[i], pos, nested, declared)) return true;
-                }
-                return false;
-            case DotKt.Bir.TypeNode.Nullable n:
-                return VarianceConflict(n.Of, pos, context, declared);
-            case DotKt.Bir.TypeNode.Oblivious o:
-                return VarianceConflict(o.Of, pos, context, declared);
-            case DotKt.Bir.TypeNode.Array a:
-                return VarianceConflict(a.Elem, pos, 0, declared); // writable CLR arrays are invariant for safety
-            case DotKt.Bir.TypeNode.ByRef b:
-                return VarianceConflict(b.Of, pos, 0, declared);
-            case DotKt.Bir.TypeNode.Fn fn:
-                if (VarianceConflict(fn.Ret, pos, context, declared)) return true;
-                foreach (var p in fn.DelegateParams)
-                    if (VarianceConflict(p, pos, -context, declared)) return true;
-                return false;
-            default:
-                return false;
-        }
-    }
-
-    // +1 covariant, -1 contravariant, 0 invariant/unknown. Local definitions are read from their Kotlin-neutral CIR
-    // declaration; referenced CLR definitions are read from reflection. Unknown must be invariant — optimistic
-    // variance here creates unloadable metadata, while invariant metadata is always sound.
-    int GenericArgVariance(string name, int arity, int index)
-    {
-        if (_types.TryGetValue(name, out var ti)
-            && ti.Def.TryGetProperty("typeParams", out var localTps)
-            && index < localTps.GetArrayLength())
-        {
-            var tp = localTps[index];
-            if (tp.ValueKind == JsonValueKind.Object && tp.TryGetProperty("variance", out var v))
-                return v.GetString() switch { "out" => 1, "in" => -1, _ => 0 };
-            return 0;
-        }
-
-        Type open = null;
-        try { open = ResolveType(name + "`" + arity); }
-        catch { }
-        if (open == null || !open.IsGenericTypeDefinition) return 0;
-        var gps = open.GetGenericArguments();
-        if (index >= gps.Length) return 0;
-        return (gps[index].GenericParameterAttributes & GenericParameterAttributes.VarianceMask) switch
-        {
-            GenericParameterAttributes.Covariant => 1,
-            GenericParameterAttributes.Contravariant => -1,
-            _ => 0,
-        };
-    }
-
     void ApplyConstraints(JsonElement tps, IReadOnlyList<GenericTypeParameterBuilder> parameters, bool isInterface,
-        JsonElement? typeDef = null, int offset = 0)
+        int offset = 0)
     {
         foreach (var x in tps.EnumerateArray())
         {
             var gp = parameters[offset++];
             if (x.ValueKind != JsonValueKind.Object) continue;
             var parameterAttributes = GenericParameterAttributes.None;
-            // Declaration-site variance is legal CLR metadata only on an interface type param, AND only when the param
-            // is NOT used in a conflicting position: a covariant `out E` may not appear in an `in` (method-argument)
-            // position, a contravariant `in E` not in an `out` (return) position. Kotlin permits the conflict via
-            // @UnsafeVariance (e.g. `Collection<out E>.contains(element: E)`); the CLR has no such escape, so such a
-            // param MUST be emitted invariant or the whole type fails to load. Keep clearly-valid variance, drop the rest.
+            // bir2cir has resolved the physical flags over signatures and inheritance. Emit that CIR fact directly.
             if (isInterface && x.TryGetProperty("variance", out var v))
             {
                 var vs = v.GetString();
-                var pname = x.GetProperty("name").GetString();
-                bool conflict = false;
-                if ((vs == "out" || vs == "in") && typeDef is { } td && td.TryGetProperty("methods", out var ms))
-                    foreach (var m in ms.EnumerateArray())
-                    {
-                        var declared = vs == "out" ? 1 : -1;
-                        if (m.TryGetProperty("params", out var ps))
-                            foreach (var p in ps.EnumerateArray())
-                                if (p.TryGetProperty("type", out var pt)
-                                    && VarianceConflict(DotKt.Bir.TypeNode.Read(pt), gp.GenericParameterPosition, -1, declared))
-                                { conflict = true; break; }
-                        if (!conflict && m.TryGetProperty("ret", out var rt)
-                            && VarianceConflict(DotKt.Bir.TypeNode.Read(rt), gp.GenericParameterPosition, 1, declared))
-                            conflict = true;
-                        if (conflict) break;
-                    }
-                var attr = conflict ? GenericParameterAttributes.None
-                         : vs == "out" ? GenericParameterAttributes.Covariant
+                var attr = vs == "out" ? GenericParameterAttributes.Covariant
                          : vs == "in" ? GenericParameterAttributes.Contravariant
                          : GenericParameterAttributes.None;
                 parameterAttributes |= attr;

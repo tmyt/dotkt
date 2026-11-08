@@ -6,6 +6,33 @@ import roundtrip.mapvariance.*
 
 class MapVarianceTests {
     @TestAttribute
+    fun inheritedInvariantNativeFaceRetainsKotlinCovarianceAcrossDlls() {
+        System.Reflection.Assembly.Load("RoundtripProducer").GetTypes()
+        val narrow = projectedTextMap("one")
+        val wide: ProjectedMap<String, Any> = narrow
+        assertTrue(wide === narrow)
+        assertTrue(wide["present"] == "one")
+    }
+
+    @TestAttribute
+    fun defaultMapsLoadAndRetainReadAndMutableBehavior() {
+        System.Reflection.Assembly.Load("DotKt.Stdlib").GetTypes()
+        val values = mapOf("present" to 1).withDefault { 42 }
+        assertTrue(values.getValue("present") == 1)
+        assertTrue(values.getValue("absent") == 42)
+        val mutable = mutableMapOf("present" to 2)
+        val defaults = mutable.withDefault { 43 }
+        defaults["added"] = 3
+        assertTrue(mutable["added"] == 3)
+        assertTrue(defaults.getValue("present") == 2)
+        assertTrue(defaults.getValue("absent") == 43)
+        val narrow = defaultTextMap()
+        val wide: Map<String, Any> = narrow
+        assertTrue(wide === narrow)
+        assertTrue(wide.getValue("absent") == "fallback")
+    }
+
+    @TestAttribute
     fun importedMutableMapBoundRetainsSourceArityAndMutation() {
         val values = mutableMapOf("original" to 1)
         val result = fillBoundMap(values)
