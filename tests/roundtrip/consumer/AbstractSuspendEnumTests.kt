@@ -5,6 +5,7 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import kotlin.coroutines.*
 import roundtrip.abstractsuspendenum.*
+import roundtrip.enumidentity.BaseIdentity
 
 private class Completion<T> : Continuation<T> {
     var outcome: Result<T>? = null
@@ -19,6 +20,24 @@ private fun <T> start(block: suspend () -> T): Completion<T> {
 }
 
 class AbstractSuspendEnumTests {
+    @TestAttribute
+    fun importedValuesArrayRetainsItsElementAcrossSuspension() {
+        val gate = EnumGate<Unit>()
+        val completion = start {
+            var sum = 0
+            for (value in BaseIdentity.values()) {
+                gate.await()
+                sum += value.code
+            }
+            sum
+        }
+        repeat(3) {
+            assertTrue(completion.outcome == null)
+            gate.resume(Unit)
+        }
+        assertEquals(21, completion.outcome!!.getOrThrow())
+    }
+
     @TestAttribute
     fun importedInheritedAbstractInterfaceSlotDispatches() {
         val first: EnumReader = InheritedSuspendReader.FIRST
