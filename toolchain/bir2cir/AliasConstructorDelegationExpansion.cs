@@ -382,6 +382,8 @@ sealed class AliasConstructorDelegationExpansion
     {
         var used = new HashSet<string>(StringComparer.Ordinal);
         CollectNames(ctor, used);
+        // Initializers can contain already-expanded adapters with their own serialized local names.
+        CollectNames(arguments, used);
         // Substitution copies these consumer temps into the serialized adapter before FreshenLocals runs.  Reserve
         // every adapter spelling up front so that the subsequent name-based alpha conversion can never mistake an
         // inserted consumer read for a declaration-owned read merely because two compiler processes restarted the
@@ -764,6 +766,29 @@ sealed class AliasConstructorDelegationExpansion
         if (caught != "caught$1" || range != "consumer" || loop != "item$1" || parameter != "argument")
             throw new InvalidOperationException(
                 "AliasConstructorDelegationExpansion self-test: substitution/freshening composition changed lexical ownership");
+
+        // An incoming value block may carry names minted by the producer of an adapter. Its
+        // locals must not shadow a newly materialized outer argument, even across compiler processes.
+        var nestedArgumentName = $"cir$alias${_localCounter + 1}";
+        var argumentHost = new JsonObject();
+        var nestedArgument = new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray(new JsonObject
+            {
+                ["k"] = "var", ["name"] = nestedArgumentName,
+                ["type"] = TypeJson.Fqn("System.Object"),
+                ["init"] = new JsonObject { ["k"] = "const", ["value"] = null },
+            }),
+            ["result"] = new JsonObject { ["k"] = "const", ["value"] = "argument" },
+        };
+        var argumentReads = MaterializeArguments(argumentHost, new JsonArray(nestedArgument),
+            new[] { "argument" }, new TypeNode[] { new TypeNode.Fqn("System.String") });
+        var argumentTemporary = Str(argumentHost["preStmts"]?[0]?["name"]);
+        if (argumentTemporary == nestedArgumentName || Str(argumentReads["argument"]?["name"]) != argumentTemporary
+            || Str(argumentHost["preStmts"]?[0]?["init"]?["stmts"]?[0]?["name"]) != nestedArgumentName)
+            throw new InvalidOperationException(
+                "AliasConstructorDelegationExpansion self-test: argument temporary captured an incoming argument local");
         Console.WriteLine("[C# alias constructor expansion] self-test OK (params + catch + loop binders; freshening)");
     }
 }
