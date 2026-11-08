@@ -9,6 +9,9 @@ import MaterializedEvents.Concurrency
 import Eventext.Beacon
 import dotkt.support.events.EventBox
 import dotkt.support.events.LocalSource
+import dotkt.support.events.InferredHandlerSource
+import dotkt.support.events.NullableHandlerSource
+import dotkt.support.events.localInferredHandler
 import dotkt.support.events.NominalLocalSource
 import dotkt.support.events.StoredEvent
 import dotkt.support.events.ForwardedEvent
@@ -17,6 +20,7 @@ import dotkt.support.events.GenericSource
 import dotkt.support.events.ReorderedSource
 import dotkt.support.events.passEvent
 import dotkt.support.events.subscribeLater
+import kotlin.clr.ClrEvent
 
 class MaterializedEventTests {
     @TestAttribute
@@ -129,6 +133,12 @@ class MaterializedEventTests {
 
     @TestAttribute
     fun retainedGenericSourcePreservesReorderedOwnerAndHandlerFrames() {
+        val inferred: ClrEvent<Nothing> = InferredHandlerSource().Changed
+        assertTrue(EventBox(inferred).event === inferred)
+        val local = localInferredHandler()
+        assertTrue(EventBox(local).event === local)
+        val nullable = NullableHandlerSource().Changed.subscribe(null)
+        nullable.close()
         val source = GenericSource<String, Int>()
         val wrapper = ReorderedSource<Int, String>(source)
         var value = 0

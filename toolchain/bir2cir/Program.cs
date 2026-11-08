@@ -210,6 +210,7 @@ sealed class Pipeline
         foreach (var root in birRoots) valueRepresentations.EraseBounds(root);
         CallableVisibilityLowering.ApplyAll(birRoots, refs);
         FunctionValueRepresentation.PreserveSourceFacts(birRoots);
+        ClrEventImplBinding.PreserveSourceFacts(birRoots);
         CapturedGenericInvocation.PreserveSourceFacts(birRoots, refs);
         ContinuationErasure.PreserveSourceSupertypes(birRoots, refs);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
