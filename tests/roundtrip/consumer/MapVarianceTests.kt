@@ -4,7 +4,49 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.mapvariance.*
 
+interface ImportedSource<out T> : CovariantSource<T>
+interface ImportedSink<in T> : ContravariantSink<T>
+
 class MapVarianceTests {
+    @TestAttribute
+    fun physicalFlagsRetainLegalImportedVarianceButNotInvariantMapVariance() {
+        val producer = System.Reflection.Assembly.Load("RoundtripProducer")
+        val map = producer.GetType("roundtrip.mapvariance.ProjectedMap`4", true)!!
+        assertTrue(map.GetGenericArguments()[1].GenericParameterAttributes == System.Reflection.GenericParameterAttributes.None)
+        val consumer = System.Reflection.Assembly.GetExecutingAssembly()
+        val source = consumer.GetType("roundtriptests.mapvariance.ImportedSource`1", true)!!
+        val sink = consumer.GetType("roundtriptests.mapvariance.ImportedSink`1", true)!!
+        assertTrue(source.GetGenericArguments()[0].GenericParameterAttributes == System.Reflection.GenericParameterAttributes.Covariant)
+        assertTrue(sink.GetGenericArguments()[0].GenericParameterAttributes == System.Reflection.GenericParameterAttributes.Contravariant)
+    }
+
+    @TestAttribute
+    fun inheritedInvariantNativeFaceRetainsKotlinCovarianceAcrossDlls() {
+        System.Reflection.Assembly.Load("RoundtripProducer").GetTypes()
+        val narrow = projectedTextMap("one")
+        val wide: ProjectedMap<String, Any> = narrow
+        assertTrue(wide === narrow)
+        assertTrue(wide["present"] == "one")
+    }
+
+    @TestAttribute
+    fun defaultMapsLoadAndRetainReadAndMutableBehavior() {
+        System.Reflection.Assembly.Load("DotKt.Stdlib").GetTypes()
+        val values = mapOf("present" to 1).withDefault { 42 }
+        assertTrue(values.getValue("present") == 1)
+        assertTrue(values.getValue("absent") == 42)
+        val mutable = mutableMapOf("present" to 2)
+        val defaults = mutable.withDefault { 43 }
+        defaults["added"] = 3
+        assertTrue(mutable["added"] == 3)
+        assertTrue(defaults.getValue("present") == 2)
+        assertTrue(defaults.getValue("absent") == 43)
+        val narrow = defaultTextMap()
+        val wide: Map<String, Any> = narrow
+        assertTrue(wide === narrow)
+        assertTrue(wide.getValue("absent") == "fallback")
+    }
+
     @TestAttribute
     fun importedMutableMapBoundRetainsSourceArityAndMutation() {
         val values = mutableMapOf("original" to 1)

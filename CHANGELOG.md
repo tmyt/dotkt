@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- Emit legal CLR generic variance across inherited invariant interfaces while preserving Kotlin source variance and valid cross-DLL variance.
+
 ## 0.9.22 (2026-11-08)
 
 ### Release highlights

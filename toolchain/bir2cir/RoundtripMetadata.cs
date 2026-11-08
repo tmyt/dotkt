@@ -269,8 +269,8 @@ static class RoundtripMetadata
             Append(to, JsonCarrierAttr(AKStaticCarrier, staticCarrier));
             to.Remove("staticCarrier");
         }
-        // CLR GenericParam variance cannot state Kotlin declaration-site variance on classes, and ilemit must also
-        // omit an interface variance flag when @UnsafeVariance puts the parameter in a conflicting CLR position.
+        // CLR GenericParam variance cannot state Kotlin declaration-site variance on classes. ClrTypeVariance also
+        // omits interface flags that conflict with physical signatures or inherited invariant interfaces.
         // Preserve every authored variant parameter by source frame index in the same type-level source carrier as
         // pre-erasure bounds. dll2klib and bir2cir's reference index consume this fact instead of guessing it back
         // from the necessarily weaker CLR row.

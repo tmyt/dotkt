@@ -2505,6 +2505,28 @@ sealed partial class ReferenceMetadataIndex
     // stdlib reference/runtime twins need not carry the same physical GenericParamConstraint rows.
     internal JsonArray PhysicalOwnerTypeParamDeclarations(string owner)
     {
+        if (owner == null) return null;
+        var type = PhysicalGenericOwner(owner, OwnerArity(owner));
+        return type == null ? null : new JsonArray(type.GetGenericArguments().Select(GenericParamDeclaration).ToArray());
+    }
+
+    // Variance is a physical GenericParam fact, including for Kotlin-authored owners. ResolveNetType intentionally
+    // excludes those owners for semantic call binding; the reference twin's flags are not runtime proof either.
+    internal string PhysicalOwnerTypeParameterVariance(string owner, int arity, int index)
+    {
+        var type = PhysicalGenericOwner(owner, arity);
+        var parameters = type?.IsGenericTypeDefinition == true ? type.GetGenericArguments() : null;
+        if (parameters == null || index < 0 || index >= parameters.Length) return null;
+        return (parameters[index].GenericParameterAttributes & GenericParameterAttributes.VarianceMask) switch
+        {
+            GenericParameterAttributes.Covariant => "out",
+            GenericParameterAttributes.Contravariant => "in",
+            _ => null,
+        };
+    }
+
+    Type PhysicalGenericOwner(string owner, int arity)
+    {
         if (owner == null || IsLocalEmittedType(owner)) return null;
         var physicalName = owner;
         // Only admitted Kotlin declarations own referenced proof rows. Compiler implementation types can be
@@ -2513,10 +2535,9 @@ sealed partial class ReferenceMetadataIndex
         if (HasDotKtOwner(owner)
             && !_physicalTypeBySemanticName.TryGetValue(StripGenericArity(DottedFqn(owner)), out physicalName))
             return null;
-        var type = ResolveRefType(physicalName, OwnerArity(owner)) ?? PhysicalTypeNamed(physicalName, OwnerArity(owner));
+        var type = ResolveRefType(physicalName, arity) ?? PhysicalTypeNamed(physicalName, arity);
         if (type == null) return null;
-        type = PhysicalProofOwner(type);
-        return type == null ? null : new JsonArray(type.GetGenericArguments().Select(GenericParamDeclaration).ToArray());
+        return PhysicalProofOwner(type);
     }
 
     internal JsonArray PhysicalMethodTypeParamDeclarations(string declarationIdentity)
