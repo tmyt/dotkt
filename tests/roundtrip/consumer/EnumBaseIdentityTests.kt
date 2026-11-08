@@ -17,11 +17,11 @@ class EnumBaseIdentityTests {
         assertEquals(21, intrinsic)
         var visited = 0
         for (value in BaseIdentity.values()) {
-            if (value == BaseIdentity.SECOND) continue
+            if (value == BaseIdentity.FIRST) continue
             visited++
-            if (value == BaseIdentity.ENTRY) break
+            if (value == BaseIdentity.SECOND) break
         }
-        assertEquals(2, visited)
+        assertEquals(1, visited)
     }
 
     private fun assertSelectedBase(value: BaseIdentity) {
