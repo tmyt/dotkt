@@ -2181,7 +2181,9 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   delegate field + real `add_E`/`remove_E`/`raise_E` accessors); the event declaration exposes `invoke(sender, args)`
   to **raise** it. **Deliberate CLR-native deviation (interop-first):** C# permits raising an event only from **within**
   its declaring type, but the DotKt event declaration exposes raise, so `vm.PropertyChanged.invoke(vm, args)` is
-  legal from **outside** the declaring type (it calls a public synthesized `raise_` accessor — the `.event`'s `.fire`).
+  legal from **outside** the declaring type when the event is public (it calls a synthesized `raise_`
+  accessor — the `.event`'s `.fire` — with the event's visibility). Private/protected/internal events
+  retain their source access restrictions; returning a retained handle grants subscription, not raising.
   This is exactly the raiser .NET libraries hand-roll as `protected virtual void OnPropertyChanged(...)`, promoted to a
   part of the event declaration — it is what lets the idiomatic property-delegate MVVM pattern
   (`ViewModelProperty.setValue` raising a base class's `PropertyChanged`) work. Consumer handles support subscription;

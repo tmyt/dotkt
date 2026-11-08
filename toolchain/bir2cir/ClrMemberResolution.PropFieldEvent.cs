@@ -297,7 +297,7 @@ static partial class ClrMemberResolution
     // the existing body instead of inventing a second event store. Reflection also excludes base-interface EventInfo
     // rows, so class and interface owners share this fallback. Own declarations win; a surviving interface collision
     // is a hard ambiguity, never a first-pick.
-    static MethodInfo FindEventAccessor(Type open, string name, bool add, BindingFlags flags)
+    static MethodInfo FindEventAccessor(Type open, string name, bool add, BindingFlags flags, bool allowNonPublic = false)
     {
         MethodInfo Accessor(Type type, bool declaredOnly)
         {
@@ -308,7 +308,7 @@ static partial class ClrMemberResolution
                 var method = add
                     ? ev?.GetAddMethod(nonPublic: true)
                     : ev?.GetRemoveMethod(nonPublic: true);
-                return method != null && IsPublicOrProtected(method) ? method : null;
+                return method != null && (allowNonPublic || IsPublicOrProtected(method)) ? method : null;
             }
             catch { return null; }
         }
@@ -325,6 +325,37 @@ static partial class ClrMemberResolution
         }
         catch { return null; }
         return hits.Count == 0 ? null : UniqueAccessor(hits, open, (add ? "add_" : "remove_") + name);
+    }
+
+    // Retained event callbacks are physical callers outside the source declaration's lexical family. Resolve a
+    // restricted referenced accessor through Event/MethodSemantics, then use the ordinary member-call path before
+    // UnsafeAccessorLowering. No target is widened and ilemit need not infer visibility or event semantics.
+    internal static JsonObject RestrictedEventCall(JsonObject node, ReferenceMetadataIndex refs)
+    {
+        _refs = refs;
+        var kind = node["k"]?.GetValue<string>();
+        if (kind is not ("clrEventAdd" or "clrEventRemove")
+            || node["localAccessor"]?.GetValue<bool>() == true
+            || TypeJson.Read(node["type"]) is not TypeNode.Fqn owner) return null;
+        var declaration = ResolveOwnerType(owner, refs);
+        if (declaration == null) return null;
+        var isStatic = node["static"]?.GetValue<bool>() == true;
+        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy
+            | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+        var accessor = FindEventAccessor(declaration, node["event"]?.GetValue<string>(),
+            kind == "clrEventAdd", flags, allowNonPublic: true);
+        if (accessor == null || !(accessor.IsPrivate || accessor.IsFamily || accessor.IsFamilyOrAssembly || accessor.IsAssembly)) return null;
+        RetargetToBaseInterface(node, "type", declaration, accessor, owner);
+        return new JsonObject
+        {
+            ["k"] = isStatic ? "callStatic" : "callInstance",
+            ["ownerType"] = node["type"]!.DeepClone(), ["method"] = accessor.Name,
+            ["sig"] = new JsonArray(accessor.GetParameters()
+                .Select(parameter => TypeJson.Write(MemberSigOf(parameter.ParameterType))).ToArray()),
+            ["recv"] = node["recv"]?.DeepClone(), ["args"] = new JsonArray(node["handler"]?.DeepClone()),
+            ["virtual"] = accessor.IsVirtual, ["ret"] = TypeJson.Fqn("void"), ["sty"] = TypeJson.Fqn("void"),
+            ["memberVisibility"] = accessor.IsPrivate ? "private" : accessor.IsAssembly ? "internal" : "protected",
+        };
     }
 
     // ---- external field access (`field` / `setFieldExpr`) --------------------------------------

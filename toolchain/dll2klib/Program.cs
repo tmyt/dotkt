@@ -3156,12 +3156,12 @@ internal sealed class AssemblyScanner : IDisposable
             {
                 Name = names.String(_md.GetString(ev.Name)),
                 ReturnType = eventType,
-                Flags = Flags.Property(
+                Flags = CallableVisibility(accessorHandle, Flags.Property(
                     explicitEventShapes.Contains(_md.GetString(ev.Name) + ":" + TypeKey(handler))
                         ? accessor.Attributes | MethodAttributes.Virtual
                         : accessor.Attributes,
                     canWrite: false,
-                    (accessor.Attributes & MethodAttributes.Static) != 0),
+                    (accessor.Attributes & MethodAttributes.Static) != 0)),
             };
             projectedEvent.PropertyAnnotation.Add(new Annotation { Id = names.Class("kotlin.clr.ClrEventDeclaration") });
             result.Property.Add(projectedEvent);

@@ -165,6 +165,14 @@ static partial class UnsafeAccessorLowering
                 Rewrite(pair.Value, caller, hosts, accessors, refs, inner, family);
 
         var kind = Str(obj["k"]);
+        if (kind is "clrEventAdd" or "clrEventRemove"
+            && Str(obj["memberVisibility"]) is "private" or "protected" or "internal"
+            && ClrMemberResolution.RestrictedEventCall(obj, refs) is JsonObject eventCall)
+        {
+            obj.Clear();
+            foreach (var pair in eventCall) obj[pair.Key] = pair.Value?.DeepClone();
+            kind = Str(obj["k"]);
+        }
         if (kind is "callInstance" or "callStatic" or "constrainedCall")
             RewriteMethod(obj, kind, caller, hosts, accessors, refs, inner, family);
         else if (kind == "newBoundDelegate") RewriteBoundDelegate(obj, caller, hosts, accessors, refs, inner, family);
@@ -252,7 +260,7 @@ static partial class UnsafeAccessorLowering
             // owns visibility crossings, not inherited-member binding; leave unrestricted non-local identities
             // for the exact declaration binder instead of demanding a MethodDef on the receiver's TypeDef.
             if (targetDeclarationId != null && candidates.Length == 0
-                && frontendVisibility is not ("private" or "protected")) return;
+                && frontendVisibility is not ("private" or "protected" or "internal")) return;
             if (targetDeclarationId != null && candidates.Length != 1)
                 throw new InvalidOperationException(
                     $"UnsafeAccessor target '{ownerType.Name}.{targetName}' has no unique local MethodDef for " +
@@ -270,7 +278,7 @@ static partial class UnsafeAccessorLowering
             targetName = Str(target["name"])
                 ?? throw new InvalidOperationException("private Kotlin accessor has no physical method name");
         }
-        else if (frontendVisibility is not ("private" or "protected"))
+        else if (frontendVisibility is not ("private" or "protected" or "internal"))
             return;
 
         var targetStatic = kind == "callStatic";
