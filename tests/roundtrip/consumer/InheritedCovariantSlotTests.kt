@@ -20,6 +20,17 @@ open class LocalFactoryBase {
 }
 class LocalFactory : LocalFactoryBase(), Factory
 
+open class ImportedClassFactory : ClassFactoryNarrow() {
+    var empty = false
+    override val item: Narrow get() = Narrow("imported class getter")
+    override fun make(): Narrow? = if (empty) null else Narrow("imported class method")
+    override fun <T> makeFrom(seed: T, text: String): Narrow = Narrow(text)
+}
+class ImportedClassFactoryLeaf : ImportedClassFactory() {
+    override val item: Narrow get() = Narrow("imported leaf getter")
+    override fun make(): Narrow? = Narrow("imported leaf method")
+}
+
 class InheritedCovariantSlotTests {
     @TestAttribute
     fun exportedBridgeOwnersRetainTheirNarrowKotlinSurface() {
@@ -85,5 +96,13 @@ class InheritedCovariantSlotTests {
         val leaf: Factory = FactoryLeaf()
         check(leaf.item.text == "leaf getter")
         check(leaf.make().text == "leaf method")
+        val concrete = ImportedClassFactory()
+        val classBase: ClassFactoryBase = concrete
+        check(classBase.item.text == "imported class getter" && classBase.make()?.text == "imported class method")
+        check(classBase.makeFrom(7, "imported class generic").text == "imported class generic")
+        concrete.empty = true
+        check(classBase.make() == null)
+        val classLeaf: ClassFactoryBase = ImportedClassFactoryLeaf()
+        check(classLeaf.item.text == "imported leaf getter" && classLeaf.make()?.text == "imported leaf method")
     }
 }

@@ -121,6 +121,11 @@ static class KotlinOverrideSlotBridge
         var emitBridges = phase != Phase.DeclarationMoves;
         var rootList = roots.ToArray();
         var defs = SupertypeGraph.Collect(rootList);
+        IReadOnlyDictionary<string, JsonObject> assignabilityDefinitions = null;
+        bool CanForwardClassReturn(TypeNode source, TypeNode target) => phase == Phase.PhysicalBridges
+            && FBoundStarProjectionErasure.IsClrAssignable(source, target,
+                assignabilityDefinitions ??= defs.ToDictionary(pair => pair.Key, pair => pair.Value.Node,
+                    StringComparer.Ordinal), refs, physicalTypes: true);
         bool CarrierParameterSeam(TypeNode left, TypeNode right)
         {
             TypeNode Core(TypeNode type) => type switch {
@@ -166,7 +171,7 @@ static class KotlinOverrideSlotBridge
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
             ApplyClass(cls, defs, isValue, refs, phase, refBuild, exactBridgeSources, localTypeNames,
                 covariantBridgedSlots, AnnotationArguments, SourceMapping(cls), sourceParameters, representations,
-                CarrierParameterSeam);
+                CarrierParameterSeam, CanForwardClassReturn);
         // A class-level inherited-DIM bridge consumes the exact MethodImpl descriptor synthesized on its interface.
         // Declarations may appear in either order and in different input files, so first finish every interface/class's
         // own slot allocation above, then inspect classes. Reading the live method arrays during the first loop would
@@ -196,7 +201,7 @@ static class KotlinOverrideSlotBridge
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots,
         Func<TypeNode.Fqn, TypeNode[]> annotationArguments, NullableRepresentationTypes sourceMapping,
         IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters, GenericRepresentationPolicy representations,
-        Func<TypeNode, TypeNode, bool> CarrierParameterSeam)
+        Func<TypeNode, TypeNode, bool> CarrierParameterSeam, Func<TypeNode, TypeNode, bool> CanForwardClassReturn)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
         if (cls.Node["methods"] is not JsonArray methods) return;
@@ -343,6 +348,12 @@ static class KotlinOverrideSlotBridge
             if (retFit == Fit.Foreign)
             {
                 if (referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
+                // A source-selected covariant class override still owes the base's exact CLR slot,
+                // including when the narrow override is abstract. Reuse the ordinary virtual forwarder
+                // only when the actual physical return is assignable; Kotlin variance alone is no proof.
+                else if (!supIsInterface && CanForwardClassReturn(
+                        PhysicalSlotType(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs)), PhysicalSlotType(slotRet)))
+                    retFit = Fit.Bridge;
                 else
                 {
                     // The covariance pass visits authored MethodDefs, not inherited implementation facts.

@@ -33,6 +33,27 @@ class FactoryLeaf : FactoryMiddle() {
     override fun make(): Narrow = Narrow("leaf method")
 }
 
+abstract class ClassFactoryBase {
+    abstract val item: Value
+    abstract fun make(): Value?
+    abstract fun <T> makeFrom(seed: T, text: String): Value
+}
+abstract class ClassFactoryNarrow : ClassFactoryBase() {
+    abstract override val item: Narrow
+    abstract override fun make(): Narrow?
+    abstract override fun <T> makeFrom(seed: T, text: String): Narrow
+}
+open class ClassFactory : ClassFactoryNarrow() {
+    var empty = false
+    override val item: Narrow get() = Narrow("class getter")
+    override fun make(): Narrow? = if (empty) null else Narrow("class method")
+    override fun <T> makeFrom(seed: T, text: String): Narrow = Narrow(text)
+}
+class ClassFactoryLeaf : ClassFactory() {
+    override val item: Narrow get() = Narrow("class leaf getter")
+    override fun make(): Narrow? = Narrow("class leaf method")
+}
+
 class InheritedCovariantSlotTests {
     @TestAttribute
     fun inheritedGenericAndConcreteGettersFillNewInterfaceSlots() {
@@ -64,5 +85,13 @@ class InheritedCovariantSlotTests {
         val leaf: Factory = FactoryLeaf()
         check(leaf.item.text == "leaf getter")
         check(leaf.make().text == "leaf method")
+        val concrete = ClassFactory()
+        val classBase: ClassFactoryBase = concrete
+        check(classBase.item.text == "class getter" && classBase.make()?.text == "class method")
+        check(classBase.makeFrom(7, "class generic").text == "class generic")
+        concrete.empty = true
+        check(classBase.make() == null)
+        val classLeaf: ClassFactoryBase = ClassFactoryLeaf()
+        check(classLeaf.item.text == "class leaf getter" && classLeaf.make()?.text == "class leaf method")
     }
 }
