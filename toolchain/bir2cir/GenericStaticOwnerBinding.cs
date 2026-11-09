@@ -357,6 +357,10 @@ static class GenericStaticOwnerBinding
             {
                 if (!local.Values.Contains(bare, StringComparer.Ordinal) && !refs.IsGenericStaticCarrier(bare))
                 {
+                    // Native CLR statics use their reference TypeDef's constructed frame, not a Kotlin carrier.
+                    // Event reads reach this early pass before NetInteropBinding closes that native owner.
+                    if (kind is "clrEventGet" or "clrEventRaise"
+                        && !localGenericOwners.Contains(bare) && !refs.HasDotKtOwner(bare)) continue;
                     if (owner.Args == null &&
                         (localGenericOwners.Contains(bare) || refs.OwnerArity(bare) > 0))
                         throw new InvalidOperationException(

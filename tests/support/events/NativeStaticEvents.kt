@@ -36,6 +36,15 @@ class GenericNativeStaticSource<T : Comparable<T>> {
     }
 }
 
+enum class NativeStaticEnum(val code: Int) {
+    Only(1);
+    companion {
+        val EnumPulse: ClrEvent<System.Action1<Int>> by clrEvent()
+        val policy = StaticIntEventPolicy()
+        val EnumPolicyPulse: ClrEvent<System.Action1<Int>> by clrEvent(policy)
+    }
+}
+
 fun exerciseLocalStaticEvents(): Int {
     var sum = 0
     val first = NativeStaticSource.StaticPulse.subscribe { sum += it }
@@ -47,5 +56,15 @@ fun exerciseLocalStaticEvents(): Int {
     second.close()
     NativeStaticSource.StaticPolicyPulse(100)
     check(NativeStaticSource.policy.added === NativeStaticSource.policy.removed)
+    var genericSum = 0
+    val genericPlain = GenericNativeStaticSource.GenericPulse.subscribe { genericSum += it }
+    val genericPolicy = GenericNativeStaticSource.GenericPolicyPulse.subscribe { genericSum += it }
+    GenericNativeStaticSource.GenericPulse(5)
+    GenericNativeStaticSource.GenericPolicyPulse(7)
+    genericPlain.close()
+    genericPolicy.close()
+    GenericNativeStaticSource.GenericPulse(100)
+    GenericNativeStaticSource.GenericPolicyPulse(100)
+    check(genericSum == 12)
     return sum
 }

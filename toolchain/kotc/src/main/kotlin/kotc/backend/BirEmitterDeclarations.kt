@@ -929,7 +929,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// A `companion { }` property of an enum: static storage (initialized in the type initializer, after the entry
 	// singletons declared above, which is the order Kotlin specifies) plus its own static accessors and CLR property.
 	val staticProps = ec.declarations.filterIsInstance<IrProperty>().filter { isKotlinStaticProperty(it) }
-	fun emitsStaticGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !isClrField(p)
+	fun emitsStaticGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !isClrField(p) && hasOrdinaryPropertySlot(p)
 	fun emitsStaticSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !isClrField(p)
 	fields.addAll(staticPropertyFields(ec))
 	val staticPropAccessors = staticProps.flatMap { p ->

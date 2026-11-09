@@ -20,3 +20,8 @@ public static class StaticEventEvidence {
             && evt.DeclaringType.GetProperty(name) == null;
     }
 }
+
+public class GenericForeignEvents<T> {
+    public static event Action<int> ForeignPulse;
+    public static void Fire(int value) => ForeignPulse?.Invoke(value);
+}
