@@ -9,6 +9,7 @@ import kotlin.clr.ClrEvent
 import roundtrip.enumevents.SignalMode
 import roundtrip.enumevents.PolicyMode
 import roundtrip.enumevents.ForwardedMode
+import roundtrip.enumevents.OverriddenMode
 import roundtrip.enumevents.localEnumEvents
 
 private fun exercise(event: ClrEvent<System.Action>, fire: () -> Unit, other: () -> Unit): Int {
@@ -36,6 +37,10 @@ class EnumEventTests {
         assertEquals("1234", PolicyMode.B.initializationOrder)
         assertEquals(42, PolicyMode.A.entryCheck())
         assertEquals(0, PolicyMode.B.entryCheck())
+        assertEquals(1, exercise(OverriddenMode.A.Changed, { OverriddenMode.A.fire() }, { OverriddenMode.B.fire() }))
+        assertEquals(7, PolicyMode.A.marker)
+        PolicyMode.A.counter = 12
+        assertEquals(12, PolicyMode.A.counter)
         assertTrue(PolicyMode.valueOf("A") === PolicyMode.A && PolicyMode.entries[1] === PolicyMode.B)
 
         val native: INotifyPropertyChanged = SignalMode.A
@@ -62,5 +67,9 @@ class EnumEventTests {
         val type = PolicyMode::class as System.Type
         val secret = type.GetEvent("Secret", BindingFlags.Instance or BindingFlags.NonPublic)!!
         assertTrue(secret.GetAddMethod(true)!!.IsPrivate && type.GetEvent("Secret") == null)
+        assertTrue(type.GetField("marker")!!.IsPublic && type.GetProperty("marker") == null)
+        assertTrue(type.GetFields(BindingFlags.Instance or BindingFlags.NonPublic).any { field ->
+            field.IsPrivate && field.GetRequiredCustomModifiers().any { it.FullName == "System.Runtime.CompilerServices.IsVolatile" }
+        })
     }
 }

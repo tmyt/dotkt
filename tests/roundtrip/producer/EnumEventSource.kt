@@ -3,6 +3,8 @@ package roundtrip.enumevents
 import kotlin.clr.ClrEvent
 import kotlin.clr.ClrEventPolicy
 import kotlin.clr.clrEvent
+import kotlin.clr.ClrField
+import kotlin.concurrent.Volatile
 import System.ComponentModel.INotifyPropertyChanged
 import System.ComponentModel.PropertyChangedEventArgs
 import System.ComponentModel.PropertyChangedEventHandler
@@ -30,6 +32,15 @@ enum class PolicyMode {
         private val EntryOnly: ClrEvent<System.Action> by clrEvent()
         override fun entryCheck(): Int {
             var value = 0
+            var inheritedCalls = 0
+            var hiddenCalls = 0
+            val inherited = Changed.subscribe { inheritedCalls++ }
+            val hidden = secretHandle().subscribe { hiddenCalls++ }
+            Changed()
+            fire()
+            inherited.close()
+            hidden.close()
+            check(inheritedCalls == 2 && hiddenCalls == 1)
             val token = EntryOnly.subscribe { value += 42 }
             EntryOnly()
             token.close()
@@ -47,9 +58,20 @@ enum class PolicyMode {
     private val Secret: ClrEvent<System.Action> by clrEvent()
     init { mark("3") }
     private val after = mark("4")
+    @ClrField val marker: Int = 7
+    @Volatile var counter: Int = 0
     open fun entryCheck() = 0
     fun secretHandle() = Secret
     fun fire() { Changed(); Secret() }
+}
+
+enum class OverriddenMode {
+    A {
+        override val Changed: ClrEvent<System.Action> by clrEvent()
+        override fun fire() { Changed() }
+    }, B;
+    open val Changed: ClrEvent<System.Action> by clrEvent()
+    open fun fire() { Changed() }
 }
 
 fun localEnumEvents(): Int {
