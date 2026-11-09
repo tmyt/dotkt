@@ -14,33 +14,76 @@ using DotKt.Bir;
 // The generated declaration and its construction node are the complete authority; no function names, class
 // layout guesses, or old artifact spellings participate. The ordinary ExistentialReceiverBinding pass subsequently
 // binds calls through the retyped field to the exact carrier slot and preserves their semantic result with an explicit
-// projection.
+// projection. Ordinary erased generic values use the same storage rule: copying a source T into a generated
+// field must not recover the caller's closed CLR T after the value was deliberately boxed/erased.
 static class ExistentialCaptureAlignment
 {
-    sealed record CaptureUse(JsonObject Expression, TypeNode.Fqn Carrier);
+    sealed record CaptureUse(JsonObject Construction, int Position, TypeNode InitialType)
+    {
+        public JsonObject Expression => Construction["captures"]?[Position] as JsonObject;
+    }
 
     public static void ApplyAll(IEnumerable<JsonNode> roots,
         IReadOnlyDictionary<string, string> localExistentialOwners,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null,
+        Action<string, string, int, int, TypeNode> recordStorage = null)
     {
+        isValue ??= _ => false;
+        var files = roots.OfType<JsonObject>().ToArray();
         var semanticByPhysical = localExistentialOwners.ToDictionary(
             pair => pair.Value, pair => pair.Key, StringComparer.Ordinal);
-        foreach (var root in roots.OfType<JsonObject>())
-            Apply(root, semanticByPhysical, refs);
+        var definitions = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var root in files) CollectTypes(root, definitions);
+        var frames = refs.NullableTypeFrames.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        foreach (var (name, definition) in definitions)
+            if (KotlinSupertypesRecord.ReadNullableFrame(definition) is { } frame) frames[name] = frame;
+        foreach (var root in files)
+            Apply(root, semanticByPhysical, refs, definitions, frames, isValue, policy, recordStorage);
     }
 
     static void Apply(JsonObject root, IReadOnlyDictionary<string, string> semanticByPhysical,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, IReadOnlyDictionary<string, JsonObject> definitions,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
+        GenericRepresentationPolicy policy, Action<string, string, int, int, TypeNode> recordStorage)
     {
-        var definitions = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        CollectTypes(root, definitions);
         var uses = new Dictionary<(string Closure, int Position), List<CaptureUse>>();
-        VisitOwner(root, uses, semanticByPhysical, refs);
-
-        foreach (var ((closureName, position), captureUses) in uses)
+        void PrepareSuspend(JsonObject lambda) => ErasedElementValues.ApplySuspendBody(
+            lambda, refs, definitions, frames, isValue, policy);
+        VisitOwner(root, uses, semanticByPhysical, refs, PrepareSuspend);
+        var dependents = new Dictionary<string, HashSet<(string Closure, int Position)>>(StringComparer.Ordinal);
+        foreach (var (key, captureUses) in uses)
+            foreach (var use in captureUses)
+                for (JsonNode parent = use.Construction.Parent; parent != null; parent = parent.Parent)
+                    if (parent is JsonObject owner && Str(owner["name"]) is string ownerName
+                        && definitions.TryGetValue(ownerName, out var definition) && ReferenceEquals(owner, definition))
+                    {
+                        if (!dependents.TryGetValue(ownerName, out var set)) dependents[ownerName] = set = new();
+                        set.Add(key);
+                        break;
+                    }
+        bool IsObject(TypeNode type) => type != null && BirTypeLowering.SamePhysicalSlotType(type,
+            new TypeNode.Fqn("object"), refs.Aliases, isValue, refs.PhysicalTypeNames,
+            returnPosition: false, nullableFrames: frames);
+        TypeNode Current(CaptureUse use)
         {
-            var carriers = captureUses.Select(use => use.Carrier).Distinct().ToArray();
-            if (carriers.Length != 1)
+            var current = PhysicalType(use.Expression, new Dictionary<string, TypeNode>());
+            return IsObject(current) || current is TypeNode.Fqn f && TrySemanticOwner(f.Name, semanticByPhysical, refs, out _)
+                ? current : use.InitialType;
+        }
+        var pending = new HashSet<(string Closure, int Position)>(uses.Keys);
+        var queue = new Queue<(string Closure, int Position)>(uses.Keys);
+
+        while (queue.TryDequeue(out var key))
+        {
+            pending.Remove(key);
+            var (closureName, position) = key;
+            var captureUses = uses[key];
+            var types = captureUses.Select(Current).ToArray();
+            var erased = types.Any(IsObject);
+            var carriers = types.OfType<TypeNode.Fqn>()
+                .Where(type => TrySemanticOwner(type.Name, semanticByPhysical, refs, out _)).Distinct().ToArray();
+            if (!erased && carriers.Length == 0) continue;
+            if (!erased && carriers.Length != 1)
                 throw new InvalidOperationException(
                     $"bir2cir: generated closure '{closureName}' capture {position} has conflicting existential carriers");
             if (!definitions.TryGetValue(closureName, out var closure) || !Bool(closure["generated"])
@@ -51,12 +94,13 @@ static class ExistentialCaptureAlignment
                 throw new InvalidOperationException(
                     $"bir2cir: existential capture {position} has no exact generated closure storage in '{closureName}'");
 
-            var carrier = carriers[0];
-            if (!TrySemanticOwner(carrier.Name, semanticByPhysical, refs, out var semanticOwner))
-                continue;
+            string semanticOwner = null;
+            var raw = erased && fieldType is TypeNode.Tv;
+            var carrier = raw ? new TypeNode.Fqn("object") : carriers.FirstOrDefault();
+            if (carrier == null) continue;
             if (fieldType.Equals(carrier)) continue;
-            if (fieldType is not TypeNode.Fqn { Args: { Length: > 0 } } logical
-                || logical.Name != semanticOwner)
+            if (!raw && (!TrySemanticOwner(carrier.Name, semanticByPhysical, refs, out semanticOwner)
+                || fieldType is not TypeNode.Fqn { Args: { Length: > 0 } } logical || logical.Name != semanticOwner))
                 continue;
 
             if (closure["ctors"] is not JsonArray { Count: 1 } constructors
@@ -68,9 +112,31 @@ static class ExistentialCaptureAlignment
 
             field["type"] = TypeJson.Write(carrier);
             parameter["type"] = TypeJson.Write(carrier);
+            recordStorage?.Invoke(closureName, fieldName, position, parameters.Count, carrier);
+            if (raw)
+            {
+                var sourceType = KotlinSupertypesRecord.ReadNullableFrame(closure)?.SemanticVariable((TypeNode.Tv)fieldType)
+                    ?? fieldType;
+                field["kotlinType"] ??= TypeNode.ToJson(sourceType);
+                parameter["kotlinType"] ??= TypeNode.ToJson(sourceType);
+            }
             RetypeFieldUses(closure, closureName, fieldName, carrier);
             foreach (var use in captureUses)
-                RetypeCaptureBoundary(use.Expression, semanticOwner, carrier);
+                if (raw)
+                {
+                    var expression = use.Expression;
+                    if (Str(expression["k"]) != "cast" || !IsObject(TypeJson.Read(expression["type"])))
+                        use.Construction["captures"][position] = new JsonObject {
+                            ["k"] = "cast", ["type"] = TypeJson.Write(carrier), ["e"] = expression.DeepClone(),
+                        };
+                }
+                else RetypeCaptureBoundary(use.Expression, semanticOwner, carrier);
+            if (raw) ErasedElementValues.ApplyType(closure, refs, definitions, frames, isValue, policy);
+            // Only changed generated storage invalidates its nested capture consumers. Do not normalize the
+            // complete module repeatedly or depend on the order closure declarations were appended.
+            if (dependents.TryGetValue(closureName, out var affected))
+                foreach (var consumer in affected)
+                    if (pending.Add(consumer)) queue.Enqueue(consumer);
         }
     }
 
@@ -86,20 +152,20 @@ static class ExistentialCaptureAlignment
 
     static void VisitOwner(JsonObject owner,
         Dictionary<(string Closure, int Position), List<CaptureUse>> uses,
-        IReadOnlyDictionary<string, string> semanticByPhysical, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, string> semanticByPhysical, ReferenceMetadataIndex refs, Action<JsonObject> prepareSuspend)
     {
         if (owner["methods"] is JsonArray methods)
-            foreach (var method in methods.OfType<JsonObject>()) VisitDeclaration(method, uses, semanticByPhysical, refs);
+            foreach (var method in methods.OfType<JsonObject>()) VisitDeclaration(method, uses, semanticByPhysical, refs, prepareSuspend);
         if (owner["ctors"] is JsonArray constructors)
             foreach (var constructor in constructors.OfType<JsonObject>())
-                VisitDeclaration(constructor, uses, semanticByPhysical, refs);
+                VisitDeclaration(constructor, uses, semanticByPhysical, refs, prepareSuspend);
         if (owner["types"] is JsonArray types)
-            foreach (var type in types.OfType<JsonObject>()) VisitOwner(type, uses, semanticByPhysical, refs);
+            foreach (var type in types.OfType<JsonObject>()) VisitOwner(type, uses, semanticByPhysical, refs, prepareSuspend);
     }
 
     static void VisitDeclaration(JsonObject declaration,
         Dictionary<(string Closure, int Position), List<CaptureUse>> uses,
-        IReadOnlyDictionary<string, string> semanticByPhysical, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, string> semanticByPhysical, ReferenceMetadataIndex refs, Action<JsonObject> prepareSuspend)
     {
         if (declaration["body"] is not JsonArray body) return;
         var vars = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
@@ -107,30 +173,31 @@ static class ExistentialCaptureAlignment
             foreach (var parameter in parameters.OfType<JsonObject>())
                 if (Str(parameter["name"]) is string name && TypeJson.Read(parameter["type"]) is TypeNode type)
                     vars[name] = type;
-        Visit(body, vars, uses, semanticByPhysical, refs);
+        Visit(body, vars, uses, semanticByPhysical, refs, prepareSuspend);
     }
 
     static void Visit(JsonNode node, Dictionary<string, TypeNode> vars,
         Dictionary<(string Closure, int Position), List<CaptureUse>> uses,
-        IReadOnlyDictionary<string, string> semanticByPhysical, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, string> semanticByPhysical, ReferenceMetadataIndex refs, Action<JsonObject> prepareSuspend)
     {
         if (node is JsonArray array)
         {
+            vars = new Dictionary<string, TypeNode>(vars, StringComparer.Ordinal);
             foreach (var child in array)
-                if (child != null) Visit(child, vars, uses, semanticByPhysical, refs);
+                if (child != null) Visit(child, vars, uses, semanticByPhysical, refs, prepareSuspend);
             return;
         }
         if (node is not JsonObject obj) return;
 
         if (Str(obj["k"]) == "var")
         {
-            if (obj["init"] != null) Visit(obj["init"], vars, uses, semanticByPhysical, refs);
+            if (obj["init"] != null) Visit(obj["init"], vars, uses, semanticByPhysical, refs, prepareSuspend);
             if (Str(obj["name"]) is string name && TypeJson.Read(obj["type"]) is TypeNode type) vars[name] = type;
             return;
         }
         if (Str(obj["k"]) == "newSuspendLambda")
         {
-            AlignSuspendCaptures(obj, vars, uses, semanticByPhysical, refs);
+            AlignSuspendCaptures(obj, vars, uses, semanticByPhysical, refs, prepareSuspend);
             return;
         }
         var generatedTypeSlot = Str(obj["k"]) switch
@@ -144,16 +211,14 @@ static class ExistentialCaptureAlignment
             && obj["captures"] is JsonArray captures)
         {
             for (var position = 0; position < captures.Count; position++)
-                if (captures[position] is JsonObject capture
-                    && PhysicalType(capture, vars) is TypeNode.Fqn carrier
-                    && TrySemanticOwner(carrier.Name, semanticByPhysical, refs, out _))
+                if (captures[position] is JsonObject capture)
                 {
                     var key = (closure.Name, position);
                     if (!uses.TryGetValue(key, out var list)) uses[key] = list = new List<CaptureUse>();
-                    list.Add(new CaptureUse(capture, carrier));
+                    list.Add(new CaptureUse(obj, position, PhysicalType(capture, vars)));
                 }
             foreach (var capture in captures)
-                if (capture != null) Visit(capture, vars, uses, semanticByPhysical, refs);
+                if (capture != null) Visit(capture, vars, uses, semanticByPhysical, refs, prepareSuspend);
             return;
         }
 
@@ -164,7 +229,7 @@ static class ExistentialCaptureAlignment
             or "forEachInline" or "repeatInline") return;
 
         foreach (var value in obj.Select(pair => pair.Value).ToList())
-            if (value != null) Visit(value, vars, uses, semanticByPhysical, refs);
+            if (value != null) Visit(value, vars, uses, semanticByPhysical, refs, prepareSuspend);
     }
 
     // A suspend lambda is materialized later, so align its capture declaration before SuspendLambdaLowering copies
@@ -173,11 +238,12 @@ static class ExistentialCaptureAlignment
     // lambda body with its own declared frame so nested suspend lambdas are handled without leaking locals outward.
     static void AlignSuspendCaptures(JsonObject node, IReadOnlyDictionary<string, TypeNode> outerVars,
         Dictionary<(string Closure, int Position), List<CaptureUse>> uses,
-        IReadOnlyDictionary<string, string> semanticByPhysical, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, string> semanticByPhysical, ReferenceMetadataIndex refs, Action<JsonObject> prepareSuspend)
     {
         var nested = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         var captures = node["captures"] as JsonArray;
         var captureValues = node["capValues"] as JsonArray;
+        var rawChanged = false;
         if (captures != null)
             for (var position = 0; position < captures.Count; position++)
             {
@@ -191,7 +257,16 @@ static class ExistentialCaptureAlignment
                 var physical = value != null
                     ? PhysicalType(value, outerVars)
                     : outerVars.GetValueOrDefault(name);
-                if (physical is TypeNode.Fqn carrier
+                if (declared is TypeNode.Tv && physical != null && BirTypeLowering.SamePhysicalSlotType(
+                        physical, new TypeNode.Fqn("object"), refs.Aliases, refs.IsValueType,
+                        refs.PhysicalTypeNames, returnPosition: false, nullableFrames: refs.NullableTypeFrames))
+                {
+                    capture["kotlinType"] ??= TypeNode.ToJson(declared);
+                    capture["type"] = TypeJson.Fqn("object");
+                    declared = new TypeNode.Fqn("object");
+                    rawChanged = true;
+                }
+                else if (physical is TypeNode.Fqn carrier
                     && TrySemanticOwner(carrier.Name, semanticByPhysical, refs, out var semanticOwner)
                     && declared is TypeNode.Fqn { Args: { Length: > 0 } } logical
                     && logical.Name == semanticOwner)
@@ -203,13 +278,14 @@ static class ExistentialCaptureAlignment
                 }
                 nested[name] = declared;
             }
+        if (rawChanged) prepareSuspend(node);
         if (node["params"] is JsonArray parameters)
             foreach (var parameter in parameters.OfType<JsonObject>())
                 if (Str(parameter["name"]) is string name
                     && TypeJson.Read(parameter["type"]) is TypeNode type)
                     nested[name] = type;
         if (node["body"] != null)
-            Visit(node["body"], nested, uses, semanticByPhysical, refs);
+            Visit(node["body"], nested, uses, semanticByPhysical, refs, prepareSuspend);
     }
 
     // Ask for the value actually delivered to a physical storage slot. A valueBlock/conditional can retain its

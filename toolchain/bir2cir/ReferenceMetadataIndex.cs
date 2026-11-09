@@ -2525,6 +2525,15 @@ sealed partial class ReferenceMetadataIndex
         };
     }
 
+    // Only for already-selected physical representation facts, never semantic call classification.
+    // A nominal carrier is an actual physical TypeDef, not a source classifier needing a declaration map.
+    internal Type PhysicalTypeForProof(string owner, int arity)
+    {
+        if (owner == null || IsLocalEmittedType(owner)) return null;
+        var type = ResolveRefType(owner, arity) ?? PhysicalTypeNamed(owner, arity);
+        return type == null ? null : PhysicalProofOwner(type);
+    }
+
     Type PhysicalGenericOwner(string owner, int arity)
     {
         if (owner == null || IsLocalEmittedType(owner)) return null;

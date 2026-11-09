@@ -26,7 +26,7 @@
           "virtual": false,
           "vis": "private",
           "params": [
-            { "name": "item", "type": { "t": "fqn", "name": "kotlin.Int" } }
+            { "name": "item", "type": { "t": "fqn", "name": "kotlin.Any" } }
           ],
           "ret": { "t": "fqn", "name": "kotlin.Boolean" },
           "body": [],
@@ -39,7 +39,7 @@
               },
               "member": "contains",
               "arity": 0,
-              "params": [{ "t": "fqn", "name": "kotlin.Int" }],
+              "params": [{ "t": "fqn", "name": "kotlin.Any" }],
               "ret": { "t": "fqn", "name": "kotlin.Boolean" }
             }
           ]
@@ -47,6 +47,31 @@
       ],
       "properties": [],
       "attrs": []
+    },
+    {
+      "name": "ExternalClosedGenericMethodImplProbe",
+      "kind": "class",
+      "abstract": true,
+      "vis": "public",
+      "base": {
+        "t": "fqn", "name": "kotlin.collections.AbstractMutableCollection",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
+      "methods": [{
+        "name": "dotkt$probe$add", "static": false, "override": false, "virtual": false, "vis": "private",
+        "params": [{ "name": "item", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+        "ret": { "t": "fqn", "name": "kotlin.Boolean" }, "body": [],
+        "clrBaseImpls": [{
+          "owner": {
+            "t": "fqn", "name": "kotlin.collections.AbstractMutableCollection",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "member": "add", "arity": 0,
+          "params": [{ "t": "fqn", "name": "kotlin.Int" }],
+          "ret": { "t": "fqn", "name": "kotlin.Boolean" }
+        }]
+      }]
     }
   ],
   "refTypes": []

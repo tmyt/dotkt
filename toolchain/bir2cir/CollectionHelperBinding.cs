@@ -15,6 +15,7 @@ static class CollectionHelperBinding
         IReadOnlyDictionary<string, string> aliases, Action<Action<JsonObject>> prepareHelpers = null)
     {
         var inputs = roots.ToArray();
+        var applicationOrder = new InnerApplicationOrder(inputs, references);
         var closedViews = references == null ? new Dictionary<string, TypeNode.Fqn>()
             : ForeignStarProjectionBinding.CollectClosedViewHints(inputs, references);
         var declaredIteratorTypes = inputs.SelectMany(MemberCallSubstitution.CollectDeclaredIteratorTypes)
@@ -96,6 +97,21 @@ static class CollectionHelperBinding
                 || TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn owner
                 || obj["args"] is not JsonArray args)
                 return obj;
+            // A concrete or native-aliased Kotlin owner implements the same erased query contract. Dispatch through that
+            // contract, not a prematurely narrowed implementation parameter. An already-selected aliased interface
+            // retains its operation family (e.g. Set rather than an unrelated Collection face). Super is exact too.
+            if (obj["super"]?.GetValue<bool>() != true
+                && (!aliases.ContainsKey(owner.Name) || !IsInterface(owner.Name))
+                && KotlinCollectionSlotSynthesis.ErasedQueryOverride(obj) is { } query)
+            {
+                // Override edges use the direct owner's declaration frame, not the caller's frame.
+                owner = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(TypeJson.Read(query["owner"]),
+                    applicationOrder.DeclarationArguments(owner) ?? Array.Empty<TypeNode>());
+                obj = (JsonObject)obj.DeepClone();
+                obj["ownerType"] = TypeJson.Write(owner);
+                obj["method"] = query["member"]?.DeepClone();
+                obj[DeclarationIdentityBinding.Key] = query[DeclarationIdentityBinding.Key]?.DeepClone();
+            }
             JsonObject call;
             if (!aliases.ContainsKey(owner.Name))
             {
@@ -270,6 +286,25 @@ static class CollectionHelperBinding
             new JsonObject { ["k"] = "local", ["name"] = "values" }));
         body.Add(Call("kotlin.collections.MutableList", new TypeNode.Projection("out", variable), "contains",
             new JsonObject { ["k"] = "local", ["name"] = "value" }));
+        var inheritedQuery = Call("probe.QueryOwner", variable, "contains",
+            new JsonObject { ["k"] = "local", ["name"] = "value" });
+        inheritedQuery["overrides"] = new JsonArray(new JsonObject {
+            ["owner"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.Collection",
+                new TypeNode[] { new TypeNode.Tv("type", 0) })),
+            ["member"] = "contains", ["kind"] = "method", ["arity"] = 1,
+            [DeclarationIdentityBinding.Key] = "collection-contains",
+        });
+        var inheritedIndex = body.Count;
+        body.Add(inheritedQuery);
+        var superQuery = inheritedQuery.DeepClone().AsObject();
+        superQuery["super"] = true;
+        body.Add(superQuery);
+        var innerQuery = inheritedQuery.DeepClone().AsObject();
+        innerQuery["ownerType"] = TypeJson.Write(new TypeNode.Fqn("probe.InnerQuery",
+            new TypeNode[] { variable, new TypeNode.Fqn("kotlin.String") }));
+        innerQuery["overrides"][0]["owner"]["args"][0] = TypeJson.Write(new TypeNode.Tv("type", 1));
+        var innerIndex = body.Count;
+        body.Add(innerQuery);
         var nestedIterator = JsonNode.Parse("""
         {"k":"newObject","synthClass":{"name":"kotlin.collections.NestedIteratorProbe","methods":[
           {"name":"iterator","abstract":false,"params":[],"body":[]}]}}
@@ -344,6 +379,14 @@ static class CollectionHelperBinding
             ["types"] = new JsonArray(aliases.Keys.Select(name => (JsonNode)new JsonObject {
                 ["name"] = name, ["kind"] = "interface", ["typeParams"] = new JsonArray("T"), ["methods"] = new JsonArray(),
             }).ToArray()) };
+        root["types"].AsArray().Add(new JsonObject {
+            ["name"] = "probe.Outer", ["kind"] = "class", ["typeParams"] = new JsonArray("A"),
+        });
+        root["types"].AsArray().Add(new JsonObject {
+            ["name"] = "probe.InnerQuery", ["kind"] = "class", ["typeParams"] = new JsonArray("B"),
+            ["capturedTypeParams"] = new JsonArray("A"), ["outerTypeParamCount"] = 1,
+            ["semanticOwner"] = "probe.Outer", ["mods"] = new JsonObject { ["inner"] = true },
+        });
         Apply(new[] { root }, null, aliases);
         if (Text(body[0][DeclarationIdentityBinding.Key]) != "clrProjectedViewIsEmpty"
             || body[0]["args"][2]["value"].GetValue<int>() != 0
@@ -373,7 +416,11 @@ static class CollectionHelperBinding
             || body[10]["args"][2]["value"].GetValue<int>() != 5
             || Text(body[10]["args"][1]["k"]) != "const"
             || Text(body[11][DeclarationIdentityBinding.Key]) != "clrProjectedViewContains"
-            || body[11]["args"][2]["value"].GetValue<int>() != 6)
+            || body[11]["args"][2]["value"].GetValue<int>() != 6
+            || Text(body[inheritedIndex][DeclarationIdentityBinding.Key]) != "clrProjectedViewContains"
+            || TypeJson.Read(body[inheritedIndex]["typeArgs"][0]) != variable
+            || Text(body[inheritedIndex + 1]["k"]) != "callInstance"
+            || TypeJson.Read(body[innerIndex]["typeArgs"][0]) != variable)
             throw new InvalidOperationException("Source collection helper selection changed projection, default index or exact-owner routing");
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));

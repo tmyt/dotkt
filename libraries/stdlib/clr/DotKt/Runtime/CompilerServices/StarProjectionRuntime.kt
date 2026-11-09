@@ -1566,16 +1566,22 @@ internal fun listIteratorHasNextErased(receiver: Any): Boolean =
     invokeIteratorErased(receiver, "kotlin.collections.Iterator`1", "hasNext", arrayOfNulls<Any?>(0)) as Boolean
 
 @PublishedApi
-internal fun listIteratorNextErased(receiver: Any): Any? =
-    invokeIteratorErased(receiver, "kotlin.collections.Iterator`1", "next", arrayOfNulls<Any?>(0))
+internal fun listIteratorNextErased(receiver: Any): Any? {
+    val values = receiver as? KotlinIteratorValueSlot
+    if (values != null) return values.dotktNextValue()
+    return invokeIteratorErased(receiver, "kotlin.collections.Iterator`1", "next", arrayOfNulls<Any?>(0))
+}
 
 @PublishedApi
 internal fun listIteratorHasPreviousErased(receiver: Any): Boolean =
     invokeIteratorErased(receiver, "kotlin.collections.ListIterator`1", "hasPrevious", arrayOfNulls<Any?>(0)) as Boolean
 
 @PublishedApi
-internal fun listIteratorPreviousErased(receiver: Any): Any? =
-    invokeIteratorErased(receiver, "kotlin.collections.ListIterator`1", "previous", arrayOfNulls<Any?>(0))
+internal fun listIteratorPreviousErased(receiver: Any): Any? {
+    val values = receiver as? KotlinListIteratorValueSlot
+    if (values != null) return values.dotktPreviousValue()
+    return invokeIteratorErased(receiver, "kotlin.collections.ListIterator`1", "previous", arrayOfNulls<Any?>(0))
+}
 
 @PublishedApi
 internal fun listIteratorNextIndexErased(receiver: Any): Int =
@@ -1603,10 +1609,14 @@ internal fun mutableIteratorHasNextErased(receiver: Any): Boolean = try {
 }
 
 @PublishedApi
-internal fun mutableIteratorNextErased(receiver: Any): Any? = try {
-    erasedMutableIteratorMethod(receiver, "next").invoke(receiver, arrayOfNulls<Any?>(0))
-} catch (failure: StarProjectionInvocationException) {
-    throw (failure.innerException ?: failure)
+internal fun mutableIteratorNextErased(receiver: Any): Any? {
+    val values = receiver as? KotlinIteratorValueSlot
+    if (values != null) return values.dotktNextValue()
+    return try {
+        erasedMutableIteratorMethod(receiver, "next").invoke(receiver, arrayOfNulls<Any?>(0))
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
 }
 
 @PublishedApi

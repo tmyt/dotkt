@@ -52,7 +52,7 @@ public fun <K, V> clrMapToString(m: Any, preferredView: Any? = null): String {
     return sb.toString()
 }
 
-public fun <K, V> clrMapGet(m: Any, key: K, preferredView: Any? = null): V? {
+public fun <K, V> clrMapGet(m: Any, key: Any?, preferredView: Any? = null): V? {
     if (m is KotlinMapDefaultSlots) return m.dotktMapGet(key) as V?
     val d = ClrNativeMapAccess(m, preferredView)
     @Suppress("UNCHECKED_CAST")
@@ -65,17 +65,17 @@ public fun <K, V> clrMapIsEmpty(m: Any, preferredView: Any? = null): Boolean =
 public fun <K, V> clrMapSize(m: Any, preferredView: Any? = null): Int =
     if (m is KotlinMapDefaultSlots) m.dotktMapSize() else ClrNativeMapAccess(m, preferredView).count()
 
-public fun <K, V> clrMapContainsKey(m: Any, key: K, preferredView: Any? = null): Boolean =
+public fun <K, V> clrMapContainsKey(m: Any, key: Any?, preferredView: Any? = null): Boolean =
     if (m is KotlinMapDefaultSlots) m.dotktMapContainsKey(key) else ClrNativeMapAccess(m, preferredView).Contains(key)
 
-public fun <K, V> clrMapContainsValue(m: Any, value: V, preferredView: Any? = null): Boolean {
+public fun <K, V> clrMapContainsValue(m: Any, value: Any?, preferredView: Any? = null): Boolean {
     if (m is KotlinMapDefaultSlots) return m.dotktMapContainsValue(value)
     val e = ClrNativeMapAccess(m, preferredView).GetEnumerator()
     try { while (e.MoveNext()) if (e.value() == value) return true } finally { e.close() }
     return false
 }
 
-public fun <K, V> clrMapGetOrDefault(m: Any, key: K, defaultValue: V, preferredView: Any? = null): V {
+public fun <K, V> clrMapGetOrDefault(m: Any, key: Any?, defaultValue: V, preferredView: Any? = null): V {
     if (m is KotlinMapDefaultSlots) return m.dotktMapGetOrDefault(key, defaultValue) as V
     val d = ClrNativeMapAccess(m, preferredView)
     @Suppress("UNCHECKED_CAST")
@@ -130,7 +130,7 @@ public fun <K, V> clrMapPut(m: Any, key: K, value: V, preferredView: Any? = null
     return null
 }
 
-public fun <K, V> clrMapRemove(m: Any, key: K, preferredView: Any? = null): V? {
+public fun <K, V> clrMapRemove(m: Any, key: Any?, preferredView: Any? = null): V? {
     if (m is KotlinMutableMapSlots) return m.dotktMapRemove(key) as V?
     val d = ClrNativeMapAccess(m, preferredView)
     if (d.Contains(key)) {
@@ -141,7 +141,7 @@ public fun <K, V> clrMapRemove(m: Any, key: K, preferredView: Any? = null): V? {
     return null
 }
 
-public fun <K, V> clrMapRemoveKV(m: Any, key: K, value: V, preferredView: Any? = null): Boolean {
+public fun <K, V> clrMapRemoveKV(m: Any, key: Any?, value: Any?, preferredView: Any? = null): Boolean {
     if (m is KotlinMutableMapSlots) return m.dotktMapRemoveEntry(key, value)
     val d = ClrNativeMapAccess(m, preferredView)
     return if (d.Contains(key) && d.clrMapItem<V>(key) == value) { d.clrMapRemoveKey(key); true } else false
@@ -168,13 +168,16 @@ public fun <K, V> clrMapPutIfAbsent(m: Any, key: K, value: V, preferredView: Any
     return if (d.Contains(key)) d.clrMapItem<V>(key) else { d.clrMapSetItem(key, value); null }
 }
 
-public fun <K, V> clrMapReplace(m: Any, key: K, value: V, preferredView: Any? = null): V? {
+public fun <K, V> clrMapReplace(m: Any, key: Any?, value: V, preferredView: Any? = null): V? {
     if (m is KotlinMutableMapSlots) return m.dotktMapReplace(key, value) as V?
     val d = ClrNativeMapAccess(m, preferredView)
-    return if (d.Contains(key)) clrMapPut<K, V>(m, key, value, preferredView) else null
+    if (!d.Contains(key)) return null
+    val previous = d.clrMapItem<V>(key)
+    d.clrMapSetItem(key, value)
+    return previous
 }
 
-public fun <K, V> clrMapReplaceKVV(m: Any, key: K, oldValue: V, newValue: V, preferredView: Any? = null): Boolean {
+public fun <K, V> clrMapReplaceKVV(m: Any, key: Any?, oldValue: Any?, newValue: V, preferredView: Any? = null): Boolean {
     if (m is KotlinMutableMapSlots) return m.dotktMapReplaceEntry(key, oldValue, newValue)
     val d = ClrNativeMapAccess(m, preferredView)
     return if (d.Contains(key) && d.clrMapItem<V>(key) == oldValue) { d.clrMapSetItem(key, newValue); true } else false

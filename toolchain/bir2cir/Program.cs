@@ -78,7 +78,7 @@ static class Bir2Cir
                 ExactMutableViewDispatch.SelfTest();
                 KotlinCollectionClassifierLowering.SelfTest();
                 GenericArrayStorageLowering.SelfTest();
-                OpenArrayElementValues.SelfTest();
+                ErasedElementValues.SelfTest();
                 RoundtripMetadata.RuntimeLinkageSelfTest();
                 SuspendColdLowering.DeclarationRegistrySelfTest();
                 ReferenceMetadataIndex.SelfTest();
@@ -249,6 +249,10 @@ sealed class Pipeline
         var nullableWitnessDemand = NullableWitnessDemand.Collect(birRoots, refs);
         RoundtripMetadata.FreezeSuspendResults(birRoots);
         InheritedMemberOwnerBinding.ProjectOwners(birRoots, refs);
+        // A generic query implementation accepts its declared erased bound, not the closed CLR E.
+        // State that ABI before frame materialization and declaration/use snapshots; typed overrides
+        // retain their concrete signature and their ordinary query guard.
+        KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(birRoots, refs, representationAliases);
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
         // The runtime implementation consumes its paired reference declaration's
@@ -911,11 +915,11 @@ sealed class Pipeline
         // declaring owner's Kotlin inner application has been projected, before later value-view erasure.
         if (!_options.RefBuild) ClrEventImplBinding.BindRaisesAll(staged.Select(s => s.Root), refs);
 
-        // Preserve open array elements as ordinary erased values before array materialization
+        // Preserve open array and iterator elements as ordinary erased values before array materialization
         // and constrained-receiver binding. Exact native locations are allocated separately by
         // the final value-flow pass; no declaration signature or allocation witness changes.
         if (!_options.RefBuild)
-            OpenArrayElementValues.ApplyAll(staged.Select(s => s.Root), refs, isValueFqn, genericRepresentations);
+            ErasedElementValues.ApplyAll(staged.Select(s => s.Root), refs, isValueFqn, genericRepresentations);
 
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
@@ -932,7 +936,9 @@ sealed class Pipeline
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
         // representation before state-machine materialization and final member binding.
         ExistentialCaptureAlignment.ApplyAll(
-            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
+            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs, isValueFqn, genericRepresentations,
+            (owner, field, position, arity, storage) => NullableTvErasureCallRealign.RebindGeneratedCapture(
+                nullableTvDeclRets, owner, field, position, arity, storage));
         // KOTLIN FAKE-OVERRIDE -> CLR INTERFACE SLOT: if a concrete class implements an interface using a public
         // NON-VIRTUAL method inherited from its base class, Kotlin considers the member implemented but CLR implicit
         // interface binding does not. Materialize the exact forwarding member in CIR/BIR-space before suspend lowering

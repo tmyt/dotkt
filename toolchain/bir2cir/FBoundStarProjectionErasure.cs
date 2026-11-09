@@ -1019,6 +1019,7 @@ static partial class FBoundStarProjectionErasure
 
     internal static void ProjectionConstraintSelfTest()
     {
+        PhysicalAssignabilitySelfTest();
         InnerFactoryNormalizationSelfTest();
         FunctionRewriteTests.Check("F-bound rewrite", type => RewriteType(type,
             new Dictionary<string, Owner>(), ReferenceMetadataIndex.Build(Array.Empty<string>())));
@@ -1272,6 +1273,26 @@ static partial class FBoundStarProjectionErasure
         NativeProofSelfTest();
         LocalAliasDeclarationSelfTest();
         Console.WriteLine("[constraint projections] self-test OK (star, variance, annotation, exact bound, physical/source separation, native proof demand)");
+    }
+
+    static void PhysicalAssignabilitySelfTest()
+    {
+        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        var definitions = new Dictionary<string, JsonObject>(StringComparer.Ordinal) {
+            ["object"] = new() { ["name"] = "object", ["kind"] = "class" },
+            ["Proof.Narrow"] = new() { ["name"] = "Proof.Narrow", ["kind"] = "class", ["base"] = TypeJson.Fqn("object") },
+            ["Proof.Value"] = new() { ["name"] = "Proof.Value", ["kind"] = "struct" },
+            ["Proof.Stream"] = new() { ["name"] = "Proof.Stream", ["kind"] = "interface", ["typeParams"] = new JsonArray(new JsonObject {
+                ["name"] = "T", ["variance"] = "out",
+            }) },
+        };
+        TypeNode Stream(string element) => new TypeNode.Fqn("Proof.Stream", new[] { new TypeNode.Fqn(element) });
+        if (!IsClrAssignable(new TypeNode.Fqn("Proof.Narrow"), new TypeNode.Fqn("object"), definitions, refs, physicalTypes: true)
+            || !IsClrAssignable(Stream("Proof.Narrow"), Stream("object"), definitions, refs, physicalTypes: true)
+            || IsClrAssignable(Stream("Proof.Value"), Stream("object"), definitions, refs, physicalTypes: true)
+            || IsClrAssignable(Stream("object"), Stream("Proof.Narrow"), definitions, refs, physicalTypes: true))
+            throw new InvalidOperationException("Physical assignability lost reference-only widening");
+        Console.WriteLine("[physical assignability] self-test OK (reference widening/covariance, value and narrowing refusals)");
     }
 
     static void LocalAliasDeclarationSelfTest()
@@ -1782,7 +1803,7 @@ static partial class FBoundStarProjectionErasure
     }
 
     static bool CanUseClrVariance(TypeNode.Fqn target, IReadOnlyList<TypeNode> sourceArguments,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool physicalTypes = false)
     {
         if (target.Args == null || sourceArguments.Count != target.Args.Length) return false;
         for (var index = 0; index < target.Args.Length; index++)
@@ -1792,8 +1813,8 @@ static partial class FBoundStarProjectionErasure
             if (!TryClrVariance(target.Name, target.Args.Length, index, defs, refs, out var variance)
                 || variance is not ("in" or "out")
                 || !(variance == "out"
-                    ? IsClrAssignable(sourceArguments[index], target.Args[index], defs, refs)
-                    : IsClrAssignable(target.Args[index], sourceArguments[index], defs, refs)))
+                    ? IsClrAssignable(sourceArguments[index], target.Args[index], defs, refs, physicalTypes)
+                    : IsClrAssignable(target.Args[index], sourceArguments[index], defs, refs, physicalTypes)))
                 return false;
         }
         return true;
@@ -1806,23 +1827,23 @@ static partial class FBoundStarProjectionErasure
         return variance != null;
     }
 
-    static bool IsClrAssignable(TypeNode source, TypeNode target,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+    internal static bool IsClrAssignable(TypeNode source, TypeNode target,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool physicalTypes = false)
     {
         source = StripSourceNullability(source);
         target = StripSourceNullability(target);
         if (SupertypeGraph.TypeKey(source) == SupertypeGraph.TypeKey(target)) return true;
-        if (!IsDefinitelyClrReferenceType(source, defs, refs)
-            || !IsDefinitelyClrReferenceType(target, defs, refs)) return false;
+        if (!IsDefinitelyClrReferenceType(source, defs, refs, physicalTypes)
+            || !IsDefinitelyClrReferenceType(target, defs, refs, physicalTypes)) return false;
         if (target is TypeNode.Fqn { Args: null, Name: "kotlin.Any" or "System.Object" or "object" })
             return true;
         if (source is TypeNode.Array sourceArray && target is TypeNode.Array targetArray)
             return sourceArray.Rank == targetArray.Rank && sourceArray.SzArray == targetArray.SzArray
-                && IsClrAssignable(sourceArray.Elem, targetArray.Elem, defs, refs);
+                && IsClrAssignable(sourceArray.Elem, targetArray.Elem, defs, refs, physicalTypes);
         if (source is not TypeNode.Fqn sourceFqn || target is not TypeNode.Fqn targetFqn) return false;
 
-        var reflectedSource = ResolveClosedReferenceType(sourceFqn, refs);
-        var reflectedTarget = ResolveClosedReferenceType(targetFqn, refs);
+        var reflectedSource = ResolveClosedReferenceType(sourceFqn, refs, physicalTypes);
+        var reflectedTarget = ResolveClosedReferenceType(targetFqn, refs, physicalTypes);
         if (reflectedSource != null && reflectedTarget != null)
             return reflectedTarget.IsAssignableFrom(reflectedSource);
 
@@ -1838,37 +1859,38 @@ static partial class FBoundStarProjectionErasure
         if (projected == null) return false;
         if (targetFqn.Args == null) return true;
         return projected.Count == targetFqn.Args.Length
-            && CanUseClrVariance(targetFqn, projected, defs, refs);
+            && CanUseClrVariance(targetFqn, projected, defs, refs, physicalTypes);
     }
 
-    static Type ResolveClosedReferenceType(TypeNode.Fqn type, ReferenceMetadataIndex refs)
+    static Type ResolveClosedReferenceType(TypeNode.Fqn type, ReferenceMetadataIndex refs, bool physicalTypes = false)
     {
         var arity = type.Args?.Length ?? 0;
-        var name = refs.Aliases.TryGetValue(type.Name, out var alias) ? alias : type.Name;
-        var open = refs.ResolveNetType(name, arity);
+        var name = !physicalTypes && refs.Aliases.TryGetValue(type.Name, out var alias) ? alias : type.Name;
+        var open = physicalTypes ? refs.PhysicalTypeForProof(name, arity) : refs.ResolveNetType(name, arity);
         if (open == null) return null;
         if (arity == 0) return open;
         if (!open.IsGenericTypeDefinition) return null;
         var arguments = type.Args.Select(argument =>
-            StripSourceNullability(argument) is TypeNode.Fqn f ? ResolveClosedReferenceType(f, refs) : null).ToArray();
+            StripSourceNullability(argument) is TypeNode.Fqn f ? ResolveClosedReferenceType(f, refs, physicalTypes) : null).ToArray();
         if (arguments.Any(argument => argument == null)) return null;
         try { return open.MakeGenericType(arguments); }
         catch { return null; }
     }
 
     static bool IsDefinitelyClrReferenceType(TypeNode type,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs) => type switch
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool physicalTypes = false) => type switch
     {
         TypeNode.Nullable nullable => nullable.Of is TypeNode.Fqn valueFqn
-            ? !refs.IsValueType(valueFqn) && IsDefinitelyClrReferenceType(nullable.Of, defs, refs)
-            : IsDefinitelyClrReferenceType(nullable.Of, defs, refs),
-        TypeNode.Oblivious oblivious => IsDefinitelyClrReferenceType(oblivious.Of, defs, refs),
+            ? !refs.IsValueType(valueFqn) && IsDefinitelyClrReferenceType(nullable.Of, defs, refs, physicalTypes)
+            : IsDefinitelyClrReferenceType(nullable.Of, defs, refs, physicalTypes),
+        TypeNode.Oblivious oblivious => IsDefinitelyClrReferenceType(oblivious.Of, defs, refs, physicalTypes),
         TypeNode.Array or TypeNode.Fn => true,
         TypeNode.Fqn f when defs.TryGetValue(f.Name, out var local) =>
             Str(local["kind"]) is not ("struct" or "enum"),
-        TypeNode.Fqn f => refs.ResolveNetType(
-                refs.Aliases.TryGetValue(f.Name, out var alias) ? alias : f.Name,
-                f.Args?.Length ?? 0) is Type reflected
+        TypeNode.Fqn f => (physicalTypes
+                ? refs.PhysicalTypeForProof(f.Name, f.Args?.Length ?? 0)
+                : refs.ResolveNetType(refs.Aliases.TryGetValue(f.Name, out var alias) ? alias : f.Name,
+                    f.Args?.Length ?? 0)) is Type reflected
             && !reflected.IsValueType,
         _ => false,
     };
