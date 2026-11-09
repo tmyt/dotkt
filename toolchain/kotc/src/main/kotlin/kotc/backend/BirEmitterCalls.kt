@@ -152,9 +152,12 @@ internal fun BirEmitter.filledArgs(
 	val valueSyms = defaultCallee.parameters.filter { isValueParameter(it) }.map { it.symbol }.toHashSet()
 	// A default may also read an ENCLOSING instance (`inner class In(val x: Int = outerProp)`, or a member of an inner
 	// class). That read is the enclosing class's own `thisReceiver` — NOT one of the callee's parameters — so it is
-	// bound separately (see [enclosingThisChain] / [enclosingThisSubst]).
+	// bound separately, together with the lexical values stored by a lifted enclosing instance (see
+	// [enclosingThisChain] / [enclosingThisSubst]). These reads also require the receiver's evaluation plan.
 	val enclosingThis = enclosingThisChain(defaultCallee)
-	val enclosingSyms = enclosingThis.map { it.first.symbol }.toHashSet()
+	val enclosingSyms = enclosingThis.flatMap { (receiver, inner) ->
+		listOf(receiver.symbol) + localClassCaptures[inner.parent as? IrClass].orEmpty().map { it.symbol }
+	}.toHashSet()
 	// The callee's POSITIONAL parameters with their `call.arguments` index — contexts then regulars, the SAME sequence
 	// [paramsJsonList] emits as `params` and [overloadSigField] keys `sig` by, so the returned list is index-for-index
 	// the declaration's arg array (the caller prepends `__self` on both sides).
@@ -602,7 +605,7 @@ internal fun enclosingThisChain(callee: org.jetbrains.kotlin.ir.declarations.IrF
 	return out
 }
 
-/** Each enclosing `this` of [chain] bound to the call-site expression that yields it. A CONSTRUCTOR's dispatch
+/** Each enclosing `this` and its captured lexical values bound to the call-site expression that yields it. A CONSTRUCTOR's dispatch
  *  receiver IS the enclosing instance (the `new`'s leading arg), so its first level needs no hop; a MEMBER's receiver
  *  is an instance of the callee's own class, so every level is reached through that class's `__outer` capture field —
  *  the same chain `innerClassDef` installs while emitting the class body. Empty when the call has no receiver
@@ -610,15 +613,11 @@ internal fun enclosingThisChain(callee: org.jetbrains.kotlin.ir.declarations.IrF
 internal fun BirEmitter.enclosingThisSubst(
 	chain: List<Pair<IrValueParameter, IrClass>>, recv: String?, calleeIsCtor: Boolean,
 ): List<Pair<IrValueDeclaration, String>> {
-	var value = recv ?: return emptyList()
-	var hop = !calleeIsCtor
-	val out = ArrayList<Pair<IrValueDeclaration, String>>()
-	for ((t, inner) in chain) {
-		if (hop) value = """{"k":"field","ownerType":${birType(inner.defaultType).toJson()},"recv":$value,"name":"__outer","outer":true,"memberVisibility":"private"}"""
-		hop = true
-		out.add(t to value)
-	}
-	return out
+	val inner = chain.firstOrNull()?.second ?: return emptyList()
+	val value = recv ?: return emptyList()
+	val immediate = if (calleeIsCtor) value
+		else """{"k":"field","ownerType":${birType(inner.defaultType).toJson()},"recv":$value,"name":"__outer","outer":true,"memberVisibility":"private"}"""
+	return innerEnclosingBindings(inner, immediate)
 }
 
 /** Emit the regular arguments of a resolved reference-KLIB call. A missing dependency-IR default becomes a

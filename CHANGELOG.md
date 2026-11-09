@@ -12,6 +12,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ### Fixed
 
 - Preserve authored Kotlin `MutableCollection.add` Boolean results through concrete, inherited and projected calls, including across DLL boundaries, while retaining the native CLR void-Add fallback.
+- Preserve inner declarations and their enclosing captures when lifting local and anonymous classes.
 - Preserve ordinary property getter slots implemented by native events, including inherited, delegated and cross-DLL declarations.
 - Synthesize native CLR events in rich enum bodies with ordinary event storage, initialization and accessor rules.
 - Preserve logical Kotlin event handler types, generic frames and nullability when importing a Kotlin DLL.
