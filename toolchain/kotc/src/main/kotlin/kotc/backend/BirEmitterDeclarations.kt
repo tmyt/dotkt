@@ -706,6 +706,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	val savedSemanticDeclaration = activeSemanticOwnerDeclaration
 	activeSemanticOwnerDeclaration = ec
 	activeSemanticOwner = typeName(ec)
+	checkUnimplementedClrEvents(ec)
+	val (clrEventBackings, clrEventMethods) = synthClrEvents(ec)
+	val (clrEventForwarders, clrEventForwardMethods) = synthClrEventForwarders(ec)
 	val name = typeName(ec)
 	val entries = ec.declarations.filterIsInstance<IrEnumEntry>()
 	val enumCtors = ec.declarations.filterIsInstance<IrConstructor>()
@@ -745,13 +748,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	fun emitsAccessor(a: IrSimpleFunction?) = a != null &&
 		(a.body is IrBlockBody || (a.body == null && a.modality == Modality.ABSTRACT))
-	fun emitsGet(p: IrProperty) = emitsAccessor(p.getter) && !p.isConst && !isClrField(p)
-	fun emitsSet(p: IrProperty) = emitsAccessor(p.setter) && !p.isConst && !isClrField(p)
-	val userFields = userProps.mapNotNull { p ->
-		val bf = p.backingField ?: return@mapNotNull null
-		val visJson = if (emitsGet(p)) ""","vis":"internal"""" else ""
-		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson${lateinitFieldFlag(p)}}"""
-	} + syntheticInstanceStorageFields(ec)
+	fun emitsGet(p: IrProperty) = emitsAccessor(p.getter) && !p.isConst && !isClrField(p) && !isClrEventProperty(p)
+	fun emitsSet(p: IrProperty) = emitsAccessor(p.setter) && !p.isConst && !isClrField(p) && !isClrEventProperty(p)
+	val userFields = instanceStorageFields(ec)
 	val propAccessors = userProps.flatMap { p ->
 		listOfNotNull(
 			p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
@@ -923,7 +922,8 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	val allPropsList = listOf(propsList, staticPropsList).filter { it.isNotEmpty() }.joinToString(",")
 	// The inherited Enum implementation supplies a name only when the enum has no authored override.
 	val defaultToString = if (declaresToString) emptyList() else listOf(toStr)
-	val methods = (userMethods + propAccessors + staticPropAccessors + defaultToString + listOf(valuesM, valueOfM)).joinToString(",")
+	val methods = (userMethods + propAccessors + staticPropAccessors + clrEventMethods + clrEventForwardMethods +
+		defaultToString + listOf(valuesM, valueOfM)).joinToString(",")
 	val ifaces = interfaceSuperTypes(ec)
 	// As for an ordinary class, inherited default members are frontend-selected implementations. Preserve that
 	// choice so bir2cir can allocate an exact MethodImpl when an unrelated CLR-shaped method would otherwise capture
@@ -952,7 +952,11 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	val richEnum = ""","richEnum":{"entries":[$richEnumEntries],"name":"__name","ordinal":"__ordinal","values":"values","valueOf":"valueOf"}"""
 	val kotlinCompanion = ""
-	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(sourceVisOf(ec))}${semanticOwnerJson(ec)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[${fields.joinToString(",")}],"ctors":[$ctors],"methods":[$methods],"properties":[$allPropsList]$inheritedDefaultsJson$inheritedDefaultMethodsJson${inheritedClassMethodsJson(ec)}$richEnum,"attrs":[${attrsJson(ec.annotations)}]}"""
+	val clrEventsJson = if (clrEventBackings.isEmpty()) "" else
+		""","clrEvents":[${clrEventBackings.joinToString(",")}]"""
+	val clrEventForwardersJson = if (clrEventForwarders.isEmpty()) "" else
+		""","clrEventForwarders":[${clrEventForwarders.joinToString(",")}]"""
+	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(sourceVisOf(ec))}${semanticOwnerJson(ec)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[${fields.joinToString(",")}],"ctors":[$ctors],"methods":[$methods],"properties":[$allPropsList]$inheritedDefaultsJson$inheritedDefaultMethodsJson${inheritedClassMethodsJson(ec)}$richEnum$clrEventsJson$clrEventForwardersJson,"attrs":[${attrsJson(ec.annotations)}]}"""
 	// Emit the base enum class first, then each per-entry subclass.
 	val result = (listOf(baseDef) + subDefs).joinToString(",")
 	activeSemanticOwner = savedSemanticOwner
@@ -1319,7 +1323,8 @@ internal fun BirEmitter.checkUnimplementedClrEvents(klass: IrClass) {
 	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
 		if (!isClrEventProperty(p) || !p.isFakeOverride) continue
 		// Provided by a base CLASS that DECLARES it (a Kotlin base that synthesized the event) -> inherited, OK.
-		if ((p.getter?.resolveFakeOverride()?.parent as? IrClass)?.kind == ClassKind.CLASS) continue
+		val declaringKind = (p.getter?.resolveFakeOverride()?.parent as? IrClass)?.kind
+		if (declaringKind == ClassKind.CLASS || declaringKind == ClassKind.ENUM_CLASS) continue
 		hadError = true
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
 			"class '${klass.name.asString()}' implements a .NET interface event '${p.name.asString()}' but does not provide it; " +
