@@ -13,6 +13,31 @@ static class ErasedElementValues
     sealed record Slot(JsonObject Declaration, string Name, TypeNode Type);
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
 
+    internal static void ApplyType(JsonObject type, ReferenceMetadataIndex references,
+        IReadOnlyDictionary<string, JsonObject> definitions,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
+        GenericRepresentationPolicy policy)
+    {
+        bool IsInterface(TypeNode value) => value is TypeNode.Fqn named
+            && (definitions.TryGetValue(named.Name, out var declaration) ? Text(declaration["kind"]) == "interface"
+                : references.IsInterfaceType(named));
+        var iterators = new KotlinIteratorValueBinding();
+        foreach (var method in (type["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+            .Concat((type["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()))
+            Project(method, type, IsInterface, frames, isValue, policy, iterators, captureStorageOnly: true);
+    }
+
+    internal static void ApplySuspendBody(JsonObject lambda, ReferenceMetadataIndex references,
+        IReadOnlyDictionary<string, JsonObject> definitions,
+        IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
+        GenericRepresentationPolicy policy)
+    {
+        bool IsInterface(TypeNode value) => value is TypeNode.Fqn named
+            && (definitions.TryGetValue(named.Name, out var declaration) ? Text(declaration["kind"]) == "interface"
+                : references.IsInterfaceType(named));
+        Project(lambda, lambda, IsInterface, frames, isValue, policy, new KotlinIteratorValueBinding(), captureStorageOnly: true);
+    }
+
     internal static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references,
         ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null)
     {
@@ -54,7 +79,7 @@ static class ErasedElementValues
 
     static void Project(JsonObject method, JsonObject owner, Func<TypeNode, bool> isInterface,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
-        GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues)
+        GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues, bool captureStorageOnly = false)
     {
         var executable = (method["preStmts"] as JsonArray ?? new JsonArray())
             .Concat(method["thisArgs"] as JsonArray ?? method["baseArgs"] as JsonArray ?? new JsonArray())
@@ -62,14 +87,31 @@ static class ErasedElementValues
         if (executable.Length == 0) return;
         var reads = new Dictionary<JsonObject, TypeNode.Tv>();
         var iteratorReads = new HashSet<JsonObject>();
+        var fieldReads = new HashSet<JsonObject>();
+        var captures = new List<JsonObject>();
         var uses = new Dictionary<JsonObject, Slot>();
         var slots = new List<Slot>();
         var loopSlots = new Dictionary<JsonObject, Slot>();
         var valueResults = new HashSet<JsonObject>();
         var bindings = new Dictionary<string, Slot>(StringComparer.Ordinal);
-        foreach (var parameter in (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+        var parameterOrigins = new Dictionary<Slot, TypeNode.Tv>();
+        var mapping = new NullableRepresentationTypes(owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner),
+            NullableRepresentationTypes.DeclarationMethodFrame(method), frames, isValue, policy: policy);
+        TypeNode.Tv SourceVariable(JsonObject declaration) => Text(declaration["kotlinType"]) is string source
+            && TypeNode.Parse(source) is TypeNode.Tv variable ? Variable(mapping.Slot(variable)) : null;
+        var erasedFields = (owner?["fields"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+            .Where(field => IsObject(TypeJson.Read(field["type"])) && SourceVariable(field) != null)
+            .ToDictionary(field => Text(field["name"]), SourceVariable, StringComparer.Ordinal);
+        foreach (var parameter in (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+            .Concat(Text(method["k"]) == "newSuspendLambda"
+                ? (method["captures"] as JsonArray ?? new JsonArray()).OfType<JsonObject>() : Enumerable.Empty<JsonObject>()))
             if (Text(parameter["name"]) is string name)
-                bindings[name] = new Slot(parameter, name, TypeJson.Read(parameter["type"]));
+            {
+                var slot = new Slot(parameter, name, TypeJson.Read(parameter["type"]));
+                bindings[name] = slot;
+                if (slot.Type is not TypeNode.Tv && SourceVariable(parameter) is { } variable)
+                    parameterOrigins[slot] = variable;
+            }
 
         TypeNode.Tv Element(JsonObject operation, Dictionary<string, Slot> scope)
         {
@@ -89,10 +131,18 @@ static class ErasedElementValues
             if (node is not JsonObject obj) return;
             if (obj["k"] == null && obj["params"] is JsonArray && obj["body"] is JsonArray) return;
             var kind = Text(obj["k"]);
+            if (kind is "newClosure" or "newSam" or "newSuspendLambda") captures.Add(obj);
             if (kind is "local" or "setLocal" && Text(obj["name"]) is string used
                 && scope.TryGetValue(used, out var slot)) uses[obj] = slot;
-            if (kind == "arrayGet" && !location && Element(obj, scope) is { } read) reads[obj] = read;
-            if (!location && iteratorValues.Element(obj) is { } iteratorElement)
+            if (!captureStorageOnly && kind == "arrayGet" && !location && Element(obj, scope) is { } read) reads[obj] = read;
+            if (!location && kind == "field" && Text(obj["recv"]?["k"]) == "this"
+                && TypeJson.OwnerName(obj["ownerType"]) == Text(owner?["name"])
+                && Text(obj["name"]) is string fieldName && erasedFields.TryGetValue(fieldName, out var fieldVariable))
+            {
+                reads[obj] = fieldVariable;
+                fieldReads.Add(obj);
+            }
+            if (!captureStorageOnly && !location && iteratorValues.Element(obj) is { } iteratorElement)
             {
                 reads[obj] = iteratorElement;
                 iteratorReads.Add(obj);
@@ -112,7 +162,7 @@ static class ErasedElementValues
             {
                 Bind(obj["array"], scope);
                 var loop = new Slot(obj, loopName, TypeJson.Read(obj["elem"]));
-                if (Element(obj, scope) is { } element)
+                if (!captureStorageOnly && Element(obj, scope) is { } element)
                 {
                     loop = loop with { Type = element };
                     loopSlots[obj] = loop;
@@ -143,9 +193,10 @@ static class ErasedElementValues
             }
         }
         foreach (var statement in executable) Bind(statement, bindings);
-        if (reads.Count == 0 && loopSlots.Count == 0) return;
+        if (reads.Count == 0 && loopSlots.Count == 0 && parameterOrigins.Count == 0) return;
 
         var origins = loopSlots.Values.ToDictionary(slot => slot, slot => (TypeNode.Tv)slot.Type);
+        foreach (var (slot, variable) in parameterOrigins) origins[slot] = variable;
         TypeNode.Tv Origin(JsonNode node)
         {
             if (node is not JsonObject obj) return null;
@@ -206,7 +257,7 @@ static class ErasedElementValues
                 iteratorValues.Bind(read);
                 continue;
             }
-            read["elem"] = TypeJson.Write(ObjectType);
+            if (!fieldReads.Contains(read)) read["elem"] = TypeJson.Write(ObjectType);
             read["sty"] = TypeJson.Write(ObjectType);
         }
         foreach (var (loop, _) in loopSlots) loop["elem"] = TypeJson.Write(ObjectType);
@@ -221,6 +272,16 @@ static class ErasedElementValues
         foreach (var (use, slot) in uses)
             if (Text(use["k"]) == "local" && origins.ContainsKey(slot))
                 use["sty"] = TypeJson.Write(ObjectType);
+        foreach (var closure in captures)
+            if (closure[Text(closure["k"]) == "newSuspendLambda" ? "capValues" : "captures"] is JsonArray values)
+                for (var index = 0; index < values.Count; index++)
+                    if (values[index] is JsonObject value && Origin(value) != null)
+                    {
+                        // A capture is physical storage, not a request for the caller's closed CLR T.
+                        // An ordinary Object boundary carries this fact through intervening rewrites.
+                        values[index] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(ObjectType),
+                            ["e"] = value.DeepClone() };
+                    }
         foreach (var (cast, bound) in casts)
         {
             // A raw non-reified generic guard admits null. The typed consumer,

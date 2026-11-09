@@ -187,10 +187,9 @@ static class KotlinCollectionSlotSynthesis
 
     internal static bool IsMapContractOwner(string owner) => owner is Map or MutableMap;
 
-    internal static JsonObject ErasedCollectionQueryOverride(JsonObject operation) =>
+    internal static JsonObject ErasedQueryOverride(JsonObject operation) =>
         (operation["overrides"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(marker =>
-            Slots.Any(slot => !IsMapContractOwner(slot.DeclaringInterface)
-                && slot.Parameters.Contains(ParameterCarrier.ErasedValue) && MatchesOverride(marker, slot)));
+            Slots.Any(slot => slot.Parameters.Contains(ParameterCarrier.ErasedValue) && MatchesOverride(marker, slot)));
 
     internal static void EraseGenericQueryParameters(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> aliases)
@@ -202,8 +201,9 @@ static class KotlinCollectionSlotSynthesis
         foreach (var definition in definitions.Values.Where(definition => !aliases.ContainsKey(definition.Name)))
             foreach (var method in definition.Methods.OfType<JsonObject>())
             {
-                var marker = ErasedCollectionQueryOverride(method);
-                if (marker == null || method["params"] is not JsonArray parameters) continue;
+                var marker = ErasedQueryOverride(method);
+                if (marker == null || IsMapContractOwner(TypeJson.OwnerName(marker["owner"]))
+                    || method["params"] is not JsonArray parameters) continue;
                 var slot = Slots.First(slot => !IsMapContractOwner(slot.DeclaringInterface)
                     && slot.Parameters.Contains(ParameterCarrier.ErasedValue) && MatchesOverride(marker, slot));
                 for (var i = 0; i < slot.Parameters.Length; i++)

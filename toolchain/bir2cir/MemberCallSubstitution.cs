@@ -2668,13 +2668,15 @@ static class MemberCallSubstitution
         TypeNode any = new TypeNode.Fqn("kotlin.Any");
         TypeNode k = new TypeNode.Tv("method", 0);
         TypeNode v = new TypeNode.Tv("method", 1);
+        TypeNode query = new TypeNode.Nullable(any);
         TypeNode[] ps = method switch
         {
             "clrMapIsEmpty" or "clrMapSize" or "clrMapKeys" or "clrMapValues" or "clrMapEntries"
                 or "clrMapMutableKeys" or "clrMapMutableValues" or "clrMapMutableEntries" or "clrMapClear" => new[] { any },
-            "clrMapGet" or "clrMapContainsKey" or "clrMapRemove" => new[] { any, k },
-            "clrMapContainsValue" => new[] { any, v },
-            "clrMapPut" or "clrMapGetOrDefault" or "clrMapRemoveKV" or "clrMapPutIfAbsent" or "clrMapReplace"
+            "clrMapGet" or "clrMapContainsKey" or "clrMapRemove" or "clrMapContainsValue" => new[] { any, query },
+            "clrMapGetOrDefault" or "clrMapReplace" => new[] { any, query, v },
+            "clrMapRemoveKV" => new[] { any, query, query },
+            "clrMapPut" or "clrMapPutIfAbsent"
                 => new[] { any, k, v },
             "clrMapMerge" => new TypeNode[]
             {
@@ -2682,7 +2684,7 @@ static class MemberCallSubstitution
                 new TypeNode.Fn(false, new TypeNode.Nullable(v), new[] { v, v }, null, "System.Func"),
             },
             "clrMapPutAll" => new[] { any, any },
-            "clrMapReplaceKVV" => new[] { any, k, v, v },
+            "clrMapReplaceKVV" => new[] { any, query, query, v },
             _ => throw new InvalidOperationException($"bir2cir: no authored descriptor for map helper {method}"),
         };
         return new JsonArray(ps.Concat(method == "clrMapPutAll"

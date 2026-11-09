@@ -163,6 +163,19 @@ static partial class NullableTvErasureCallRealign
         CollectFrom(root, idx, topLevel: false);
     }
 
+    // Capture storage can change after the original declaration snapshot. Update the exact already-owned
+    // field and constructor slot together; otherwise later use alignment would restore a stale closed T cast.
+    internal static void RebindGeneratedCapture(DeclIndex index, string owner, string field, int position,
+        int arity, TypeNode storage)
+    {
+        if (!index.Slots.TryGetValue(owner, out var fields) || !fields.ContainsKey(field)
+            || !index.Ctors.TryGetValue(owner, out var constructors) || !constructors.TryGetValue(arity, out var parameters)
+            || position < 0 || position >= parameters.Length)
+            throw new InvalidOperationException($"Generated capture '{owner}.{field}' has no indexed storage slot");
+        fields[field] = storage;
+        parameters[position] = storage;
+    }
+
     // The same generated holder method can be visited once through the new-type walk and once through the
     // generated-member walk. Keep its one-shot ownership fact stable across both index additions, then consume it
     // only after both views have been collected so they cannot disagree and poison the declaration key.
