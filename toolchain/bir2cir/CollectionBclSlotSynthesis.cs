@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -6,14 +7,15 @@ using DotKt.Bir;
 // ICollection")` and `MutableList<E>` is `IList` — but `ICollection<T>`/`IList<T>` carry members Kotlin's collection
 // interfaces do NOT: `Contains`, `CopyTo`, `IsReadOnly` (ICollection) and `IndexOf` (IList). Kotlin has the
 // value-returning `contains`/`indexOf` under LOWERCASE names (not @ClrIntrinsic-renamed → DeclarationRename leaves them
-// lowercase), and has NO equivalent for `CopyTo`/`IsReadOnly` at all. So a Kotlin class DIRECTLY implementing the aliased
+// lowercase), and has NO equivalent for `CopyTo`/`IsReadOnly` at all. So a Kotlin class implementing the aliased
 // interface (kotlin.collections.AbstractMutable{Collection,List,Set}, a MutableMap keys/values view, a user class) is
 // missing those BCL slots → the CLR loader rejects any CONCRETE type in the hierarchy ("Method 'Contains' ... does not
 // have an implementation" → TypeLoadException). Concrete Kotlin-backed collections need these native slots regardless
 // of whether other collection factories happen to allocate native BCL storage.
 //
-// Fill each missing slot with an ordinary public forwarding member, keyed on the DIRECTLY-listed alias. An IList face
-// needs only IndexOf here; the ICollection face comes from a base or the direct ICollection listing. Contains and
+// Fill each missing slot with an ordinary public forwarding member, following the constructed interface closure.
+// A class base already supplies its native faces; inherit those implementations rather than replacing their policy.
+// An IList face also reaches ICollection through that same graph. Contains and
 // IndexOf dispatch through the already-resolved Kotlin query slots, which own the ordinary/storage argument
 // boundary and the selected implementation (including renamed overrides). CopyTo consumes the exact CLR IEnumerable<E> face.
 // IsReadOnly returns false. The return-DROPPING slots
@@ -24,43 +26,50 @@ static class CollectionBclSlotSynthesis
     const string ICollection = "System.Collections.Generic.ICollection";
     const string IList = "System.Collections.Generic.IList";
 
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
-        if (root is not JsonObject o || o["types"] is not JsonArray types) return;
-        foreach (var t in types)
+        // Snapshot the whole module before synthesis: a user interface/base can live in a later input file.
+        var definitions = SupertypeGraph.Collect(roots);
+        foreach (var definition in definitions.Values)
         {
-            if (t is not JsonObject to) continue;
-            if ((to["kind"] as JsonValue)?.GetValue<string>() != "class") continue;   // interfaces carry no bodies
-            var owner = (to["name"] as JsonValue)?.GetValue<string>();
-            if (string.IsNullOrEmpty(owner)) continue;
+            if (definition.Kind != "class") continue; // interfaces carry no bodies
+            var to = definition.Node;
             if (to["interfaces"] is not JsonArray ifaces) continue;
 
-            // The element type = the FIRST type-arg of a DIRECTLY-listed ICollection<E> / IList<E>.
+            var faces = SupertypeGraph.Reachable(
+                    new SupertypeGraph.Def { Interfaces = definition.Interfaces }, definitions, refs)
+                .Where(edge => edge.isInterface && IsCollectionFace(edge.spec))
+                .Select(edge => edge.spec).ToList();
+            if (faces.Count == 0) continue;
+            var inherited = definition.Base == null ? new HashSet<string>()
+                : SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = definition.Base }, definitions, refs)
+                    .Where(edge => edge.isInterface && IsCollectionFace(edge.spec))
+                    .Select(edge => SupertypeGraph.TypeKey(edge.spec)).ToHashSet();
+
+            // Each edge has already been substituted into this class's exact physical generic frame.
             JsonNode collElem = null, listElem = null;
-            foreach (var i in ifaces)
+            foreach (var face in faces)
             {
-                if (TypeJson.Read(i) is not TypeNode.Fqn f || f.Args is not { Length: 1 }) continue;
-                if (f.Name == IList) listElem ??= ArgNode(i);
-                else if (f.Name == ICollection) collElem ??= ArgNode(i);
+                if (inherited.Contains(SupertypeGraph.TypeKey(face))) continue;
+                if (face.Name == IList) listElem ??= TypeJson.Write(face.Args[0]);
+                else collElem ??= TypeJson.Write(face.Args[0]);
+                // State the native face so subsequent slot and read-only-sibling synthesis consume the same facts.
+                if (!ifaces.Any(i => SupertypeGraph.TypeKey(TypeJson.Read(i)) == SupertypeGraph.TypeKey(face)))
+                    ifaces.Add(TypeJson.Write(face));
             }
             if (collElem == null && listElem == null) continue;
 
             if (to["methods"] is not JsonArray methods) { methods = new JsonArray(); to["methods"] = methods; }
             bool Has(string name) => methods.OfType<JsonObject>().Any(m => (m["name"] as JsonValue)?.GetValue<string>() == name);
 
-            // A direct IList<E> implementer need not inherit an ICollection<E> implementation from a class base.
-            // List ICollection<E> explicitly so the common slot pass sees that face too — its `Add`
-            // void-drop bridge, `Remove`/`Clear`/`Count` (the class's own renamed members), and the synthesized
-            // `Contains`/`CopyTo`/`IsReadOnly`. (Redundant-but-legal: IList already implies ICollection.)
-            var elem = listElem ?? collElem;
-            if (listElem != null && !ifaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn { Name: ICollection }))
-                ifaces.Add(new JsonObject { ["t"] = "fqn", ["name"] = ICollection, ["args"] = new JsonArray(Clone(elem)) });
-
             // ICollection<E> face: Contains / CopyTo / get_IsReadOnly.
-            if (!Has("Contains")) methods.Add(QuerySlotForward("Contains", elem, "System.Boolean",
-                "KotlinCollectionDefaultSlots", "dotktContains"));
-            if (!Has("get_IsReadOnly")) methods.Add(ConstBoolGetter("get_IsReadOnly"));
-            if (!Has("CopyTo")) methods.Add(CopyTo(elem));
+            if (collElem != null)
+            {
+                if (!Has("Contains")) methods.Add(QuerySlotForward("Contains", collElem, "System.Boolean",
+                    "KotlinCollectionDefaultSlots", "dotktContains"));
+                if (!Has("get_IsReadOnly")) methods.Add(ConstBoolGetter("get_IsReadOnly"));
+                if (!Has("CopyTo")) methods.Add(CopyTo(collElem));
+            }
             // IList<E> face additionally needs IndexOf.
             if (listElem != null && !Has("IndexOf"))
                 methods.Add(QuerySlotForward("IndexOf", listElem, "System.Int32",
@@ -68,9 +77,8 @@ static class CollectionBclSlotSynthesis
         }
     }
 
-    // The interface node's first type-arg, cloned as a fresh JsonNode (so it can be attached under several slots).
-    static JsonNode ArgNode(JsonNode ifaceNode) =>
-        (ifaceNode as JsonObject)?["args"] is JsonArray a && a.Count == 1 ? Clone(a[0]) : null;
+    static bool IsCollectionFace(TypeNode.Fqn face) =>
+        face.Name is ICollection or IList && face.Args is { Length: 1 };
 
     static JsonNode Clone(JsonNode n) => n == null ? null : JsonNode.Parse(n.ToJsonString());
 
