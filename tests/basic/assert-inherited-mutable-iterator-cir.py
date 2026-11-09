@@ -25,7 +25,8 @@ source_calls = [node for node in nodes(source["body"])
 assert len(source_calls) == 2
 for call in source_calls:
     assert call.get("declarationId")
-    assert any(edge.get("owner", {}).get("name") == "kotlin.collections.AbstractMutableCollection"
+    # The restored upstream hierarchy inherits its read-only query policy from AbstractCollection.
+    assert any(edge.get("owner", {}).get("name") == "kotlin.collections.AbstractCollection"
                and edge.get("declarationId") == call["declarationId"] for edge in call["overrides"])
 calls = [node for node in nodes(lowered["body"])
          if node.get("k") == "callStatic" and node.get("method") == "clrProjectedViewContains"]

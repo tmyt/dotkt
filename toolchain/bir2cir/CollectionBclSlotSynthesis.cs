@@ -48,9 +48,8 @@ static class CollectionBclSlotSynthesis
             if (to["methods"] is not JsonArray methods) { methods = new JsonArray(); to["methods"] = methods; }
             bool Has(string name) => methods.OfType<JsonObject>().Any(m => (m["name"] as JsonValue)?.GetValue<string>() == name);
 
-            // The CLR stdlib's mutable-collection abstract classes are FLAT (`AbstractMutableList : MutableList`, base
-            // Object — NOT `: AbstractMutableCollection`), so an IList<E> implementer does NOT inherit the ICollection<E>
-            // face from a base. List ICollection<E> EXPLICITLY so the common slot pass sees that face too — its `Add`
+            // A direct IList<E> implementer need not inherit an ICollection<E> implementation from a class base.
+            // List ICollection<E> explicitly so the common slot pass sees that face too — its `Add`
             // void-drop bridge, `Remove`/`Clear`/`Count` (the class's own renamed members), and the synthesized
             // `Contains`/`CopyTo`/`IsReadOnly`. (Redundant-but-legal: IList already implies ICollection.)
             var elem = listElem ?? collElem;

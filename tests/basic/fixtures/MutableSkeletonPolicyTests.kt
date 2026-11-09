@@ -12,6 +12,15 @@ private class PolicySet<T>(val values: MutableList<T>) : AbstractMutableSet<T>()
     override fun iterator(): MutableIterator<T> = values.listIterator()
 }
 
+private class PolicyReplacingCollection<T>(first: T) : AbstractMutableCollection<T>() {
+    val values = mutableListOf(first)
+    var calls = 0
+    var result = true
+    override val size: Int get() = values.size
+    override fun iterator(): MutableIterator<T> = values.iterator()
+    override fun add(element: T): Boolean { calls++; values[0] = element; return result }
+}
+
 private class PolicyList<T>(val values: MutableList<T>) : AbstractMutableList<T>() {
     var ranges = 0
     override val size: Int get() = values.size
@@ -35,7 +44,29 @@ private fun policyConcurrent(block: () -> Unit) {
     check(caught)
 }
 
+private open class PolicyWideValue<T>(val element: T)
+private class PolicyNarrowValue<T>(element: T) : PolicyWideValue<T>(element)
+private abstract class PolicyWideSelection<T> {
+    abstract fun selected(): PolicyWideValue<T>
+    abstract val selectedProperty: PolicyWideValue<T>
+}
+private interface PolicyNarrowSelection<T> {
+    fun selected(): PolicyNarrowValue<T>
+    val selectedProperty: PolicyNarrowValue<T>
+}
+private abstract class PolicyInheritedSelection<T> : PolicyWideSelection<T>(), PolicyNarrowSelection<T> {
+    fun readSelected(): PolicyNarrowValue<T> = selected()
+    fun readProperty(): PolicyNarrowValue<T> = selectedProperty
+}
+private class PolicySelected<T>(val value: PolicyNarrowValue<T>) : PolicyInheritedSelection<T>() {
+    override fun selected(): PolicyNarrowValue<T> = value
+    override val selectedProperty: PolicyNarrowValue<T> get() = value
+}
+
 private fun <T> policyBulk(first: T, last: T) {
+    val selected = PolicySelected(PolicyNarrowValue(first))
+    check(selected.readSelected() === selected.value && selected.readSelected().element == first)
+    check(selected.readProperty() === selected.value && selected.readProperty().element == first)
     val collection = PolicyCollection(mutableListOf(first, last, first))
     check(collection.removeAll(listOf(last)) && collection.values == listOf(first, first))
     check(!collection.removeAll(listOf(last)))
@@ -45,6 +76,19 @@ private fun <T> policyBulk(first: T, last: T) {
     check(set.removeAll(listOf(last)) && set.values == listOf(first))
     check(!set.removeAll(listOf(last)) && !set.retainAll(listOf(first)))
     check(set.retainAll(emptyList()) && set.isEmpty())
+
+    val replacing = PolicyReplacingCollection(first)
+    val readOnly: AbstractCollection<T> = replacing
+    check(replacing.addAll(listOf(last)) && replacing.calls == 1 && replacing.size == 1)
+    check(readOnly.contains(last) && readOnly.containsAll(listOf(last)))
+    replacing.result = false
+    check(!replacing.addAll(listOf(first)) && replacing.calls == 2 && readOnly.contains(first))
+    (replacing as System.Collections.Generic.ICollection<T>).Add(last)
+    check(replacing.calls == 3 && readOnly.contains(last))
+    val mutableSet: AbstractMutableCollection<T> = PolicySet(mutableListOf(first))
+    check(mutableSet.add(last) && !mutableSet.add(last))
+    val mutableList: AbstractMutableCollection<T> = PolicyList(mutableListOf(first))
+    check(mutableList.add(last) && mutableList.containsAll(listOf(first, last)))
 }
 
 class MutableSkeletonPolicyTests {

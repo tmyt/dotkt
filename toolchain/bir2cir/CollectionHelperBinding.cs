@@ -97,12 +97,15 @@ static class CollectionHelperBinding
                 || TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn owner
                 || obj["args"] is not JsonArray args)
                 return obj;
-            // A concrete or native-aliased Kotlin owner implements the same erased query contract. Dispatch through that
-            // contract, not a prematurely narrowed implementation parameter. An already-selected aliased interface
-            // retains its operation family (e.g. Set rather than an unrelated Collection face). Super is exact too.
+            // A concrete or native-aliased Kotlin owner retains its inherited protocol obligations. Dispatch erased queries and
+            // supplemental operations through their selected contract. An already-selected aliased interface retains
+            // its operation family; a super call is deliberately exact.
             if (obj["super"]?.GetValue<bool>() != true
                 && (!aliases.ContainsKey(owner.Name) || !IsInterface(owner.Name))
-                && KotlinCollectionSlotSynthesis.ErasedQueryOverride(obj) is { } query)
+                && (KotlinCollectionSlotSynthesis.ErasedQueryOverride(obj)
+                    ?? (obj["overrides"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(marker =>
+                        !KotlinCollectionSlotSynthesis.IsMapContractOwner(TypeJson.OwnerName(marker["owner"]))
+                        && KotlinCollectionSlotSynthesis.OwnsSupplementalOverride(marker))) is { } query)
             {
                 // Override edges use the direct owner's declaration frame, not the caller's frame.
                 owner = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(TypeJson.Read(query["owner"]),

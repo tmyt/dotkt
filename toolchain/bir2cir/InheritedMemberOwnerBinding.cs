@@ -249,10 +249,10 @@ static class InheritedMemberOwnerBinding
         if (!Bool(call["super"]) && paramCount >= 0
             && (DeclaresVirtual(types.GetValueOrDefault(owner.Name), method, methodArity, sig, paramCount,
                     propertyName, propertyAccessor)
-                || (propertyAccessor != null
+                || (!types.ContainsKey(owner.Name) && (propertyAccessor != null
                     ? refs.DeclaresVirtualInstancePropertyAccessor(owner.Name, propertyName, propertyAccessor,
                         methodArity, sig, paramCount, owner.Args ?? Array.Empty<TypeNode>())
-                    : refs.DeclaresVirtualInstanceMember(owner.Name, method, methodArity, sig, paramCount))))
+                    : refs.DeclaresVirtualInstanceMember(owner.Name, method, methodArity, sig, paramCount)))))
             call["virtual"] = true;
 
         if (sig == null) return; // inherited owner binding requires the declaration signature
@@ -261,8 +261,8 @@ static class InheritedMemberOwnerBinding
         // That closure records semantic ancestry; it does not ask CIR to call the base/interface declaration. Retargeting
         // a covariant concrete method (`Derived.m(): Derived`) to its interface slot (`Base.m(): Base`) changes the
         // physical return type and makes an immediately-narrow consumer unverifiable. Prefer the real declaration on
-        // the current owner. A local fake override is not emitted as a slot, so it deliberately falls through to the
-        // hierarchy search.
+        // the current owner, including retained abstract obligations. A concrete inherited fake has no own slot
+        // and deliberately falls through to the hierarchy search.
         var ownDeclarationSig = ExactDeclarationSignature(
             types.GetValueOrDefault(owner.Name), method, methodArity, sig, owner.Args,
             propertyName, propertyAccessor);
@@ -289,11 +289,11 @@ static class InheritedMemberOwnerBinding
                 var localSig = ExactDeclarationSignature(
                     types.GetValueOrDefault(baseOwner.Name), method, methodArity, sig, baseOwner.Args,
                     propertyName, propertyAccessor);
-                var referenced = propertyAccessor != null
+                var referenced = !types.ContainsKey(baseOwner.Name) && (propertyAccessor != null
                     ? refs.DeclaresExactInstancePropertyAccessor(baseOwner.Name, propertyName, propertyAccessor,
                         methodArity, sig, baseOwner.Args ?? Array.Empty<TypeNode>())
                     : refs.DeclaresExactInstanceMember(baseOwner.Name, method, methodArity, sig,
-                        baseOwner.Args ?? Array.Empty<TypeNode>());
+                        baseOwner.Args ?? Array.Empty<TypeNode>()));
                 if (localSig == null && !referenced) continue;
                 call["ownerType"] = TypeJson.Write(baseOwner);
                 if (localSig != null) call["sig"] = localSig;
@@ -330,11 +330,13 @@ static class InheritedMemberOwnerBinding
             call["virtual"] = true;
             return;
         }
-        if (propertyAccessor != null
+        // A reference twin can expose abstract/fake declarations absent from the local runtime type.
+        // Local emitted declarations are authoritative; never use that twin to stop the owner walk.
+        if (!types.ContainsKey(owner.Name) && (propertyAccessor != null
                 ? refs.DeclaresExactInstancePropertyAccessor(owner.Name, propertyName, propertyAccessor,
                     methodArity, sig, owner.Args ?? Array.Empty<TypeNode>())
                 : refs.DeclaresExactInstanceMember(owner.Name, method, methodArity, sig,
-                    owner.Args ?? Array.Empty<TypeNode>()))
+                    owner.Args ?? Array.Empty<TypeNode>())))
             return;
 
         var hierarchy = ReachableTypes(owner, types, refs).ToList();
@@ -356,11 +358,11 @@ static class InheritedMemberOwnerBinding
             .Where(r => overrideOwners.Count == 0 || overrideOwners.Contains(r.Type.Name))
             .Where(r => DeclaresExact(types.GetValueOrDefault(r.Type.Name), method, methodArity, sig, r.Type.Args,
                     propertyName, propertyAccessor)
-                || (propertyAccessor != null
+                || (!types.ContainsKey(r.Type.Name) && (propertyAccessor != null
                     ? refs.DeclaresExactInstancePropertyAccessor(r.Type.Name, propertyName, propertyAccessor,
                         methodArity, sig, r.Type.Args ?? Array.Empty<TypeNode>())
                     : refs.DeclaresExactInstanceMember(r.Type.Name, method, methodArity, sig,
-                        r.Type.Args ?? Array.Empty<TypeNode>())))
+                        r.Type.Args ?? Array.Empty<TypeNode>()))))
             .ToList();
 
         if (overrideOwners.Count > 0)

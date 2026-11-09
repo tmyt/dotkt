@@ -25,3 +25,26 @@ open class FactoryBase {
     fun <T> makeFrom(seed: T, text: String): Narrow = Narrow(text)
 }
 open class ExportedFactory : FactoryBase(), Factory
+
+abstract class ClassFactoryBase {
+    abstract val item: Value
+    abstract fun make(): Value?
+    abstract fun <T> makeFrom(seed: T, text: String): Value
+}
+abstract class ClassFactoryNarrow : ClassFactoryBase() {
+    abstract override val item: Narrow
+    abstract override fun make(): Narrow?
+    abstract override fun <T> makeFrom(seed: T, text: String): Narrow
+}
+
+abstract class BoundReturnBase { abstract fun value(): Value }
+abstract class BoxedReturnBase { abstract fun value(): Comparable<Int> }
+abstract class EchoBase { abstract fun <T> echo(value: T): T }
+abstract class EchoMiddle : EchoBase()
+interface OverloadLeft
+interface OverloadRight
+abstract class OverloadBase {
+    abstract fun <T : OverloadLeft> choose(value: T): Int
+    abstract fun <T : OverloadRight> choose(value: T): Int
+}
+abstract class OverloadMiddle : OverloadBase()

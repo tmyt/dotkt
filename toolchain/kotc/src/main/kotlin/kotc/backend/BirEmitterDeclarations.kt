@@ -1900,7 +1900,9 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	val instMethods = klass.declarations.filterIsInstance<IrSimpleFunction>()
 		// Include `abstract fun`s (body == null): they emit as CLR abstract methods so subclass overrides bind
 		// and a base-typed call (`shape.area()`) resolves to the slot.
-		.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride &&
+		// Abstract inherited obligations retain the frontend's selected signature too. A fake override can combine
+		// a wide class declaration with a narrower interface result; dropping it loses the Kotlin contract.
+		.filter { it.correspondingPropertySymbol == null && (!it.isFakeOverride || it.modality == Modality.ABSTRACT) &&
 			(it.body != null || it.modality == Modality.ABSTRACT || it.isExternal) }
 		// The method twin of `inheritedStatic` below: a static of a BASE type has nothing to emit here.
 		.filter { !isInheritedStaticFunction(it) }

@@ -1281,7 +1281,9 @@ static partial class FBoundStarProjectionErasure
         var definitions = new Dictionary<string, JsonObject>(StringComparer.Ordinal) {
             ["object"] = new() { ["name"] = "object", ["kind"] = "class" },
             ["Proof.Narrow"] = new() { ["name"] = "Proof.Narrow", ["kind"] = "class", ["base"] = TypeJson.Fqn("object") },
-            ["Proof.Value"] = new() { ["name"] = "Proof.Value", ["kind"] = "struct" },
+            ["Proof.Value"] = new() { ["name"] = "Proof.Value", ["kind"] = "struct",
+                ["interfaces"] = new JsonArray(TypeJson.Fqn("Proof.Marker")) },
+            ["Proof.Marker"] = new() { ["name"] = "Proof.Marker", ["kind"] = "interface" },
             ["Proof.Stream"] = new() { ["name"] = "Proof.Stream", ["kind"] = "interface", ["typeParams"] = new JsonArray(new JsonObject {
                 ["name"] = "T", ["variance"] = "out",
             }) },
@@ -1292,7 +1294,14 @@ static partial class FBoundStarProjectionErasure
             || IsClrAssignable(Stream("Proof.Value"), Stream("object"), definitions, refs, physicalTypes: true)
             || IsClrAssignable(Stream("object"), Stream("Proof.Narrow"), definitions, refs, physicalTypes: true))
             throw new InvalidOperationException("Physical assignability lost reference-only widening");
-        Console.WriteLine("[physical assignability] self-test OK (reference widening/covariance, value and narrowing refusals)");
+        if (!IsClrAssignable(new TypeNode.Fqn("Proof.Value"), new TypeNode.Fqn("object"), definitions, refs,
+                physicalTypes: true, allowBoxing: true)
+            || !IsClrAssignable(new TypeNode.Fqn("Proof.Value"), new TypeNode.Fqn("Proof.Marker"), definitions, refs,
+                physicalTypes: true, allowBoxing: true)
+            || IsClrAssignable(Stream("Proof.Value"), Stream("object"), definitions, refs,
+                physicalTypes: true, allowBoxing: true))
+            throw new InvalidOperationException("Root boxing leaked into CLR generic variance or lost its interface");
+        Console.WriteLine("[physical assignability] self-test OK (reference widening, root boxing, invariant value arguments)");
     }
 
     static void LocalAliasDeclarationSelfTest()
@@ -1828,12 +1837,15 @@ static partial class FBoundStarProjectionErasure
     }
 
     internal static bool IsClrAssignable(TypeNode source, TypeNode target,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool physicalTypes = false)
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool physicalTypes = false,
+        bool allowBoxing = false)
     {
         source = StripSourceNullability(source);
         target = StripSourceNullability(target);
         if (SupertypeGraph.TypeKey(source) == SupertypeGraph.TypeKey(target)) return true;
-        if (!IsDefinitelyClrReferenceType(source, defs, refs, physicalTypes)
+        // Boxing is an optional ROOT value conversion, never an allowance inside CLR generic variance or arrays.
+        if (!(IsDefinitelyClrReferenceType(source, defs, refs, physicalTypes)
+                || allowBoxing && IsBoxableValue(source, defs, refs, physicalTypes))
             || !IsDefinitelyClrReferenceType(target, defs, refs, physicalTypes)) return false;
         if (target is TypeNode.Fqn { Args: null, Name: "kotlin.Any" or "System.Object" or "object" })
             return true;
@@ -1875,6 +1887,15 @@ static partial class FBoundStarProjectionErasure
         if (arguments.Any(argument => argument == null)) return null;
         try { return open.MakeGenericType(arguments); }
         catch { return null; }
+    }
+
+    static bool IsBoxableValue(TypeNode type, IReadOnlyDictionary<string, JsonObject> defs,
+        ReferenceMetadataIndex refs, bool physicalTypes)
+    {
+        if (type is not TypeNode.Fqn named || refs.IsByRefLikeFqn(named)) return false;
+        if (defs.TryGetValue(named.Name, out var local)) return Str(local["kind"]) is "struct" or "enum";
+        var reflected = ResolveClosedReferenceType(named, refs, physicalTypes);
+        return reflected is { IsValueType: true, IsByRefLike: false } && reflected.FullName != "System.Void";
     }
 
     static bool IsDefinitelyClrReferenceType(TypeNode type,

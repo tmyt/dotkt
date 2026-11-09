@@ -122,9 +122,13 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	 * every source declaration, so kotc authors an equivalent stable fingerprint from the PRE-CLR Kotlin declaration
 	 * itself. Calls read the selected IrSymbol through this identity map; bir2cir never reconstructs it after erasure. */
 	private val declarationIds = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, String>()
+	private fun ownsInheritedAbstractDeclaration(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
+		fn is IrSimpleFunction && fn.isFakeOverride && fn.modality == Modality.ABSTRACT &&
+			(fn.parent as? IrClass)?.let { it.kind != ClassKind.INTERFACE && !isExternalNetType(it) } == true
+
 	internal fun declarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
 		declarationIds.getOrPut(fn) {
-			carriedDeclarationId(fn) ?: computeDeclarationId(fn, companionReceiverJson(fn)
+			(if (ownsInheritedAbstractDeclaration(fn)) null else carriedDeclarationId(fn)) ?: computeDeclarationId(fn, companionReceiverJson(fn)
 				?: companionExtensionReceiverType(fn)?.let { birType(it).toJson() })
 		}
 
@@ -176,12 +180,15 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// interface/override slot. Its trusted metadata identity is nevertheless the exact FIR-selected declaration and
 		// must survive at every call site; rejecting it on modality sends the backend back to erased-signature overload
 		// resolution. Native Kotlin declarations likewise retain their identity independently of override allocation.
+		// A new local abstract obligation can inherit the producer's identity ANNOTATION through a fake override.
+		// That annotation still names the ancestor; this declaration owns its own Kotlin parent/signature instead.
+		if (ownsInheritedAbstractDeclaration(fn)) return declarationId(fn)
 		val carried = carriedDeclarationId(fn)
 		if (carried != null) return carried
 		if (projectedClrOwner != null) return null
-		// An inherited view has no declaration of its own. Call/delegate emission resolves its frontend override
-		// edge to the real declaration; only an explicit imported carrier can give the view an independent identity.
-		if (fn.isFakeOverride) return null
+		// Concrete inherited views resolve to the selected implementation. Retained abstract class obligations
+		// instead own a declaration signature, including its generic frame and any overload discriminator.
+		if (fn.isFakeOverride && (fn.modality != Modality.ABSTRACT || owner.kind == ClassKind.INTERFACE)) return null
 		// Kotlin supplies body-less primitive operations as built-in vocabulary, not emitted declarations.
 		// Keep real primitive declarations (e.g. source-authored conversion bodies) on the ordinary identity path.
 		if (owner.defaultType.isPrimitiveType() && fn.body == null && !fn.isExternal

@@ -122,9 +122,12 @@ static class KotlinOverrideSlotBridge
         var rootList = roots.ToArray();
         var defs = SupertypeGraph.Collect(rootList);
         IReadOnlyDictionary<string, JsonObject> assignabilityDefinitions = null;
-        bool CanForwardArgument(TypeNode source, TypeNode target) => FBoundStarProjectionErasure.IsClrAssignable(
+        bool CanForwardPhysicalValue(TypeNode source, TypeNode target) => FBoundStarProjectionErasure.IsClrAssignable(
             source, target, assignabilityDefinitions ??= defs.ToDictionary(pair => pair.Key, pair => pair.Value.Node,
                 StringComparer.Ordinal), refs, physicalTypes: true);
+        bool CanForwardReturn(TypeNode source, TypeNode target) => FBoundStarProjectionErasure.IsClrAssignable(
+            source, target, assignabilityDefinitions ??= defs.ToDictionary(pair => pair.Key, pair => pair.Value.Node,
+                StringComparer.Ordinal), refs, physicalTypes: true, allowBoxing: true);
         bool CarrierParameterSeam(TypeNode left, TypeNode right)
         {
             TypeNode Core(TypeNode type) => type switch {
@@ -170,7 +173,7 @@ static class KotlinOverrideSlotBridge
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
             ApplyClass(cls, defs, isValue, refs, phase, refBuild, exactBridgeSources, localTypeNames,
                 covariantBridgedSlots, AnnotationArguments, SourceMapping(cls), sourceParameters, representations,
-                CarrierParameterSeam, CanForwardArgument);
+                CarrierParameterSeam, CanForwardPhysicalValue, CanForwardReturn);
         // A class-level inherited-DIM bridge consumes the exact MethodImpl descriptor synthesized on its interface.
         // Declarations may appear in either order and in different input files, so first finish every interface/class's
         // own slot allocation above, then inspect classes. Reading the live method arrays during the first loop would
@@ -200,7 +203,8 @@ static class KotlinOverrideSlotBridge
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots,
         Func<TypeNode.Fqn, TypeNode[]> annotationArguments, NullableRepresentationTypes sourceMapping,
         IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters, GenericRepresentationPolicy representations,
-        Func<TypeNode, TypeNode, bool> CarrierParameterSeam, Func<TypeNode, TypeNode, bool> CanForwardArgument)
+        Func<TypeNode, TypeNode, bool> CarrierParameterSeam, Func<TypeNode, TypeNode, bool> CanForwardPhysicalValue,
+        Func<TypeNode, TypeNode, bool> CanForwardReturn)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
         if (cls.Node["methods"] is not JsonArray methods) return;
@@ -230,6 +234,22 @@ static class KotlinOverrideSlotBridge
                         .Select(Str).Contains("allowsRefStruct");
             }
             return type is TypeNode.Array or TypeNode.Fn;
+        }
+        bool CanForwardClassReturn(TypeNode source, TypeNode target, JsonObject implementation)
+        {
+            var seen = new HashSet<TypeNode.Tv>();
+            bool Prove(TypeNode value)
+            {
+                if (!CanPassAsObject(value, implementation)) return false;
+                if (CanForwardReturn(value, target)) return true;
+                if (value is not TypeNode.Tv variable || !seen.Add(variable)) return false;
+                var parameters = variable.Scope == "type" ? TypeParameterFrame.Declarations(cls.Node).ToArray()
+                    : (implementation["typeParams"] as JsonArray ?? new JsonArray()).ToArray();
+                return variable.I >= 0 && variable.I < parameters.Length
+                    && ((parameters[variable.I] as JsonObject)?["constraints"] as JsonArray ?? new JsonArray())
+                        .Select(TypeJson.Read).Where(bound => bound != null).Any(bound => Prove(PhysicalSlotType(bound)));
+            }
+            return Prove(source);
         }
         if (emitBridges)
             CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners, inheritedSignatures,
@@ -325,7 +345,7 @@ static class KotlinOverrideSlotBridge
                 if (fit[i] == Fit.Foreign && inheritedOwner != null
                     && (LowersToObject(SupertypeGraph.SubstOwnerTvs(declT, ownArgs), refs)
                             && CanPassAsObject(slotParams[i], impl)
-                        || CanForwardArgument(PhysicalSlotType(slotParams[i]),
+                        || CanForwardPhysicalValue(PhysicalSlotType(slotParams[i]),
                             PhysicalSlotType(SupertypeGraph.SubstOwnerTvs(declT, ownArgs))))) fit[i] = Fit.Bridge;
                 // Equal runtime function carriers do not imply equal CLR
                 // signature discriminators. MethodImpl requires the selected
@@ -371,6 +391,14 @@ static class KotlinOverrideSlotBridge
             if (retFit == Fit.Foreign)
             {
                 if (referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
+                // A source-selected covariant class override still owes the base's exact CLR slot,
+                // including when the narrow override is abstract. Reuse the ordinary virtual forwarder
+                // only when the actual physical return is assignable; Kotlin variance alone is no proof.
+                else if (!supIsInterface && phase == Phase.PhysicalBridges && CanForwardClassReturn(
+                        PhysicalSlotType(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs)),
+                        referencedSlot && !refs.HasDotKtOwner(descriptorSpec.Name)
+                            ? slotRet : PhysicalSlotType(slotRet), impl))
+                    retFit = Fit.Bridge;
                 else
                 {
                     // The covariance pass visits authored MethodDefs, not inherited implementation facts.
@@ -1735,10 +1763,11 @@ static class KotlinOverrideSlotBridge
                 // A null PARAMETER fact is a slot this reader cannot state, and inventing one from the physical
                 // signature is the derivation its silence exists to prevent — so the member is left alone.
                 if (slotParams0.Any(t => t == null)) continue;
-                // Only an explicitly selected hot/cold MethodDef is returned as an entirely physical signature.
-                // Ordinary reference lookups may restore Kotlin nullable-generic carriers even in the late phase.
+                // A native accessor and an explicitly selected hot/cold MethodDef state exact CLR signatures.
+                // Ordinary Kotlin reference lookups may restore nullable-generic carriers even in the late phase.
+                // Never erase a native Nullable<V> nested in a reified slot into an unrelated Kotlin object slot.
                 var slotParams = slotParams0
-                    .Select(t => SupertypeGraph.SubstOwnerTvs(DeclaredSlot(t, isValue, physical: physicalProjection != null),
+                    .Select(t => SupertypeGraph.SubstOwnerTvs(DeclaredSlot(t, isValue, physical: physicalProjection != null || nativeOwner != null),
                         accessorKind != null ? physicalSelectedArgs : supArgs))
                     .ToArray();
                 // A null RETURN fact is the opposite: the reader states a return only while it still says something a
@@ -1747,7 +1776,7 @@ static class KotlinOverrideSlotBridge
                 // `compareTo(T): Int` is exactly that — the parameter is the whole divergence.
                 var slotRet = slotRet0 == null
                     ? SupertypeGraph.SubstOwnerTvs(TypeJson.Read(impl["ret"]), ownArgs)
-                    : SupertypeGraph.SubstOwnerTvs(DeclaredSlot(slotRet0, isValue, physical: physicalProjection != null),
+                    : SupertypeGraph.SubstOwnerTvs(DeclaredSlot(slotRet0, isValue, physical: physicalProjection != null || nativeOwner != null),
                         accessorKind != null ? physicalSelectedArgs : supArgs);
                 if (slotRet == null) continue;
                 if (accessorKind != null) slotReturnsValue = slotRet0 != null && !IsVoid(slotRet0);
