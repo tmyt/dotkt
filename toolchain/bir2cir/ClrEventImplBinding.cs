@@ -36,13 +36,41 @@ static class ClrEventImplBinding
     {
         void Preserve(JsonObject owner)
         {
+            if (owner["methods"] is JsonArray inheritedAccessors)
+                foreach (var getter in inheritedAccessors.OfType<JsonObject>().Where(method =>
+                    method["fakeOverride"]?.GetValue<bool>() == true
+                    && method["eventProperty"]?.GetValue<bool>() == true
+                    && Str(method[KotlinPropertyAccessors.KindKey]) == "get"))
+                    getter[KotlinPropertyAccessors.MetadataCarrierKey] = new JsonObject
+                    {
+                        ["name"] = Str(getter[KotlinPropertyAccessors.SourceNameKey]), ["kind"] = "get",
+                        ["association"] = Str(getter[KotlinPropertyAccessors.AssociationKey]), ["inherited"] = true,
+                    };
+            var events = (owner["clrEvents"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>();
+            var forwarders = (owner["clrEventForwarders"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>();
+            if (owner["methods"] is JsonArray accessors)
+                foreach (var declaration in events.Concat(forwarders))
+                    foreach (var getter in accessors.OfType<JsonObject>().Where(method =>
+                        Str(method[KotlinPropertyAccessors.KindKey]) == "get"
+                        && Str(method[KotlinPropertyAccessors.AssociationKey]) is string association
+                        && association == Str(declaration[KotlinPropertyAccessors.AssociationKey])))
+                        getter[KotlinPropertyAccessors.MetadataCarrierKey] = new JsonObject
+                        {
+                            ["name"] = Str(getter[KotlinPropertyAccessors.SourceNameKey]),
+                            ["kind"] = "get",
+                            ["association"] = Str(declaration[KotlinPropertyAccessors.AssociationKey]),
+                            ["event"] = Str(declaration["name"]),
+                        };
             if (owner["methods"] is JsonArray methods)
                 foreach (var method in methods.OfType<JsonObject>())
+                {
+                    method.Remove("eventProperty");
                     if (method["body"] is JsonArray { Count: > 0 } body
                         && Str(body[0]?["k"]) == "clrEventAccessor"
                         && Str(body[0]?["kind"]) is "add" or "remove"
                         && method["params"] is JsonArray { Count: 1 } parameters)
                         parameters[0]["kotlinType"] ??= parameters[0]["type"].ToJsonString();
+                }
             if (owner["types"] is JsonArray types)
                 foreach (var type in types.OfType<JsonObject>()) Preserve(type);
         }
@@ -362,6 +390,11 @@ static class ClrEventImplBinding
                 "final" => false,
                 _ => throw new InvalidOperationException($"bir2cir: clrEvent '{name}' has no concrete source modality"),
             };
+            if (Str(backing[KotlinPropertyAccessors.AssociationKey]) is string association)
+                foreach (var getter in methods.OfType<JsonObject>().Where(method =>
+                    Str(method[KotlinPropertyAccessors.AssociationKey]) == association
+                    && Str(method[KotlinPropertyAccessors.KindKey]) == "get"))
+                    getter["clrFinal"] = !openEvent && getter["virtual"]?.GetValue<bool>() == true;
             var baseType = classOwner == null ? null : ClrMemberResolution.ResolveOwnerType(classOwner, refs);
             EventInfo baseEvent = null;
             if (baseType != null

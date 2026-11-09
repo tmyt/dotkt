@@ -476,7 +476,9 @@ static class KotlinPropertyAccessors
         foreach (var (method, role) in resolved)
         {
             var sourceAssociation = Str((method[MetadataCarrierKey] as JsonObject)?["sourceAssociation"]);
-            if (representable && sourceAssociation == null && !isBridgeSource) continue;
+            var nativeEvent = Str((method[MetadataCarrierKey] as JsonObject)?["event"]);
+            var inherited = (method[MetadataCarrierKey] as JsonObject)?["inherited"]?.GetValue<bool>() == true;
+            if (representable && sourceAssociation == null && nativeEvent == null && !inherited && !isBridgeSource) continue;
             var carrier = new JsonObject
             {
                 ["name"] = sourceName,
@@ -487,6 +489,8 @@ static class KotlinPropertyAccessors
             // Rebuilding the bridge's physical Property descriptor must not collapse its four-field carrier back to
             // an ordinary source accessor's three fields.
             if (sourceAssociation != null) carrier["sourceAssociation"] = sourceAssociation;
+            if (nativeEvent != null) carrier["event"] = nativeEvent;
+            if (inherited) carrier["inherited"] = true;
             method[MetadataCarrierKey] = carrier;
         }
 

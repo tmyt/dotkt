@@ -231,6 +231,20 @@ private fun selectedInheritedImplementation(fn: IrSimpleFunction): IrSimpleFunct
 	return fn.resolveFakeOverride(::isInheritedSynthetic)?.takeIf { it.modality != Modality.ABSTRACT }
 }
 
+/** An intermediate class can supply an ordinary getter obligation for an inherited native event without
+ * declaring a new event. Retain that nearest class property in ordinary implementation facts; event reads
+ * still resolve the original event declaration through [selectedInheritedImplementation]. */
+private fun BirEmitter.selectedOrdinaryPropertyImplementation(fn: IrSimpleFunction): IrSimpleFunction? {
+	val selected = selectedInheritedImplementation(fn) ?: return null
+	val property = fn.correspondingPropertySymbol?.owner ?: return selected
+	if (!isClrEventProperty(property) || selected.correspondingPropertySymbol?.owner?.let(::hasOrdinaryPropertySlot) != false)
+		return selected
+	return fn.overriddenSymbols.map { it.owner }.firstOrNull { target ->
+		(target.parent as? IrClass)?.kind in listOf(ClassKind.CLASS, ClassKind.ENUM_CLASS) &&
+			target.correspondingPropertySymbol?.owner?.let(::hasOrdinaryPropertySlot) == true
+	} ?: selected
+}
+
 /** The resolved fake-override target may be a substituted IR copy whose callable and parent no longer carry imported
  *  annotations. The original declaration remains in the frontend override closure: select only declarations with the
  *  same Kotlin owner/member identity as the already-selected target, then transport their unique exact CLR owner. */
@@ -288,7 +302,7 @@ private fun BirEmitter.inheritedImplementationOwner(
 
 /** Preserve the frontend-selected implementation identity instead of rediscovering it from ancestor bodies. */
 private fun BirEmitter.inheritedImplementationFact(fn: IrSimpleFunction): String {
-	val target = selectedInheritedImplementation(fn) ?: return ""
+	val target = selectedOrdinaryPropertyImplementation(fn) ?: return ""
 	val targetOwner = target.parent as? IrClass ?: return ""
 	val owner = inheritedImplementationOwner(fn, target, targetOwner) ?: return ""
 	val property = target.correspondingPropertySymbol?.owner
@@ -337,7 +351,7 @@ private fun BirEmitter.inheritedDefaultMethodFact(fn: IrSimpleFunction): String?
 /** Keep the selected class implementation and override closure even when no method is emitted on this class. */
 private fun BirEmitter.inheritedClassMethodsJson(klass: IrClass): String {
 	val functions = klass.declarations.filterIsInstance<IrSimpleFunction>().filter { it.correspondingPropertySymbol == null } +
-		klass.declarations.filterIsInstance<IrProperty>().filter { !isClrEventProperty(it) && !isInheritedStaticProperty(it) }
+		klass.declarations.filterIsInstance<IrProperty>().filter { hasOrdinaryPropertySlot(it) && !isInheritedStaticProperty(it) }
 			.flatMap { listOfNotNull(it.getter, it.setter) }
 	val facts = functions.mapNotNull { fn ->
 		if (!isInheritedSynthetic(fn)) return@mapNotNull null
@@ -349,7 +363,8 @@ private fun BirEmitter.inheritedClassMethodsJson(klass: IrClass): String {
 			return candidate.overriddenSymbols.any { reachesInterfaceDeclaration(it.owner) }
 		}
 		if (!reachesInterfaceDeclaration(fn)) return@mapNotNull null
-		val target = selectedInheritedImplementation(fn) ?: return@mapNotNull null
+		val target = selectedOrdinaryPropertyImplementation(fn) ?: return@mapNotNull null
+		if (target.correspondingPropertySymbol?.owner?.let(::hasOrdinaryPropertySlot) == false) return@mapNotNull null
 		val owner = target.parent as? IrClass ?: return@mapNotNull null
 		if (owner.kind == ClassKind.INTERFACE || isInheritedStaticFunction(fn)) return@mapNotNull null
 		val implementation = inheritedImplementationFact(fn)
@@ -363,7 +378,7 @@ private fun BirEmitter.inheritedClassMethodsJson(klass: IrClass): String {
 		val accessor = property?.let {
 			""","propertyName":${str(member)},"propertyAccessor":${str(if (fn === it.getter) "get" else "set")},"propertyAssociation":${str(propertyAssociation(it))}"""
 		} ?: ""
-		"""{"member":${str(member)}$accessor,"params":[$parameters],"ret":${birType(fn.returnType).toJson()}${typeParamsJson(fn.typeParameters)}${funModsJson(fn)}${overridesJson(fn)}$implementation}"""
+		"""{"member":${str(member)}$accessor,"params":[$parameters],"ret":${birType(fn.returnType).toJson()}${typeParamsJson(fn.typeParameters)}${funModsJson(fn)}${overridesJson(fn, ordinaryPropertySlots = property != null)}$implementation}"""
 	}
 	return if (facts.isEmpty()) "" else ""","inheritedClassMethods":[${facts.joinToString(",")}]"""
 }
@@ -399,6 +414,10 @@ private fun BirEmitter.sourceTypeVisibilityField(declaration: IrDeclarationWithV
 
 internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 	rejectClrEnumOnNonEnum(iface)
+	// A mixed inherited event already inherits its ordinary getter from the ordinary property interface.
+	// The frontend intersection wrapper is not a new source declaration or another getter obligation.
+	fun inheritedMixedEvent(p: IrProperty) = isClrEventProperty(p) && hasOrdinaryPropertySlot(p) &&
+		p.getter?.let(::isInheritedSynthetic) == true
 	fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
 		val savedSemanticOwner = activeSemanticOwner
 		val savedSemanticDeclaration = activeSemanticOwnerDeclaration
@@ -477,6 +496,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		.map { ifaceMethod(it) }
 	val propMethods = iface.declarations.filterIsInstance<IrProperty>()
 		.filterNot { isKotlinStaticProperty(it) }
+		.filterNot { inheritedMixedEvent(it) }
 		.flatMap { p -> listOfNotNull(p.getter?.let { ifaceMethod(it, p) }, p.setter?.let { ifaceMethod(it, p) }) }
 	// `interface I { companion { fun foo() … } }`: a CLR interface legally declares static methods with bodies, static
 	// fields and a type initializer, so an interface's static members need no separate carrier — they are emitted the
@@ -504,7 +524,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 	// 2B layer 1: a Kotlin interface property -> a real CLR property. The Property row carries only which accessor roles
 	// exist; bir2cir allocates and links the physical MethodDefs so dll2klib later sees one property association.
 	val ifaceProps = iface.declarations.filterIsInstance<IrProperty>()
-		.filter { it.getter != null && !isKotlinStaticProperty(it) }.joinToString(",") { p ->
+		.filter { it.getter != null && !isKotlinStaticProperty(it) && !inheritedMixedEvent(it) }.joinToString(",") { p ->
 			val n = p.name.asString()
 			"""{"name":${str(n)},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, p.setter != null)}}"""
 		}
@@ -748,7 +768,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	fun emitsAccessor(a: IrSimpleFunction?) = a != null &&
 		(a.body is IrBlockBody || (a.body == null && a.modality == Modality.ABSTRACT))
-	fun emitsGet(p: IrProperty) = emitsAccessor(p.getter) && !p.isConst && !isClrField(p) && !isClrEventProperty(p)
+	fun emitsGet(p: IrProperty) = emitsAccessor(p.getter) && !p.isConst && !isClrField(p) && hasOrdinaryPropertySlot(p)
 	fun emitsSet(p: IrProperty) = emitsAccessor(p.setter) && !p.isConst && !isClrField(p) && !isClrEventProperty(p)
 	val userFields = instanceStorageFields(ec)
 	val propAccessors = userProps.flatMap { p ->
@@ -1072,7 +1092,7 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 		.map { method(it, static = false, semanticOwnerOverride = subName) }
 	val entryProps = cc.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride }
 	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst &&
-		!isClrField(p) && !isClrEventProperty(p)
+		!isClrField(p) && hasOrdinaryPropertySlot(p)
 	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst &&
 		!isClrField(p) && !isClrEventProperty(p)
 	val accessors = entryProps.flatMap { p ->
@@ -1081,7 +1101,7 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 			p.setter?.takeIf { emitsSet(p) }?.let { accessorMethod(it, p.name.asString(), false) })
 	}
 	val properties = entryProps.filter { emitsGet(it) }.joinToString(",") { p ->
-		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}${overridesJson(p.getter!!)}}"""
+		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}${overridesJson(p.getter!!, ordinaryPropertySlots = true)}}"""
 	}
 	val fields = instanceStorageFields(cc).joinToString(",")
 	val savedSemanticOwner = activeSemanticOwner
@@ -1280,6 +1300,14 @@ internal fun BirEmitter.isClrEventProperty(p: IrProperty): Boolean {
 	return event(p)
 }
 
+/** Event accessors do not replace an ordinary Kotlin property slot in the override closure. */
+internal fun BirEmitter.hasOrdinaryPropertySlot(p: IrProperty): Boolean {
+	val seen = HashSet<IrProperty>()
+	fun ordinary(property: IrProperty): Boolean = seen.add(property) &&
+		(!isClrEventProperty(property) || property.overriddenSymbols.any { ordinary(it.owner) })
+	return ordinary(p)
+}
+
 /** The direct `clrEvent(...)` delegate-initializer call (§4.2/§5 of design-clr-event-model.md), or
  *  null. A DELEGATED property whose delegate expression is a call to `kotlin.clr.clrEvent` — the marker "synthesize the
  *  field-like .NET event impl here" (a backing delegate field + add_/remove_/raise_ accessors). Distinguished from the
@@ -1375,7 +1403,9 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 		// The `overrides` closure: the interface event slot(s) this member implements, by Kotlin identity (owner FQN +
 		// event name). bir2cir derives the concrete add_/remove_ slot + delegate `D` off the ref.dll from it. Empty for a
 		// NEW event (no override), where bir2cir instead maps the handler function type to a delegate.
-		val overridden = p.overriddenSymbols.flatMap { it.owner.getter?.collectRealOverrides().orEmpty() }
+		val overridden = p.overriddenSymbols.filter { isClrEventProperty(it.owner) }
+			.flatMap { it.owner.getter?.collectRealOverrides().orEmpty() }
+			.filter { it.correspondingPropertySymbol?.owner?.let(::isClrEventProperty) == true }
 			.distinctBy { it.symbol }
 		val classOwner = overridden.mapNotNull { it.parent as? IrClass }
 			.firstOrNull { it.kind == ClassKind.CLASS || it.kind == ClassKind.ENUM_CLASS }
@@ -1393,7 +1423,7 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 			val field = p.backingField ?: error("custom CLR event '$name' has no Kotlin delegate field")
 			""","policyField":${str(field.name.asString())}"""
 		} else ""
-		backings.add("""{"k":"clrEventBacking","name":${str(name)},"handlerType":$handlerJson,"modality":${str(p.modality.name.lowercase())}$classOverride$policyField}""")
+		backings.add("""{"k":"clrEventBacking","name":${str(name)},"propertyAssociation":${str(propertyAssociation(p))},"handlerType":$handlerJson,"modality":${str(p.modality.name.lowercase())}$classOverride$policyField}""")
 		// Preserve source override owners and modality; bir2cir selects native slot reuse, delegate signatures and
 		// whether a referenced event has a raise slot at all. These shells do not choose that physical representation.
 		methods.add(accessor("add_$name", kind = "add", ov = overridesFor("event-add")))
@@ -1432,7 +1462,7 @@ internal fun BirEmitter.synthClrEventForwarders(klass: IrClass): Pair<List<Strin
 			"""{"name":${str("${kind}_$name")},"static":false,"override":false,"virtual":true,"abstract":false,"objectOverride":false,"vis":"public","params":[{"name":"value","type":$handlerJson}],"ret":$unit,"body":[{"k":"clrEventAccessor","kind":${str(kind)},"event":${str(name)}}]${overridesFor("event-$kind")}}"""
 
 		forwards.add(
-			"""{"name":${str(name)},"ownerType":${birType(target.type).toJson()},"recv":${expr(target)}}""")
+			"""{"name":${str(name)},"propertyAssociation":${str(propertyAssociation(p))},"ownerType":${birType(target.type).toJson()},"recv":${expr(target)}}""")
 		methods.add(accessor("add"))
 		methods.add(accessor("remove"))
 	}
@@ -1468,7 +1498,7 @@ private fun BirEmitter.overrideOwnerType(fn: IrSimpleFunction, owner: IrClass): 
 private fun BirEmitter.overrideOwnerJson(fn: IrSimpleFunction, owner: IrClass): String =
 	overrideOwnerType(fn, owner).toJson()
 
-internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
+internal fun BirEmitter.overridesJson(fn: IrSimpleFunction, ordinaryPropertySlots: Boolean = false): String {
 	val prop = fn.correspondingPropertySymbol?.owner
 	val items = if (prop != null) {
 		// An ACCESSOR: walk the PROPERTY's override closure (the setter of a `var size` overriding a `val size` has
@@ -1484,7 +1514,10 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 		// override still reports 0 and a plain `var`
 		// setter 1, exactly as the emitted accessors have.
 		val accArity = emittedParamCount(fn)
-		ordered.mapNotNull { p -> (p.parent as? IrClass)?.let { owner ->
+		ordered.filter { target -> !ordinaryPropertySlots || hasOrdinaryPropertySlot(target) &&
+			!(isClrEventProperty(target) && (target.parent as? IrClass)?.kind == ClassKind.INTERFACE &&
+				target.getter?.let(::isInheritedSynthetic) == true)
+		}.mapNotNull { p -> (p.parent as? IrClass)?.let { owner ->
 			val targetAccessor = if (kind == "getter") p.getter else p.setter
 			"""{"owner":${overrideOwnerJson(fn, owner)},"member":${str(p.name.asString())},"kind":${str(kind)},"arity":$accArity${targetAccessor?.let { declarationIdField(it) }.orEmpty()}}""" } }
 	} else {
@@ -1498,6 +1531,16 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 }
 
 private fun BirEmitter.accessorBodyStmts(acc: IrSimpleFunction): String {
+	val property = acc.correspondingPropertySymbol?.owner
+	if (property != null && acc === property.getter && isClrEventProperty(property)) {
+		val declaration = selectedInheritedImplementation(acc)?.correspondingPropertySymbol?.owner ?: property
+		val owner = declaration.parent as IrClass
+		val receiver = acc.parameters.first { it.kind == IrParameterKind.DispatchReceiver }
+		val ownerType = correspondingSupertypeInstantiation(receiver.type, owner)?.let(::birType)
+			?: ownerSpec(owner, receiver.type)
+		val read = """{"k":"clrEventGet","type":${ownerType.toJson()},"name":${str(declaration.name.asString())},"static":false,"recv":{"k":"this"},"sty":${birType(acc.returnType).toJson()},"memberVisibility":${str(visOf(declaration))}}"""
+		return """{"k":"return","value":$read}"""
+	}
 	val render = {
 		withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 	}
@@ -1578,7 +1621,10 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	// neither virtual nor an override — the frontend cannot produce one, and the flags are pinned here so the two
 	// facts cannot disagree.
 	val isStatic = acc.isStaticMethodOfClass
-	val isOverrideClass = !isStatic && acc.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS } }
+	val isOverrideClass = !isStatic && acc.overriddenSymbols.any {
+		it.owner.correspondingPropertySymbol?.owner?.let(::hasOrdinaryPropertySlot) != false &&
+			(it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS }
+	}
 	val virtual = !isStatic && (acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty())
 	val vis = visOf(acc)
 	// Emit the PROPERTY's annotations (e.g. @ClrIntrinsic) onto its accessor method — the SAME unconditional
@@ -1594,7 +1640,10 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 		""","kotlinStatic":true""" else ""
 	val property = acc.correspondingPropertySymbol?.owner
 		?: error("accessor '$propName' has no corresponding property")
-	return """{"name":${str(propName)}${declarationIdField(acc)}${explicitClrNameField(acc)}${propertyAccessorFact(property, kind)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
+	val inheritedEvent = if (isClrEventProperty(property))
+		""","eventProperty":true""" + if (isInheritedSynthetic(acc)) ""","fakeOverride":true""" else ""
+	else ""
+	return """{"name":${str(propName)}${declarationIdField(acc)}${explicitClrNameField(acc)}${propertyAccessorFact(property, kind)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$inheritedEvent$accAttrs${overridesJson(acc, ordinaryPropertySlots = true)}}"""
 }
 
 /** A user `annotation class Ann(val v: Int, …)` retains its Kotlin constructor, property/accessor identities and
@@ -1844,11 +1893,20 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		val resolved = a?.let(::selectedInheritedImplementation) ?: return false
 		return (resolved.parent as? IrClass)?.kind == ClassKind.CLASS || resolved.modality != Modality.ABSTRACT
 	}
-	fun dropFake(a: IrSimpleFunction?) = a?.let(::isInheritedSynthetic) == true && implementationInherited(a)
+	fun dropFake(a: IrSimpleFunction?): Boolean {
+		if (a?.let(::isInheritedSynthetic) != true || !implementationInherited(a)) return false
+		val property = a.correspondingPropertySymbol?.owner
+		val target = selectedInheritedImplementation(a)?.correspondingPropertySymbol?.owner
+		// An inherited event can acquire a new ordinary interface getter obligation on this subclass.
+		return property == null || !isClrEventProperty(property) || !hasOrdinaryPropertySlot(property) ||
+			target?.let(::hasOrdinaryPropertySlot) != false || a.overriddenSymbols.any {
+				(it.owner.parent as? IrClass)?.kind in listOf(ClassKind.CLASS, ClassKind.ENUM_CLASS) &&
+					it.owner.correspondingPropertySymbol?.owner?.let(::hasOrdinaryPropertySlot) == true
+			}
+	}
 	fun inheritedStatic(p: IrProperty) = isInheritedStaticProperty(p)
-	// `!isClrEventProperty`: a `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited through a base's
-	// interface) is not a real property and must not surface an accessor/property member.
-	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !isClrField(p) && !dropFake(p.getter) && !isClrEventProperty(p) && !inheritedStatic(p)
+	// A native event needs a getter only when its override closure also contains an ordinary property slot.
+	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !isClrField(p) && !dropFake(p.getter) && hasOrdinaryPropertySlot(p) && !inheritedStatic(p)
 	fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !isClrField(p) && !dropFake(p.setter) && !isClrEventProperty(p) && !inheritedStatic(p)
 	val inheritedDefaultAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 		listOfNotNull(
@@ -1867,7 +1925,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// @ClrField opt-out" is the next phase; field-backed props keep their backing field for now.)
 	val propsList = klass.declarations.filterIsInstance<IrProperty>().filter { emitsGet(it) }.joinToString(",") { p ->
 		val kotlinStatic = if (isKotlinStaticProperty(p)) ""","kotlinStatic":true""" else ""
-		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}$kotlinStatic${overridesJson(p.getter!!)}}"""
+		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}$kotlinStatic${overridesJson(p.getter!!, ordinaryPropertySlots = true)}}"""
 	}
 	val methods = (instMethods + userAccessors + clrEventMethods + clrEventForwardMethods).joinToString(",")
 	// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
