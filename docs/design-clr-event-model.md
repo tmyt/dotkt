@@ -161,7 +161,7 @@ Layer split mirrors the consume path (kotc declares + wires overrides; bir2cir s
 relation; ilemit emits pure CLR codegen):
 
 - **kotc** (`BirEmitter*`): on the implementing type, emit
-  1. a backing field member `clrEventBacking{name:"<E>", handlerType:<Kotlin fn type>}` (kotc does not
+  1. a backing field member `clrEventBacking{name:"<E>", static:<Boolean>, handlerType:<Kotlin fn type>}` (kotc does not
      name `MulticastDelegate` — it carries the *handler Kotlin function type*; bir2cir resolves the
      concrete delegate). The backing also carries the source `modality` and, for class overrides,
      `classOverrideOwner` with the frontend-selected constructed declaring supertype;
@@ -176,7 +176,7 @@ relation; ilemit emits pure CLR codegen):
   the Kotlin↔CLR relation. Resolve the interface event off ref.dll → its concrete `EventHandlerType`
   (the delegate `D`) and the interface accessor slot names. Rewrite the backing field to `<E>$delegate : D`,
   and rewrite each accessor's tagged body into a CIR directive `clrEventAccessorImpl{kind, field:"<E>$delegate",
-  delegateType: clr:D}` carrying the resolved delegate type + the interface `MethodImpl` slot to bind.
+  delegateType: clr:D, static:<Boolean>}` carrying the resolved delegate type + the interface `MethodImpl` slot to bind.
   Also stamp a type-level `clrEventDecl{name, field, add, remove, raise, delegateType}` record so
   ilemit emits the `.event` metadata.
 - **ilemit** (`Emitter.ClrInterop.cs`, `EmitClrEventAccessorImpl`): pure CLR codegen — emit the CAS
@@ -195,10 +195,16 @@ delegate ABI and function-signature discriminator, substituted through the const
 allocating a delegate again from a covariant or inferred handler type. Foreign add/remove/raise slots are
 selected by EventInfo and carried as exact MethodImpl operands, not inferred from accessor naming conventions.
 
+Companion-block declarations carry the frontend's receiverless static fact on the backing recipe and
+accessor shells. Their accessors are static and non-virtual, with static delegate or policy storage.
+For a generic Kotlin owner, bir2cir relocates the event relation together with its accessor declarations
+to the same non-generic static carrier, before materializing consumer callbacks. ilemit follows the
+explicit static CIR directive: `ldsfld`/`ldsflda` and parameter offsets without a `this` argument.
+
 ### 4.3 RAISE — `vm.E.invoke(sender, args)`
 
 - **kotc**: `invoke` resolved on `kotlin.clr.ClrEvent<T>` (`operator fun invoke`) whose
-  receiver is a `clrEventGet` → a dedicated dialect node `clrEventRaise{type,event,super,recv,args}`
+  receiver is a `clrEventGet` → a dedicated dialect node `clrEventRaise{type,event,static,super,recv,args}`
   (parallel to `clrEventGet`; emitted in `BirEmitterCalls.kt`). This declaration-bound raise does not
   construct a consumer handle. Because raise is `operator fun invoke`, **`vm.E.invoke(s, a)` and `vm.E(s, a)` desugar
   to the identical call** (Kotlin's invoke convention) → both produce `clrEventRaise`; the author
@@ -206,7 +212,7 @@ selected by EventInfo and carried as exact MethodImpl operands, not inferred fro
   ABI-identical. The owner is the frontend-selected event declaration instantiated through the receiver,
   not an inheriting receiver's class. The receiver and arguments retain their ordinary evaluation order.
 - **bir2cir** (`ClrEventImplBinding`): bind `clrEventRaise` to
-  an ordinary instance call of its actual raise accessor. A local event record identifies its compiler-authored
+  an ordinary static or instance call of its actual raise accessor. A local event record identifies its compiler-authored
   MethodDef; a referenced Kotlin event supplies its exact EventInfo raise method and constructed owner.
   The reference call carries the already-selected scalar `memberRef`, not a generated-name lookup in ilemit.
   `super` remains non-virtual, including through lifted callbacks. Restricted accessor calls retain their

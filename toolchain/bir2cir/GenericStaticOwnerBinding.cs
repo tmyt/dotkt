@@ -76,6 +76,8 @@ static class GenericStaticOwnerBinding
                     .Where(f => Bool(f["static"]) && Bool(f["kotlinStatic"])).ToArray() ?? [];
                 var methods = (owner["methods"] as JsonArray)?.OfType<JsonObject>()
                     .Where(m => Bool(m["static"]) && Bool(m["kotlinStatic"])).ToArray() ?? [];
+                var events = (owner["clrEvents"] as JsonArray)?.OfType<JsonObject>()
+                    .Where(e => Bool(e["static"])).ToArray() ?? [];
                 var nestedTypes = nestedDeclarations.GetValueOrDefault(ownerName) ?? [];
                 if (fields.Length == 0 && methods.Length == 0 && nestedTypes.Length == 0) continue;
                 var hasRuntimeInitializer = fields.Any(field => !Bool(field["const"]) && field["init"] != null);
@@ -156,6 +158,7 @@ static class GenericStaticOwnerBinding
                 Remove(owner["fields"] as JsonArray, fields);
                 Remove(owner["methods"] as JsonArray, methods);
                 Remove(owner["properties"] as JsonArray, properties);
+                Remove(owner["clrEvents"] as JsonArray, events);
                 if (hasRuntimeInitializer)
                 {
                     var ownerFields = owner["fields"] as JsonArray ?? new JsonArray();
@@ -183,6 +186,7 @@ static class GenericStaticOwnerBinding
                     ["ctors"] = new JsonArray(),
                     ["methods"] = Array(physicalMethods),
                     ["properties"] = Array(properties),
+                    ["clrEvents"] = Array(events),
                     ["attrs"] = new JsonArray(),
                     ["staticCarrier"] = new JsonObject { ["owner"] = ownerName },
                 };
@@ -271,6 +275,12 @@ static class GenericStaticOwnerBinding
     }
 
     public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+        => ApplyAll(roots, refs, eventsOnly: false);
+
+    public static void ApplyEventOwnersAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+        => ApplyAll(roots, refs, eventsOnly: true);
+
+    static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs, bool eventsOnly)
     {
         var all = roots.ToArray();
         var local = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -281,7 +291,7 @@ static class GenericStaticOwnerBinding
             CollectGenericOwners(root, localGenericOwners);
         }
         foreach (var root in all)
-            Walk(root, local, localGenericOwners, refs);
+            Walk(root, local, localGenericOwners, refs, eventsOnly);
     }
 
     static void CollectGenericOwners(JsonNode node, HashSet<string> owners)
@@ -307,18 +317,19 @@ static class GenericStaticOwnerBinding
     }
 
     static void Walk(JsonNode node, IReadOnlyDictionary<string, string> local,
-        IReadOnlySet<string> localGenericOwners, ReferenceMetadataIndex refs)
+        IReadOnlySet<string> localGenericOwners, ReferenceMetadataIndex refs, bool eventsOnly)
     {
         switch (node)
         {
             case JsonObject obj:
-                Bind(obj, local, localGenericOwners, refs);
+                if (!eventsOnly || Str(obj["k"]) is "clrEventGet" or "clrEventRaise")
+                    Bind(obj, local, localGenericOwners, refs);
                 foreach (var child in obj.ToArray())
-                    if (child.Value != null) Walk(child.Value, local, localGenericOwners, refs);
+                    if (child.Value != null) Walk(child.Value, local, localGenericOwners, refs, eventsOnly);
                 break;
             case JsonArray array:
                 foreach (var child in array.ToArray())
-                    if (child != null) Walk(child, local, localGenericOwners, refs);
+                    if (child != null) Walk(child, local, localGenericOwners, refs, eventsOnly);
                 break;
         }
     }
@@ -330,6 +341,7 @@ static class GenericStaticOwnerBinding
         var keys = kind switch {
             "staticField" or "staticFieldSet" or "setStaticField" or "setStaticFieldExpr" => new[] { "ownerType" },
             "lateinitGet" when Bool(node["static"]) => new[] { "ownerType" },
+            "clrEventGet" or "clrEventRaise" when Bool(node["static"]) => new[] { "type" },
             "callStatic" => new[] { "ownerType", "owner" },
             _ => [],
         };
@@ -345,6 +357,10 @@ static class GenericStaticOwnerBinding
             {
                 if (!local.Values.Contains(bare, StringComparer.Ordinal) && !refs.IsGenericStaticCarrier(bare))
                 {
+                    // Native CLR statics use their reference TypeDef's constructed frame, not a Kotlin carrier.
+                    // Event reads reach this early pass before NetInteropBinding closes that native owner.
+                    if (kind is "clrEventGet" or "clrEventRaise"
+                        && !localGenericOwners.Contains(bare) && !refs.HasDotKtOwner(bare)) continue;
                     if (owner.Args == null &&
                         (localGenericOwners.Contains(bare) || refs.OwnerArity(bare) > 0))
                         throw new InvalidOperationException(
