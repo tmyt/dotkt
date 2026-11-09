@@ -237,7 +237,7 @@ sealed partial class ReferenceMetadataIndex
     static (TypeNode[] Parameters, TypeNode Return) PhysicalDeclarationSignature(MemberBinding binding) =>
         (binding.SignatureParameters, binding.SignatureReturn);
 
-    static TypeNode DeclarationSignatureSlot(ParameterInfo parameter)
+    internal static TypeNode DeclarationSignatureSlot(ParameterInfo parameter)
     {
         if (parameter.Member is MethodBase method && NativeSignatures.Method(method) is { } native)
             return parameter.Position < 0 ? native.Return : native.Parameters[parameter.Position];

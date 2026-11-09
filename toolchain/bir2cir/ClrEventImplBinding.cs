@@ -402,9 +402,10 @@ static class ClrEventImplBinding
                     getter["clrFinal"] = !openEvent && getter["virtual"]?.GetValue<bool>() == true;
             var baseType = classOwner == null ? null : ClrMemberResolution.ResolveOwnerType(classOwner, refs);
             EventInfo baseEvent = null;
+            TypeNode[] baseArguments = Array.Empty<TypeNode>();
             if (baseType != null
                 && !TryResolveDeclaredEvent(baseType, classOwner.Args ?? Array.Empty<TypeNode>(), name,
-                    out baseEvent, out _))
+                    out baseEvent, out baseArguments))
                 throw new InvalidOperationException($"bir2cir: overridden class event '{classOwner.Name}.{name}' was not found");
 
             // The concrete delegate `D` + its Invoke param nodes (raise's signature).
@@ -430,14 +431,26 @@ static class ClrEventImplBinding
                 method["virtual"] = isVirtual;
                 method["clrFinal"] = isVirtual && !openEvent;
                 if (externalSlot == null) return;
+                // The selected native accessor owns its entire signature, including source-function modopts.
+                // Covariant/inferred Kotlin H stays in kotlinType; it must not allocate a new override ABI.
+                var parameters = (JsonArray)method["params"];
+                var signature = externalSlot.GetParameters().Select(parameter =>
+                    SupertypeGraph.SubstOwnerTvs(ReferenceMetadataIndex.DeclarationSignatureSlot(parameter), baseArguments)).ToArray();
+                for (var i = 0; i < signature.Length; i++)
+                {
+                    parameters[i]["type"] = TypeJson.Write(signature[i]);
+                    ((JsonObject)parameters[i]).Remove(FunctionSignatureIdentity.Key);
+                }
                 // A MethodImpl owner is a declaration, not an ordinary covariant value-view type. Keep it in the
                 // existing descriptor path so carrier projection preserves the exact native declaring class.
                 method["clrBaseImpls"] = new JsonArray(new JsonObject
                 {
-                    ["owner"] = TypeJson.Write(classOwner), ["member"] = externalSlot.Name, ["arity"] = 0,
-                    ["params"] = new JsonArray(((JsonArray)method["params"]).OfType<JsonObject>()
-                        .Select(parameter => parameter["type"].DeepClone()).ToArray()),
-                    ["ret"] = TypeJson.Write(NetTypeToNode(externalSlot.ReturnType)),
+                    ["owner"] = TypeJson.Write(new TypeNode.Fqn(externalSlot.DeclaringType.FullName,
+                        baseArguments.Length == 0 ? null : baseArguments)),
+                    ["member"] = externalSlot.Name, ["arity"] = 0,
+                    ["params"] = new JsonArray(signature.Select(TypeJson.Write).ToArray()),
+                    ["ret"] = TypeJson.Write(SupertypeGraph.SubstOwnerTvs(
+                        ReferenceMetadataIndex.DeclarationSignatureSlot(externalSlot.ReturnParameter), baseArguments)),
                 });
             }
             MethodInfo Overridable(MethodInfo method) => baseEvent?.DeclaringType?.IsInterface == false
