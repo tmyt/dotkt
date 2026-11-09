@@ -1019,7 +1019,7 @@ static partial class FBoundStarProjectionErasure
 
     internal static void ProjectionConstraintSelfTest()
     {
-        PhysicalReturnAssignabilitySelfTest();
+        PhysicalAssignabilitySelfTest();
         InnerFactoryNormalizationSelfTest();
         FunctionRewriteTests.Check("F-bound rewrite", type => RewriteType(type,
             new Dictionary<string, Owner>(), ReferenceMetadataIndex.Build(Array.Empty<string>())));
@@ -1275,7 +1275,7 @@ static partial class FBoundStarProjectionErasure
         Console.WriteLine("[constraint projections] self-test OK (star, variance, annotation, exact bound, physical/source separation, native proof demand)");
     }
 
-    static void PhysicalReturnAssignabilitySelfTest()
+    static void PhysicalAssignabilitySelfTest()
     {
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
         var definitions = new Dictionary<string, JsonObject>(StringComparer.Ordinal) {
@@ -1287,11 +1287,12 @@ static partial class FBoundStarProjectionErasure
             }) },
         };
         TypeNode Stream(string element) => new TypeNode.Fqn("Proof.Stream", new[] { new TypeNode.Fqn(element) });
-        if (!IsClrAssignable(Stream("Proof.Narrow"), Stream("object"), definitions, refs, physicalTypes: true)
+        if (!IsClrAssignable(new TypeNode.Fqn("Proof.Narrow"), new TypeNode.Fqn("object"), definitions, refs, physicalTypes: true)
+            || !IsClrAssignable(Stream("Proof.Narrow"), Stream("object"), definitions, refs, physicalTypes: true)
             || IsClrAssignable(Stream("Proof.Value"), Stream("object"), definitions, refs, physicalTypes: true)
             || IsClrAssignable(Stream("object"), Stream("Proof.Narrow"), definitions, refs, physicalTypes: true))
-            throw new InvalidOperationException("Physical return covariance lost reference-only assignability");
-        Console.WriteLine("[physical return assignability] self-test OK (reference covariance, value and narrowing refusals)");
+            throw new InvalidOperationException("Physical assignability lost reference-only widening");
+        Console.WriteLine("[physical assignability] self-test OK (reference widening/covariance, value and narrowing refusals)");
     }
 
     static void LocalAliasDeclarationSelfTest()

@@ -11,6 +11,8 @@
 package kotlin.collections
 
 import DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots
+import DotKt.Runtime.CompilerServices.KotlinIteratorValueSlot
+import DotKt.Runtime.CompilerServices.KotlinListIteratorValueSlot
 import DotKt.Runtime.CompilerServices.KotlinMutableCollectionAddSlot
 import DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableListSlots
@@ -56,15 +58,17 @@ private interface ClrRawMutableList {
     @kotlin.clr.ClrIntrinsic("RemoveAt") fun removeAt(index: Int): Unit
 }
 
-private class ClrErasedMutableIteratorAdapter<T>(private val iterator: Any) : MutableIterator<T> {
+private class ClrErasedMutableIteratorAdapter<T>(private val iterator: Any) : MutableIterator<T>, KotlinIteratorValueSlot {
     override fun hasNext(): Boolean = mutableIteratorHasNextErased(iterator)
     override fun next(): T = mutableIteratorNextErased(iterator) as T
+    override fun dotktNextValue(): Any? = mutableIteratorNextErased(iterator)
     override fun remove() = mutableIteratorRemoveErased(iterator)
 }
 
-private class ClrProjectedIterator<T>(private val iterator: Iterator<Any?>) : Iterator<T> {
+private class ClrProjectedIterator<T>(private val iterator: Iterator<Any?>) : Iterator<T>, KotlinIteratorValueSlot {
     override fun hasNext(): Boolean = iterator.hasNext()
     override fun next(): T = iterator.next() as T
+    override fun dotktNextValue(): Any? = iterator.next()
 }
 
 public fun <T> clrProjectedIterator(iterable: Any): Iterator<T> =
@@ -81,7 +85,7 @@ public fun <T> clrProjectedViewIsEmpty(source: Any, preferredView: Any?, family:
     return slots?.dotktIsEmpty() ?: (projectedViewCountErased(source, preferredView, family) == 0)
 }
 
-public fun <T> clrProjectedViewContains(source: Any, preferredView: Any?, family: Int, element: T): Boolean {
+public fun <T> clrProjectedViewContains(source: Any, preferredView: Any?, family: Int, element: Any?): Boolean {
     val slots = source as? KotlinCollectionDefaultSlots
     if (slots != null) return slots.dotktContains(element)
     val native = projectedMembershipContainsErased(source, preferredView, family, element)
@@ -94,14 +98,14 @@ public fun <T> clrProjectedViewContains(source: Any, preferredView: Any?, family
 public fun <T> clrProjectedViewContainsAll(source: Any, preferredView: Any?, family: Int, elements: Collection<T>): Boolean {
     val slots = source as? KotlinCollectionDefaultSlots
     if (slots != null) return slots.dotktContainsAll(elements)
-    for (element in elements) if (!clrProjectedViewContains(source, preferredView, family, element)) return false
+    for (element in elements) if (!clrProjectedViewContains<T>(source, preferredView, family, element)) return false
     return true
 }
 
 public fun <T> clrProjectedViewGet(source: Any, preferredView: Any?, family: Int, index: Int): T =
     projectedListViewGetErased(source, preferredView, index) as T
 
-private fun <T> clrProjectedViewFindIndex(source: Any, preferredView: Any?, family: Int, element: T, last: Boolean): Int {
+private fun clrProjectedViewFindIndex(source: Any, preferredView: Any?, family: Int, element: Any?, last: Boolean): Int {
     val slots = source as? KotlinListDefaultSlots
     if (slots != null) return if (last) slots.dotktLastIndexOf(element) else slots.dotktIndexOf(element)
     var found = -1
@@ -117,10 +121,10 @@ private fun <T> clrProjectedViewFindIndex(source: Any, preferredView: Any?, fami
     return found
 }
 
-public fun <T> clrProjectedViewIndexOf(source: Any, preferredView: Any?, family: Int, element: T): Int =
+public fun <T> clrProjectedViewIndexOf(source: Any, preferredView: Any?, family: Int, element: Any?): Int =
     clrProjectedViewFindIndex(source, preferredView, family, element, false)
 
-public fun <T> clrProjectedViewLastIndexOf(source: Any, preferredView: Any?, family: Int, element: T): Int =
+public fun <T> clrProjectedViewLastIndexOf(source: Any, preferredView: Any?, family: Int, element: Any?): Int =
     clrProjectedViewFindIndex(source, preferredView, family, element, true)
 
 public fun <T> clrProjectedViewListIterator(source: Any, preferredView: Any?, family: Int): ListIterator<T> {
@@ -510,14 +514,15 @@ private class ClrMutableListIterator<T>(
     }
 }
 
-private class ClrRawMutableListIterator<T>(private val list: ClrRawMutableList) : MutableIterator<T> {
+private class ClrRawMutableListIterator<T>(private val list: ClrRawMutableList) : MutableIterator<T>, KotlinIteratorValueSlot {
     private var cursor = 0
     private var last = -1
 
     override fun hasNext(): Boolean = cursor < list.count
-    override fun next(): T {
+    override fun next(): T = dotktNextValue() as T
+    override fun dotktNextValue(): Any? {
         if (!hasNext()) throw NoSuchElementException()
-        val value = list.get(cursor) as T
+        val value = list.get(cursor)
         last = cursor
         cursor++
         return value
@@ -604,7 +609,7 @@ private class ClrProjectedMutableListIterator<T>(
     private val list: Any,
     private val preferredView: Any?,
     index: Int,
-) : MutableListIterator<T> {
+) : MutableListIterator<T>, KotlinIteratorValueSlot, KotlinListIteratorValueSlot {
     private var cursor = index
     private var last = -1
 
@@ -613,18 +618,20 @@ private class ClrProjectedMutableListIterator<T>(
     }
 
     override fun hasNext(): Boolean = cursor < projectedViewCountErased(list, preferredView, 6)
-    override fun next(): T {
+    override fun next(): T = dotktNextValue() as T
+    override fun dotktNextValue(): Any? {
         if (!hasNext()) throw NoSuchElementException()
         last = cursor
         cursor++
-        return mutableListGetErased(list, last, preferredView) as T
+        return mutableListGetErased(list, last, preferredView)
     }
     override fun hasPrevious(): Boolean = cursor > 0
-    override fun previous(): T {
+    override fun previous(): T = dotktPreviousValue() as T
+    override fun dotktPreviousValue(): Any? {
         if (!hasPrevious()) throw NoSuchElementException()
         cursor--
         last = cursor
-        return mutableListGetErased(list, last, preferredView) as T
+        return mutableListGetErased(list, last, preferredView)
     }
     override fun nextIndex(): Int = cursor
     override fun previousIndex(): Int = cursor - 1
@@ -645,20 +652,24 @@ private class ClrProjectedMutableListIterator<T>(
     }
 }
 
-private class ClrErasedListIteratorAdapter<T>(private val iterator: Any) : ListIterator<T> {
+private class ClrErasedListIteratorAdapter<T>(private val iterator: Any) : ListIterator<T>, KotlinIteratorValueSlot, KotlinListIteratorValueSlot {
     override fun hasNext(): Boolean = listIteratorHasNextErased(iterator)
     override fun next(): T = listIteratorNextErased(iterator) as T
+    override fun dotktNextValue(): Any? = listIteratorNextErased(iterator)
     override fun hasPrevious(): Boolean = listIteratorHasPreviousErased(iterator)
     override fun previous(): T = listIteratorPreviousErased(iterator) as T
+    override fun dotktPreviousValue(): Any? = listIteratorPreviousErased(iterator)
     override fun nextIndex(): Int = listIteratorNextIndexErased(iterator)
     override fun previousIndex(): Int = listIteratorPreviousIndexErased(iterator)
 }
 
-private class ClrErasedMutableListIteratorAdapter<T>(private val iterator: Any) : MutableListIterator<T> {
+private class ClrErasedMutableListIteratorAdapter<T>(private val iterator: Any) : MutableListIterator<T>, KotlinIteratorValueSlot, KotlinListIteratorValueSlot {
     override fun hasNext(): Boolean = listIteratorHasNextErased(iterator)
     override fun next(): T = listIteratorNextErased(iterator) as T
+    override fun dotktNextValue(): Any? = listIteratorNextErased(iterator)
     override fun hasPrevious(): Boolean = listIteratorHasPreviousErased(iterator)
     override fun previous(): T = listIteratorPreviousErased(iterator) as T
+    override fun dotktPreviousValue(): Any? = listIteratorPreviousErased(iterator)
     override fun nextIndex(): Int = listIteratorNextIndexErased(iterator)
     override fun previousIndex(): Int = listIteratorPreviousIndexErased(iterator)
     override fun remove() = mutableIteratorRemoveErased(iterator)

@@ -2597,7 +2597,8 @@ static class MemberCallSubstitution
             (_, "clrProjectedViewIterator" or "clrProjectedViewIsEmpty" or "clrProjectedViewListIterator") =>
                 new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrProjectedViewContains" or "clrProjectedViewIndexOf" or "clrProjectedViewLastIndexOf") => new TypeNode[] {
-                new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int"), tv },
+                new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), new TypeNode.Fqn("kotlin.Int"),
+                new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) },
             (_, "clrProjectedViewGet" or "clrProjectedViewListIteratorAt") => new TypeNode[] {
                 new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")),
                 new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") },

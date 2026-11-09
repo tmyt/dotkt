@@ -122,10 +122,9 @@ static class KotlinOverrideSlotBridge
         var rootList = roots.ToArray();
         var defs = SupertypeGraph.Collect(rootList);
         IReadOnlyDictionary<string, JsonObject> assignabilityDefinitions = null;
-        bool CanForwardClassReturn(TypeNode source, TypeNode target) => phase == Phase.PhysicalBridges
-            && FBoundStarProjectionErasure.IsClrAssignable(source, target,
-                assignabilityDefinitions ??= defs.ToDictionary(pair => pair.Key, pair => pair.Value.Node,
-                    StringComparer.Ordinal), refs, physicalTypes: true);
+        bool CanForwardPhysicalValue(TypeNode source, TypeNode target) => FBoundStarProjectionErasure.IsClrAssignable(
+            source, target, assignabilityDefinitions ??= defs.ToDictionary(pair => pair.Key, pair => pair.Value.Node,
+                StringComparer.Ordinal), refs, physicalTypes: true);
         bool CarrierParameterSeam(TypeNode left, TypeNode right)
         {
             TypeNode Core(TypeNode type) => type switch {
@@ -171,7 +170,7 @@ static class KotlinOverrideSlotBridge
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
             ApplyClass(cls, defs, isValue, refs, phase, refBuild, exactBridgeSources, localTypeNames,
                 covariantBridgedSlots, AnnotationArguments, SourceMapping(cls), sourceParameters, representations,
-                CarrierParameterSeam, CanForwardClassReturn);
+                CarrierParameterSeam, CanForwardPhysicalValue);
         // A class-level inherited-DIM bridge consumes the exact MethodImpl descriptor synthesized on its interface.
         // Declarations may appear in either order and in different input files, so first finish every interface/class's
         // own slot allocation above, then inspect classes. Reading the live method arrays during the first loop would
@@ -201,7 +200,7 @@ static class KotlinOverrideSlotBridge
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots,
         Func<TypeNode.Fqn, TypeNode[]> annotationArguments, NullableRepresentationTypes sourceMapping,
         IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters, GenericRepresentationPolicy representations,
-        Func<TypeNode, TypeNode, bool> CarrierParameterSeam, Func<TypeNode, TypeNode, bool> CanForwardClassReturn)
+        Func<TypeNode, TypeNode, bool> CarrierParameterSeam, Func<TypeNode, TypeNode, bool> CanForwardPhysicalValue)
     {
         var emitBridges = phase != Phase.DeclarationMoves;
         if (cls.Node["methods"] is not JsonArray methods) return;
@@ -216,6 +215,22 @@ static class KotlinOverrideSlotBridge
         TypeNode PhysicalSlotType(TypeNode type) => BirTypeLowering.LowerPhysicalType(
             type, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false,
             localTypeNames, nullableFrames: refs.NullableTypeFrames);
+        bool CanPassAsObject(TypeNode type, JsonObject method)
+        {
+            type = SignatureValueTypes.Of(PhysicalSlotType(type));
+            if (type is TypeNode.Nullable nullable) return CanPassAsObject(nullable.Of, method);
+            if (type is TypeNode.Oblivious oblivious) return CanPassAsObject(oblivious.Of, method);
+            if (type is TypeNode.Fqn named) return !refs.IsByRefLikeFqn(named);
+            if (type is TypeNode.Tv variable)
+            {
+                var parameters = variable.Scope == "type" ? TypeParameterFrame.Declarations(cls.Node).ToArray()
+                    : (method["typeParams"] as JsonArray ?? new JsonArray()).ToArray();
+                return variable.I >= 0 && variable.I < parameters.Length
+                    && !((parameters[variable.I] as JsonObject)?["specialConstraints"] as JsonArray ?? new JsonArray())
+                        .Select(Str).Contains("allowsRefStruct");
+            }
+            return type is TypeNode.Array or TypeNode.Fn;
+        }
         if (emitBridges)
             CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners, inheritedSignatures,
                 phase == Phase.SuspendValueBridges);
@@ -304,6 +319,14 @@ static class KotlinOverrideSlotBridge
                 // or specialize a bare source T as G<X>. Preserve both declarations with an exact forwarder.
                 if (fit[i] == Fit.Foreign && CarrierParameterSeam(slotParams[i],
                         SupertypeGraph.SubstOwnerTvs(declT, ownArgs))) fit[i] = Fit.Bridge;
+                // A selected inherited implementation may accept an erased upper bound while the
+                // interface redeclares a narrower argument. Forward the exact slot to that wider body,
+                // boxing ordinary values but never native references or byref-like storage.
+                if (fit[i] == Fit.Foreign && inheritedOwner != null
+                    && (LowersToObject(SupertypeGraph.SubstOwnerTvs(declT, ownArgs), refs)
+                            && CanPassAsObject(slotParams[i], impl)
+                        || CanForwardPhysicalValue(PhysicalSlotType(slotParams[i]),
+                            PhysicalSlotType(SupertypeGraph.SubstOwnerTvs(declT, ownArgs))))) fit[i] = Fit.Bridge;
                 // Equal runtime function carriers do not imply equal CLR
                 // signature discriminators. MethodImpl requires the selected
                 // slot's modifier too; preserve the body row and forward from
@@ -351,7 +374,7 @@ static class KotlinOverrideSlotBridge
                 // A source-selected covariant class override still owes the base's exact CLR slot,
                 // including when the narrow override is abstract. Reuse the ordinary virtual forwarder
                 // only when the actual physical return is assignable; Kotlin variance alone is no proof.
-                else if (!supIsInterface && CanForwardClassReturn(
+                else if (!supIsInterface && phase == Phase.PhysicalBridges && CanForwardPhysicalValue(
                         PhysicalSlotType(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs)), PhysicalSlotType(slotRet)))
                     retFit = Fit.Bridge;
                 else
@@ -801,7 +824,10 @@ static class KotlinOverrideSlotBridge
                         && ((source["typeParams"] as JsonArray)?.Count ?? 0) == arity
                         && SameMethodTypeParameterShape(SemanticMethodTypeParameters(source),
                             SemanticMethodTypeParameters(implementation), args, args)
-                        && SignatureMatches(source, factParams, factRet, args, refs, isValue)).ToList();
+                        && ((fact["overrides"] as JsonArray)?.OfType<JsonObject>().Any(edge =>
+                                Str(edge[DeclarationIdentityBinding.Key]) is string selected
+                                && selected == SourceDeclarationId(Str(source[DeclarationIdentityBinding.Key]))) == true
+                            || SignatureMatches(source, factParams, factRet, args, refs, isValue))).ToList();
                     if (sources.Count == 0 || sources.Count > 1 && !SameSelectedSuspendDeclaration(sources)) continue;
                     // One selected Kotlin suspend declaration has multiple explicit CLR projections.
                     // Retain each exact MethodDef; these are not ambiguous source overloads.

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Pin source-selected inherited slots across a local/reference carrier boundary."""
 import json
-import re
 import sys
 
 
@@ -29,17 +28,22 @@ for call in source_calls:
     assert any(edge.get("owner", {}).get("name") == "kotlin.collections.AbstractMutableCollection"
                and edge.get("declarationId") == call["declarationId"] for edge in call["overrides"])
 calls = [node for node in nodes(lowered["body"])
-         if node.get("k") == "callInstance" and re.fullmatch(r"\$star\$contains\$[0-9]+", node.get("method", ""))]
+         if node.get("k") == "callStatic" and node.get("method") == "clrProjectedViewContains"]
 assert len(calls) == 2
-assert len({call["method"] for call in calls}) == 1
 for call in calls:
     selected = call["memberRef"]
     assert selected["assembly"] == "DotKt.Stdlib"
-    assert selected["declaringType"] == {"t": "fqn", "name": "kotlin.collections.AbstractMutableCollection$star"}
-    assert selected["name"] == call["method"] and selected["genericArity"] == 0
-    assert selected["parameterTypes"] == [{"t": "fqn", "name": "System.Object"}]
+    assert selected["declaringType"] == {"t": "fqn", "name": "kotlin.collections.ClrCollectionDefaultsKt"}
+    assert selected["name"] == call["method"] and selected["genericArity"] == 1
+    assert selected["callingConvention"] == "static"
+    assert selected["parameterTypes"] == [{"t": "fqn", "name": name}
+                                          for name in ("System.Object", "System.Object", "System.Int32", "System.Object")]
     assert selected["returnType"] == {"t": "fqn", "name": "System.Boolean"}
-    assert call["ownerType"] == selected["declaringType"]
+    assert call["owner"] == selected["declaringType"]
+    assert call["typeArgs"] == [{"t": "tv", "scope": "method", "i": 0}]
+    assert call["args"][1] == {"k": "classRef", "type": {
+        "t": "fqn", "name": "System.Collections.Generic.IReadOnlyCollection`1", "args": call["typeArgs"]}}
+    assert call["args"][2]["value"] == 0
     assert not any(node.get("t") == "tv" and node.get("scope") == "type" for node in nodes(call["sig"]))
     assert not any(node.get("t") == "tv" and node.get("scope") == "type" for node in nodes(call["args"]))
-print("Inherited source declaration binds its exact referenced carrier slot without leaking owner variables")
+print("Inherited source query binds its exact erased dispatcher with a caller-framed witness and no owner-variable leak")
