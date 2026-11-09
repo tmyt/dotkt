@@ -38,13 +38,15 @@ static class CollectionBclSlotSynthesis
 
             var faces = SupertypeGraph.Reachable(
                     new SupertypeGraph.Def { Interfaces = definition.Interfaces }, definitions, refs)
-                .Where(edge => edge.isInterface && IsCollectionFace(edge.spec))
-                .Select(edge => edge.spec).ToList();
+                .Where(edge => edge.isInterface).Select(edge => CollectionFace(edge.spec))
+                .OfType<TypeNode.Fqn>().ToList();
             if (faces.Count == 0) continue;
             var inherited = definition.Base == null ? new HashSet<string>()
                 : SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = definition.Base }, definitions, refs)
-                    .Where(edge => edge.isInterface && IsCollectionFace(edge.spec))
-                    .Select(edge => SupertypeGraph.TypeKey(edge.spec)).ToHashSet();
+                    .Where(edge => edge.isInterface).Select(edge => CollectionFace(edge.spec))
+                    .OfType<TypeNode.Fqn>().Select(SupertypeGraph.TypeKey).ToHashSet();
+            var stated = ifaces.Select(TypeJson.Read).OfType<TypeNode.Fqn>().Select(CollectionFace)
+                .OfType<TypeNode.Fqn>().Select(SupertypeGraph.TypeKey).ToHashSet();
 
             // Each edge has already been substituted into this class's exact physical generic frame.
             JsonNode collElem = null, listElem = null;
@@ -54,7 +56,7 @@ static class CollectionBclSlotSynthesis
                 if (face.Name == IList) listElem ??= TypeJson.Write(face.Args[0]);
                 else collElem ??= TypeJson.Write(face.Args[0]);
                 // State the native face so subsequent slot and read-only-sibling synthesis consume the same facts.
-                if (!ifaces.Any(i => SupertypeGraph.TypeKey(TypeJson.Read(i)) == SupertypeGraph.TypeKey(face)))
+                if (stated.Add(SupertypeGraph.TypeKey(face)))
                     ifaces.Add(TypeJson.Write(face));
             }
             if (collElem == null && listElem == null) continue;
@@ -77,8 +79,14 @@ static class CollectionBclSlotSynthesis
         }
     }
 
-    static bool IsCollectionFace(TypeNode.Fqn face) =>
-        face.Name is ICollection or IList && face.Args is { Length: 1 };
+    // A referenced graph uses exact CLR TypeDef punctuation; locally lowered aliases use the open name.
+    // Compare that same declaration identity with its authoritative argument vector, never a source-name prefix.
+    static TypeNode.Fqn CollectionFace(TypeNode.Fqn face)
+    {
+        if (face.Args is not { Length: 1 }) return null;
+        var name = ReferenceMetadataIndex.BareOwnerFqn(face.Name);
+        return name is ICollection or IList ? new TypeNode.Fqn(name, face.Args) : null;
+    }
 
     static JsonNode Clone(JsonNode n) => n == null ? null : JsonNode.Parse(n.ToJsonString());
 

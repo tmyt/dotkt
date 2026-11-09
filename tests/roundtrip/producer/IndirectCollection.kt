@@ -26,14 +26,14 @@ class IndirectList<T> : ListContract<T> by CompleteList<T>(mutableListOf())
 fun localIndirectCollection(): Int {
     val source = IndirectCollection<Int>()
     check(source.add(42))
-    check(NativeFaces.CopyFirstAndAppend(source, 42) == 42)
+    check(NativeFaces.CopyFirstAndAppend(source as System.Collections.Generic.ICollection<Int>, 42) == 42)
     check(source.size == 2 && source.containsCalls == 1)
     val child = IndirectCollectionChild<Int>()
     check(child.add(7))
-    check(NativeFaces.CopyFirstAndAppend(child, 7) == 7 && child.adds == 2)
+    check(NativeFaces.CopyFirstAndAppend(child as System.Collections.Generic.ICollection<Int>, 7) == 7 && child.adds == 2)
     val list = IndirectList<Int>()
     list.add(10)
     list.add(20)
-    check(NativeFaces.IndexOf(list, 20) == 1)
+    check(NativeFaces.IndexOf(list as System.Collections.Generic.IList<Int>, 20) == 1)
     return source.adds
 }

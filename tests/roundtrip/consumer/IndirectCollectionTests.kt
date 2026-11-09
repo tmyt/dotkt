@@ -10,7 +10,7 @@ import roundtrip.indirectcollection.localIndirectCollection
 
 private class ImportedCollection<T> : CollectionContract<T> by IndirectCollection<T>()
 private class ImportedList<T> : ListContract<T> by IndirectList<T>()
-private class NativeReadOnlyControl : System.Collections.ObjectModel.ReadOnlyCollection<Int>(
+private class NativeReadOnlyControl : System.Collections.ObjectModel.ReadOnlyCollection1<Int>(
     System.Collections.Generic.List<Int>()
 )
 
@@ -20,18 +20,18 @@ class IndirectCollectionTests {
         check(localIndirectCollection() == 2)
         val ints = ImportedCollection<Int>()
         check(ints.add(7))
-        check(NativeFaces.CopyFirstAndAppend(ints, 7) == 7 && ints.adds == 2)
+        check(NativeFaces.CopyFirstAndAppend(ints as System.Collections.Generic.ICollection<Int>, 7) == 7 && ints.adds == 2)
         val nullable = ImportedCollection<String?>()
         check(nullable.add(null))
-        check(NativeFaces.CopyFirstAndAppend(nullable, null) == null && nullable.adds == 2)
+        check(NativeFaces.CopyFirstAndAppend(nullable as System.Collections.Generic.ICollection<String?>, null) == null && nullable.adds == 2)
         val value = Any()
         val objects = ImportedCollection<Any>()
         check(objects.add(value))
-        check(NativeFaces.CopyFirstAndAppend(objects, value) === value && objects.adds == 2)
+        check(NativeFaces.CopyFirstAndAppend(objects as System.Collections.Generic.ICollection<Any>, value) === value && objects.adds == 2)
         val list = ImportedList<String?>()
         list.add("first")
         list.add(null)
-        check(NativeFaces.IndexOf(list, null) == 1)
-        check(NativeFaces.IsReadOnly(NativeReadOnlyControl()))
+        check(NativeFaces.IndexOf(list as System.Collections.Generic.IList<String?>, null) == 1)
+        check(NativeFaces.IsReadOnly(NativeReadOnlyControl() as System.Collections.Generic.ICollection<Int>))
     }
 }
