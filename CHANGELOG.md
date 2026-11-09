@@ -3,7 +3,16 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
-## Unreleased
+## 0.9.23 (2026-11-09)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.23`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Strengthen native CLR event declarations, inheritance, visibility and cross-DLL metadata.
+- Restore upstream mutable collection skeleton inheritance while preserving Kotlin
+  query and Boolean-add behavior across CLR and DLL boundaries.
+- Continue to require the .NET 10 SDK and a .NET runtime of **10.0.12 or later**.
 
 ### Added
 
