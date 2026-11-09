@@ -98,8 +98,10 @@ static class CollectionHelperBinding
                 || obj["args"] is not JsonArray args)
                 return obj;
             // A concrete or native-aliased Kotlin owner implements the same erased query contract. Dispatch through that
-            // contract, not a prematurely narrowed implementation parameter. A super call is deliberately exact.
+            // contract, not a prematurely narrowed implementation parameter. An already-selected aliased interface
+            // retains its operation family (e.g. Set rather than an unrelated Collection face). Super is exact too.
             if (obj["super"]?.GetValue<bool>() != true
+                && (!aliases.ContainsKey(owner.Name) || !IsInterface(owner.Name))
                 && KotlinCollectionSlotSynthesis.ErasedQueryOverride(obj) is { } query)
             {
                 // Override edges use the direct owner's declaration frame, not the caller's frame.
