@@ -89,6 +89,10 @@ linker, generated-binary, or runtime result for the undefined forms.
   labels and the agreed milestone; do not assign milestones to pull requests.
 - Begin each issue in a dedicated Git worktree rather than changing the primary
   working tree.
+- While one pull request waits for CI, an independent issue may proceed in its
+  own worktree. Normally keep this bounded to one CI-waiting task and one active
+  implementation. Keep dependent work ordered; after the base advances, inspect
+  relevant changes and integrate them when needed, then validate the new head.
 - Open a draft pull request once the focused tests for the changed behavior are
   green. State every outstanding review and validation step in its description.
   Keep the description concise: scope, approach, validation, and pending steps,
@@ -97,8 +101,12 @@ linker, generated-binary, or runtime result for the undefined forms.
   sandbox. Do not impose a short API timeout or force a model override; allow
   20--30 minutes for a long review, and follow the review budget below.
 - Mark the draft pull request ready for review only after the independent
-  reviews and the canonical full gate (`make verify` for behavior-affecting
-  changes) have completed successfully.
+  reviews and the complete CI full gate for its final head have succeeded.
+  Local focused checks remain required; routinely duplicating the full gate
+  with local `make verify` is not required. Keep that command available for
+  diagnosis, without treating it as permission to bypass required CI.
+  Verify the run's head SHA and every full-gate lane, not just a green subset
+  or aggregate hiding skipped jobs; follow the runbook for the lane checklist.
 - Treat CI failures and Copilot review findings as work to investigate and
   resolve before merge. Validate a finding before changing the implementation.
 - Copilot automatically reviews the initial ready-for-review revision, but a
@@ -167,16 +175,14 @@ request description.
   request's declared scope is reported for the issue tracker, not folded into
   the pull request.
 - After addressing material findings, rerun the focused checks — the review
-  budget for this iteration is spent, so do not open another review round. Run
-  the canonical full gate (`make verify` for behavior-affecting changes) once
-  the diff is stable, rather than after each implementation iteration.
+  budget for this iteration is spent, so do not open another review round.
+  Push the stable diff and use the complete CI full gate on that final head.
 - If the full gate fails, reproduce and iterate with the failing stage or
-  focused check before running the full gate again; the fix is validated by
-  those focused checks, not by a new review round. A green full-gate result
-  must be repeated only when a subsequent code, build, or packaging change
-  can invalidate it; review-only discussion
-  and documentation/comment-only edits to files not executed or consumed by
-  the build or gates do not require another full run.
+  focused check locally before pushing the fix; the updated head needs a
+  successful full CI gate, not a new review round. Review-only discussion does
+  not invalidate a green result. Documentation/comment-only edits to files not
+  executed or consumed by the build or gates retain their gate exemption;
+  repository-required checks and up-to-date rules still apply.
 - If a budgeted review cannot be run, report that explicitly rather than
   silently skipping it.
 

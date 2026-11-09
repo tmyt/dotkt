@@ -29,6 +29,15 @@ If resuming an existing branch, inspect its state instead of recreating it.
 Respect sandbox permissions for Git metadata and network access; use the
 environment's approval mechanism where required.
 
+While a PR waits for CI, work on an independent issue in another worktree when
+authorized. Normally keep one CI-waiting task and one active implementation,
+with separate scope, artifacts, and checkpoints. Dependent changes must wait
+for their prerequisites. When the base advances, inspect relevant code, build,
+and test changes and integrate them when necessary; the updated head needs its
+own CI result. Unconsumed documentation-only base changes do not inherently
+invalidate implementation tests, but never claim unequal trees are identical
+and always obey repository up-to-date requirements.
+
 ## 2. Implement, focus-test, and create a draft
 
 Implement the general rule at its owning compiler layer. Keep upstream common
@@ -111,15 +120,32 @@ record it as not performed and report the blocker; do not imply approval.
 
 ## 4. Final gate, ready, CI, and Copilot
 
-After material fixes, rerun focused checks. Once the final diff is stable, run
-`make verify` and record its commit, command, log, exit status, and result. Commit
-before the final run so the evidence names an immutable revision. A change-aware
-subset is a development aid, not a replacement for the canonical full gate.
+After material fixes, rerun focused checks. Push the stable final diff and use
+the complete CI full gate on that immutable PR head as the final validation.
+Local focused checks and independent reviews remain required; a duplicate
+local `make verify` is not routine. Keep it available as a diagnostic equivalent,
+including during CI outages, without bypassing repository-required checks.
+A change-aware subset is not a replacement for the full CI gate.
 
-If the gate fails, reproduce with its failing stage/focused test and iterate
-there before rerunning the full gate. Rerun a green gate only when subsequent
-code, build, or packaging changes invalidate it. Non-consumed documentation,
-comments, and review discussion do not require another full run or review.
+For the [verify workflow](../.github/workflows/verify.yml), confirm success of
+`prerequisites`, all four `verify-core` shards (`test-corpus`, `compile-fail`,
+`lowering`, `integration`), `packaged-sdk`, and the final `verify` aggregate.
+Inspect individual jobs: a skipped, cancelled, incomplete, or partial run is
+not a passing full gate. Check other repository-required checks too. Record
+the PR head SHA, run URL/ID, run head SHA, and job conclusions; they must refer
+to the final head, not an earlier successful push. For example:
+
+```sh
+gh pr view NUMBER --json headRefOid
+gh run view RUN_ID --json headSha,status,conclusion,jobs,url
+gh pr checks NUMBER
+```
+
+If CI fails, reproduce with its failing stage/focused test locally and iterate
+there before pushing the fix. Every new behavior-affecting head needs its own
+successful full CI gate, not another local review round. Review discussion does
+not invalidate checks. Non-consumed documentation/comment-only edits retain
+their gate/review exemption; repository protections still apply.
 
 When the budgeted reviews and required validation are complete, update the
 concise PR description and mark it ready:
@@ -193,6 +219,8 @@ unchanged state to fill waiting time. Give concise progress updates without
 claiming unobserved success. After interruption/restart, reconcile the checkpoint
 with actual processes, Git, PR, and CI state before continuing. Do not reread
 completed historical PRs or rerun spent reviews simply because context compacted.
+Use an independent task's worktree to overlap useful implementation with CI
+waiting, within the bounded concurrency described in section 1.
 
 ## Requested releases
 

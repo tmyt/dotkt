@@ -133,15 +133,17 @@ Not a single `gradle build` — a multi-stage native pipeline. Don't guess these
 
 | Goal | Command |
 |------|---------|
-| Canonical gate (a behavior-affecting change isn't done without it) | `make verify` |
+| Final gate for behavior-affecting changes | Complete CI full gate on the final PR head; see `docs/agent-workflow.md` |
+| Optional local full-gate equivalent / diagnosis | `make verify` |
 | Compiler behavior only (NUnit, ILVerify and negative compilation) | `make verify-tests` |
 | Compile and run one file | `./scripts/dotkt.sh --run path/to/Foo.kt` |
 | The CLR stdlib: frontend KLIB, then reference dll, then runtime dll | `make stdlib` |
 
 Validation cadence is part of the review contract in `AGENTS.md`: iterate with the narrowest focused check,
-spend the review budget on the stable focused-green diff, then run the canonical full gate once. If that gate
-fails, iterate on its failing stage and validate the fix with focused checks — the budget is spent, so no new
-review round — before rerunning the whole gate. A draft PR may expose honest work in progress, but it must
+spend the review budget on the stable focused-green diff, then await complete full-gate CI on the final head.
+Do not routinely duplicate it with local `make verify`. If CI fails, iterate on its failing stage locally and
+validate the fix with focused checks — the budget is spent, so no new review round — before pushing and
+awaiting CI for the updated head. A draft PR may expose honest work in progress, but it must
 state which reviews or checks remain and cannot be treated as ready for handoff.
 
 ILVerify's allowed failures are machine-readable: `ILVERIFY_XFAIL` in `tests/run-ilverify.sh`.
