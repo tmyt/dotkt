@@ -164,6 +164,7 @@ static class ExactMutableViewDispatch
             CloseDeclaring((TypeNode.Fqn)queryOwner, view.Args), receiver,
             hasIndex ? new JsonArray(captured[2].DeepClone()) : new JsonArray());
         TypeNode slot = operation switch {
+            "clrProjectedListAdd" => new TypeNode.Fqn("DotKt.Runtime.CompilerServices.KotlinMutableCollectionAddSlot"),
             "clrProjectedListSet" => new TypeNode.Fqn("DotKt.Runtime.CompilerServices.KotlinMutableListSetSlot"),
             "clrProjectedListRemoveAt" => new TypeNode.Fqn("DotKt.Runtime.CompilerServices.KotlinMutableListRemoveAtSlot"),
             _ => null,

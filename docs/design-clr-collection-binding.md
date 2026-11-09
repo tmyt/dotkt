@@ -47,7 +47,11 @@ directly when it exists. The same runtime selector verifies eligibility, includi
 its immutable type/view decisions use weak keys, not collection-instance history. A missing exact view keeps the
 existing erased path. Value-returning Kotlin mutation slots take precedence over native old-value emulation.
 
-Projected mutable List append uses the same selected `IList<T>` family as indexed insertion. Its native `Add` and
+Authored Kotlin `MutableCollection.add` results use a dedicated Boolean-returning capability, including inherited
+and projected calls. It does not share the bulk-mutation capability: an unrelated override must not acquire a new
+implementation obligation. Only native void `Add` needs before/after Count emulation.
+
+Projected native mutable List append uses the same selected `IList<T>` family as indexed insertion. Its native `Add` and
 before/after `Count` come from that List's own `ICollection<T>` parent, not from unrelated collection faces on the
 receiver. An exact source preference wins when implemented; otherwise genuine ambiguity remains an error. A raw
 `IList` is used only when no eligible generic List exists and the raw face is not map storage.

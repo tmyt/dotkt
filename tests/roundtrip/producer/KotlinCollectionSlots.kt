@@ -7,6 +7,17 @@
 // which tests for the interface at run time and reaches the override declared here.
 package roundtrip.collslots
 
+open class ReplacingResultList<T>(private val storage: MutableList<T>) : MutableList<T> by storage {
+    var addCalls = 0
+    override fun add(element: T): Boolean {
+        addCalls++
+        storage[0] = element
+        return true
+    }
+}
+
+fun <T> makeReplacingResultList(element: T): MutableList<T> = ReplacingResultList(mutableListOf(element))
+
 /** An `Iterable`-derived Kotlin interface an implementer in ANOTHER assembly can name (#400). Its CLR enumerable
  *  face is reachable only through this assembly's projected metadata, so the consumer's implementer is owed a
  *  `GetEnumerator` that nothing in its own module states. */

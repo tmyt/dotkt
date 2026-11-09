@@ -17,6 +17,12 @@ import roundtrip.collslots.ExternalDefaultCollection
 import roundtrip.collslots.ExternalIteratorProvider
 import roundtrip.collslots.TrackedBag
 import roundtrip.collslots.makeTrackedBag
+import roundtrip.collslots.ReplacingResultList
+import roundtrip.collslots.makeReplacingResultList
+
+private class CrossModuleInheritedAddResult<T>(values: MutableList<T>) : ReplacingResultList<T>(values)
+
+private fun <T> crossModuleAddResult(receiver: MutableCollection<T>, element: T): Boolean = receiver.add(element)
 
 // The enumerable face of this class arrives entirely through the PRODUCER assembly: `Feed<T> : Iterable<T>` is
 // declared there, so nothing in this module states `IEnumerable<Int>` for it. The reverse bridge is owed all the
@@ -36,6 +42,24 @@ class CrossModuleDefaultCollection : ExternalDefaultCollection {
 }
 
 class KotlinCollectionSlotTests {
+    @TestAttribute
+    fun crossModuleAddKeepsTheAuthoredBooleanWithoutGrowingTheCollection() {
+        val value = ReplacingResultList(mutableListOf(1))
+        check(value.add(2))
+        val exact: MutableList<Int> = value
+        check(exact.add(3))
+        val projected: MutableList<in Int> = exact
+        check(projected.add(4))
+        val collection: MutableCollection<in Int> = exact
+        check(collection.add(5))
+        check(crossModuleAddResult(exact, 6))
+        check(value.size == 1 && value[0] == 6 && value.addCalls == 5)
+        val inherited = CrossModuleInheritedAddResult(mutableListOf("before"))
+        check(crossModuleAddResult(inherited, "after") && inherited[0] == "after")
+        val nullable = makeReplacingResultList<Int?>(1)
+        check(nullable.add(null) && nullable[0] == null)
+    }
+
     @TestAttribute
     fun crossModuleOverrideIsReachedThroughTheKotlinInterface() {
         val b: TrackedBag<Int> = makeTrackedBag()
