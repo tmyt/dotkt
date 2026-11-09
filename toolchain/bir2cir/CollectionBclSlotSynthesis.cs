@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -25,57 +26,133 @@ static class CollectionBclSlotSynthesis
 {
     const string ICollection = "System.Collections.Generic.ICollection";
     const string IList = "System.Collections.Generic.IList";
+    const string ContractKey = "dotktKotlinMutableCollectionContract";
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    static string FaceKey(TypeNode.Fqn face) => SupertypeGraph.TypeKey(
+        BirTypeLowering.CanonicalPhysicalSlotType(CollectionFace(face)));
+
+    // Preserve the source obligation before physical lowering: a map or a foreign CLR interface can expose
+    // ICollection as storage without implementing Kotlin's mutable-collection query/default contract.
+    public static void RecordContracts(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    {
+        var definitions = SupertypeGraph.Collect(roots);
+        foreach (var definition in definitions.Values.Where(d => d.Kind == "class"))
+        {
+            var contracts = SupertypeGraph.Reachable(definition, definitions, refs,
+                    sourceFrames: true, physicalSourceApplications: true)
+                .Select(edge => new TypeNode.Fqn(ReferenceMetadataIndex.BareOwnerFqn(edge.spec.Name), edge.spec.Args))
+                .Where(owner => owner.Name is "kotlin.collections.MutableCollection"
+                    or "kotlin.collections.MutableList" or "kotlin.collections.MutableSet")
+                .Select(owner => (JsonNode)JsonValue.Create(TypeJson.Write(owner).ToJsonString())).ToArray();
+            // The final argument frame is already allocated. Keep these obligation facts opaque to value erasure;
+            // an operational interface is not a collection value. Physical lowering consumes them once below.
+            if (contracts.Length != 0) definition.Node[ContractKey] = new JsonArray(contracts);
+        }
+    }
+
+    internal static void SelfTest()
+    {
+        TypeNode.Fqn Face(string owner, TypeNode element) => new(owner, new[] { element });
+        var keyword = Face(ICollection, new TypeNode.Array(new TypeNode.Fqn("int")));
+        var qualified = Face(ICollection + "`1", new TypeNode.Array(new TypeNode.Fqn("System.Int32")));
+        if (FaceKey(keyword) != FaceKey(qualified)
+            || FaceKey(Face(ICollection, new TypeNode.Tv("type", 0)))
+                == FaceKey(Face(ICollection, new TypeNode.Tv("type", 1)))
+            || FaceKey(qualified) == FaceKey(Face(IList, qualified.Args[0])))
+            throw new InvalidOperationException("Native collection faces lost physical identity or exact frames");
+        Console.WriteLine("[collection native faces] self-test OK (physical element identity, distinct frames and faces)");
+    }
+
+    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs, Func<TypeNode, TypeNode> lowerType)
     {
         // Snapshot the whole module before synthesis: a user interface/base can live in a later input file.
         var definitions = SupertypeGraph.Collect(roots);
         foreach (var definition in definitions.Values)
         {
+            var contracts = (definition.Node[ContractKey] as JsonArray)?
+                .Select(contract => lowerType(TypeJson.Read(JsonNode.Parse(contract.GetValue<string>()))) as TypeNode.Fqn)
+                .Where(contract => contract != null).Select(CollectionFace).OfType<TypeNode.Fqn>().ToList()
+                ?? new List<TypeNode.Fqn>();
+            definition.Node.Remove(ContractKey);
             if (definition.Kind != "class") continue; // interfaces carry no bodies
+            if (contracts.Count == 0) continue;
+            var owned = contracts.Select(FaceKey).ToHashSet();
+            foreach (var list in contracts.Where(contract => contract.Name == IList))
+                owned.Add(FaceKey(new TypeNode.Fqn(ICollection, list.Args)));
             var to = definition.Node;
             if (to["interfaces"] is not JsonArray ifaces) continue;
 
             var faces = SupertypeGraph.Reachable(
                     new SupertypeGraph.Def { Interfaces = definition.Interfaces }, definitions, refs)
                 .Where(edge => edge.isInterface).Select(edge => CollectionFace(edge.spec))
-                .OfType<TypeNode.Fqn>().ToList();
+                .OfType<TypeNode.Fqn>().Where(face => owned.Contains(FaceKey(face))).ToList();
             if (faces.Count == 0) continue;
             var inherited = definition.Base == null ? new HashSet<string>()
                 : SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = definition.Base }, definitions, refs)
                     .Where(edge => edge.isInterface).Select(edge => CollectionFace(edge.spec))
-                    .OfType<TypeNode.Fqn>().Select(SupertypeGraph.TypeKey).ToHashSet();
+                    .OfType<TypeNode.Fqn>().Select(FaceKey).ToHashSet();
             var stated = ifaces.Select(TypeJson.Read).OfType<TypeNode.Fqn>().Select(CollectionFace)
-                .OfType<TypeNode.Fqn>().Select(SupertypeGraph.TypeKey).ToHashSet();
+                .OfType<TypeNode.Fqn>().Select(FaceKey).ToHashSet();
 
             // Each edge has already been substituted into this class's exact physical generic frame.
             JsonNode collElem = null, listElem = null;
             foreach (var face in faces)
             {
-                if (inherited.Contains(SupertypeGraph.TypeKey(face))) continue;
+                if (inherited.Contains(FaceKey(face))) continue;
                 if (face.Name == IList) listElem ??= TypeJson.Write(face.Args[0]);
                 else collElem ??= TypeJson.Write(face.Args[0]);
                 // State the native face so subsequent slot and read-only-sibling synthesis consume the same facts.
-                if (stated.Add(SupertypeGraph.TypeKey(face)))
+                if (stated.Add(FaceKey(face)))
                     ifaces.Add(TypeJson.Write(face));
             }
             if (collElem == null && listElem == null) continue;
 
             if (to["methods"] is not JsonArray methods) { methods = new JsonArray(); to["methods"] = methods; }
-            bool Has(string name) => methods.OfType<JsonObject>().Any(m => (m["name"] as JsonValue)?.GetValue<string>() == name);
+            void AddSlot(JsonObject slot, string owner, JsonNode elem)
+            {
+                var name = slot["name"].GetValue<string>();
+                string Key(JsonNode type) => SupertypeGraph.TypeKey(
+                    BirTypeLowering.CanonicalPhysicalSlotType(TypeJson.Read(type)));
+                var signature = FunctionSignatureIdentity.Signature((JsonArray)slot["params"]);
+                if (methods.OfType<JsonObject>().Any(method => method["name"]?.GetValue<string>() == name
+                    && method["vis"]?.GetValue<string>() == "public"
+                    && method["virtual"]?.GetValue<bool>() == true
+                    && method["static"]?.GetValue<bool>() != true && TypeParameterFrame.Count(method) == 0
+                    && method["params"] is JsonArray parameters && parameters.Count == signature.Count
+                    && FunctionSignatureIdentity.Signature(parameters).Select(Key).SequenceEqual(signature.Select(Key))
+                    && Key(method["ret"]) == Key(slot["ret"]))) return;
+
+                // A same-named user overload (or non-virtual member) cannot fill the native slot. Keep that
+                // declaration intact and allocate an exact explicit implementation instead of a duplicate MethodDef.
+                if (methods.OfType<JsonObject>().Any(method => method["name"]?.GetValue<string>() == name))
+                {
+                    var fresh = "dotkt$native$" + name;
+                    while (methods.OfType<JsonObject>().Any(method => method["name"]?.GetValue<string>() == fresh))
+                        fresh += "$";
+                    slot["name"] = fresh;
+                    slot["vis"] = "private";
+                    slot["clrFinal"] = true;
+                    slot["clrInterfaceImpls"] = new JsonArray(new JsonObject {
+                        ["owner"] = TypeJson.Write(new TypeNode.Fqn(owner, new[] { TypeJson.Read(elem) })),
+                        ["member"] = name, ["arity"] = 0, ["params"] = signature,
+                        ["ret"] = slot["ret"].DeepClone(),
+                    });
+                }
+                methods.Add(slot);
+            }
 
             // ICollection<E> face: Contains / CopyTo / get_IsReadOnly.
             if (collElem != null)
             {
-                if (!Has("Contains")) methods.Add(QuerySlotForward("Contains", collElem, "System.Boolean",
-                    "KotlinCollectionDefaultSlots", "dotktContains"));
-                if (!Has("get_IsReadOnly")) methods.Add(ConstBoolGetter("get_IsReadOnly"));
-                if (!Has("CopyTo")) methods.Add(CopyTo(collElem));
+                AddSlot(QuerySlotForward("Contains", collElem, "System.Boolean",
+                    "KotlinCollectionDefaultSlots", "dotktContains"), ICollection, collElem);
+                AddSlot(ConstBoolGetter("get_IsReadOnly"), ICollection, collElem);
+                AddSlot(CopyTo(collElem), ICollection, collElem);
             }
             // IList<E> face additionally needs IndexOf.
-            if (listElem != null && !Has("IndexOf"))
-                methods.Add(QuerySlotForward("IndexOf", listElem, "System.Int32",
-                    "KotlinListDefaultSlots", "dotktIndexOf"));
+            if (listElem != null)
+                AddSlot(QuerySlotForward("IndexOf", listElem, "System.Int32",
+                    "KotlinListDefaultSlots", "dotktIndexOf"), IList, listElem);
         }
     }
 

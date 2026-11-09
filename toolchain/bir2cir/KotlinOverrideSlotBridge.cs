@@ -1647,9 +1647,9 @@ static class KotlinOverrideSlotBridge
                 var accessorKind = overrideKind switch { "getter" => "get", "setter" => "set", _ => null };
                 // dll2klib preserves every flattened property override owner even when the emitted CLR interface
                 // hierarchy cannot preserve the semantic @ClrTypeAlias edge (Collection -> IReadOnlyCollection).
-                // That exact frontend-selected owner is sufficient for a property slot. Ordinary methods retain the
-                // independent reachability proof that prevents an unrelated same-shaped interface from capturing a
-                // marker while walking another referenced spec.
+                // That exact frontend-selected owner is sufficient for a property slot. Ordinary methods need
+                // declaration reachability or the exact trusted alias-to-TypeDef binding below; shape alone cannot
+                // let an unrelated interface capture a marker while walking another referenced spec.
                 // The graph already contains physical companion arguments; the override marker retains
                 // source arity. Compare declarations in the recorded frame, not by mismatched arities.
                 var selectedSlotSpec = spec;

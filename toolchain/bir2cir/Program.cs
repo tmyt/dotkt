@@ -60,6 +60,7 @@ static class Bir2Cir
                 IntrinsicExtensionRepresentation.SelfTest();
                 ReferenceExistentialAbiBinding.SelfTest();
                 KotlinCollectionSlotSynthesis.SelfTest();
+                CollectionBclSlotSynthesis.SelfTest();
                 KotlinOverrideSlotBridge.SelfTest();
                 ContinuationErasure.SelfTest();
                 ReferenceNullableStrip.FunctionSelfTest();
@@ -1260,6 +1261,8 @@ sealed class Pipeline
         // declarations together with the source-to-slot relation carried by their allocating passes.
         var existentialReceiverMembers = ExistentialReceiverBinding.Collect(
             staged.Select(s => s.Root), physicalDeclarationSources);
+        if (!_options.RefBuild)
+            CollectionBclSlotSynthesis.RecordContracts(staged.Select(s => s.Root), refs);
         foreach (var (substituted, outputName) in staged)
         {
             // §11 CONTINUATION-ERASURE (bundle-6 bug #5 ROOT): make the coroutine ABI monomorphic on
@@ -1423,7 +1426,9 @@ sealed class Pipeline
         // graph. A derived type can precede its base in another file; resolving interface manifests inside this loop
         // would otherwise make their contents depend on source-file order.
         if (!_options.RefBuild)
-            CollectionBclSlotSynthesis.ApplyAll(loweredRoots.Select(s => s.Root), refs);
+            CollectionBclSlotSynthesis.ApplyAll(loweredRoots.Select(s => s.Root), refs,
+                type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValueFqn,
+                    refs.PhysicalTypeNames, typeArg: true, nullableFrames: refs.NullableTypeFrames));
         foreach (var (lowered, _) in loweredRoots)
         {
             // `.size` (Count) on a STAR-PROJECTED / `Any`-erased collection receiver: StarProjectionLowering already

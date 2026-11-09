@@ -6,6 +6,7 @@ open class IndirectCollection<T> : CollectionContract<T> {
     override val values: MutableList<T> = mutableListOf()
     override var adds: Int = 0
     var containsCalls = 0
+    fun CopyTo(path: String): String = path
     override val size: Int get() = values.size
     override fun isEmpty() = values.isEmpty()
     override fun contains(element: T): Boolean { containsCalls++; return values.contains(element) }
@@ -28,6 +29,7 @@ fun localIndirectCollection(): Int {
     check(source.add(42))
     check(NativeFaces.CopyFirstAndAppend(source as System.Collections.Generic.ICollection<Int>, 42) == 42)
     check(source.size == 2 && source.containsCalls == 1)
+    check(source.CopyTo("user overload") == "user overload")
     val child = IndirectCollectionChild<Int>()
     check(child.add(7))
     check(NativeFaces.CopyFirstAndAppend(child as System.Collections.Generic.ICollection<Int>, 7) == 7 && child.adds == 2)
