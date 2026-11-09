@@ -727,7 +727,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// User properties follow the CLR property model exactly like typeDef: the access site emits an explicit property
 	// identity and role (there is no rich-enum special case for user props — only name/ordinal route to the
 	// __name/__ordinal fields), so the class must carry real accessors plus a
-	// `properties` entry, with the backing field demoted to internal. A bare public field alone crashes
+	// `properties` entry, with private backing storage shared with ordinary classes. A bare public field alone crashes
 	// ilemit with "<Enum>.get_<prop> not found".
 	// Only REAL user properties: kotlin.Enum's `name`/`ordinal` ride along as body-less fake overrides and
 	// `entries` as an IrSyntheticBody getter (bir2cir realizes its list-valued property operation);
@@ -993,7 +993,7 @@ internal fun BirEmitter.enumSuperCall(cc: IrClass): EnumSuperCall {
 		declarationIdForPhysicalAllocation(call.symbol.owner))
 }
 
-/** Instance storage authored by a Kotlin class body. Rich-enum entry subclasses and ordinary classes share this
+/** Instance storage authored by a Kotlin class body. Ordinary classes, rich enums and entry subclasses share this
  * declaration rule; only their constructor/base-call shapes differ. */
 internal fun BirEmitter.instanceStorageFields(klass: IrClass): List<String> {
 	val propertyFields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { p ->
