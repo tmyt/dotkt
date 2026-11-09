@@ -11,7 +11,7 @@ private class ErasedCollectionQueryOverride : ErasedCollectionQuerySet<Int>(list
     override fun containsAll(elements: Collection<Int>): Boolean { calls++; return result }
 }
 
-private class ErasedCountingQueries<E>(values: List<E>) : ErasedCollectionQuerySet<E>(values) {
+private open class ErasedCountingQueries<E>(values: List<E>) : ErasedCollectionQuerySet<E>(values) {
     var calls = 0
     var failure: IllegalStateException? = null
     override fun contains(element: E): Boolean {
@@ -28,12 +28,24 @@ private class ErasedTypedQuery : ErasedCollectionQuerySet<Int>(listOf(1)) {
 }
 
 private open class ErasedQueryBound
-private class ErasedBoundedQueries<E : ErasedQueryBound>(private val values: List<E>) : AbstractSet<E>() {
+private class ErasedQueryItem : ErasedQueryBound()
+private open class ErasedBoundedQueries<E : ErasedQueryBound>(private val values: List<E>) : AbstractSet<E>() {
     var calls = 0
     override val size: Int get() = values.size
     override fun iterator(): Iterator<E> = values.iterator()
     override fun contains(element: E): Boolean { calls++; return super.contains(element) }
+    fun contains(element: String): Boolean = error("unrelated overload was selected")
 }
+
+private interface ErasedIntegerQueries : Collection<Int>
+private interface ErasedDeclaredQueries : Collection<Int> { override fun contains(element: Int): Boolean }
+private interface ErasedNullableQueries : Collection<String?>
+private interface ErasedItemQueries : Collection<ErasedQueryItem>
+private class ErasedInheritedIntegerQueries : ErasedCountingQueries<Int>(listOf(1)), ErasedIntegerQueries
+private class ErasedInheritedDeclaredQueries : ErasedCountingQueries<Int>(listOf(1)), ErasedDeclaredQueries
+private class ErasedInheritedNullableQueries : ErasedCountingQueries<String?>(listOf(null, "x")), ErasedNullableQueries
+private class ErasedInheritedItemQueries(item: ErasedQueryItem) :
+    ErasedBoundedQueries<ErasedQueryItem>(listOf(item)), ErasedItemQueries
 
 private class ErasedOuterQuery<A> {
     inner class Values<B>(private val values: List<B>) : AbstractSet<B>() {
@@ -113,6 +125,18 @@ class ErasedCollectionQueryTests {
         val bounded = ErasedBoundedQueries(listOf(boundedValue))
         check(!bounded.equals(setOf("x")) && bounded.calls == 0)
         check(bounded.equals(setOf(boundedValue)) && bounded.calls == 1)
+        val inherited = ErasedInheritedIntegerQueries()
+        check((inherited as ErasedIntegerQueries).contains(1) && inherited.calls == 1)
+        check(!(inherited as ErasedIntegerQueries).contains(2) && inherited.calls == 2)
+        val declared = ErasedInheritedDeclaredQueries()
+        check((declared as ErasedDeclaredQueries).contains(1) && declared.calls == 1)
+        val inheritedNullable = ErasedInheritedNullableQueries()
+        check((inheritedNullable as ErasedNullableQueries).contains(null) && inheritedNullable.calls == 1)
+        check((inheritedNullable as ErasedNullableQueries).contains("x") && inheritedNullable.calls == 2)
+        val item = ErasedQueryItem()
+        val inheritedBounded = ErasedInheritedItemQueries(item)
+        check((inheritedBounded as ErasedItemQueries).contains(item) && inheritedBounded.calls == 1)
+        check(!(inheritedBounded as ErasedItemQueries).contains(ErasedQueryItem()) && inheritedBounded.calls == 2)
         check(ErasedOuterQuery<String>().Values(listOf(1)).contains(1))
 
         val cursor = ErasedQueryCursor(reference)

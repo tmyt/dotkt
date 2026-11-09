@@ -1,8 +1,16 @@
 import NUnit.Framework.TestAttribute
 import roundtrip.erasedqueries.QuerySet
 import roundtrip.erasedqueries.CountingQuerySet
+import roundtrip.erasedqueries.IntegerQueries
+import roundtrip.erasedqueries.NullableQueries
+import roundtrip.erasedqueries.ItemQueries
+import roundtrip.erasedqueries.QueryItem
+import roundtrip.erasedqueries.BoundedQuerySet
 
 private class ImportedErasedQuerySet<E>(values: List<E>) : QuerySet<E>(values)
+private class ImportedIntegerQueries : CountingQuerySet<Int>(listOf(1)), IntegerQueries
+private class ImportedNullableQueries : CountingQuerySet<String?>(listOf(null, "x")), NullableQueries
+private class ImportedItemQueries(item: QueryItem) : BoundedQuerySet<QueryItem>(listOf(item)), ItemQueries
 
 private class ImportedErasedQueryOverride : QuerySet<Int>(listOf(1)) {
     var calls = 0
@@ -36,5 +44,15 @@ class CrossModuleErasedCollectionQueryTests {
         check(!integers.matchesAll(unrelated) && integers.matchesAll(listOf(1)))
         val override = ImportedErasedQueryOverride()
         check(override.equals(setOf("x")) && override.calls == 1)
+        val inherited = ImportedIntegerQueries()
+        check((inherited as IntegerQueries).contains(1) && inherited.calls == 1)
+        check(!(inherited as IntegerQueries).contains(2) && inherited.calls == 2)
+        val inheritedNullable = ImportedNullableQueries()
+        check((inheritedNullable as NullableQueries).contains(null) && inheritedNullable.calls == 1)
+        check((inheritedNullable as NullableQueries).contains("x") && inheritedNullable.calls == 2)
+        val item = QueryItem()
+        val inheritedBounded = ImportedItemQueries(item)
+        check((inheritedBounded as ItemQueries).contains(item) && inheritedBounded.calls == 1)
+        check(!(inheritedBounded as ItemQueries).contains(QueryItem()) && inheritedBounded.calls == 2)
     }
 }

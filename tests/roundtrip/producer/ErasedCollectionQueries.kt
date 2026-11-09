@@ -22,3 +22,14 @@ open class CountingQuerySet<E>(values: List<E>) : QuerySet<E>(values) {
         return super.contains(element)
     }
 }
+
+interface IntegerQueries : Collection<Int>
+interface NullableQueries : Collection<String?>
+open class QueryBound
+class QueryItem : QueryBound()
+interface ItemQueries : Collection<QueryItem>
+open class BoundedQuerySet<E : QueryBound>(values: List<E>) : QuerySet<E>(values) {
+    var calls = 0
+    override fun contains(element: E): Boolean { calls++; return super.contains(element) }
+    fun contains(element: String): Boolean = error("unrelated imported overload was selected")
+}
