@@ -53,13 +53,11 @@ static class MemberStrip
             // the ref.dll (String.compareTo's ordinal body overriding the culture-sensitive Comparable.compareTo@ClrIntrinsic)
             // — carries a REAL Kotlin body that must be PRESERVED and hoisted (else the call would resolve to the
             // semantically-wrong BCL slot). IsRule3Member is exactly that ref.dll signal, so exempt it from the override-drop.
-            // A fake abstract class obligation can carry its interface's native binding annotation. The
-            // supplemental Kotlin contract still owns that declaration and its separate native-slot bridge.
-            var abstractKotlinSlot = !alias && mo["abstract"] is JsonValue abstractValue
-                && abstractValue.TryGetValue<bool>(out var isAbstract) && isAbstract
-                && mo["overrides"] is JsonArray obligations
-                && obligations.OfType<JsonObject>().Any(KotlinCollectionSlotSynthesis.OwnsSupplementalOverride);
-            var drop = !abstractKotlinSlot && refs.IsBoundStub(owner, name, keys)
+            // An abstract Kotlin class obligation is not an external throwing stub. Its inherited native
+            // binding annotation names a slot to implement; only an aliased owner supplies that implementation.
+            var abstractKotlinDeclaration = !alias && mo["abstract"] is JsonValue abstractValue
+                && abstractValue.TryGetValue<bool>(out var isAbstract) && isAbstract;
+            var drop = !abstractKotlinDeclaration && refs.IsBoundStub(owner, name, keys)
                 || (alias && mo["overrides"] is JsonArray ovs
                     && DeclarationRename.ResolveSlot(mo, ovs, refs) != null
                     && !refs.IsRule3Member(owner, name));
