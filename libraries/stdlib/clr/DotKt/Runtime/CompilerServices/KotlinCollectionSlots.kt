@@ -153,6 +153,12 @@ internal interface KotlinListDefaultSlots {
     fun dotktSubList(fromIndex: Int, toIndex: Int): Any
 }
 
+/** Kotlin's `add` result is independent of native void `ICollection<E>.Add`. */
+@PublishedApi
+internal interface KotlinMutableCollectionAddSlot {
+    fun dotktAdd(element: Any?): Boolean
+}
+
 /** The Kotlin-only `MutableCollection` slots that `System.Collections.Generic.ICollection<E>` does not carry. */
 @PublishedApi
 internal interface KotlinMutableCollectionSlots {

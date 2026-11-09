@@ -1400,14 +1400,18 @@ internal fun mutableCollectionCountErased(receiver: Any): Int = try {
 }
 
 @PublishedApi
-internal fun mutableCollectionAddErased(receiver: Any, element: Any?): Boolean = try {
-    val count = erasedMutableCollectionMethod(receiver, "get_Count", 0)
-    val add = erasedMutableCollectionMethod(receiver, "Add", 1)
-    val before = count.invoke(receiver, arrayOfNulls<Any?>(0)) as Int
-    add.invoke(receiver, arrayOf(element))
-    (count.invoke(receiver, arrayOfNulls<Any?>(0)) as Int) != before
-} catch (failure: StarProjectionInvocationException) {
-    throw (failure.innerException ?: failure)
+internal fun mutableCollectionAddErased(receiver: Any, element: Any?): Boolean {
+    val slots = receiver as? KotlinMutableCollectionAddSlot
+    if (slots != null) return slots.dotktAdd(element)
+    return try {
+        val count = erasedMutableCollectionMethod(receiver, "get_Count", 0)
+        val add = erasedMutableCollectionMethod(receiver, "Add", 1)
+        val before = count.invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+        add.invoke(receiver, arrayOf(element))
+        (count.invoke(receiver, arrayOfNulls<Any?>(0)) as Int) != before
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
 }
 
 @PublishedApi
@@ -1458,6 +1462,8 @@ internal fun mutableListSetErased(receiver: Any, index: Int, element: Any?, sour
 
 @PublishedApi
 internal fun mutableListAddErased(receiver: Any, element: Any?, sourceWitness: Any?): Boolean {
+    val slots = receiver as? KotlinMutableCollectionAddSlot
+    if (slots != null) return slots.dotktAdd(element)
     val view = erasedMutableListView(receiver, sourceWitness)
     if (view == null && receiver is StarProjectionRawList && !rawListIsMapStorage(receiver)) {
         val before = receiver.count

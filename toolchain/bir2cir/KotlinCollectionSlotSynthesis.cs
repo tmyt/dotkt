@@ -50,6 +50,7 @@ static class KotlinCollectionSlotSynthesis
     const string CollectionDefaultSlots = "DotKt.Runtime.CompilerServices.KotlinCollectionDefaultSlots";
     const string ListDefaultSlots = "DotKt.Runtime.CompilerServices.KotlinListDefaultSlots";
     const string CollectionSlots = "DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots";
+    const string CollectionAddSlot = "DotKt.Runtime.CompilerServices.KotlinMutableCollectionAddSlot";
     const string ListSlots = "DotKt.Runtime.CompilerServices.KotlinMutableListSlots";
     const string ListSetSlot = "DotKt.Runtime.CompilerServices.KotlinMutableListSetSlot";
     const string ListRemoveAtSlot = "DotKt.Runtime.CompilerServices.KotlinMutableListRemoveAtSlot";
@@ -110,6 +111,9 @@ static class KotlinCollectionSlotSynthesis
         new() { DeclaringInterface = List, Member = "subList", Arity = 2,
                 SlotInterface = ListDefaultSlots, SlotMember = "dotktSubList", Bridge = "dotkt$slot$subList",
                 Parameters = new[] { ParameterCarrier.Exact, ParameterCarrier.Exact }, EraseReturn = true },
+        new() { DeclaringInterface = MutableCollection, Member = "add", Arity = 1,
+                SlotInterface = CollectionAddSlot, SlotMember = "dotktAdd", Bridge = "dotkt$slot$add",
+                Parameters = new[] { ParameterCarrier.ErasedInput } },
         new() { DeclaringInterface = MutableCollection, Member = "removeAll", Arity = 1,
                 SlotInterface = CollectionSlots, SlotMember = "dotktRemoveAll", Bridge = "dotkt$slot$removeAll",
                 Parameters = new[] { ParameterCarrier.ErasedCollection } },
@@ -184,8 +188,9 @@ static class KotlinCollectionSlotSynthesis
     internal static bool IsMapContractOwner(string owner) => owner is Map or MutableMap;
 
     internal static bool OwnsSupplementalOverride(JsonObject marker) =>
-        OwnsMapOverride(marker) || Slots.Any(slot => slot.DeclaringInterface == MutableList
-            && slot.EraseReturn && MatchesOverride(marker, slot));
+        OwnsMapOverride(marker) || Slots.Any(slot => MatchesOverride(marker, slot)
+            && (slot.DeclaringInterface == MutableList && slot.EraseReturn
+                || slot.DeclaringInterface == MutableCollection && slot.Member == "add"));
 
     sealed class Def
     {

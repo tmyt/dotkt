@@ -17,6 +17,42 @@ import roundtrip.collslots.ExternalDefaultCollection
 import roundtrip.collslots.ExternalIteratorProvider
 import roundtrip.collslots.TrackedBag
 import roundtrip.collslots.makeTrackedBag
+import roundtrip.collslots.ReplacingResultList
+import roundtrip.collslots.makeReplacingResultList
+import roundtrip.collslots.ExternalAddProvider
+import roundtrip.collslots.ExternalDefaultAdd
+
+private class CrossModuleInheritedAddResult<T>(values: MutableList<T>) : ReplacingResultList<T>(values)
+
+private class CrossModuleAddProvider<T>(private val values: MutableList<T>) :
+    ExternalAddProvider<T>(values), MutableCollection<T> {
+    override val size: Int get() = values.size
+    override fun isEmpty() = values.isEmpty()
+    override fun contains(element: T) = values.contains(element)
+    override fun containsAll(elements: Collection<T>) = values.containsAll(elements)
+    override fun iterator() = values.iterator()
+    override fun addAll(elements: Collection<T>) = values.addAll(elements)
+    override fun remove(element: T) = values.remove(element)
+    override fun removeAll(elements: Collection<T>) = values.removeAll(elements)
+    override fun retainAll(elements: Collection<T>) = values.retainAll(elements)
+    override fun clear() = values.clear()
+}
+
+private class CrossModuleDefaultAdd : ExternalDefaultAdd, MutableCollection<Int> {
+    override val defaultAddStorage: MutableList<Int> = mutableListOf(1)
+    override val size: Int get() = defaultAddStorage.size
+    override fun isEmpty() = defaultAddStorage.isEmpty()
+    override fun contains(element: Int) = defaultAddStorage.contains(element)
+    override fun containsAll(elements: Collection<Int>) = defaultAddStorage.containsAll(elements)
+    override fun iterator() = defaultAddStorage.iterator()
+    override fun addAll(elements: Collection<Int>) = defaultAddStorage.addAll(elements)
+    override fun remove(element: Int) = defaultAddStorage.remove(element)
+    override fun removeAll(elements: Collection<Int>) = defaultAddStorage.removeAll(elements)
+    override fun retainAll(elements: Collection<Int>) = defaultAddStorage.retainAll(elements)
+    override fun clear() = defaultAddStorage.clear()
+}
+
+private fun <T> crossModuleAddResult(receiver: MutableCollection<T>, element: T): Boolean = receiver.add(element)
 
 // The enumerable face of this class arrives entirely through the PRODUCER assembly: `Feed<T> : Iterable<T>` is
 // declared there, so nothing in this module states `IEnumerable<Int>` for it. The reverse bridge is owed all the
@@ -36,6 +72,28 @@ class CrossModuleDefaultCollection : ExternalDefaultCollection {
 }
 
 class KotlinCollectionSlotTests {
+    @TestAttribute
+    fun crossModuleAddKeepsTheAuthoredBooleanWithoutGrowingTheCollection() {
+        val value = ReplacingResultList(mutableListOf(1))
+        check(value.add(2))
+        val exact: MutableList<Int> = value
+        check(exact.add(3))
+        val projected: MutableList<in Int> = exact
+        check(projected.add(4))
+        val collection: MutableCollection<in Int> = exact
+        check(collection.add(5))
+        check(crossModuleAddResult(exact, 6))
+        check(value.size == 1 && value[0] == 6 && value.addCalls == 5)
+        val inherited = CrossModuleInheritedAddResult(mutableListOf("before"))
+        check(crossModuleAddResult(inherited, "after") && inherited[0] == "after")
+        val nullable = makeReplacingResultList<Int?>(1)
+        check(nullable.add(null) && nullable[0] == null)
+        val provider = CrossModuleAddProvider(mutableListOf<String?>("before"))
+        check(crossModuleAddResult(provider, null) && provider.first() == null && provider.providerAddCalls == 1)
+        val defaults = CrossModuleDefaultAdd()
+        check(crossModuleAddResult(defaults, 7) && defaults.defaultAddStorage[0] == 7 && defaults.size == 1)
+    }
+
     @TestAttribute
     fun crossModuleOverrideIsReachedThroughTheKotlinInterface() {
         val b: TrackedBag<Int> = makeTrackedBag()

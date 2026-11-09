@@ -11,6 +11,7 @@
 package kotlin.collections
 
 import DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots
+import DotKt.Runtime.CompilerServices.KotlinMutableCollectionAddSlot
 import DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableListSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableListSetSlot
@@ -147,11 +148,12 @@ public fun <T> clrCollIsEmpty(c: Collection<T>): Boolean = c.size == 0
 public fun <T> MutableCollection<T>.clrCollNativeAdd(element: T): Unit = TODO("clr binding should be implemented")
 
 /**
- * `MutableCollection.add`: Kotlin returns whether the collection CHANGED; `ICollection<T>.Add` is void
- * (a set silently ignores a duplicate). Synthesized as Add + size compare — true for a list always,
- * duplicate-aware for a set.
+ * `MutableCollection.add`: preserve an authored Kotlin result. Only a native void `ICollection<T>.Add`
+ * needs a size comparison (a native set silently ignores a duplicate).
  */
 public fun <T> clrCollAdd(c: MutableCollection<T>, element: T): Boolean {
+    val slots = c as? KotlinMutableCollectionAddSlot
+    if (slots != null) return slots.dotktAdd(element)
     val before = c.size
     c.clrCollNativeAdd(element)
     return c.size != before
