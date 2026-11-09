@@ -258,13 +258,18 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	// collapse to `value is Any`), while anonymous objects resolve through `typeName`.
 	if (klass != null && (klass.kind == ClassKind.CLASS || klass.kind == ClassKind.INTERFACE ||
 		klass.kind == ClassKind.OBJECT || klass.kind == ClassKind.ANNOTATION_CLASS)) {
-		// An `inner class` re-declares its enclosing class(es)' type params; reference it WITH those (as `tv`).
-		val enclArgs = innerEnclosingTypeParams(klass).map { tvOf(it) }
 		// A LIFTED local class made generic over enclosing type params (liftLocalClass) is DENOTABLE — a `val l: L`
 		// slot / member access `l.x` must name the CONSTRUCTED `L<T>`. Append the captured params (flattened LAST).
 		// Empty for a non-generic local class and every other type. See liftedCaptureArgs.
 		val liftedCaps = liftedCaptureArgs(klass)
-		if (klass.typeParameters.isNotEmpty() || klass.isInner) {
+		if (klass.isInner) {
+			val arguments = (t as? IrSimpleType)?.arguments?.let { args ->
+				if (t.hasRawType()) args.map { TypeNode.Star } else args.map(::birTypeProjection)
+			}.orEmpty()
+			val application = innerTypeArguments(klass, arguments) + liftedCaps
+			return sourceClassifierType(klass, application.takeIf { it.isNotEmpty() })
+		}
+		if (klass.typeParameters.isNotEmpty()) {
 			val sargs = (t as? IrSimpleType)?.arguments
 			if (!sargs.isNullOrEmpty()) {
 				// Fir2Ir represents a RAW external generic using its lower-bound arguments (normally `Any`) plus the
@@ -273,19 +278,13 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 				// Preserve the frontend fact in BIR; bir2cir owns the physical existential/runtime representation.
 				val semanticArgs = if (t.hasRawType()) sargs.map { TypeNode.Star }
 				else sargs.map(::birTypeProjection)
-				// Preserve Kotlin's inner-class argument order [own..., outer...] in BIR. Some self types expose only
-				// their own arguments; append the enclosing declaration variables as the missing semantic suffix.
-				// bir2cir owns the later projection to CLR's [outer..., own...] order.
-				val args = if (klass.isInner && semanticArgs.size < klass.typeParameters.size + enclArgs.size &&
-					semanticArgs.size >= klass.typeParameters.size) semanticArgs + enclArgs else semanticArgs
 				// A local classifier's IR may already include captured arguments, but their order need not match the
 				// captured declaration segment emitted by typeDef. Use that declaration's recorded correspondence.
-				val semanticArity = klass.typeParameters.size + if (klass.isInner) enclArgs.size else 0
-				val all = if (liftedCaps.isEmpty()) args else args.take(semanticArity) + liftedCaps
+				val all = if (liftedCaps.isEmpty()) semanticArgs else semanticArgs.take(klass.typeParameters.size) + liftedCaps
 				return sourceClassifierType(klass, all)
 			}
 		}
-		val head = enclArgs + liftedCaps
+		val head = liftedCaps
 		return sourceClassifierType(klass, head.takeIf { it.isNotEmpty() })
 	}
 	return OBJ
@@ -515,8 +514,6 @@ internal fun BirEmitter.liftedCaptureArgs(klass: IrClass): List<TypeNode> =
 internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode {
 	klass ?: return TypeNode.Fqn("?")
 	val name = typeName(klass)
-	// An `inner class` re-declares its enclosing type params; construct it WITH them (as `tv`). See innerEnclosingTypeParams.
-	val enclArgs = innerEnclosingTypeParams(klass).map { tvOf(it) }
 	// A lifted generic-capturing local/object class: its captured enclosing params come LAST (the flattened order).
 	val liftedCaps = liftedCaptureArgs(klass)
 	fun projectedArgs(type: IrType?): List<TypeNode>? {
@@ -538,21 +535,18 @@ internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode 
 	val selectedRecvType = recvType?.takeIf { it.classifierOrNull?.owner === klass }
 		?: recvType?.let { correspondingSupertypeInstantiation(it, klass, allowCapturedArguments = true) }
 	val recvArgs = projectedArgs(selectedRecvType)
-	if (klass.isInner && recvArgs != null && recvArgs.size >= enclArgs.size + klass.typeParameters.size) {
-		val semanticArity = klass.typeParameters.size + enclArgs.size
-		val all = if (liftedCaps.isEmpty()) recvArgs else recvArgs.take(semanticArity) + liftedCaps
+	if (klass.isInner) {
+		val all = innerTypeArguments(klass, recvArgs.orEmpty()) + liftedCaps
 		return if (all.isEmpty()) TypeNode.Fqn(name) else TypeNode.Fqn(name, all)
 	}
 	if (klass.typeParameters.isEmpty()) {
-		val head = enclArgs + liftedCaps
+		val head = liftedCaps
 		return if (head.isNotEmpty()) TypeNode.Fqn(name, head) else TypeNode.Fqn(name)
 	}
 	// A type-parameter argument keeps its `tv` form (resolvable in the enclosing generic context), NOT the open type.
 	// A `Unit` TYPE-ARG stays the real Unit identity; a STAR projection stays `star` for bir2cir.
 	val args = recvArgs ?: klass.typeParameters.map { tvOf(it) }
-	val semanticArity = klass.typeParameters.size + if (klass.isInner) enclArgs.size else 0
-	val semanticArgs = if (klass.isInner) args + enclArgs else args
-	val all = if (liftedCaps.isEmpty()) semanticArgs else semanticArgs.take(semanticArity) + liftedCaps
+	val all = if (liftedCaps.isEmpty()) args else args.take(klass.typeParameters.size) + liftedCaps
 	return if (all.isEmpty()) TypeNode.Fqn(name) else TypeNode.Fqn(name, all)
 }
 

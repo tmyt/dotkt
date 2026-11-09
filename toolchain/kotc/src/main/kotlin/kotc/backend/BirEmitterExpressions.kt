@@ -298,7 +298,7 @@ private fun BirEmitter.innerConstructorOuterSlotJson(
 	val innerApplication = ownerSpec(innerClass, node.type)
 	val arguments = (innerApplication as? TypeNode.Fqn)?.args.orEmpty()
 	val ownCount = innerClass.typeParameters.size
-	val outerCount = innerSemanticEnclosingTypeParams(innerClass).size
+	val outerCount = innerEnclosingTypeParams(innerClass).size
 	if (arguments.size != ownCount + outerCount)
 		return invariantBroken(node,
 			"an inner constructor result does not carry its complete own and enclosing type application")
