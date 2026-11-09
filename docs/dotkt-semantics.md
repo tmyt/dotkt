@@ -1068,22 +1068,25 @@ The existing §9c-bis nullable-generic limitation remains: `Int?` values use `ob
 
 `MutableCollection<E>` IS `System.Collections.Generic.ICollection<E>` and `MutableList<E>` IS `IList<E>`, and neither
 BCL interface has a slot for Kotlin's `removeAll(elements)`, `retainAll(elements)`, `addAll(elements)` or
-`MutableList.addAll(index, elements)`. Native `IList` also cannot carry the value-returning Kotlin `set`/`removeAt`
+`MutableList.addAll(index, elements)`. Native void `Add` cannot carry Kotlin's authored Boolean `add` result.
+Native `IList` also cannot carry the value-returning Kotlin `set`/`removeAt`
 contracts through its void mutation slots. These are virtual Kotlin members a user class may override, and the receiver
 may equally be a plain BCL value (`mutableListOf()` is a `List<T>`, `HashSet()` is a `HashSet<T>`) with no Kotlin body
 at all. The same boundary affects `MutableIterable.iterator()`: its operational `IEnumerable<E>` face returns a BCL
 enumerator and cannot carry Kotlin's remove-capable `MutableIterator<E>`. DotKt reconciles those categories physically:
 
 - every call becomes a `kotlin.collections.ClrCollectionDefaults` dispatcher call (`clrCollRemoveAll`,
-  `clrCollRetainAll`, `clrCollAddAll`, `clrListAddAllAt`, `clrListSet`, `clrListRemoveAt`, their projected counterparts,
+  `clrCollRetainAll`, `clrCollAdd`, `clrCollAddAll`, `clrListAddAllAt`, `clrListSet`, `clrListRemoveAt`, their projected counterparts,
   and `clrMutableIterator`);
 - every emitted Kotlin class declaring one of the members gains the compiler-owned
   `DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots` / `KotlinMutableCollectionSlots` /
-  `KotlinMutableListSlots` (or the independent `KotlinMutableListSetSlot` / `KotlinMutableListRemoveAtSlot`)
+  `KotlinMutableListSlots` (or the independent `KotlinMutableCollectionAddSlot` / `KotlinMutableListSetSlot` /
+  `KotlinMutableListRemoveAtSlot`)
   interface with an exact MethodImpl per member, so the dispatcher reaches the OVERRIDE by
   ordinary virtual dispatch;
-- value-returning List mutations use frontend-selected implementations inherited from non-collection bases; their
+- Boolean `add` and value-returning List mutations use frontend-selected implementations inherited from non-collection bases; their
   declaration and generic frame are preserved rather than requiring the base declaration to override a collection;
+- authored Boolean `add` results take precedence over native Add/Count emulation, including exact List fast paths;
 - a receiver with no such interface runs a BCL adapter. Mutable-iterator dispatch accepts its receiver through an
   erased physical parameter: Kotlin permits a value-typed `MutableIterable<Int>` to widen to `MutableIterable<Any?>`,
   while CLR generic variance deliberately does not lift value-type instantiations. An alias local for such a widened

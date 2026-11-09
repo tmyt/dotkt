@@ -18,6 +18,23 @@ open class ReplacingResultList<T>(private val storage: MutableList<T>) : Mutable
 
 fun <T> makeReplacingResultList(element: T): MutableList<T> = ReplacingResultList(mutableListOf(element))
 
+open class ExternalAddProvider<T>(protected val addStorage: MutableList<T>) {
+    var providerAddCalls = 0
+    open fun add(element: T): Boolean {
+        providerAddCalls++
+        addStorage[0] = element
+        return true
+    }
+}
+
+interface ExternalDefaultAdd : MutableCollection<Int> {
+    val defaultAddStorage: MutableList<Int>
+    override fun add(element: Int): Boolean {
+        defaultAddStorage[0] = element
+        return true
+    }
+}
+
 /** An `Iterable`-derived Kotlin interface an implementer in ANOTHER assembly can name (#400). Its CLR enumerable
  *  face is reachable only through this assembly's projected metadata, so the consumer's implementer is owed a
  *  `GetEnumerator` that nothing in its own module states. */

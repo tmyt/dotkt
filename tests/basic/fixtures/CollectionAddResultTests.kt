@@ -18,6 +18,29 @@ private open class CollectionAddResultList<T>(
 private class CollectionAddResultInherited<T>(storage: MutableList<T>) : CollectionAddResultList<T>(storage)
 private class CollectionAddResultNativeList : System.Collections.Generic.List<Int>()
 
+private class CollectionAddResultDerived<T>(private val storage: MutableList<T>) : CollectionAddResultList<T>(storage) {
+    override fun add(element: T): Boolean { calls++; storage[0] = element; return false }
+}
+
+private interface CollectionAddResultDefault : MutableCollection<Int> {
+    val values: MutableList<Int>
+    override fun add(element: Int): Boolean { values[0] = element; return true }
+}
+
+private class CollectionAddResultDefaultCollection : CollectionAddResultDefault, MutableCollection<Int> {
+    override val values: MutableList<Int> = mutableListOf(1)
+    override val size: Int get() = values.size
+    override fun isEmpty() = values.isEmpty()
+    override fun contains(element: Int) = values.contains(element)
+    override fun containsAll(elements: Collection<Int>) = values.containsAll(elements)
+    override fun iterator() = values.iterator()
+    override fun addAll(elements: Collection<Int>) = values.addAll(elements)
+    override fun remove(element: Int) = values.remove(element)
+    override fun removeAll(elements: Collection<Int>) = values.removeAll(elements)
+    override fun retainAll(elements: Collection<Int>) = values.retainAll(elements)
+    override fun clear() = values.clear()
+}
+
 private fun <T> collectionAddResultGeneric(receiver: MutableCollection<T>, element: T): Boolean = receiver.add(element)
 
 class CollectionAddResultTests {
@@ -45,6 +68,11 @@ class CollectionAddResultTests {
 
         val inherited = CollectionAddResultInherited(mutableListOf("old"))
         check(collectionAddResultGeneric(inherited, "new") && inherited[0] == "new")
+        val derived = CollectionAddResultDerived(mutableListOf(1))
+        val base: CollectionAddResultList<Int> = derived
+        check(!base.add(2) && !collectionAddResultGeneric(derived, 3) && derived.calls == 2 && derived[0] == 3)
+        val defaults = CollectionAddResultDefaultCollection()
+        check(collectionAddResultGeneric(defaults, 4) && defaults.values[0] == 4 && defaults.size == 1)
         val nullable = CollectionAddResultInherited(mutableListOf<Int?>(1))
         check(nullable.add(null) && nullable[0] == null)
         val first = Any()
