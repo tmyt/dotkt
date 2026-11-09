@@ -17,6 +17,7 @@ static class DeclarationSignatureIdentity
     internal const string AllocatedKey = "declarationSignatureAllocation";
     internal const string AllocationMetadataKey = "signatureAllocation";
     static readonly Dictionary<string, JsonObject> Markers = new(StringComparer.Ordinal);
+    static readonly HashSet<(bool Required, string Owner, int Arity)> ReferencedModifiers = new();
     static readonly Dictionary<string, List<(JsonObject Descriptor, bool IsInterface)>> PhysicalSlots = new(StringComparer.Ordinal);
     static string MarkerOwner;
 
@@ -44,6 +45,7 @@ static class DeclarationSignatureIdentity
     public static void Capture(IEnumerable<JsonNode> roots)
     {
         Markers.Clear();
+        ReferencedModifiers.Clear();
         PhysicalSlots.Clear();
         var rootList = roots.ToArray();
         void Walk(JsonNode node, string owner)
@@ -102,7 +104,7 @@ static class DeclarationSignatureIdentity
             foreach (var child in array) RemoveCapturedFacts(child);
     }
 
-    public static IReadOnlyDictionary<string, JsonArray> Plan(IEnumerable<JsonNode> roots)
+    public static IReadOnlyDictionary<string, JsonArray> Plan(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs = null)
     {
         var methods = new List<(string Owner, string Name, JsonObject Method)>();
         void Collect(JsonObject owner, string name)
@@ -153,8 +155,22 @@ static class DeclarationSignatureIdentity
             {
                 if (target == null) continue;
                 ResolveOverride(target);
-                if (!result.TryGetValue(target, out var signature)) continue;
-                var selectedOwner = SelectedLocalOwner(definitions[methodOwners[id]], methodOwners[target], definitions, null);
+                string selectedOwnerName;
+                if (result.TryGetValue(target, out var signature)) selectedOwnerName = methodOwners[target];
+                else if (refs?.TryDeclarationSignatureSlot(target, out var referenced) == true
+                    && referenced.SignatureAllocated)
+                {
+                    // A referenced override family already owns its exact signature discriminator. Reuse it just
+                    // as for a local ancestor instead of allocating another identity and bridging the same slot twice.
+                    signature = new JsonArray(referenced.Parameters.Select(TypeJson.Write).ToArray());
+                    foreach (var parameter in referenced.Parameters)
+                        for (var type = parameter; type is TypeNode.Mod modifier; type = modifier.Of)
+                            if (modifier.M is TypeNode.Fqn marker)
+                                ReferencedModifiers.Add((modifier.Req, marker.Name, marker.Args?.Length ?? 0));
+                    selectedOwnerName = referenced.Owner;
+                }
+                else continue;
+                var selectedOwner = SelectedLocalOwner(definitions[methodOwners[id]], selectedOwnerName, definitions, refs);
                 var arguments = selectedOwner.Args ?? Array.Empty<TypeNode>();
                 result[id] = new JsonArray(signature.Select(TypeJson.Read)
                     .Select(type => TypeJson.Write(SupertypeGraph.SubstOwnerTvs(type, arguments))).ToArray());
@@ -334,8 +350,11 @@ static class DeclarationSignatureIdentity
     static TypeNode WithIdentityModifiers(TypeNode signature, TypeNode valueType)
     {
         if (signature is not TypeNode.Mod modifier) return valueType;
+        if (valueType is TypeNode.Mod existing && existing.Req == modifier.Req && existing.M == modifier.M)
+            return new TypeNode.Mod(existing.Req, existing.M, WithIdentityModifiers(modifier.Of, existing.Of));
         var underlying = WithIdentityModifiers(modifier.Of, valueType);
-        return modifier.M is TypeNode.Fqn marker && Markers.ContainsKey(marker.Name)
+        return modifier.M is TypeNode.Fqn marker && (Markers.ContainsKey(marker.Name)
+                || ReferencedModifiers.Contains((modifier.Req, marker.Name, marker.Args?.Length ?? 0)))
             ? new TypeNode.Mod(modifier.Req, modifier.M, underlying) : underlying;
     }
 
@@ -445,6 +464,22 @@ static class DeclarationSignatureIdentity
         if (!JsonNode.DeepEquals(ProjectMode(true), ProjectMode(false)))
             throw new InvalidOperationException("Source-bound signature identity differs across reference/runtime modes");
         var tv = new TypeNode.Tv("method", 0);
+        var referencedMarker = new TypeNode.Fqn("Probe.ReferencedModifier", new TypeNode[] { tv });
+        var referencedKey = (false, referencedMarker.Name, 1);
+        ReferencedModifiers.Add(referencedKey);
+        try
+        {
+            var signature = new TypeNode.Mod(false, referencedMarker, new TypeNode.Fqn("object"));
+            var expected = new TypeNode.Mod(false, referencedMarker, tv);
+            if (WithIdentityModifiers(signature, tv) != expected
+                || WithIdentityModifiers(signature, expected) != expected)
+                throw new InvalidOperationException("Referenced signature identity lost its value ABI or duplicated a modifier");
+            var qualifier = new TypeNode.Fqn("Probe.NativeQualifier");
+            if (WithIdentityModifiers(new TypeNode.Mod(true, qualifier, signature),
+                    new TypeNode.Mod(true, qualifier, tv)) != new TypeNode.Mod(true, qualifier, expected))
+                throw new InvalidOperationException("Referenced signature identity changed an existing native qualifier");
+        }
+        finally { ReferencedModifiers.Remove(referencedKey); }
         var modified = new TypeNode.Mod(false, new TypeNode.Fqn("Probe.Marker", new TypeNode[] { tv }), tv);
         if (SignatureValueTypes.Of(modified) != tv
             || !MethodVariables(new TypeNode.Nullable(tv)).SequenceEqual(new[] { 0 })

@@ -122,9 +122,13 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	 * every source declaration, so kotc authors an equivalent stable fingerprint from the PRE-CLR Kotlin declaration
 	 * itself. Calls read the selected IrSymbol through this identity map; bir2cir never reconstructs it after erasure. */
 	private val declarationIds = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, String>()
+	private fun ownsInheritedAbstractDeclaration(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
+		fn is IrSimpleFunction && fn.isFakeOverride && fn.modality == Modality.ABSTRACT &&
+			(fn.parent as? IrClass)?.let { it.kind != ClassKind.INTERFACE && !isExternalNetType(it) } == true
+
 	internal fun declarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
 		declarationIds.getOrPut(fn) {
-			carriedDeclarationId(fn) ?: computeDeclarationId(fn, companionReceiverJson(fn)
+			(if (ownsInheritedAbstractDeclaration(fn)) null else carriedDeclarationId(fn)) ?: computeDeclarationId(fn, companionReceiverJson(fn)
 				?: companionExtensionReceiverType(fn)?.let { birType(it).toJson() })
 		}
 
@@ -176,6 +180,9 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// interface/override slot. Its trusted metadata identity is nevertheless the exact FIR-selected declaration and
 		// must survive at every call site; rejecting it on modality sends the backend back to erased-signature overload
 		// resolution. Native Kotlin declarations likewise retain their identity independently of override allocation.
+		// A new local abstract obligation can inherit the producer's identity ANNOTATION through a fake override.
+		// That annotation still names the ancestor; this declaration owns its own Kotlin parent/signature instead.
+		if (ownsInheritedAbstractDeclaration(fn)) return declarationId(fn)
 		val carried = carriedDeclarationId(fn)
 		if (carried != null) return carried
 		if (projectedClrOwner != null) return null

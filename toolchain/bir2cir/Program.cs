@@ -1384,7 +1384,7 @@ sealed class Pipeline
         // #395: Kotlin declarations that were distinct before type lowering may now occupy one CLI signature.
         // Allocate their MethodDef names from the common runtime-physical projection and rewrite all local uses from
         // the frontend-selected declaration identity before any module-wide member binding consults declarations.
-        var declarationSignatures = DeclarationSignatureIdentity.Plan(declarationCollisionProjection);
+        var declarationSignatures = DeclarationSignatureIdentity.Plan(declarationCollisionProjection, refs);
         DeclarationSignatureIdentity.Apply(declarationCollisionProjection, declarationSignatures);
         DeclarationSignatureIdentity.Apply(loweredRoots.Select(s => s.Root), declarationSignatures);
         DeclarationSignatureIdentity.BindSelectedOverrides(loweredRoots.Select(s => s.Root), declarationSignatures,
