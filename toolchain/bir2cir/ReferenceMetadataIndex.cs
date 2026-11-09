@@ -6927,7 +6927,7 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidDataException("expected exactly one trusted [KotlinPropertyAccessor]");
         var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinPropertyAccessorAttr) as JsonObject
             ?? throw new InvalidDataException("malformed [KotlinPropertyAccessor] payload");
-        if (payload.Count is < 3 or > 5 ||
+        if (payload.Count is < 3 or > 6 ||
             payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name) ||
             payload["kind"] is not JsonValue kindValue || !kindValue.TryGetValue<string>(out var kind) ||
             payload["association"] is not JsonValue associationValue ||
@@ -6946,7 +6946,11 @@ sealed partial class ReferenceMetadataIndex
         if (payload.ContainsKey("event") && (kind != "get" || payload["event"] is not JsonValue eventValue ||
             !eventValue.TryGetValue<string>(out nativeEvent) || string.IsNullOrEmpty(nativeEvent)))
             throw new InvalidDataException("malformed [KotlinPropertyAccessor] event association");
-        if (payload.Count != 3 + (sourceAssociation != null ? 1 : 0) + (nativeEvent != null ? 1 : 0))
+        var inherited = payload.ContainsKey("inherited");
+        if (inherited && (payload["inherited"] is not JsonValue inheritedValue ||
+            !inheritedValue.TryGetValue<bool>(out var isInherited) || !isInherited))
+            throw new InvalidDataException("malformed [KotlinPropertyAccessor] inherited declaration fact");
+        if (payload.Count != 3 + (sourceAssociation != null ? 1 : 0) + (nativeEvent != null ? 1 : 0) + (inherited ? 1 : 0))
             throw new InvalidDataException("malformed [KotlinPropertyAccessor] payload");
         return new PropertyAccessorPayloadInfo(name, kind, association, sourceAssociation);
     }

@@ -2176,6 +2176,11 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   `ClrEvent<T>` fake-override satisfies the slot and is elided — nothing to declare. This includes a C# explicit
   implementation whose add/remove accessors are private: subscription binds to the interface accessor and hence the
   class's existing `MethodImpl`/backing store; it never synthesizes a second Kotlin event store.
+- **Ordinary property contracts:** a native event may also implement an ordinary Kotlin property returning
+  `ClrEvent<H>`. In that case the emitted type exposes both native Event metadata and a getter-backed CLR Property;
+  the getter returns a retained handle to that same event. Inherited events and class delegation preserve both
+  obligations. An ordinary handle-valued property alone does not become an event, and an event without an
+  ordinary property obligation does not acquire a getter.
 - **Implementing and raising a CLR event from Kotlin** (MVVM / `INotifyPropertyChanged`): a Kotlin class that directly
   implements an event-bearing interface writes `override val E by clrEvent()` to synthesize the event (a backing
   delegate field + real `add_E`/`remove_E`/`raise_E` accessors); the event declaration exposes `invoke(sender, args)`

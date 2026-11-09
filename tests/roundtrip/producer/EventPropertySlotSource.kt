@@ -3,6 +3,10 @@ package roundtrip.eventpropertyslot
 import kotlin.clr.ClrEvent
 import kotlin.clr.ClrEventPolicy
 import kotlin.clr.clrEvent
+import EventPropertySlotInterop.IMixedEvent
+import System.ComponentModel.PropertyChangedEventHandler
+import System.ComponentModel.PropertyChangedEventArgs
+import System.ComponentModel.INotifyPropertyChanged
 
 interface HasChanged<T> { val Changed: ClrEvent<System.Action1<T>> }
 abstract class AbstractChanged<T> { abstract val Changed: ClrEvent<System.Action1<T>> }
@@ -26,10 +30,14 @@ class PolicyPublisher<T> : AbstractChanged<T>(), HasChanged<T> {
 }
 
 open class NativeBase<T> {
-    val Changed: ClrEvent<System.Action1<T>> by clrEvent()
+    open val Changed: ClrEvent<System.Action1<T>> by clrEvent()
     fun fire(value: T) { Changed(value) }
 }
-class InheritedPublisher : NativeBase<Int>(), HasChanged<Int>
+open class InheritedPublisher : NativeBase<Int>(), HasChanged<Int>
+class InheritedLeaf : InheritedPublisher()
+open class LockedPublisher : HasChanged<Int> {
+    final override val Changed: ClrEvent<System.Action1<Int>> by clrEvent()
+}
 class ForwardedPublisher<T>(source: HasChanged<T>) : HasChanged<T> by source
 class OrdinaryHandle<T>(override val Changed: ClrEvent<System.Action1<T>>) : HasChanged<T>
 
@@ -37,6 +45,27 @@ interface HasFunctionChanged { val Changed: ClrEvent<(Int) -> Unit> }
 class FunctionPublisher : HasFunctionChanged {
     override val Changed: ClrEvent<(Int) -> Unit> by clrEvent()
     fun fire(value: Int) { Changed(value) }
+}
+
+enum class EnumPublisher : HasChanged<Int> {
+    A {
+        override val Changed: ClrEvent<System.Action1<Int>> by clrEvent()
+        override fun fire(value: Int) { Changed(value) }
+    }, B;
+    override open val Changed: ClrEvent<System.Action1<Int>> by clrEvent()
+    open fun fire(value: Int) { Changed(value) }
+}
+
+class PcPublisher : IMixedEvent {
+    override val PropertyChanged: ClrEvent<PropertyChangedEventHandler> by clrEvent()
+    fun fire() { PropertyChanged(this, PropertyChangedEventArgs("value")) }
+}
+
+interface HasPc { val PropertyChanged: ClrEvent<PropertyChangedEventHandler> }
+interface KotlinMixed : INotifyPropertyChanged, HasPc
+class KotlinPcPublisher : KotlinMixed {
+    override val PropertyChanged: ClrEvent<PropertyChangedEventHandler> by clrEvent()
+    fun fire() { PropertyChanged(this, PropertyChangedEventArgs("value")) }
 }
 
 fun localPropertySlots(): Int {

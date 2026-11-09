@@ -477,7 +477,8 @@ static class KotlinPropertyAccessors
         {
             var sourceAssociation = Str((method[MetadataCarrierKey] as JsonObject)?["sourceAssociation"]);
             var nativeEvent = Str((method[MetadataCarrierKey] as JsonObject)?["event"]);
-            if (representable && sourceAssociation == null && nativeEvent == null && !isBridgeSource) continue;
+            var inherited = (method[MetadataCarrierKey] as JsonObject)?["inherited"]?.GetValue<bool>() == true;
+            if (representable && sourceAssociation == null && nativeEvent == null && !inherited && !isBridgeSource) continue;
             var carrier = new JsonObject
             {
                 ["name"] = sourceName,
@@ -489,6 +490,7 @@ static class KotlinPropertyAccessors
             // an ordinary source accessor's three fields.
             if (sourceAssociation != null) carrier["sourceAssociation"] = sourceAssociation;
             if (nativeEvent != null) carrier["event"] = nativeEvent;
+            if (inherited) carrier["inherited"] = true;
             method[MetadataCarrierKey] = carrier;
         }
 

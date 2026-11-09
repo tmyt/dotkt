@@ -1070,7 +1070,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	}
 	val selectedEventProp = callee.correspondingPropertySymbol?.owner
 	// An inherited field-like event is selected through a frontend fake override.  Its wrapper is intentionally not
-	// emitted as a property/getter, so classify the event from the real Kotlin declaration and close its owner through
+	// emitted as a new event declaration, so classify the event from the real Kotlin declaration and close its owner through
 	// the receiver's frontend supertype. Otherwise `Derived().pulse.subscribe { ... }` falls through to an ordinary call of the
 	// deliberately omitted fake getter instead of producing the same event handle as a direct base-typed access.
 	val localEventProp = selectedEventProp?.let { selected ->
@@ -1732,7 +1732,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set"${overloadSigField(callee)},"argTypes":[$accArgTypes],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[$accArgs]${superTag(call)}$companionCallTag}"""
 				else """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get"${overloadSigField(callee)},"argTypes":[$accArgTypes],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[$accArgs]${superTag(call)}$companionCallTag}"""
 			}
-			// A projected event declaration has no getter. Carry its identity and complete handler type; bir2cir
+			// Reading a projected event uses its native identity even when it also fills an ordinary getter slot. bir2cir
 			// materializes a retained handle. Ordinary ClrEvent-valued properties remain ordinary accessor calls.
 			if (callee === prop.getter && isClrEventProperty(prop)) {
 				return """{"k":"clrEventGet","type":${memberType!!.toJson()},"name":${str(pn)},"static":$isStatic,"recv":$recvJson,"sty":${birType(call.type).toJson()}${eventVisibilityFact(prop)}$companionCallTag}"""
