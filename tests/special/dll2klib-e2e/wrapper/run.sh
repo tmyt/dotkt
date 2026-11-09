@@ -21,13 +21,19 @@ driver="$ROOT/scripts/dotkt.sh"
 # the implicit stdlib in the resolver catalog, without adding duplicate KLIBs.
 bash "$driver" -o WrapperProducer -d "$OUT/producer" "$fixtures/producer.kt"
 bash "$driver" --run -o WrapperConsumer -d "$OUT/implicit consumer" \
-    --ref "$OUT/producer/WrapperProducer.dll" "$fixtures/consumer.kt" > "$OUT/implicit.log" 2>&1
+    --ref "$OUT/producer/WrapperProducer.dll" "$fixtures/consumer.kt" > "$OUT/implicit.log" 2>&1 || {
+    cat "$OUT/implicit.log" >&2
+    die "implicit stdlib consumer failed"
+}
 grep -qx 'wrapper-enum-ok' "$OUT/implicit.log" || die "implicit stdlib consumer did not run"
 
 # Disabling implicit stdlib must still allow the caller's authoritative refs.
 bash "$driver" --no-stdlib --run -o WrapperExplicit -d "$OUT/explicit" \
     --ref "$STDLIB_REF_DLL" --ref "$STDLIB_RT_DLL" \
-    --ref "$OUT/producer/WrapperProducer.dll" "$fixtures/consumer.kt" > "$OUT/explicit.log" 2>&1
+    --ref "$OUT/producer/WrapperProducer.dll" "$fixtures/consumer.kt" > "$OUT/explicit.log" 2>&1 || {
+    cat "$OUT/explicit.log" >&2
+    die "explicit stdlib consumer failed"
+}
 grep -qx 'wrapper-enum-ok' "$OUT/explicit.log" || die "explicit stdlib consumer did not run"
 
 info "implicit and --no-stdlib with explicit reference modes passed"
