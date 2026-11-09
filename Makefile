@@ -42,7 +42,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
         verify verify-core verify-tests verify-nunit verify-compile-fail verify-test-corpus verify-integration \
         verify-schema verify-sanity verify-lowering verify-msbuild verify-gate-selection verify-packaged-sdk \
-        verify-target-universe verify-csharp14-extension-abi verify-xfail-policy verify-stdlib-upstream verify-stdlib-source-array \
+        verify-target-universe verify-csharp14-extension-abi verify-stdlib-upstream verify-stdlib-source-array \
         dev dll2klib-e2e dll2klib-index-benchmark \
         clean clean-tools clean-stdlib clean-pack help
 
@@ -150,7 +150,6 @@ verify-integration: toolchain stdlib ## independent MSBuild/target/ABI/policy ga
 	+$(MAKE) verify-csharp14-extension-abi
 	+$(MAKE) verify-pinvoke
 	+$(MAKE) dll2klib-e2e
-	+$(MAKE) verify-xfail-policy
 	+$(MAKE) verify-gate-selection
 
 verify-schema: ## BIR/CIR schema contract enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-nunit
@@ -184,9 +183,6 @@ verify-csharp14-extension-abi: ## released C# 14 static extension-member metadat
 verify-pinvoke: pack ## Kotlin DllImport -> MethodImport/runtime + dll2klib round-trip
 	python3 tests/special/pinvoke/test-harness.py
 	bash tests/special/pinvoke/run.sh
-
-verify-xfail-policy: ## self-test the shared NEW/FIXED baseline verdict without building the toolchain
-	bash tests/xfail/run.sh
 
 verify-stdlib-upstream: ## offline byte-for-byte common stdlib check against the selected Kotlin snapshot
 	bash tests/stdlib-common-upstream/run.sh

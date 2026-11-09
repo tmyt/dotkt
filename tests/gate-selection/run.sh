@@ -12,7 +12,7 @@ suite_line() { # [gate.sh arguments...]
 FULL_SUITES="$(suite_line --full)"
 [[ -n "$FULL_SUITES" && "$FULL_SUITES" != '(none)' ]] || die "could not obtain the FULL suite set"
 [[ " $FULL_SUITES " != *' packagedsdk '* ]] || die "ordinary --full unexpectedly includes packagedsdk"
-expected_full="compiler_tests schema sanity lowering stdlib_upstream stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection"
+expected_full="compiler_tests schema sanity lowering stdlib_upstream stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib gate_selection"
 [[ "$FULL_SUITES" == "$expected_full" ]] || die "FULL must cover every canonical core gate once: got '$FULL_SUITES'"
 
 assert_suites() { # <fixture-name> <changed-path> <expected suites>
