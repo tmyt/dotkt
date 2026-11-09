@@ -11,6 +11,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- Restore the upstream mutable collection skeleton hierarchy and inherited policy, preserving exact CLR slots for covariant abstract class returns.
 - Preserve heterogeneous and null query values through generic collection iteration and inherited `containsAll`, including cross-DLL calls, without bypassing Kotlin overrides.
 - Preserve authored Kotlin `MutableCollection.add` Boolean results through concrete, inherited and projected calls, including across DLL boundaries, while retaining the native CLR void-Add fallback.
 - Preserve inner declarations and their enclosing captures when lifting local and anonymous classes.

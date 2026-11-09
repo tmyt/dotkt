@@ -1,5 +1,9 @@
 package roundtrip.mutablepolicy
 
+fun <T> portableReadOnlyBase(value: AbstractMutableCollection<T>): AbstractCollection<T> = value
+fun <T> portableMutableBase(value: AbstractMutableList<T>): AbstractMutableCollection<T> = value
+fun <T> portableMutableBase(value: AbstractMutableSet<T>): AbstractMutableCollection<T> = value
+
 class PortableMutableList<T>(private val values: MutableList<T>) : AbstractMutableList<T>() {
     var iterations: Int = 0
     override val size: Int get() = values.size

@@ -9,6 +9,8 @@ import roundtrip.mutablepolicy.renderMutableGeneric
 import roundtrip.mutablepolicy.renderMutableInline
 import roundtrip.mutablepolicy.renderMutableDefault
 import roundtrip.mutablepolicy.PortableSuperRenderList
+import roundtrip.mutablepolicy.portableReadOnlyBase
+import roundtrip.mutablepolicy.portableMutableBase
 
 private fun checkPortableMutableRendering(value: Any, expected: String) {
     val actual = value.toString()
@@ -21,6 +23,9 @@ private fun renderAbstractMutableCollection(value: AbstractMutableCollection<Any
 
 class CrossModulePortableMutableRenderingTests {
     @TestAttribute fun opaqueDefaultsRenderEmptyNullableAndValueElements() {
+        check(portableReadOnlyBase(PortableMutableCollection(mutableListOf(1))).contains(1))
+        check(portableReadOnlyBase(portableMutableBase(PortableMutableList(mutableListOf("x")))).contains("x"))
+        check(portableReadOnlyBase(portableMutableBase(PortableMutableSet(mutableListOf<String?>(null)))).contains(null))
         checkPortableMutableRendering(PortableMutableCollection(mutableListOf<Int>()), "[]")
         checkPortableMutableRendering(PortableMutableList(mutableListOf<Int>()), "[]")
         checkPortableMutableRendering(PortableMutableSet(mutableListOf<Int>()), "[]")

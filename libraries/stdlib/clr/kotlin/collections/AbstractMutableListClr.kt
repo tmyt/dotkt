@@ -14,8 +14,7 @@ package kotlin.collections
  */
 @SinceKotlin("1.1")
 @Suppress("NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
-// Keep the direct CLR interface face; iterator and sublist policy follows Native/Wasm.
-public actual abstract class AbstractMutableList<E> protected actual constructor() : MutableList<E> {
+public actual abstract class AbstractMutableList<E> protected actual constructor() : AbstractMutableCollection<E>(), MutableList<E> {
     override fun equals(other: Any?): Boolean {
         if (other === this) return true
         if (other !is List<*>) return false
@@ -24,10 +23,6 @@ public actual abstract class AbstractMutableList<E> protected actual constructor
     }
 
     override fun hashCode(): Int = AbstractList.orderedHashCode(this)
-
-    override fun toString(): String = joinToString(", ", "[", "]") {
-        if (it === this) "(this Collection)" else clrElemToString(it)
-    }
 
     @SinceKotlin("2.0")
     protected actual var modCount: Int = 0
@@ -41,9 +36,7 @@ public actual abstract class AbstractMutableList<E> protected actual constructor
         }
     }
 
-    actual override fun isEmpty(): Boolean = size == 0
     actual override fun contains(element: E): Boolean = indexOf(element) >= 0
-    actual override fun containsAll(elements: Collection<E>): Boolean = elements.all { contains(it) }
 
     actual override fun indexOf(element: E): Int = indexOfFirst { it == element }
 
@@ -55,15 +48,6 @@ public actual abstract class AbstractMutableList<E> protected actual constructor
         add(size, element)
         return true
     }
-
-    actual override fun remove(element: E): Boolean {
-        val index = indexOf(element)
-        if (index < 0) return false
-        removeAt(index)
-        return true
-    }
-
-    actual override fun addAll(elements: Collection<E>): Boolean = addAll(size, elements)
 
     actual override fun addAll(index: Int, elements: Collection<E>): Boolean {
         AbstractList.checkPositionIndex(index, size)

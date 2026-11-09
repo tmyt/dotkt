@@ -12,29 +12,11 @@ package kotlin.collections
  *
  * @param E the type of elements contained in the collection. The collection is invariant in its element type.
  */
-// Keep the CLR interface face direct until inherited read-only/mutable slots can be composed.
-// Portable mutation policy follows the pinned Native/Wasm implementation.
 @SinceKotlin("1.1")
-public actual abstract class AbstractMutableCollection<E> protected actual constructor() : MutableCollection<E> {
+public actual abstract class AbstractMutableCollection<E> protected actual constructor() : MutableCollection<E>, AbstractCollection<E>() {
     override fun toString(): String = joinToString(", ", "[", "]") {
         if (it === this) "(this Collection)" else clrElemToString(it)
     }
-
-    actual abstract override val size: Int
-    actual abstract override fun iterator(): MutableIterator<E>
-    actual abstract override fun add(element: E): Boolean
-
-    actual override fun isEmpty(): Boolean = size == 0
-
-    actual override fun contains(element: E): Boolean {
-        val iterator = iterator()
-        while (iterator.hasNext()) {
-            if (iterator.next() == element) return true
-        }
-        return false
-    }
-
-    actual override fun containsAll(elements: Collection<E>): Boolean = elements.all { contains(it) }
 
     actual override fun addAll(elements: Collection<E>): Boolean {
         var modified = false
