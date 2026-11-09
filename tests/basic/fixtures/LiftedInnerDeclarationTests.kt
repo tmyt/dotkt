@@ -66,6 +66,58 @@ private fun liftedInnerMutableCapture(): Int {
     return value
 }
 
+private fun liftedInnerLocalBase(seed: Int): Int {
+    var value = seed
+    open class Base {
+        fun read() = value
+        fun write(next: Int) { value = next }
+    }
+    class Local { inner class Capture : Base() }
+    val capture = Local().Capture()
+    value++
+    check(capture.read() == seed + 1)
+    capture.write(seed + 2)
+    return value
+}
+
+private fun liftedInnerOwnerDefault(seed: Int, prior: Any? = null): Int {
+    class Local { inner class Capture(val value: Int = seed) }
+    return if (prior == null) liftedInnerOwnerDefault(seed + 1, Local())
+    else (prior as Local).Capture().value
+}
+
+private fun liftedInnerDefaultReceiver(seed: Int): Int {
+    class Local { inner class Capture(val value: Int = seed) }
+    val owner = Local()
+    var reads = 0
+    val next = { reads++; owner }
+    val make = { next().Capture().value }
+    val result = make()
+    check(reads == 1)
+    return result
+}
+
+private class LiftedInnerGenericOwner<A>(val value: A) {
+    fun read(): Triple<A, String, Int> {
+        class Local<U>(val middle: U) {
+            inner class Capture<V>(val last: V) { fun read() = Triple(value, middle, last) }
+        }
+        return Local("middle").Capture(5).read()
+    }
+}
+
+private fun <T> liftedInnerMethodBound(seed: T): T {
+    class Local { inner class Capture { fun <U : T> read(value: U): U = value } }
+    return Local().Capture().read(seed)
+}
+
+private fun <T> liftedInnerMarker(): Boolean = true
+
+private fun <T> liftedInnerAccessorType(): Boolean {
+    class Local { inner class Capture { val value: Boolean get() = liftedInnerMarker<T>() } }
+    return Local().Capture().value
+}
+
 class LiftedInnerDeclarationTests {
     @TestAttribute
     fun liftedOwnersKeepInnerDeclarationsAndCompleteEnclosingFrames() {
@@ -77,5 +129,11 @@ class LiftedInnerDeclarationTests {
         check(liftedInnerDescendants() == Pair(9, "middle"))
         check(liftedInnerDefault("default") == "default")
         check(liftedInnerMutableCapture() == 3)
+        check(liftedInnerLocalBase(10) == 12)
+        check(liftedInnerOwnerDefault(41) == 41)
+        check(liftedInnerDefaultReceiver(27) == 27)
+        check(LiftedInnerGenericOwner(true).read() == Triple(true, "middle", 5))
+        check(liftedInnerMethodBound("bound") == "bound" && liftedInnerMethodBound<Int?>(null) == null)
+        check(liftedInnerAccessorType<String>())
     }
 }

@@ -1243,7 +1243,7 @@ internal fun BirEmitter.innerTypeArguments(klass: IrClass, arguments: List<TypeN
 	return own + enclosing
 }
 
-private fun BirEmitter.innerEnclosingBindings(
+internal fun BirEmitter.innerEnclosingBindings(
 	inner: IrClass, immediateReceiver: String,
 ): List<Pair<IrValueDeclaration, String>> {
 	var owner = inner.parent as? IrClass ?: return emptyList()
@@ -1254,7 +1254,7 @@ private fun BirEmitter.innerEnclosingBindings(
 		// A lifted owner stores free lexical values too. An inner declaration reaches those values through the
 		// same enclosing instance, not through its own `this` or a no-longer-live function local.
 		for ((declaration, field) in captureFieldPairs(owner, localClassCaptures[owner].orEmpty()))
-			result.add(declaration to """{"k":"field","ownerType":${birType(owner.defaultType).toJson()},"recv":$receiver,"name":${str(field)}}""")
+			result.add(declaration to """{"k":"field","ownerType":${birType(owner.defaultType).toJson()},"recv":$receiver,"name":${str(field)},"memberVisibility":"private"}""")
 		if (!owner.isInner) break
 		val parent = owner.parent as? IrClass ?: break
 		// This lexical capture is private storage. A carried default can move its read into another module;
@@ -2113,15 +2113,12 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 		val targetFq = delegateClass?.fqNameWhenAvailable?.asString()
 		if (targetFq != "kotlin.Any") {
 			// A CAPTURING local base took its captures as hidden leading ctor parameters when lifted. The derived
-			// local class's transitive capture scan already added the same declarations to this ctor, so forward THIS
-			// ctor's capture parameters before the base's source-level/default-filled arguments. The capture fields
-			// are assigned only after the base call and cannot be read here.
+			// local class supplies them either directly or through its enclosing instance. Both paths are bound above
+			// to THIS ctor's parameters, not its uninitialized capture fields, before the base call.
 			val baseCaptureArgs = delegateClass?.let { localClassCaptures[it] }.orEmpty().map { baseCapture ->
-				val here = captures.firstOrNull { (own, _) -> own === baseCapture }?.second
+				captureSubst[baseCapture]
 					?: return@let invariantBroken(delegating,
 						"a local base class's capture is not a capture of the derived local class")
-				val outer = if (isExactOuterDeclaration(baseCapture)) ""","outer":true""" else ""
-				"""{"k":"local","name":${str(here)}$outer}"""
 			}
 			withCallPlan(d) { baseCaptureArgs + delegatedCtorArgs(d) }
 				.let { (plan, a) ->
