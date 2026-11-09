@@ -23,12 +23,12 @@ using DotKt.Bir;
 //   * replaces `clrEventBacking` with a type-level `clrEventDecl{name, delegateType:D}` (ilemit emits the `.event` row).
 // The interface MethodImpl wiring is FREE: ilemit's referenced-interface binding pass matches the public-virtual
 // add_/remove_<E> to the interface's add_/remove_ event-accessor slots by name+signature (DefineMethodOverride).
-// A RAISE (`clrEventRaise`) is bound separately below to a `callInstance raise_<E>` on the receiver's declaring type,
+// A RAISE (`clrEventRaise`) is bound below to the selected static/instance accessor on its physical declaring type,
 // with the §6 guard: raise is legal ONLY for a Kotlin-DECLARED event (one that has a synthesized `raise_<E>`).
 static class ClrEventImplBinding
 {
     const string RaiseDeclarationKey = "eventRaiseDeclarationId";
-    sealed record RaiseBinding(string Name, JsonArray Signature, string DeclarationId);
+    sealed record RaiseBinding(string Name, JsonArray Signature, string DeclarationId, bool IsStatic);
 
     // Event accessors adopt their native delegate slot later. Keep Kotlin's complete handler type first,
     // including nominal nullability and covariant Nothing overrides, not only ordinary function shapes.
@@ -156,7 +156,8 @@ static class ClrEventImplBinding
                         if (identity == null) continue; // Interface delegation supplies add/remove, not a raiser.
                         var method = methods.OfType<JsonObject>().Single(m => Str(m[DeclarationIdentityBinding.Key]) == identity);
                         signatures[(owner, Str(declaration["name"]))] = new RaiseBinding(
-                            Str(method["name"]), FunctionSignatureIdentity.Signature((JsonArray)method["params"]), identity);
+                            Str(method["name"]), FunctionSignatureIdentity.Signature((JsonArray)method["params"]), identity,
+                            method["static"]?.GetValue<bool>() == true);
                         declaration.Remove(RaiseDeclarationKey);
                     }
                 }
@@ -326,7 +327,9 @@ static class ClrEventImplBinding
                         obj["localAccessor"] = true;
                         // A type-parameter receiver requires an address plus constrained. dispatch.  A concrete local
                         // owner uses the synthesized public-virtual accessor normally.
-                        obj["dispatch"] = TypeJson.Read(obj["type"]) is TypeNode.Tv ? "constrained" : "callvirt";
+                        var isStatic = obj["static"]?.GetValue<bool>() == true;
+                        obj["dispatch"] = isStatic ? "call"
+                            : TypeJson.Read(obj["type"]) is TypeNode.Tv ? "constrained" : "callvirt";
                         var visibility = kind == "clrEventAdd" ? binding.AddVisibility : binding.RemoveVisibility;
                         if (visibility is "private" or "protected")
                         {
@@ -335,16 +338,17 @@ static class ClrEventImplBinding
                             var constrained = TypeJson.Read(obj["type"]) is TypeNode.Tv;
                             var call = new JsonObject
                             {
-                                ["k"] = constrained ? "constrainedCall" : "callInstance",
-                                [constrained ? "iface" : "ownerType"] = obj["accessorOwner"]!.DeepClone(),
+                                ["k"] = isStatic ? "callStatic" : constrained ? "constrainedCall" : "callInstance",
+                                [isStatic ? "owner" : constrained ? "iface" : "ownerType"] = obj["accessorOwner"]!.DeepClone(),
                                 ["method"] = obj["accessor"]!.DeepClone(),
                                 [DeclarationIdentityBinding.Key] = obj[DeclarationIdentityBinding.Key]!.DeepClone(),
                                 ["sig"] = obj["sig"]!.DeepClone(), ["recv"] = obj["recv"]?.DeepClone(),
                                 ["args"] = new JsonArray(obj["handler"]?.DeepClone()),
-                                ["virtual"] = true, ["ret"] = TypeJson.Fqn("kotlin.Unit"),
+                                ["virtual"] = !isStatic, ["ret"] = TypeJson.Fqn("kotlin.Unit"),
                                 ["sty"] = TypeJson.Fqn("kotlin.Unit"),
                             };
                             if (constrained) call["recvType"] = obj["type"]!.DeepClone();
+                            if (isStatic) call.Remove("recv");
                             obj.Clear();
                             foreach (var pair in call) obj[pair.Key] = pair.Value?.DeepClone();
                         }
@@ -377,6 +381,7 @@ static class ClrEventImplBinding
         {
             var name = Str(backing["name"]);
             if (name == null) continue;
+            var isStatic = backing["static"]?.GetValue<bool>() == true;
             var addM = FindAccessor(methods, "add_" + name, "add");
             var remM = FindAccessor(methods, "remove_" + name, "remove");
             var raiseM = FindAccessor(methods, "raise_" + name, "raise");
@@ -411,7 +416,8 @@ static class ClrEventImplBinding
             else
             {
                 var fieldName = name + "$delegate";
-                fields.Add(new JsonObject { ["name"] = fieldName, ["type"] = delegateNode.DeepClone(), ["vis"] = "private" });
+                fields.Add(new JsonObject { ["name"] = fieldName, ["type"] = delegateNode.DeepClone(),
+                    ["vis"] = "private", ["static"] = isStatic });
                 RewriteFieldLike(addM, "add", fieldName, delegateNode);
                 RewriteFieldLike(remM, "remove", fieldName, delegateNode);
                 RewriteRaise(raiseM, fieldName, delegateNode, invokeParamNodes);
@@ -419,8 +425,8 @@ static class ClrEventImplBinding
 
             void Slot(JsonObject method, MethodInfo externalSlot, bool reusesSlot, bool needsInterfaceSlot)
             {
-                var isVirtual = reusesSlot || openEvent || needsInterfaceSlot;
-                method["override"] = reusesSlot;
+                var isVirtual = !isStatic && (reusesSlot || openEvent || needsInterfaceSlot);
+                method["override"] = !isStatic && reusesSlot;
                 method["virtual"] = isVirtual;
                 method["clrFinal"] = isVirtual && !openEvent;
                 if (externalSlot == null) return;
@@ -538,10 +544,11 @@ static class ClrEventImplBinding
         var ownerArguments = TypeParameterFrame.Declarations(type)
             .Select((_, index) => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
         var owner = new TypeNode.Fqn(Str(type["name"]), ownerArguments.Length == 0 ? null : ownerArguments);
+        var isStatic = add["static"]?.GetValue<bool>() == true;
         JsonObject Receiver() => new()
         {
-            ["k"] = "field", ["ownerType"] = TypeJson.Write(owner), ["name"] = fieldName,
-            ["recv"] = new JsonObject { ["k"] = "this", ["sty"] = TypeJson.Write(owner) },
+            ["k"] = isStatic ? "staticField" : "field", ["ownerType"] = TypeJson.Write(owner), ["name"] = fieldName,
+            ["recv"] = isStatic ? null : new JsonObject { ["k"] = "this", ["sty"] = TypeJson.Write(owner) },
             ["sty"] = policyType.DeepClone(),
         };
         JsonObject Call(string name, TypeNode parameter, JsonNode argument)
@@ -599,7 +606,7 @@ static class ClrEventImplBinding
     {
         if (m["params"] is JsonArray ps && ps.Count > 0 && ps[0] is JsonObject p0)
             p0["type"] = delegateNode.DeepClone();
-        m["body"] = new JsonArray { AccessorImpl(kind, fieldName, delegateNode) };
+        m["body"] = new JsonArray { AccessorImpl(kind, fieldName, delegateNode, m["static"]?.GetValue<bool>() == true) };
         m["specialName"] = true;   // ECMA-335 event-accessor convention (ilemit stamps MethodAttributes.SpecialName)
         m.Remove("overrides");
     }
@@ -611,17 +618,18 @@ static class ClrEventImplBinding
         for (int i = 0; i < invokeParamNodes.Count; i++)
             ps.Add(new JsonObject { ["name"] = "arg" + i, ["type"] = invokeParamNodes[i].DeepClone() });
         m["params"] = ps;
-        m["body"] = new JsonArray { AccessorImpl("raise", fieldName, delegateNode) };
+        m["body"] = new JsonArray { AccessorImpl("raise", fieldName, delegateNode, m["static"]?.GetValue<bool>() == true) };
         m["specialName"] = true;   // ECMA-335 event-accessor convention (the .event's Fire)
         m.Remove("overrides");
     }
 
-    static JsonObject AccessorImpl(string kind, string fieldName, JsonNode delegateNode) => new()
+    static JsonObject AccessorImpl(string kind, string fieldName, JsonNode delegateNode, bool isStatic) => new()
     {
         ["k"] = "clrEventAccessorImpl",
         ["kind"] = kind,
         ["name"] = fieldName,
         ["delegateType"] = delegateNode.DeepClone(),
+        ["static"] = isStatic,
     };
 
     // Class delegation forwards to the exact delegate expression captured by kotc. The referenced interface owns the
@@ -913,9 +921,10 @@ static class ClrEventImplBinding
                 JsonObject call;
                 if (signatures.TryGetValue((owner.Name, name), out var local))
                     call = new JsonObject {
-                        ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(owner), ["method"] = local.Name,
+                        ["k"] = local.IsStatic ? "callStatic" : "callInstance",
+                        [local.IsStatic ? "owner" : "ownerType"] = TypeJson.Write(owner), ["method"] = local.Name,
                         ["sig"] = local.Signature.DeepClone(), [DeclarationIdentityBinding.Key] = local.DeclarationId,
-                        ["virtual"] = true, ["recv"] = recv, ["args"] = args,
+                        ["virtual"] = !local.IsStatic, ["recv"] = recv, ["args"] = args,
                     };
                 else
                 {
@@ -925,11 +934,14 @@ static class ClrEventImplBinding
                             $"bir2cir: cannot raise the .NET event '{name}' on '{owner.Name}' — you can only raise an "
                             + "event you DECLARE in Kotlin (`override val E by clrEvent()`), not a consumed foreign .NET event");
                     var declaration = referenced.GetEvent(name, BindingFlags.Public | BindingFlags.NonPublic
-                        | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                        | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
                     var raise = declaration?.GetRaiseMethod(true)
                         ?? throw new InvalidOperationException($"bir2cir: referenced Kotlin event '{owner.Name}.{name}' has no raise declaration");
-                    call = ClrMemberResolution.ExactInstanceCall(refs, raise, owner, recv, args);
+                    call = raise.IsStatic
+                        ? ClrMemberResolution.ExactStaticCall(refs, raise, owner, args)
+                        : ClrMemberResolution.ExactInstanceCall(refs, raise, owner, recv, args);
                 }
+                if (Str(call["k"]) is "callStatic" or "clrStatic") call.Remove("recv");
                 if (superCall)
                 {
                     call["super"] = true;

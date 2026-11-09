@@ -76,9 +76,17 @@ static class NetInteropBinding
             ReshapeField(node, write: k is not ("field" or "staticField"));
             return;
         }
-        if (k == "clrEventGet" && node["companionCall"]?.GetValue<bool>() == true)
+        if (k == "clrEventGet")
         {
-            NormalizeCompanionEvent(node);
+            if (node["companionCall"]?.GetValue<bool>() == true) NormalizeCompanionEvent(node);
+            if (node["static"]?.GetValue<bool>() == true && TypeJson.Read(node["type"]) is TypeNode.Fqn eventOwner)
+            {
+                var arity = eventOwner.Args?.Length ?? 0;
+                var eventPhysicalOwner = _refs.ExactReflectedOwner(eventOwner.Name, arity);
+                var nativeOwner = _refs.ResolveNetType(eventPhysicalOwner, arity);
+                if (nativeOwner != null)
+                    node["type"] = CloseStaticOwner(TypeJson.Write(new TypeNode.Fqn(eventPhysicalOwner, eventOwner.Args)), nativeOwner);
+            }
             return;
         }
         // #73 M4.4: a BOUND method reference `netObj::m`. kotc emits a NEUTRAL `newBoundDelegate` (the same kind it uses

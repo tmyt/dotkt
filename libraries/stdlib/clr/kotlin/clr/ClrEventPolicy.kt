@@ -27,5 +27,5 @@ public abstract class ClrEventPolicy<out T> protected constructor() {
         ClrEvent(::add, ::remove)
 }
 
-/** Supplies [policy] for a native instance event declared as a member with `by clrEvent(policy)`. */
+/** Supplies [policy] for a native event declared with `by clrEvent(policy)`. */
 public fun <T> clrEvent(policy: ClrEventPolicy<T>): ClrEventPolicy<T> = policy
