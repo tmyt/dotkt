@@ -392,6 +392,7 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			capPairs.forEach { (decl, fname) ->
 				captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 			}
+			localClassCaptures[anon] = captured
 			liftedTypes.add(typeDef(anon, capPairs, captureEnclosingGenerics = true, generated = true))
 			capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 			// Instantiate the flattened generic anon with the captured params rendered in THIS (enclosing) scope

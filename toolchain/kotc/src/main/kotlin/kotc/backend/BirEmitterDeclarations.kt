@@ -1199,12 +1199,15 @@ internal fun BirEmitter.innerClasses(c: IrClass): List<IrClass> {
 	return out
 }
 
-/** Enclosing parameters in emitted CLR type-frame order: outermost owner first. */
+/** Complete enclosing declaration frame, outermost owner first, including a lifted owner's lexical captures. */
 internal fun BirEmitter.innerEnclosingTypeParams(klass: IrClass): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
 	if (!klass.isInner) return emptyList()
 	val result = mutableListOf<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
 	var p = klass.parent as? IrClass
-	while (p != null) { result.addAll(0, p.typeParameters); p = if (p.isInner) p.parent as? IrClass else null }
+	while (p != null) {
+		result.addAll(0, p.typeParameters + liftedTypeArgParams[p].orEmpty())
+		p = if (p.isInner) p.parent as? IrClass else null
+	}
 	return result
 }
 
@@ -1223,7 +1226,24 @@ internal fun BirEmitter.innerSemanticEnclosingTypeParams(
 	return result
 }
 
-private fun BirEmitter.innerEnclosingReceivers(
+/** Close the inner declaration's complete semantic application from the frontend arguments and lifted-owner facts. */
+internal fun BirEmitter.innerTypeArguments(klass: IrClass, arguments: List<TypeNode>): List<TypeNode> {
+	val own = klass.typeParameters.mapIndexed { index, parameter ->
+		arguments.getOrNull(index) ?: typeArgSubst[parameter] ?: tvOf(parameter)
+	}
+	val selected = innerSemanticEnclosingTypeParams(klass).zip(arguments.drop(own.size)).toMap()
+	val enclosing = ArrayList<TypeNode>()
+	var child = klass
+	while (child.isInner) {
+		val parent = child.parent as? IrClass ?: break
+		for (parameter in parent.typeParameters + liftedTypeArgParams[parent].orEmpty())
+			enclosing.add(selected[parameter] ?: typeArgSubst[parameter] ?: tvOf(parameter))
+		child = parent
+	}
+	return own + enclosing
+}
+
+internal fun BirEmitter.innerEnclosingBindings(
 	inner: IrClass, immediateReceiver: String,
 ): List<Pair<IrValueDeclaration, String>> {
 	var owner = inner.parent as? IrClass ?: return emptyList()
@@ -1231,6 +1251,10 @@ private fun BirEmitter.innerEnclosingReceivers(
 	val result = mutableListOf<Pair<IrValueDeclaration, String>>()
 	while (true) {
 		owner.thisReceiver?.let { result.add(it to receiver) }
+		// A lifted owner stores free lexical values too. An inner declaration reaches those values through the
+		// same enclosing instance, not through its own `this` or a no-longer-live function local.
+		for ((declaration, field) in captureFieldPairs(owner, localClassCaptures[owner].orEmpty()))
+			result.add(declaration to """{"k":"field","ownerType":${birType(owner.defaultType).toJson()},"recv":$receiver,"name":${str(field)},"memberVisibility":"private"}""")
 		if (!owner.isInner) break
 		val parent = owner.parent as? IrClass ?: break
 		// This lexical capture is private storage. A carried default can move its read into another module;
@@ -1249,7 +1273,7 @@ internal fun BirEmitter.innerClassDef(inner: IrClass): String {
 	// Each edge is an explicit Kotlin inner relation; bir2cir later supplies the constructed CLR owner TypeSpecs.
 	val saved = java.util.IdentityHashMap<IrValueDeclaration, String?>()
 	val immediate = """{"k":"field","ownerType":${birType(inner.defaultType).toJson()},"recv":{"k":"this"},"name":"__outer","outer":true,"memberVisibility":"private"}"""
-	for ((declaration, receiver) in innerEnclosingReceivers(inner, immediate)) {
+	for ((declaration, receiver) in innerEnclosingBindings(inner, immediate)) {
 		saved[declaration] = captureSubst[declaration]
 		captureSubst[declaration] = receiver
 	}
@@ -1797,27 +1821,34 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		klass.superTypes.forEach { scan(it, ownParameterSet) }
 		klass.typeParameters.forEach { tp -> tp.superTypes.forEach { scan(it, ownParameterSet) } }
 		captures.forEach { scan(it.first.type, ownParameterSet) }
-		klass.declarations.forEach { d ->
+		fun scanDeclaration(d: IrDeclaration, excluded: Set<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>) {
 			when (d) {
 				// A member/ctor may ALSO reference an enclosing param in its signature or a reified body operand (`is R`);
 				// exclude that member's OWN type params (a generic method's `<U>` is not a class capture).
 				is IrSimpleFunction -> {
-					val excl = ownParameterSet + d.typeParameters
+					val excl = excluded + d.typeParameters
 					d.parameters.forEach { scan(it.type, excl) }
 					scan(d.returnType, excl)
 					bodyTypeOperands(d).forEach { scan(it, excl) }
 				}
 				is IrConstructor -> {
-					d.parameters.forEach { scan(it.type, ownParameterSet) }
-					bodyTypeOperands(d).forEach { scan(it, ownParameterSet) }
+					d.parameters.forEach { scan(it.type, excluded) }
+					bodyTypeOperands(d).forEach { scan(it, excluded) }
 				}
 				is IrProperty -> {
-					d.backingField?.let { scan(it.type, ownParameterSet) }
-					d.getter?.let { scan(it.returnType, ownParameterSet) }
+					d.backingField?.let { scan(it.type, excluded) }
+					d.getter?.let { scan(it.returnType, excluded) }
+				}
+				is IrClass -> if (d.isInner) {
+					val innerExcluded = excluded + d.typeParameters
+					d.superTypes.forEach { scan(it, innerExcluded) }
+					d.typeParameters.forEach { tp -> tp.superTypes.forEach { scan(it, innerExcluded) } }
+					d.declarations.forEach { scanDeclaration(it, innerExcluded) }
 				}
 				else -> {}
 			}
 		}
+		klass.declarations.forEach { scanDeclaration(it, ownParameterSet) }
 		// A captured param's own BOUND can name a FURTHER enclosing param (`<T, U> where T : Box<U>`): this class
 		// re-declares the bound along with the param, so it must re-declare that one too or the constraint references a
 		// variable the flattened class does not have. Close the set (worklist — a bound can pull in a param whose own
@@ -1837,6 +1868,10 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	}
 	liftedTypeArgParams[klass] = capturedTpParams.toList()
 	liftedTypeArgNames[klass] = capturedTpParams.map { it.name.asString() }
+	// File-level discovery cannot see member declarations of a lifted local/object class. Register this owner's
+	// complete generic frame first, then emit its inner declarations before any body can construct them.
+	if (captureEnclosingGenerics)
+		for (inner in innerClasses(klass)) liftedTypes.add(innerClassDef(inner))
 	// A companion reaches BIR as its own representation-neutral semantic type. Its declaration visibility belongs
 	// to that type; each member retains its own Kotlin visibility. The CLR nested TypeDef therefore gates the whole
 	// companion without incorrectly turning a source-public member into a Family member of the carrier itself.
@@ -2052,7 +2087,7 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 		captures.firstOrNull { (declaration, _) -> declaration === outerThis }?.let { (declaration, _) ->
 			// Every farther enclosing receiver must share the parameter-rooted chain during delegation.
 			// Replacing only the immediate capture leaves the pre-rendered ancestor chains rooted at this.
-			for ((enclosing, receiver) in innerEnclosingReceivers(klass, captureSubst.getValue(declaration))) {
+			for ((enclosing, receiver) in innerEnclosingBindings(klass, captureSubst.getValue(declaration))) {
 				if (!savedCapSubst.containsKey(enclosing)) savedCapSubst[enclosing] = captureSubst[enclosing]
 				captureSubst[enclosing] = receiver
 			}
@@ -2078,15 +2113,12 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 		val targetFq = delegateClass?.fqNameWhenAvailable?.asString()
 		if (targetFq != "kotlin.Any") {
 			// A CAPTURING local base took its captures as hidden leading ctor parameters when lifted. The derived
-			// local class's transitive capture scan already added the same declarations to this ctor, so forward THIS
-			// ctor's capture parameters before the base's source-level/default-filled arguments. The capture fields
-			// are assigned only after the base call and cannot be read here.
+			// local class supplies them either directly or through its enclosing instance. Both paths are bound above
+			// to THIS ctor's parameters, not its uninitialized capture fields, before the base call.
 			val baseCaptureArgs = delegateClass?.let { localClassCaptures[it] }.orEmpty().map { baseCapture ->
-				val here = captures.firstOrNull { (own, _) -> own === baseCapture }?.second
+				captureSubst[baseCapture]
 					?: return@let invariantBroken(delegating,
 						"a local base class's capture is not a capture of the derived local class")
-				val outer = if (isExactOuterDeclaration(baseCapture)) ""","outer":true""" else ""
-				"""{"k":"local","name":${str(here)}$outer}"""
 			}
 			withCallPlan(d) { baseCaptureArgs + delegatedCtorArgs(d) }
 				.let { (plan, a) ->
@@ -2672,7 +2704,7 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 		}
 		val ownerClass = ownerFn.parent as? IrClass
 		if (ownerFn is IrConstructor && ownerClass?.isInner == true) {
-			for ((declaration, receiver) in innerEnclosingReceivers(
+			for ((declaration, receiver) in innerEnclosingBindings(
 				ownerClass, """{"k":"defaultArgReceiver","kind":"enclosing"}""",
 			)) {
 				installCarrierSubst(declaration, receiver)
