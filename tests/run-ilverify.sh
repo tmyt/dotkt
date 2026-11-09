@@ -16,8 +16,8 @@
 # pointer fixture cannot weaken the permanent whole-suite baseline. Both paths keep the same narrow method identity.
 #
 # --audit-baseline additionally reddens on a DEAD key: a baseline entry that matched no finding at all has
-# rotted into a mask for whatever finding lands on that method next. It is reported with scripts/lib.sh's strict
-# xfail_diff wording and verdict, `FIXED … remove it from the xfail list`, and stays red until the entry is pruned.
+# rotted into a mask for whatever finding lands on that method next. It is reported as
+# `FIXED … remove it from the xfail list`, and stays red until the entry is pruned.
 # Opt-in because the audit is only meaningful over the COMPLETE emitted set: tests/packaged-sdk/run.sh verifies
 # a two-assembly subset, where an unmatched key means "not in this subset", not "fixed".
 # tests/run-nunit-tests.sh, which verifies every emitted suite assembly, passes it.
@@ -203,8 +203,8 @@ for key in ${allowed_pointer_keys[@]+"${allowed_pointer_keys[@]}"}; do
 	rc=1
 done
 
-# DEAD-KEY VERDICT: every baseline key that masked nothing over the complete emitted set. xfail_diff's wording,
-# but red rather than its advisory green — see the header note on why this lane is deliberately stricter.
+# DEAD-KEY VERDICT: every baseline key that masked nothing over the complete emitted set reddens the gate.
+# See the header note on why this audit requires the complete emitted set.
 if (( audit )); then
 	for key in "${!ILVERIFY_SPAN_RETURN[@]}"; do
 		[[ -v MATCHED_SPAN_RETURN["$key"] ]] && continue

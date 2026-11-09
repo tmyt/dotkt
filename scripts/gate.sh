@@ -163,7 +163,7 @@ classify() { # <path>
 }
 
 # ---- suite targets --------------------------------------------------------------------------------
-declare -a RUN_ORDER=(compiler_tests nunit_corpus schema sanity lowering stdlib_upstream stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection packagedsdk)
+declare -a RUN_ORDER=(compiler_tests nunit_corpus schema sanity lowering stdlib_upstream stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib gate_selection packagedsdk)
 declare -A SUITE_TARGET=(
 	[compiler_tests]=verify-tests [schema]=verify-schema [sanity]=verify-sanity
 	[nunit_corpus]=verify-nunit
@@ -172,11 +172,11 @@ declare -A SUITE_TARGET=(
 	[stdlib_upstream]=verify-stdlib-upstream
 	[stdlib_source_array]=verify-stdlib-source-array
 	[lowering]=verify-lowering [csharp14]=verify-csharp14-extension-abi
-	[pinvoke]=verify-pinvoke [dll2klib]=dll2klib-e2e [xfail]=verify-xfail-policy
+	[pinvoke]=verify-pinvoke [dll2klib]=dll2klib-e2e
 	[packagedsdk]=verify-packaged-sdk
 )
 
-FULL_SUITES=(compiler_tests schema sanity lowering stdlib_upstream stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib xfail gate_selection)
+FULL_SUITES=(compiler_tests schema sanity lowering stdlib_upstream stdlib_source_array msbuild targetuniverse csharp14 pinvoke dll2klib gate_selection)
 
 # ---- compute the plan -----------------------------------------------------------------------------
 mapfile -t CHANGES < <(collect_changes)

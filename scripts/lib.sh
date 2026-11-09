@@ -79,34 +79,6 @@ die()  { echo "$SCRIPT_NAME: error: $*" >&2; exit 1; }
 # every script answers -h|--help; unknown flags go through usage_error.
 usage_error() { echo "$SCRIPT_NAME: $*" >&2; usage >&2; exit 2; }
 
-# --- XFAIL baseline verdict (shared by the verify gates) --------------------------------------------
-# A gate declares its expected failures as an associative array (fail name -> reason) and hands its
-# ACTUAL fail names to xfail_diff, which prints one classification line per name:
-#   XFAIL     <prefix>:<name> (<reason>)    expected fail, still failing — does NOT redden the gate
-#   NEW-FAIL  <prefix>:<name>               fail NOT in the baseline — a regression
-#   FIXED     <prefix>:<name> — fixed; remove it from the xfail list   (stale baseline; reddens the gate)
-# NEW-FAIL / FIXED names are appended to the global arrays below. A gate is clean only when BOTH are empty:
-# an expected failure that stopped failing is a baseline change which must prune its stale entry in the same PR.
-declare -a XFAIL_NEW=() XFAIL_FIXED=()
-xfail_diff() { # <prefix> <xfail-assoc-array-name> [actual-fail-name...]
-	local _pfx="$1"; local -n _xf="$2"; shift 2
-	local n
-	for n in "$@"; do
-		if [[ -v _xf[$n] ]]; then
-			echo "XFAIL     $_pfx:$n (${_xf[$n]})"
-		else
-			echo "NEW-FAIL  $_pfx:$n"; XFAIL_NEW+=("$_pfx:$n")
-		fi
-	done
-	for n in $(printf '%s\n' "${!_xf[@]}" | sort); do
-		if [[ " ${*:-} " != *" $n "* ]]; then
-			echo "FIXED     $_pfx:$n — fixed; remove it from the xfail list"
-			XFAIL_FIXED+=("$_pfx:$n")
-		fi
-	done
-}
-xfail_gate_is_clean() { (( ${#XFAIL_NEW[@]} == 0 && ${#XFAIL_FIXED[@]} == 0 )); }
-
 # --- lazy builders (loud when they fire) -----------------------------------------------------------
 run_stdlib_stage() { # <stderr-log> <command> [args...] — partial output never overrides process failure
 	local log="$1"; shift
