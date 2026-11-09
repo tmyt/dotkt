@@ -4,11 +4,11 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// An open Kotlin array preserves its allocation's component, not the caller's concrete T.
-// Its element is therefore an erased value until an actual consuming slot asks for T.
+// Open Kotlin arrays and iterators preserve their actual elements, not the caller's concrete T.
+// Their elements are erased values until an actual consuming slot asks for T.
 // Project only body-local value storage here; signatures, allocation witnesses, reified
 // operations and native locations retain their independently owned representations.
-static class OpenArrayElementValues
+static class ErasedElementValues
 {
     sealed record Slot(JsonObject Declaration, string Name, TypeNode Type);
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
@@ -17,6 +17,7 @@ static class OpenArrayElementValues
         ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null)
     {
         var files = roots.OfType<JsonObject>().ToArray();
+        var iteratorValues = new KotlinIteratorValueBinding(files, references);
         var interfaces = new Dictionary<string, bool>(StringComparer.Ordinal);
         var frames = references?.NullableTypeFrames.ToDictionary(pair => pair.Key, pair => pair.Value,
             StringComparer.Ordinal) ?? new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal);
@@ -36,9 +37,9 @@ static class OpenArrayElementValues
         void Container(JsonObject container, JsonObject owner)
         {
             foreach (var method in (container["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                Project(method, owner, IsInterface, frames, isValue ?? (_ => false), policy);
+                Project(method, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues);
             foreach (var constructor in (container["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                Project(constructor, owner, IsInterface, frames, isValue ?? (_ => false), policy);
+                Project(constructor, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues);
             foreach (var type in (container["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Container(type, type);
         }
@@ -53,13 +54,14 @@ static class OpenArrayElementValues
 
     static void Project(JsonObject method, JsonObject owner, Func<TypeNode, bool> isInterface,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
-        GenericRepresentationPolicy policy)
+        GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues)
     {
         var executable = (method["preStmts"] as JsonArray ?? new JsonArray())
             .Concat(method["thisArgs"] as JsonArray ?? method["baseArgs"] as JsonArray ?? new JsonArray())
             .Concat(method["body"] as JsonArray ?? new JsonArray()).ToArray();
         if (executable.Length == 0) return;
         var reads = new Dictionary<JsonObject, TypeNode.Tv>();
+        var iteratorReads = new HashSet<JsonObject>();
         var uses = new Dictionary<JsonObject, Slot>();
         var slots = new List<Slot>();
         var loopSlots = new Dictionary<JsonObject, Slot>();
@@ -90,6 +92,11 @@ static class OpenArrayElementValues
             if (kind is "local" or "setLocal" && Text(obj["name"]) is string used
                 && scope.TryGetValue(used, out var slot)) uses[obj] = slot;
             if (kind == "arrayGet" && !location && Element(obj, scope) is { } read) reads[obj] = read;
+            if (!location && iteratorValues.Element(obj) is { } iteratorElement)
+            {
+                reads[obj] = iteratorElement;
+                iteratorReads.Add(obj);
+            }
             if (!location && kind is "cond" or "valueBlock") valueResults.Add(obj);
             if (kind == "valueBlock")
             {
@@ -217,6 +224,11 @@ static class OpenArrayElementValues
         foreach (var statement in executable) Plan(statement);
         foreach (var (read, _) in reads)
         {
+            if (iteratorReads.Contains(read))
+            {
+                iteratorValues.Bind(read);
+                continue;
+            }
             read["elem"] = TypeJson.Write(ObjectType);
             read["sty"] = TypeJson.Write(ObjectType);
         }
@@ -381,6 +393,51 @@ static class OpenArrayElementValues
         if (TypeJson.Read(constructor["baseArgs"][0]["elem"]) != ObjectType)
             throw new InvalidOperationException("Array value projection missed executable constructor delegation");
         Console.WriteLine("[open array element values] self-test OK (erased reads/aliases, retained signature)");
+        IteratorSelfTest(pristine.AsObject());
+    }
+
+    static void IteratorSelfTest(JsonObject template)
+    {
+        foreach (var direction in new[] { "next", "previous" })
+        {
+            var root = template.DeepClone().AsObject();
+            var method = root["methods"][0];
+            var read = new JsonObject {
+                ["k"] = "callInstance", ["ownerType"] = TypeJson.Fqn("kotlin.collections.ListIterator"),
+                ["method"] = direction, [DeclarationIdentityBinding.Key] = "iterator-" + direction,
+                ["args"] = new JsonArray(),
+                ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "iterator" },
+                ["sty"] = TypeJson.Write(new TypeNode.Tv("method", 0)),
+            };
+            var helperName = direction == "next" ? "listIteratorNextErased" : "listIteratorPreviousErased";
+            var helper = new JsonObject {
+                ["fileClass"] = "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt",
+                ["methods"] = new JsonArray(new JsonObject {
+                    ["name"] = helperName, [DeclarationIdentityBinding.Key] = helperName,
+                    ["params"] = new JsonArray(new JsonObject { ["name"] = "receiver", ["type"] = TypeJson.Fqn("kotlin.Any") }),
+                }),
+            };
+            var binding = new KotlinIteratorValueBinding(new[] { helper }, null);
+            foreach (var key in new[] { "super", "clrOwnerResolved" })
+            {
+                var exact = read.DeepClone().AsObject();
+                exact[key] = true;
+                if (binding.Element(exact) != null)
+                    throw new InvalidOperationException("Iterator value binding changed exact native/super dispatch");
+            }
+            var unrelated = read.DeepClone().AsObject();
+            unrelated["ownerType"] = TypeJson.Fqn("UserIterator");
+            if (binding.Element(unrelated) != null)
+                throw new InvalidOperationException("Iterator value binding inferred a protocol from a member name");
+            method["body"][0]["init"] = read;
+            ApplyAll(new[] { root, helper }, null);
+            if (Text(read["k"]) != "callStatic" || Text(read[DeclarationIdentityBinding.Key]) != helperName
+                || read["args"] is not JsonArray { Count: 1 }
+                || TypeJson.Read(method["body"][0]["type"]) != ObjectType
+                || TypeJson.Read(method["body"][1]["type"]) != ObjectType)
+                throw new InvalidOperationException("Iterator value binding lost erased forward/reverse reads or aliases");
+        }
+        Console.WriteLine("[iterator element values] self-test OK (declaration binding, directions, aliases, exact dispatch)");
     }
 
     static string Text(JsonNode node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;

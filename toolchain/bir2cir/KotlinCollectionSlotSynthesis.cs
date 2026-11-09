@@ -187,6 +187,11 @@ static class KotlinCollectionSlotSynthesis
 
     internal static bool IsMapContractOwner(string owner) => owner is Map or MutableMap;
 
+    internal static JsonObject ErasedCollectionQueryOverride(JsonObject operation) =>
+        (operation["overrides"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(marker =>
+            Slots.Any(slot => !IsMapContractOwner(slot.DeclaringInterface)
+                && slot.Parameters.Contains(ParameterCarrier.ErasedValue) && MatchesOverride(marker, slot)));
+
     internal static bool OwnsSupplementalOverride(JsonObject marker) =>
         OwnsMapOverride(marker) || Slots.Any(slot => MatchesOverride(marker, slot)
             && (slot.DeclaringInterface == MutableList && slot.EraseReturn

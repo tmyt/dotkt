@@ -128,6 +128,18 @@ internal interface KotlinMutableMapSlots {
 // `DotKt.Runtime.CompilerServices` namespace from a projected type's Kotlin supertype list, so a consumer never sees
 // one either. `kotlin.collections.ClrCollectionDefaults` is in this same module and resolves them normally.
 
+/** An adapter can preserve its erased payload independently of its native typed Iterator result. */
+@PublishedApi
+internal interface KotlinIteratorValueSlot {
+    fun dotktNextValue(): Any?
+}
+
+/** The reverse-direction value slot is independent of forward iteration. */
+@PublishedApi
+internal interface KotlinListIteratorValueSlot {
+    fun dotktPreviousValue(): Any?
+}
+
 /** The Kotlin mutable-iterator slot that `System.Collections.Generic.IEnumerable<E>` cannot represent. */
 @PublishedApi
 internal interface KotlinMutableIteratorSlots {

@@ -277,6 +277,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   Foreign Set membership invokes `Contains` on the selected native Set contract, retaining its equality comparer
   for closed, star-projected and widened calls, including `containsAll`. Incompatible candidate types return false;
   null is not converted to a default non-nullable value. Kotlin-authored membership overrides remain authoritative.
+  Generic Kotlin iterator reads and their local aliases keep erased values until an actual typed consumer needs
+  extraction. Inherited `containsAll` and set equality can therefore query unrelated or null values without first
+  narrowing them to the receiver's element type. The original common implementation and virtual overrides still run;
+  a concrete typed consumer retains its required cast. Pinned by `ErasedCollectionQueryTests` and its DLL consumer.
   Collection views of a Set use an eligible Set membership slot for their selected element closure when available;
   mutable operations retain their mutable family rather than selecting an unrelated read-only view.
   Independent List/Set contracts select their actual closed Collection parent interfaces, so dictionary entry
