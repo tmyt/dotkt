@@ -4,6 +4,17 @@ fun <T> portableReadOnlyBase(value: AbstractMutableCollection<T>): AbstractColle
 fun <T> portableMutableBase(value: AbstractMutableList<T>): AbstractMutableCollection<T> = value
 fun <T> portableMutableBase(value: AbstractMutableSet<T>): AbstractMutableCollection<T> = value
 
+open class PortableWideValue<T>(val element: T)
+class PortableNarrowValue<T>(element: T) : PortableWideValue<T>(element)
+abstract class PortableWideSelection<T> { abstract fun selected(): PortableWideValue<T> }
+interface PortableNarrowSelection<T> { fun selected(): PortableNarrowValue<T> }
+abstract class PortableInheritedSelection<T> : PortableWideSelection<T>(), PortableNarrowSelection<T> {
+    fun readSelected(): PortableNarrowValue<T> = selected()
+}
+class PortableSelected<T>(val value: PortableNarrowValue<T>) : PortableInheritedSelection<T>() {
+    override fun selected(): PortableNarrowValue<T> = value
+}
+
 class PortableMutableList<T>(private val values: MutableList<T>) : AbstractMutableList<T>() {
     var iterations: Int = 0
     override val size: Int get() = values.size

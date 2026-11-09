@@ -44,7 +44,29 @@ private fun policyConcurrent(block: () -> Unit) {
     check(caught)
 }
 
+private open class PolicyWideValue<T>(val element: T)
+private class PolicyNarrowValue<T>(element: T) : PolicyWideValue<T>(element)
+private abstract class PolicyWideSelection<T> {
+    abstract fun selected(): PolicyWideValue<T>
+    abstract val selectedProperty: PolicyWideValue<T>
+}
+private interface PolicyNarrowSelection<T> {
+    fun selected(): PolicyNarrowValue<T>
+    val selectedProperty: PolicyNarrowValue<T>
+}
+private abstract class PolicyInheritedSelection<T> : PolicyWideSelection<T>(), PolicyNarrowSelection<T> {
+    fun readSelected(): PolicyNarrowValue<T> = selected()
+    fun readProperty(): PolicyNarrowValue<T> = selectedProperty
+}
+private class PolicySelected<T>(val value: PolicyNarrowValue<T>) : PolicyInheritedSelection<T>() {
+    override fun selected(): PolicyNarrowValue<T> = value
+    override val selectedProperty: PolicyNarrowValue<T> get() = value
+}
+
 private fun <T> policyBulk(first: T, last: T) {
+    val selected = PolicySelected(PolicyNarrowValue(first))
+    check(selected.readSelected() === selected.value && selected.readSelected().element == first)
+    check(selected.readProperty() === selected.value && selected.readProperty().element == first)
     val collection = PolicyCollection(mutableListOf(first, last, first))
     check(collection.removeAll(listOf(last)) && collection.values == listOf(first, first))
     check(!collection.removeAll(listOf(last)))
