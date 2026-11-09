@@ -722,16 +722,19 @@ static class ClrEventImplBinding
                 return (TypeJson.Write(SubstituteOwnerTypeVariables(NetTypeToNode(d), ownerArgs)), invokeParams);
             }
 
+        // Nullability belongs to the logical handler contract, already preserved on the accessor metadata.
+        // Select the native delegate from its shape, just as for a nullable nominal delegate below.
+        var handler = TypeJson.Read(handlerType);
+        while (handler is TypeNode.Nullable nullable) handler = nullable.Of;
+        while (handler is TypeNode.Oblivious oblivious) handler = oblivious.Of;
+
         // A NEW event: the overrides closure was empty (no interface slot). Map the handler fn -> Action/Func.
-        if (handlerType is JsonObject fn && Str(fn["t"]) == "fn")
-            return FnToDelegate(fn);
+        if (handler is TypeNode.Fn fn)
+            return FnToDelegate((JsonObject)TypeJson.Write(fn));
 
         // A dll2klib-projected nominal delegate is the other natural Kotlin spelling of an event handler. Keep its
         // semantic classifier as the field/accessor type (the ordinary physical type lowering applies ClrExternal),
         // and derive only the raise parameter vector from the exact referenced Invoke declaration here.
-        var handler = TypeJson.Read(handlerType);
-        while (handler is TypeNode.Nullable nullable) handler = nullable.Of;
-        while (handler is TypeNode.Oblivious oblivious) handler = oblivious.Of;
         if (handler is TypeNode.Fqn named && refs.IsClrDelegate(named))
         {
             var declaration = ClrMemberResolution.ResolveOwnerType(named, refs);
