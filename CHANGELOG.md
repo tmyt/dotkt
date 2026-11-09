@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- Preserve logical Kotlin event handler types, generic frames and nullability when importing a Kotlin DLL.
 - Resolve inherited and cross-DLL Kotlin event raises through their actual declaring accessors and generic owner frames.
 - Reuse native class event override slots, preserving generic delegate signatures, source modality, and base-typed subscription and raise dispatch.
 - Preserve Kotlin event visibility and PublishedApi metadata without breaking retained subscriptions to restricted events.

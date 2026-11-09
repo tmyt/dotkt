@@ -284,9 +284,18 @@ static partial class ClrMemberResolution
         if (acc == null)
             throw new InvalidOperationException($"bir2cir: no event '{name}' on .NET type '{open}' (clrEvent{(add ? "Add" : "Remove")})");
         RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
-        // Subscription lowering has already constructed and spilled the exact delegate so add/remove reuse one value.
+        // Logical H can be narrower than the native slot (including Nothing). A checked view preserves the stored
+        // handler's identity while supplying the selected accessor's exact stack type; never rebuild a delegate.
         node["accessor"] = acc.Name;
-        node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
+        var reference = MemberRefOf(acc, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
+        node["memberRef"] = reference.Write();
+        var handlerType = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(reference.ParameterTypes[0],
+            ((TypeNode.Fqn)reference.DeclaringType).Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
+        node["handler"] = new JsonObject
+        {
+            ["k"] = "cast", ["type"] = TypeJson.Write(SignatureValueTypes.Of(handlerType)),
+            ["e"] = node["handler"]?.DeepClone(),
+        };
         StampResolvedMemberReturn(node, acc.ReturnType);
         if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall: false);
     }

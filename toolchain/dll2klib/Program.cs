@@ -3145,7 +3145,15 @@ internal sealed class AssemblyScanner : IDisposable
         foreach (var (ev, accessorHandle) in declaredEvents)
         {
             var accessor = _md.GetMethodDefinition(accessorHandle);
-            var handler = signatures.DecodeEntity(ev.Type, typeContext, platform: false);
+            var physicalHandler = signatures.DecodeEntity(ev.Type, typeContext, platform: false);
+            var handler = physicalHandler;
+            if (_attrs.IsDotKtAssembly)
+            {
+                // The Event row owns the native delegate identity; the accessor parameter carries Kotlin's H.
+                var parameter = accessor.GetParameters().FirstOrDefault(parameterHandle =>
+                    _md.GetParameter(parameterHandle).SequenceNumber == 1);
+                handler = ProjectType(parameter, physicalHandler, accessorHandle, names, signatures, typeContext);
+            }
             var eventType = signatures.NamedType("kotlin.clr.ClrEvent");
             eventType.Argument.Add(new KType.Types.Argument
             {
@@ -3157,7 +3165,7 @@ internal sealed class AssemblyScanner : IDisposable
                 Name = names.String(_md.GetString(ev.Name)),
                 ReturnType = eventType,
                 Flags = CallableVisibility(accessorHandle, Flags.Property(
-                    explicitEventShapes.Contains(_md.GetString(ev.Name) + ":" + TypeKey(handler))
+                    explicitEventShapes.Contains(_md.GetString(ev.Name) + ":" + TypeKey(physicalHandler))
                         ? accessor.Attributes | MethodAttributes.Virtual
                         : accessor.Attributes,
                     canWrite: false,

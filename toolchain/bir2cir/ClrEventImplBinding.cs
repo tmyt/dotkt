@@ -29,6 +29,26 @@ static class ClrEventImplBinding
 {
     const string RaiseDeclarationKey = "eventRaiseDeclarationId";
     sealed record RaiseBinding(string Name, JsonArray Signature, string DeclarationId);
+
+    // Event accessors adopt their native delegate slot later. Keep Kotlin's complete handler type first,
+    // including nominal nullability and covariant Nothing overrides, not only ordinary function shapes.
+    public static void PreserveSourceFacts(IEnumerable<JsonNode> roots)
+    {
+        void Preserve(JsonObject owner)
+        {
+            if (owner["methods"] is JsonArray methods)
+                foreach (var method in methods.OfType<JsonObject>())
+                    if (method["body"] is JsonArray { Count: > 0 } body
+                        && Str(body[0]?["k"]) == "clrEventAccessor"
+                        && Str(body[0]?["kind"]) is "add" or "remove"
+                        && method["params"] is JsonArray { Count: 1 } parameters)
+                        parameters[0]["kotlinType"] ??= parameters[0]["type"].ToJsonString();
+            if (owner["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>()) Preserve(type);
+        }
+        foreach (var root in roots.OfType<JsonObject>()) Preserve(root);
+    }
+
     // Snapshot declaration recipes before per-file lowering mutates their bodies. A local override uses the base
     // delegate ABI, even when its covariant ClrEvent handler is narrower or inferred as Nothing. Input file order
     // must not decide which delegate is selected. Hoisting may add newly materialized owners to the same index.
@@ -268,6 +288,11 @@ static class ClrEventImplBinding
                         obj[DeclarationIdentityBinding.Key] = kind == "clrEventAdd"
                             ? binding.AddIdentity : binding.RemoveIdentity;
                         obj["delegateType"] = TypeJson.Write(binding.DelegateType);
+                        obj["handler"] = new JsonObject
+                        {
+                            ["k"] = "cast", ["type"] = TypeJson.Write(binding.DelegateType),
+                            ["e"] = obj["handler"]?.DeepClone(),
+                        };
                         obj["sig"] = (kind == "clrEventAdd"
                             ? binding.AddSignature : binding.RemoveSignature).DeepClone();
                         obj["localAccessor"] = true;
