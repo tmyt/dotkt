@@ -451,6 +451,13 @@ metadata. A synthesized override bridge carries its own physical-property associ
 relation lets a downstream class consume the frontend-selected default through the bridge even when their CLR
 signatures differ; no consumer compares those signatures or parses either opaque association.
 
+A native event can also implement an ordinary Kotlin `ClrEvent<H>` property slot. Its getter returns the
+materialized event handle, while add/remove/raise remain native event accessors. The BIR event backing carries
+the source `propertyAssociation`; bir2cir preserves the getter-to-Event relation as an optional `event` name
+in `KotlinPropertyAccessor`. `dll2klib` projects that explicitly associated pair as one event-marked Kotlin
+property with its ordinary getter declaration identity, not two same-named declarations. Equal CLR names alone
+do not establish this relation. Native events without an ordinary property obligation still emit no getter.
+
 Control flow: the structured `for*` family and the CFG `label`/`brIf`/`goto` while-family coexist
 (mid-migration, audit D8) — the freeze picks the CFG form as canonical for lowered output; the structured
 `for*` may remain as a kotc-emit sugar that bir2cir lowers. [finalize in impl]

@@ -748,7 +748,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	fun emitsAccessor(a: IrSimpleFunction?) = a != null &&
 		(a.body is IrBlockBody || (a.body == null && a.modality == Modality.ABSTRACT))
-	fun emitsGet(p: IrProperty) = emitsAccessor(p.getter) && !p.isConst && !isClrField(p) && !isClrEventProperty(p)
+	fun emitsGet(p: IrProperty) = emitsAccessor(p.getter) && !p.isConst && !isClrField(p) && hasOrdinaryPropertySlot(p)
 	fun emitsSet(p: IrProperty) = emitsAccessor(p.setter) && !p.isConst && !isClrField(p) && !isClrEventProperty(p)
 	val userFields = instanceStorageFields(ec)
 	val propAccessors = userProps.flatMap { p ->
@@ -1072,7 +1072,7 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 		.map { method(it, static = false, semanticOwnerOverride = subName) }
 	val entryProps = cc.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride }
 	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst &&
-		!isClrField(p) && !isClrEventProperty(p)
+		!isClrField(p) && hasOrdinaryPropertySlot(p)
 	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst &&
 		!isClrField(p) && !isClrEventProperty(p)
 	val accessors = entryProps.flatMap { p ->
@@ -1081,7 +1081,7 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 			p.setter?.takeIf { emitsSet(p) }?.let { accessorMethod(it, p.name.asString(), false) })
 	}
 	val properties = entryProps.filter { emitsGet(it) }.joinToString(",") { p ->
-		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}${overridesJson(p.getter!!)}}"""
+		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}${overridesJson(p.getter!!, ordinaryPropertySlots = true)}}"""
 	}
 	val fields = instanceStorageFields(cc).joinToString(",")
 	val savedSemanticOwner = activeSemanticOwner
@@ -1280,6 +1280,14 @@ internal fun BirEmitter.isClrEventProperty(p: IrProperty): Boolean {
 	return event(p)
 }
 
+/** Event accessors do not replace an ordinary Kotlin property slot in the override closure. */
+internal fun BirEmitter.hasOrdinaryPropertySlot(p: IrProperty): Boolean {
+	val seen = HashSet<IrProperty>()
+	fun ordinary(property: IrProperty): Boolean = seen.add(property) &&
+		(!isClrEventProperty(property) || property.overriddenSymbols.any { ordinary(it.owner) })
+	return ordinary(p)
+}
+
 /** The direct `clrEvent(...)` delegate-initializer call (§4.2/§5 of design-clr-event-model.md), or
  *  null. A DELEGATED property whose delegate expression is a call to `kotlin.clr.clrEvent` — the marker "synthesize the
  *  field-like .NET event impl here" (a backing delegate field + add_/remove_/raise_ accessors). Distinguished from the
@@ -1375,7 +1383,9 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 		// The `overrides` closure: the interface event slot(s) this member implements, by Kotlin identity (owner FQN +
 		// event name). bir2cir derives the concrete add_/remove_ slot + delegate `D` off the ref.dll from it. Empty for a
 		// NEW event (no override), where bir2cir instead maps the handler function type to a delegate.
-		val overridden = p.overriddenSymbols.flatMap { it.owner.getter?.collectRealOverrides().orEmpty() }
+		val overridden = p.overriddenSymbols.filter { isClrEventProperty(it.owner) }
+			.flatMap { it.owner.getter?.collectRealOverrides().orEmpty() }
+			.filter { it.correspondingPropertySymbol?.owner?.let(::isClrEventProperty) == true }
 			.distinctBy { it.symbol }
 		val classOwner = overridden.mapNotNull { it.parent as? IrClass }
 			.firstOrNull { it.kind == ClassKind.CLASS || it.kind == ClassKind.ENUM_CLASS }
@@ -1393,7 +1403,7 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 			val field = p.backingField ?: error("custom CLR event '$name' has no Kotlin delegate field")
 			""","policyField":${str(field.name.asString())}"""
 		} else ""
-		backings.add("""{"k":"clrEventBacking","name":${str(name)},"handlerType":$handlerJson,"modality":${str(p.modality.name.lowercase())}$classOverride$policyField}""")
+		backings.add("""{"k":"clrEventBacking","name":${str(name)},"propertyAssociation":${str(propertyAssociation(p))},"handlerType":$handlerJson,"modality":${str(p.modality.name.lowercase())}$classOverride$policyField}""")
 		// Preserve source override owners and modality; bir2cir selects native slot reuse, delegate signatures and
 		// whether a referenced event has a raise slot at all. These shells do not choose that physical representation.
 		methods.add(accessor("add_$name", kind = "add", ov = overridesFor("event-add")))
@@ -1468,7 +1478,7 @@ private fun BirEmitter.overrideOwnerType(fn: IrSimpleFunction, owner: IrClass): 
 private fun BirEmitter.overrideOwnerJson(fn: IrSimpleFunction, owner: IrClass): String =
 	overrideOwnerType(fn, owner).toJson()
 
-internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
+internal fun BirEmitter.overridesJson(fn: IrSimpleFunction, ordinaryPropertySlots: Boolean = false): String {
 	val prop = fn.correspondingPropertySymbol?.owner
 	val items = if (prop != null) {
 		// An ACCESSOR: walk the PROPERTY's override closure (the setter of a `var size` overriding a `val size` has
@@ -1484,7 +1494,7 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 		// override still reports 0 and a plain `var`
 		// setter 1, exactly as the emitted accessors have.
 		val accArity = emittedParamCount(fn)
-		ordered.mapNotNull { p -> (p.parent as? IrClass)?.let { owner ->
+		ordered.filter { !ordinaryPropertySlots || hasOrdinaryPropertySlot(it) }.mapNotNull { p -> (p.parent as? IrClass)?.let { owner ->
 			val targetAccessor = if (kind == "getter") p.getter else p.setter
 			"""{"owner":${overrideOwnerJson(fn, owner)},"member":${str(p.name.asString())},"kind":${str(kind)},"arity":$accArity${targetAccessor?.let { declarationIdField(it) }.orEmpty()}}""" } }
 	} else {
@@ -1498,6 +1508,16 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 }
 
 private fun BirEmitter.accessorBodyStmts(acc: IrSimpleFunction): String {
+	val property = acc.correspondingPropertySymbol?.owner
+	if (property != null && acc === property.getter && isClrEventProperty(property)) {
+		val declaration = selectedInheritedImplementation(acc)?.correspondingPropertySymbol?.owner ?: property
+		val owner = declaration.parent as IrClass
+		val receiver = acc.parameters.first { it.kind == IrParameterKind.DispatchReceiver }
+		val ownerType = correspondingSupertypeInstantiation(receiver.type, owner)?.let(::birType)
+			?: ownerSpec(owner, receiver.type)
+		val read = """{"k":"clrEventGet","type":${ownerType.toJson()},"name":${str(declaration.name.asString())},"static":false,"recv":{"k":"this"},"sty":${birType(acc.returnType).toJson()},"memberVisibility":${str(visOf(declaration))}}"""
+		return """{"k":"return","value":$read}"""
+	}
 	val render = {
 		withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 	}
@@ -1578,7 +1598,10 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	// neither virtual nor an override — the frontend cannot produce one, and the flags are pinned here so the two
 	// facts cannot disagree.
 	val isStatic = acc.isStaticMethodOfClass
-	val isOverrideClass = !isStatic && acc.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS } }
+	val isOverrideClass = !isStatic && acc.overriddenSymbols.any {
+		it.owner.correspondingPropertySymbol?.owner?.let(::hasOrdinaryPropertySlot) != false &&
+			(it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS }
+	}
 	val virtual = !isStatic && (acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty())
 	val vis = visOf(acc)
 	// Emit the PROPERTY's annotations (e.g. @ClrIntrinsic) onto its accessor method — the SAME unconditional
@@ -1594,7 +1617,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 		""","kotlinStatic":true""" else ""
 	val property = acc.correspondingPropertySymbol?.owner
 		?: error("accessor '$propName' has no corresponding property")
-	return """{"name":${str(propName)}${declarationIdField(acc)}${explicitClrNameField(acc)}${propertyAccessorFact(property, kind)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
+	return """{"name":${str(propName)}${declarationIdField(acc)}${explicitClrNameField(acc)}${propertyAccessorFact(property, kind)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc, ordinaryPropertySlots = true)}}"""
 }
 
 /** A user `annotation class Ann(val v: Int, …)` retains its Kotlin constructor, property/accessor identities and
@@ -1844,11 +1867,17 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		val resolved = a?.let(::selectedInheritedImplementation) ?: return false
 		return (resolved.parent as? IrClass)?.kind == ClassKind.CLASS || resolved.modality != Modality.ABSTRACT
 	}
-	fun dropFake(a: IrSimpleFunction?) = a?.let(::isInheritedSynthetic) == true && implementationInherited(a)
+	fun dropFake(a: IrSimpleFunction?): Boolean {
+		if (a?.let(::isInheritedSynthetic) != true || !implementationInherited(a)) return false
+		val property = a.correspondingPropertySymbol?.owner
+		val target = selectedInheritedImplementation(a)?.correspondingPropertySymbol?.owner
+		// An inherited event can acquire a new ordinary interface getter obligation on this subclass.
+		return property == null || !isClrEventProperty(property) || !hasOrdinaryPropertySlot(property) ||
+			target?.let(::hasOrdinaryPropertySlot) != false
+	}
 	fun inheritedStatic(p: IrProperty) = isInheritedStaticProperty(p)
-	// `!isClrEventProperty`: a `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited through a base's
-	// interface) is not a real property and must not surface an accessor/property member.
-	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !isClrField(p) && !dropFake(p.getter) && !isClrEventProperty(p) && !inheritedStatic(p)
+	// A native event needs a getter only when its override closure also contains an ordinary property slot.
+	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !isClrField(p) && !dropFake(p.getter) && hasOrdinaryPropertySlot(p) && !inheritedStatic(p)
 	fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !isClrField(p) && !dropFake(p.setter) && !isClrEventProperty(p) && !inheritedStatic(p)
 	val inheritedDefaultAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 		listOfNotNull(
@@ -1867,7 +1896,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// @ClrField opt-out" is the next phase; field-backed props keep their backing field for now.)
 	val propsList = klass.declarations.filterIsInstance<IrProperty>().filter { emitsGet(it) }.joinToString(",") { p ->
 		val kotlinStatic = if (isKotlinStaticProperty(p)) ""","kotlinStatic":true""" else ""
-		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}$kotlinStatic${overridesJson(p.getter!!)}}"""
+		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}$kotlinStatic${overridesJson(p.getter!!, ordinaryPropertySlots = true)}}"""
 	}
 	val methods = (instMethods + userAccessors + clrEventMethods + clrEventForwardMethods).joinToString(",")
 	// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`

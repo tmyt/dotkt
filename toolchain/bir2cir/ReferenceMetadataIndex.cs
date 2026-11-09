@@ -6927,7 +6927,7 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidDataException("expected exactly one trusted [KotlinPropertyAccessor]");
         var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinPropertyAccessorAttr) as JsonObject
             ?? throw new InvalidDataException("malformed [KotlinPropertyAccessor] payload");
-        if (payload.Count is not (3 or 4) ||
+        if (payload.Count is < 3 or > 5 ||
             payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name) ||
             payload["kind"] is not JsonValue kindValue || !kindValue.TryGetValue<string>(out var kind) ||
             payload["association"] is not JsonValue associationValue ||
@@ -6935,13 +6935,19 @@ sealed partial class ReferenceMetadataIndex
             string.IsNullOrEmpty(name) || string.IsNullOrEmpty(association) || kind is not ("get" or "set"))
             throw new InvalidDataException("malformed [KotlinPropertyAccessor] payload");
         string sourceAssociation = null;
-        if (payload.Count == 4 && payload["sourceAssociation"] is JsonValue sourceValue)
+        if (payload["sourceAssociation"] is JsonValue sourceValue)
         {
             if (!sourceValue.TryGetValue<string>(out sourceAssociation) || string.IsNullOrEmpty(sourceAssociation))
                 throw new InvalidDataException("malformed [KotlinPropertyAccessor] source association");
         }
-        else if (payload.Count == 4 || payload.ContainsKey("sourceAssociation"))
+        else if (payload.ContainsKey("sourceAssociation"))
             throw new InvalidDataException("malformed [KotlinPropertyAccessor] source association");
+        string nativeEvent = null;
+        if (payload.ContainsKey("event") && (kind != "get" || payload["event"] is not JsonValue eventValue ||
+            !eventValue.TryGetValue<string>(out nativeEvent) || string.IsNullOrEmpty(nativeEvent)))
+            throw new InvalidDataException("malformed [KotlinPropertyAccessor] event association");
+        if (payload.Count != 3 + (sourceAssociation != null ? 1 : 0) + (nativeEvent != null ? 1 : 0))
+            throw new InvalidDataException("malformed [KotlinPropertyAccessor] payload");
         return new PropertyAccessorPayloadInfo(name, kind, association, sourceAssociation);
     }
 

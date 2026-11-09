@@ -36,6 +36,19 @@ static class ClrEventImplBinding
     {
         void Preserve(JsonObject owner)
         {
+            if (owner["clrEvents"] is JsonArray events && owner["methods"] is JsonArray accessors)
+                foreach (var declaration in events.OfType<JsonObject>())
+                    foreach (var getter in accessors.OfType<JsonObject>().Where(method =>
+                        Str(method[KotlinPropertyAccessors.KindKey]) == "get"
+                        && Str(method[KotlinPropertyAccessors.AssociationKey]) is string association
+                        && association == Str(declaration[KotlinPropertyAccessors.AssociationKey])))
+                        getter[KotlinPropertyAccessors.MetadataCarrierKey] = new JsonObject
+                        {
+                            ["name"] = Str(getter[KotlinPropertyAccessors.SourceNameKey]),
+                            ["kind"] = "get",
+                            ["association"] = Str(declaration[KotlinPropertyAccessors.AssociationKey]),
+                            ["event"] = Str(declaration["name"]),
+                        };
             if (owner["methods"] is JsonArray methods)
                 foreach (var method in methods.OfType<JsonObject>())
                     if (method["body"] is JsonArray { Count: > 0 } body

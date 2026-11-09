@@ -3144,6 +3144,11 @@ internal sealed class AssemblyScanner : IDisposable
 
         foreach (var (ev, accessorHandle) in declaredEvents)
         {
+            // One Kotlin declaration can own both a native Event row and an ordinary property getter slot.
+            // The trusted accessor carrier states that relation; never infer it from equal physical names.
+            if (accessorPairs.Any(pair => !pair.Getter.IsNil &&
+                KotlinPropertyAccessorCarrier(pair.Getter)?.Event == _md.GetString(ev.Name)))
+                continue;
             var accessor = _md.GetMethodDefinition(accessorHandle);
             var physicalHandler = signatures.DecodeEntity(ev.Type, typeContext, platform: false);
             var handler = physicalHandler;
@@ -5821,7 +5826,8 @@ internal sealed class AssemblyScanner : IDisposable
             var hasCompanionReceiver =
                 _attrs.Has(representativeHandle, MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute");
             var contextStart = hasReceiver ? 1 : 0;
-            if (!hasReceiver && !hasCompanionReceiver && propertyPhysical.Count == 0 ||
+            var hasEventAssociation = KotlinPropertyAccessorCarrier(representativeHandle)?.Event is not null;
+            if (!hasReceiver && !hasCompanionReceiver && propertyPhysical.Count == 0 && !hasEventAssociation ||
                 propertyPhysical.Skip(contextStart).Any(x =>
                     !_attrs.Has(x.Handle, MetadataAttributes.DotKtNs + "KotlinContextParameterAttribute")))
                 continue;
@@ -5963,10 +5969,10 @@ internal sealed class AssemblyScanner : IDisposable
         return result;
     }
 
-    private (string Name, int Kind, string Association, string? SourceAssociation)? KotlinPropertyAccessorCarrier(
+    private (string Name, int Kind, string Association, string? SourceAssociation, string? Event)? KotlinPropertyAccessorCarrier(
         MethodDefinitionHandle methodHandle) => KotlinPropertyAccessorCarrier(_attrs, methodHandle);
 
-    private static (string Name, int Kind, string Association, string? SourceAssociation)? KotlinPropertyAccessorCarrier(
+    private static (string Name, int Kind, string Association, string? SourceAssociation, string? Event)? KotlinPropertyAccessorCarrier(
         MetadataAttributes attributes, MethodDefinitionHandle methodHandle)
     {
         using var document = attributes.CarrierDocument(
@@ -5976,14 +5982,15 @@ internal sealed class AssemblyScanner : IDisposable
         var propertyCount = root.ValueKind == JsonValueKind.Object
             ? root.EnumerateObject().Count() : 0;
         if (root.ValueKind != JsonValueKind.Object ||
-            propertyCount is not (3 or 4) ||
+            propertyCount is < 3 or > 5 ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("kind", out var kindNode) || kindNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("association", out var associationNode) ||
             associationNode.ValueKind != JsonValueKind.String)
             throw new InvalidDataException("malformed [KotlinPropertyAccessor] payload");
         var hasSourceAssociation = root.TryGetProperty("sourceAssociation", out var sourceAssociationNode);
-        if (hasSourceAssociation != (propertyCount == 4) || hasSourceAssociation &&
+        var hasEvent = root.TryGetProperty("event", out var eventNode);
+        if (propertyCount != 3 + (hasSourceAssociation ? 1 : 0) + (hasEvent ? 1 : 0) || hasSourceAssociation &&
             (sourceAssociationNode.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(sourceAssociationNode.GetString())))
             throw new InvalidDataException("malformed [KotlinPropertyAccessor] source association");
         var name = nameNode.GetString();
@@ -5996,7 +6003,11 @@ internal sealed class AssemblyScanner : IDisposable
             "set" => 2,
             _ => throw new InvalidDataException("invalid [KotlinPropertyAccessor] role"),
         };
-        return (name, kind, association, hasSourceAssociation ? sourceAssociationNode.GetString() : null);
+        if (hasEvent && (kind != 1 || eventNode.ValueKind != JsonValueKind.String ||
+            string.IsNullOrEmpty(eventNode.GetString())))
+            throw new InvalidDataException("malformed [KotlinPropertyAccessor] event association");
+        return (name, kind, association, hasSourceAssociation ? sourceAssociationNode.GetString() : null,
+            hasEvent ? eventNode.GetString() : null);
     }
 
     private string KotlinPropertySourceName(PropertyDefinition property, PropertyAccessors accessors) =>
@@ -6174,6 +6185,13 @@ internal sealed class AssemblyScanner : IDisposable
                 : new ValueParameter { Name = names.String("value"), Type = type.Clone() },
         };
         ApplyAccessorFlags(property, getterHandle, setterHandle);
+        if (!getterHandle.IsNil && KotlinPropertyAccessorCarrier(getterHandle)?.Event is string nativeEvent)
+        {
+            if (!_md.GetTypeDefinition(owner).GetEvents().Any(eventHandle =>
+                _md.GetString(_md.GetEventDefinition(eventHandle).Name) == nativeEvent))
+                throw new InvalidDataException("Kotlin property accessor names a missing native event");
+            property.PropertyAnnotation.Add(new Annotation { Id = names.Class("kotlin.clr.ClrEventDeclaration") });
+        }
         var getterIdentity = getterHandle.IsNil ? null : KotlinDeclarationIdentityCarrier(getterHandle)?.Id;
         var setterIdentity = setterHandle.IsNil ? null : KotlinDeclarationIdentityCarrier(setterHandle)?.Id;
         if (getterIdentity is not null || setterIdentity is not null)
