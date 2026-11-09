@@ -90,7 +90,13 @@ fi
 # 1. Project every resolved CLR reference to one standard KLIB. DotKt.Stdlib is deliberately represented by
 #    the authoritative frontend KLIB instead of projecting its physical runtime/reference assembly.
 rsp="$work/references.rsp"
-printf '%s\n' "${FRAMEWORK_COMPILE_REF_PATHS[@]}" "${extra_refs[@]}" > "$rsp"
+declare -a projection_refs=("${FRAMEWORK_COMPILE_REF_PATHS[@]}" "${extra_refs[@]}")
+if (( use_stdlib )); then
+	# Resolution still needs the stdlib-owned CLR declarations referenced by user DLLs. dll2klib's
+	# library-kind marker excludes both twins from projection, not from its resolved type catalog.
+	projection_refs+=("$STDLIB_REF_DLL" "$STDLIB_RT_DLL")
+fi
+printf '%s\n' "${projection_refs[@]}" > "$rsp"
 jobs="${DOTKT_DLL2KLIB_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1')}"
 dotnet "$DLL2KLIB_DLL" --out "$klibs" --jobs "$jobs" @"$rsp" >/dev/null
 case "${OS:-}" in
