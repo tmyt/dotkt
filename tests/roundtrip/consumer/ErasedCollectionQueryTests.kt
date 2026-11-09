@@ -6,6 +6,7 @@ import roundtrip.erasedqueries.NullableQueries
 import roundtrip.erasedqueries.ItemQueries
 import roundtrip.erasedqueries.QueryItem
 import roundtrip.erasedqueries.BoundedQuerySet
+import roundtrip.erasedqueries.NativeBackedQuerySet
 
 private class ImportedErasedQuerySet<E>(values: List<E>) : QuerySet<E>(values)
 private class ImportedIntegerQueries : CountingQuerySet<Int>(listOf(1)), IntegerQueries
@@ -54,5 +55,9 @@ class CrossModuleErasedCollectionQueryTests {
         val inheritedBounded = ImportedItemQueries(item)
         check((inheritedBounded as ItemQueries).contains(item) && inheritedBounded.calls == 1)
         check(!(inheritedBounded as ItemQueries).contains(QueryItem()) && inheritedBounded.calls == 2)
+        val nativeBacked = NativeBackedQuerySet(arrayListOf(1))
+        check(!nativeBacked.equals(setOf("x")) && nativeBacked.calls == 1)
+        check(!nativeBacked.equals(setOf<Int?>(null)) && nativeBacked.calls == 2)
+        check(nativeBacked.equals(setOf(1)) && nativeBacked.calls == 3)
     }
 }

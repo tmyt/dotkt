@@ -17,6 +17,12 @@ open class CountingQuerySet<E>(values: List<E>) : QuerySet<E>(values) {
     var failure: IllegalStateException? = null
     override fun contains(element: E): Boolean {
         calls++
+        val alias = element
+        val captured: () -> (() -> Any?) = {
+            val nestedAlias = alias
+            { nestedAlias }
+        }
+        check(captured()() == (element as Any?))
         val pending = failure
         if (pending != null) throw pending
         return super.contains(element)
@@ -27,6 +33,12 @@ interface IntegerQueries : Collection<Int>
 interface NullableQueries : Collection<String?>
 open class QueryBound
 class QueryItem : QueryBound()
+class NativeBackedQuerySet<E>(private val values: ArrayList<E>) : AbstractSet<E>() {
+    var calls = 0
+    override val size: Int get() = values.size
+    override fun iterator(): Iterator<E> = values.iterator()
+    override fun contains(element: E): Boolean { calls++; return values.contains(element) }
+}
 interface ItemQueries : Collection<QueryItem>
 open class BoundedQuerySet<E : QueryBound>(values: List<E>) : QuerySet<E>(values) {
     var calls = 0

@@ -936,7 +936,9 @@ sealed class Pipeline
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
         // representation before state-machine materialization and final member binding.
         ExistentialCaptureAlignment.ApplyAll(
-            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
+            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs, isValueFqn, genericRepresentations,
+            (owner, field, position, arity, storage) => NullableTvErasureCallRealign.RebindGeneratedCapture(
+                nullableTvDeclRets, owner, field, position, arity, storage));
         // KOTLIN FAKE-OVERRIDE -> CLR INTERFACE SLOT: if a concrete class implements an interface using a public
         // NON-VIRTUAL method inherited from its base class, Kotlin considers the member implemented but CLR implicit
         // interface binding does not. Materialize the exact forwarding member in CIR/BIR-space before suspend lowering

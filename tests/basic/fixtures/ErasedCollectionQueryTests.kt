@@ -1,4 +1,9 @@
 import NUnit.Framework.TestAttribute
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+
+private fun interface ErasedCapturedQueryValue { fun read(): Any? }
 
 private open class ErasedCollectionQuerySet<E>(private val values: List<E>) : AbstractSet<E>() {
     override val size: Int get() = values.size
@@ -14,8 +19,29 @@ private class ErasedCollectionQueryOverride : ErasedCollectionQuerySet<Int>(list
 private open class ErasedCountingQueries<E>(values: List<E>) : ErasedCollectionQuerySet<E>(values) {
     var calls = 0
     var failure: IllegalStateException? = null
+    var capturedResult: Any? = null
     override fun contains(element: E): Boolean {
         calls++
+        val captured: () -> Any? = { element }
+        check(captured() == (element as Any?))
+        val alias = element
+        val nested: () -> (() -> Any?) = {
+            val secondAlias = alias
+            { secondAlias }
+        }
+        check(nested()() == (element as Any?))
+        val sam = ErasedCapturedQueryValue { element as Any? }
+        check(sam.read() == (element as Any?))
+        val suspended: suspend () -> Any? = {
+            val aliasInSuspend = element
+            val read: () -> Any? = { aliasInSuspend }
+            read()
+        }
+        suspended.startCoroutine(object : Continuation<Any?> {
+            override val context = EmptyCoroutineContext
+            override fun resumeWith(result: Result<Any?>) { capturedResult = result.getOrThrow() }
+        })
+        check(capturedResult == (element as Any?))
         val pending = failure
         if (pending != null) throw pending
         return super.contains(element)
@@ -33,7 +59,12 @@ private open class ErasedBoundedQueries<E : ErasedQueryBound>(private val values
     var calls = 0
     override val size: Int get() = values.size
     override fun iterator(): Iterator<E> = values.iterator()
-    override fun contains(element: E): Boolean { calls++; return super.contains(element) }
+    override fun contains(element: E): Boolean {
+        calls++
+        val captured: () -> Any? = { element }
+        check(captured() === element)
+        return super.contains(element)
+    }
     fun contains(element: String): Boolean = error("unrelated overload was selected")
 }
 
@@ -46,6 +77,24 @@ private class ErasedInheritedDeclaredQueries : ErasedCountingQueries<Int>(listOf
 private class ErasedInheritedNullableQueries : ErasedCountingQueries<String?>(listOf(null, "x")), ErasedNullableQueries
 private class ErasedInheritedItemQueries(item: ErasedQueryItem) :
     ErasedBoundedQueries<ErasedQueryItem>(listOf(item)), ErasedItemQueries
+
+private class ErasedNativeBackedQueries<E>(private val values: ArrayList<E>) : AbstractSet<E>() {
+    var calls = 0
+    override val size: Int get() = values.size
+    override fun iterator(): Iterator<E> = values.iterator()
+    override fun contains(element: E): Boolean { calls++; return values.contains(element) }
+}
+
+private class ErasedMapBackedQueries<E>(private val values: List<E>) : AbstractSet<E>() {
+    private val positions = HashMap<E, Int>()
+    init { for (index in values.indices) positions[values[index]] = index }
+    var calls = 0
+    override val size: Int get() = values.size
+    override fun iterator(): Iterator<E> = values.iterator()
+    override fun contains(element: E): Boolean { calls++; return positions.containsKey(element) }
+}
+
+private enum class ErasedQueryEnum { ITEM }
 
 private class ErasedOuterQuery<A> {
     inner class Values<B>(private val values: List<B>) : AbstractSet<B>() {
@@ -78,7 +127,8 @@ private fun <T> erasedCollectionQueryLoop(target: Collection<T>, values: Collect
 
 private fun <T> erasedCollectionQueryConsumer(values: Collection<T>, consume: (T) -> String): String {
     val value = values.iterator().next()
-    return consume(value)
+    val deferred = { consume(value) }
+    return deferred()
 }
 
 class ErasedCollectionQueryTests {
@@ -137,6 +187,19 @@ class ErasedCollectionQueryTests {
         val inheritedBounded = ErasedInheritedItemQueries(item)
         check((inheritedBounded as ErasedItemQueries).contains(item) && inheritedBounded.calls == 1)
         check(!(inheritedBounded as ErasedItemQueries).contains(ErasedQueryItem()) && inheritedBounded.calls == 2)
+        val otherBound = ErasedBoundedQueries(listOf(item))
+        check(!otherBound.equals(setOf(ErasedQueryBound())) && otherBound.calls == 1)
+        val nativeBacked = ErasedNativeBackedQueries(arrayListOf(1))
+        check(!nativeBacked.equals(setOf("x")) && nativeBacked.calls == 1)
+        check(!nativeBacked.equals(setOf<Int?>(null)) && nativeBacked.calls == 2)
+        check(nativeBacked.equals(setOf(1)) && nativeBacked.calls == 3)
+        val mapBacked = ErasedMapBackedQueries(listOf(1))
+        check(!mapBacked.equals(setOf("x")) && mapBacked.calls == 1)
+        check(!mapBacked.equals(setOf<Int?>(null)) && mapBacked.calls == 2)
+        check(mapBacked.equals(setOf(1)) && mapBacked.calls == 3)
+        val entries: List<*> = ErasedQueryEnum.entries
+        check(!entries.contains("ITEM") && !entries.contains(null))
+        check(entries.indexOf("ITEM") == -1 && entries.lastIndexOf(null) == -1)
         check(ErasedOuterQuery<String>().Values(listOf(1)).contains(1))
 
         val cursor = ErasedQueryCursor(reference)
