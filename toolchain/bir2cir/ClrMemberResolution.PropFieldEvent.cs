@@ -293,7 +293,8 @@ static partial class ClrMemberResolution
             ((TypeNode.Fqn)reference.DeclaringType).Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
         node["handler"] = new JsonObject
         {
-            ["k"] = "cast", ["type"] = TypeJson.Write(handlerType), ["e"] = node["handler"]?.DeepClone(),
+            ["k"] = "cast", ["type"] = TypeJson.Write(SignatureValueTypes.Of(handlerType)),
+            ["e"] = node["handler"]?.DeepClone(),
         };
         StampResolvedMemberReturn(node, acc.ReturnType);
         if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall: false);
