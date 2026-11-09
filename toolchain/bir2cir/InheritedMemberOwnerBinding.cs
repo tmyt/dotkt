@@ -261,8 +261,8 @@ static class InheritedMemberOwnerBinding
         // That closure records semantic ancestry; it does not ask CIR to call the base/interface declaration. Retargeting
         // a covariant concrete method (`Derived.m(): Derived`) to its interface slot (`Base.m(): Base`) changes the
         // physical return type and makes an immediately-narrow consumer unverifiable. Prefer the real declaration on
-        // the current owner. A local fake override is not emitted as a slot, so it deliberately falls through to the
-        // hierarchy search.
+        // the current owner, including retained abstract obligations. A concrete inherited fake has no own slot
+        // and deliberately falls through to the hierarchy search.
         var ownDeclarationSig = ExactDeclarationSignature(
             types.GetValueOrDefault(owner.Name), method, methodArity, sig, owner.Args,
             propertyName, propertyAccessor);

@@ -179,9 +179,9 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		val carried = carriedDeclarationId(fn)
 		if (carried != null) return carried
 		if (projectedClrOwner != null) return null
-		// An inherited view has no declaration of its own. Call/delegate emission resolves its frontend override
-		// edge to the real declaration; only an explicit imported carrier can give the view an independent identity.
-		if (fn.isFakeOverride) return null
+		// Concrete inherited views resolve to the selected implementation. Retained abstract class obligations
+		// instead own a declaration signature, including its generic frame and any overload discriminator.
+		if (fn.isFakeOverride && (fn.modality != Modality.ABSTRACT || owner.kind == ClassKind.INTERFACE)) return null
 		// Kotlin supplies body-less primitive operations as built-in vocabulary, not emitted declarations.
 		// Keep real primitive declarations (e.g. source-authored conversion bodies) on the ordinary identity path.
 		if (owner.defaultType.isPrimitiveType() && fn.body == null && !fn.isExternal

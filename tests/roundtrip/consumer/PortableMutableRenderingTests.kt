@@ -13,6 +13,11 @@ import roundtrip.mutablepolicy.portableReadOnlyBase
 import roundtrip.mutablepolicy.portableMutableBase
 import roundtrip.mutablepolicy.PortableSelected
 import roundtrip.mutablepolicy.PortableNarrowValue
+import roundtrip.mutablepolicy.PortableInheritedSelection
+
+private class ConsumerSelected<T>(private val value: PortableNarrowValue<T>) : PortableInheritedSelection<T>() {
+    override fun selected(): PortableNarrowValue<T> = value
+}
 
 private fun checkPortableMutableRendering(value: Any, expected: String) {
     val actual = value.toString()
@@ -27,6 +32,8 @@ class CrossModulePortableMutableRenderingTests {
     @TestAttribute fun opaqueDefaultsRenderEmptyNullableAndValueElements() {
         val selected = PortableSelected(PortableNarrowValue(7))
         check(selected.readSelected() === selected.value && selected.readSelected().element == 7)
+        val inherited: PortableInheritedSelection<Int> = ConsumerSelected(selected.value)
+        check(inherited.selected() === selected.value && inherited.readSelected() === selected.value)
         val nullableSelected = PortableSelected(PortableNarrowValue<String?>(null))
         check(nullableSelected.readSelected() === nullableSelected.value && nullableSelected.readSelected().element == null)
         check(portableReadOnlyBase(PortableMutableCollection(mutableListOf(1))).contains(1))

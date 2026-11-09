@@ -54,6 +54,29 @@ class ClassFactoryLeaf : ClassFactory() {
     override fun make(): Narrow? = Narrow("class leaf method")
 }
 
+private abstract class BoundReturnBase { abstract fun value(): Value }
+private class BoundReturn<T : Value>(private val item: T) : BoundReturnBase() { override fun value(): T = item }
+private abstract class BoxedReturnBase { abstract fun value(): Comparable<Int> }
+private class BoxedReturn : BoxedReturnBase() { override fun value(): Int = 7 }
+private abstract class MethodBoundBase { abstract fun <T : Value> choose(value: T): Value }
+private class MethodBound : MethodBoundBase() { override fun <T : Value> choose(value: T): T = value }
+private abstract class EchoBase { abstract fun <T> echo(value: T): T }
+private abstract class EchoMiddle : EchoBase()
+private class EchoLeaf : EchoMiddle() { override fun <T> echo(value: T): T = value }
+private interface OverloadLeft
+private interface OverloadRight
+private class LeftValue : OverloadLeft
+private class RightValue : OverloadRight
+private abstract class OverloadBase {
+    abstract fun <T : OverloadLeft> choose(value: T): Int
+    abstract fun <T : OverloadRight> choose(value: T): Int
+}
+private abstract class OverloadMiddle : OverloadBase()
+private class OverloadLeaf : OverloadMiddle() {
+    override fun <T : OverloadLeft> choose(value: T): Int = 1
+    override fun <T : OverloadRight> choose(value: T): Int = 2
+}
+
 class InheritedCovariantSlotTests {
     @TestAttribute
     fun inheritedGenericAndConcreteGettersFillNewInterfaceSlots() {
@@ -76,6 +99,17 @@ class InheritedCovariantSlotTests {
 
     @TestAttribute
     fun inheritedCovariantGettersAndMethodsKeepVirtualDispatch() {
+        val value = Narrow("bounded")
+        val bounded: BoundReturnBase = BoundReturn(value)
+        check(bounded.value() === value)
+        val boxed: BoxedReturnBase = BoxedReturn()
+        check(boxed.value().compareTo(7) == 0)
+        val methodBound: MethodBoundBase = MethodBound()
+        check(methodBound.choose(value) === value)
+        val echo: EchoMiddle = EchoLeaf()
+        check(echo.echo(7) == 7 && echo.echo("echo") == "echo" && echo.echo<String?>(null) == null)
+        val overloads: OverloadMiddle = OverloadLeaf()
+        check(overloads.choose(LeftValue()) == 1 && overloads.choose(RightValue()) == 2)
         val middle: Factory = FactoryMiddle()
         check(middle.item.text == "base getter")
         check(middle.make().text == "base method")

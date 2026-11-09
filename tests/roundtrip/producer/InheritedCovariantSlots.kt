@@ -36,3 +36,15 @@ abstract class ClassFactoryNarrow : ClassFactoryBase() {
     abstract override fun make(): Narrow?
     abstract override fun <T> makeFrom(seed: T, text: String): Narrow
 }
+
+abstract class BoundReturnBase { abstract fun value(): Value }
+abstract class BoxedReturnBase { abstract fun value(): Comparable<Int> }
+abstract class EchoBase { abstract fun <T> echo(value: T): T }
+abstract class EchoMiddle : EchoBase()
+interface OverloadLeft
+interface OverloadRight
+abstract class OverloadBase {
+    abstract fun <T : OverloadLeft> choose(value: T): Int
+    abstract fun <T : OverloadRight> choose(value: T): Int
+}
+abstract class OverloadMiddle : OverloadBase()

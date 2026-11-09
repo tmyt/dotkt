@@ -31,6 +31,18 @@ class ImportedClassFactoryLeaf : ImportedClassFactory() {
     override fun make(): Narrow? = Narrow("imported leaf method")
 }
 
+private class ImportedBoundReturn<T : Value>(private val item: T) : BoundReturnBase() { override fun value(): T = item }
+private class ImportedBoxedReturn : BoxedReturnBase() { override fun value(): Int = 7 }
+private abstract class ImportedEchoMiddle : EchoMiddle()
+private class ImportedEcho : ImportedEchoMiddle() { override fun <T> echo(value: T): T = value }
+private class ImportedLeftValue : OverloadLeft
+private class ImportedRightValue : OverloadRight
+private abstract class ImportedOverloadMiddle : OverloadMiddle()
+private class ImportedOverloads : ImportedOverloadMiddle() {
+    override fun <T : OverloadLeft> choose(value: T): Int = 1
+    override fun <T : OverloadRight> choose(value: T): Int = 2
+}
+
 class InheritedCovariantSlotTests {
     @TestAttribute
     fun exportedBridgeOwnersRetainTheirNarrowKotlinSurface() {
@@ -82,6 +94,15 @@ class InheritedCovariantSlotTests {
 
     @TestAttribute
     fun importedCovariantGettersAndMethodsKeepVirtualDispatch() {
+        val value = Narrow("bounded")
+        val bounded: BoundReturnBase = ImportedBoundReturn(value)
+        check(bounded.value() === value)
+        val boxed: BoxedReturnBase = ImportedBoxedReturn()
+        check(boxed.value().compareTo(7) == 0)
+        val echo: EchoMiddle = ImportedEcho()
+        check(echo.echo(7) == 7 && echo.echo("echo") == "echo" && echo.echo<String?>(null) == null)
+        val overloads: OverloadMiddle = ImportedOverloads()
+        check(overloads.choose(ImportedLeftValue()) == 1 && overloads.choose(ImportedRightValue()) == 2)
         val middle: Factory = FactoryMiddle()
         check(middle.item.text == "base getter")
         check(middle.make().text == "base method")
