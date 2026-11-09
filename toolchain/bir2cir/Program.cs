@@ -162,8 +162,7 @@ sealed class Pipeline
                 path,
                 json,
                 root,
-                SuspendShapeAnalyzer.Analyze(root),
-                CallSiteAnalyzer.Analyze(root)));
+                SuspendShapeAnalyzer.Analyze(root)));
         }
 
         return files;
@@ -1843,7 +1842,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
     }
 }
 
-sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend, CallSiteAnalysis Calls);
+sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record CirFile(string OutputName, string Json);
 
 static class JsonOptions
