@@ -497,7 +497,10 @@ sealed class ValueRepresentationLowering
                 foreach (var marker in (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     if (Text(marker[DeclarationIdentityBinding.Key]) is string id && members.TryGetValue(id, out var selected))
                         reachable.Add(selected.Owner);
-            var sourceMembers = members.Where(member => reachable.Contains(member.Value.Owner)).ToArray();
+            // A retained abstract override can carry the ancestor's adapter annotation and identity relation.
+            // It selects that existing facet; only the aliased declaration introduces its physical slot.
+            var sourceMembers = members.Where(member => reachable.Contains(member.Value.Owner)
+                && aliases.ContainsKey(member.Value.Owner)).ToArray();
             bool Selects(JsonObject fact, string sourceId) =>
                 (fact["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
                     .Any(marker => Text(marker[DeclarationIdentityBinding.Key]) == sourceId);
@@ -607,10 +610,10 @@ sealed class ValueRepresentationLowering
                 if (cls.Node["interfaces"] == null) cls.Node["interfaces"] = interfaces;
                 if (!interfaces.Any(type => TypeJson.OwnerName(type) == slotOwner)) interfaces.Add(TypeJson.Fqn(slotOwner));
             }
-            // Inherited accessor placeholders are not new source declarations. Their value-family
-            // obligations are the exact facet slots above, not a second abstract CLR property surface.
-            var placeholders = cls.Methods.OfType<JsonObject>().Where(method => Bool(method["abstract"])
-                && method[DeclarationIdentityBinding.Key] == null && SelectedAdapter(method) != null
+            // Inherited abstract value-family obligations select the exact facet slots above,
+            // not a second abstract CLR method/property surface beside those slots.
+            var placeholders = cls.Methods.OfType<JsonObject>().Where(method => !aliases.ContainsKey(cls.Name)
+                && Bool(method["abstract"]) && SelectedAdapter(method) != null
                 && (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
                     .Select(marker => Text(marker[DeclarationIdentityBinding.Key])).Where(id => id != null)
                     .All(members.ContainsKey)).ToArray();
@@ -659,6 +662,14 @@ sealed class ValueRepresentationLowering
             {"k":"exprStmt","expr":{"k":"classRef","type":{"t":"fqn","name":"Union"}}},
             {"k":"exprStmt","expr":{"k":"callStatic","sig":[{"t":"fqn","name":"Union"}]}}]}]}
         """);
+        root["types"].AsArray().Add(JsonNode.Parse("""
+            {"name":"AbstractChild","kind":"class","abstract":true,"base":{"t":"fqn","name":"Union"},
+             "methods":[{"name":"convert","declarationId":"abstract-convert","abstract":true,
+              "params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"body":[],
+              "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrValueMember"},
+                "args":[{"value":"Helpers.convert"},{"value":"Slots.convert"}]}],
+              "overrides":[{"declarationId":"convert"}]}]}
+            """));
         var referenceRoot = root.DeepClone();
         var policy = new ValueRepresentationLowering(new[] { root }, null, false);
         var inheritedCall = JsonNode.Parse("""
@@ -668,6 +679,13 @@ sealed class ValueRepresentationLowering
         policy.BindOperations(inheritedCall);
         if (Text(inheritedCall[DeclarationIdentityBinding.Key]) != "helper-convert")
             throw new InvalidOperationException("A frontend-selected inherited contract lost its value adapter");
+        var abstractCall = JsonNode.Parse("""
+            {"k":"callInstance","declarationId":"abstract-convert","overrides":[{"declarationId":"convert"}],
+             "recv":{"k":"local","name":"value"},"args":[],"sig":[],"ret":{"t":"fqn","name":"kotlin.Int"}}
+            """);
+        policy.BindOperations(abstractCall);
+        if (Text(abstractCall[DeclarationIdentityBinding.Key]) != "helper-convert")
+            throw new InvalidOperationException("A retained abstract obligation lost its selected ancestor adapter");
         var nullCast = JsonNode.Parse("""
             {"k":"cast","type":{"t":"fqn","name":"Union"},
              "e":{"k":"const","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}},"value":null}}
@@ -690,6 +708,9 @@ sealed class ValueRepresentationLowering
             """);
         policy.RecordSourceTypes(root);
         policy.SynthesizeSlots(new[] { root }, _ => false);
+        if (root["types"][2]["methods"].AsArray().OfType<JsonObject>().Count() != 1
+            || !Bool(root["types"][2]["methods"][0]["generated"]))
+            throw new InvalidOperationException("An inherited binding annotation duplicated a nominal facet slot");
         foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
             if (method[key][0].AsObject().ContainsKey("retKotlinType"))
                 throw new InvalidOperationException("Physical MethodImpl descriptor acquired source metadata");

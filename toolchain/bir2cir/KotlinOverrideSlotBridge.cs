@@ -395,7 +395,9 @@ static class KotlinOverrideSlotBridge
                 // including when the narrow override is abstract. Reuse the ordinary virtual forwarder
                 // only when the actual physical return is assignable; Kotlin variance alone is no proof.
                 else if (!supIsInterface && phase == Phase.PhysicalBridges && CanForwardClassReturn(
-                        PhysicalSlotType(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs)), PhysicalSlotType(slotRet), impl))
+                        PhysicalSlotType(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs)),
+                        referencedSlot && !refs.HasDotKtOwner(descriptorSpec.Name)
+                            ? slotRet : PhysicalSlotType(slotRet), impl))
                     retFit = Fit.Bridge;
                 else
                 {
@@ -1761,10 +1763,11 @@ static class KotlinOverrideSlotBridge
                 // A null PARAMETER fact is a slot this reader cannot state, and inventing one from the physical
                 // signature is the derivation its silence exists to prevent — so the member is left alone.
                 if (slotParams0.Any(t => t == null)) continue;
-                // Only an explicitly selected hot/cold MethodDef is returned as an entirely physical signature.
-                // Ordinary reference lookups may restore Kotlin nullable-generic carriers even in the late phase.
+                // A native accessor and an explicitly selected hot/cold MethodDef state exact CLR signatures.
+                // Ordinary Kotlin reference lookups may restore nullable-generic carriers even in the late phase.
+                // Never erase a native Nullable<V> nested in a reified slot into an unrelated Kotlin object slot.
                 var slotParams = slotParams0
-                    .Select(t => SupertypeGraph.SubstOwnerTvs(DeclaredSlot(t, isValue, physical: physicalProjection != null),
+                    .Select(t => SupertypeGraph.SubstOwnerTvs(DeclaredSlot(t, isValue, physical: physicalProjection != null || nativeOwner != null),
                         accessorKind != null ? physicalSelectedArgs : supArgs))
                     .ToArray();
                 // A null RETURN fact is the opposite: the reader states a return only while it still says something a
@@ -1773,7 +1776,7 @@ static class KotlinOverrideSlotBridge
                 // `compareTo(T): Int` is exactly that — the parameter is the whole divergence.
                 var slotRet = slotRet0 == null
                     ? SupertypeGraph.SubstOwnerTvs(TypeJson.Read(impl["ret"]), ownArgs)
-                    : SupertypeGraph.SubstOwnerTvs(DeclaredSlot(slotRet0, isValue, physical: physicalProjection != null),
+                    : SupertypeGraph.SubstOwnerTvs(DeclaredSlot(slotRet0, isValue, physical: physicalProjection != null || nativeOwner != null),
                         accessorKind != null ? physicalSelectedArgs : supArgs);
                 if (slotRet == null) continue;
                 if (accessorKind != null) slotReturnsValue = slotRet0 != null && !IsVoid(slotRet0);
