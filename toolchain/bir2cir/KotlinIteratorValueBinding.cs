@@ -9,19 +9,7 @@ using DotKt.Bir;
 // next/previous methods, super dispatch, and already-bound CLR bridges remain exact.
 sealed class KotlinIteratorValueBinding
 {
-    const string Runtime = "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt";
-    readonly ReferenceMetadataIndex references;
-    readonly Dictionary<string, JsonObject> localHelpers = new(StringComparer.Ordinal);
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
-
-    internal KotlinIteratorValueBinding(IEnumerable<JsonObject> roots, ReferenceMetadataIndex refs)
-    {
-        references = refs;
-        foreach (var root in roots.Where(root => Text(root["fileClass"]) == Runtime))
-            foreach (var method in (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(method["name"]) is "listIteratorNextErased" or "listIteratorPreviousErased")
-                    localHelpers.Add(Text(method["name"]), method);
-    }
 
     internal TypeNode.Tv Element(JsonObject call)
     {
@@ -54,34 +42,37 @@ sealed class KotlinIteratorValueBinding
 
     internal void Bind(JsonObject read)
     {
-        var name = Operation(read) == "previous" ? "listIteratorPreviousErased" : "listIteratorNextErased";
-        string identity;
-        JsonArray signature;
-        if (localHelpers.TryGetValue(name, out var local))
-        {
-            identity = Text(local[DeclarationIdentityBinding.Key])
-                ?? throw new InvalidOperationException("Iterator value helper has no declaration identity");
-            signature = new JsonArray(((JsonArray)local["params"]).OfType<JsonObject>()
-                .Select(parameter => parameter["type"]?.DeepClone()).ToArray());
-        }
-        else
-        {
-            var helper = references.AuthoredKotlinHelper(Runtime, name, 0,
-                new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
-            identity = helper.DeclarationId;
-            signature = new JsonArray(helper.ParamTypeNodes.Select(TypeJson.Write).ToArray());
-        }
-        var receiver = read["recv"]?.DeepClone()
+        var previous = Operation(read) == "previous";
+        var capability = TypeJson.Fqn("DotKt.Runtime.CompilerServices."
+            + (previous ? "KotlinListIteratorValueSlot" : "KotlinIteratorValueSlot"));
+        var name = CallEvalLowering.FreshBindingId();
+        JsonObject Local() => new() { ["k"] = "local", ["name"] = name };
+        var receiver = read["recv"]
             ?? throw new InvalidOperationException("Iterator value read has no receiver");
+        // Move, do not clone, the receiver: nested reads already belong to the same value-flow plan.
+        read.Remove("recv");
+        var direct = read.DeepClone().AsObject();
+        direct["recv"] = Local();
+        direct["sty"] = TypeJson.Write(ObjectType);
         read.Clear();
-        read["k"] = "callStatic";
-        read["owner"] = TypeJson.Fqn(Runtime);
-        read["method"] = name;
-        read[DeclarationIdentityBinding.Key] = identity;
-        read["sig"] = signature;
-        read["typeArgs"] = new JsonArray();
-        read["args"] = new JsonArray(receiver);
-        read["ret"] = TypeJson.Write(ObjectType);
+        read["k"] = "valueBlock";
+        read["stmts"] = new JsonArray(new JsonObject {
+            ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(ObjectType), ["init"] = receiver,
+        });
+        read["result"] = new JsonObject {
+            ["k"] = "cond", ["type"] = TypeJson.Write(ObjectType),
+            ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = capability.DeepClone(), ["e"] = Local() },
+            ["then"] = new JsonObject {
+                ["k"] = "callInstance", ["ownerType"] = capability, ["virtual"] = true,
+                ["method"] = previous ? "dotktPreviousValue" : "dotktNextValue",
+                ["recv"] = Local(), ["sig"] = new JsonArray(), ["args"] = new JsonArray(),
+                ["ret"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))),
+            },
+            // Keep the selected native/nominal protocol when there is no erased adapter capability.
+            // Generic Kotlin iteration must not become uncached reflection or lose its exact interface view.
+            ["else"] = direct,
+        };
+        read["type"] = TypeJson.Write(ObjectType);
         read["sty"] = TypeJson.Write(ObjectType);
     }
 

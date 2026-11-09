@@ -11,6 +11,51 @@ private class ErasedCollectionQueryOverride : ErasedCollectionQuerySet<Int>(list
     override fun containsAll(elements: Collection<Int>): Boolean { calls++; return result }
 }
 
+private class ErasedCountingQueries<E>(values: List<E>) : ErasedCollectionQuerySet<E>(values) {
+    var calls = 0
+    var failure: IllegalStateException? = null
+    override fun contains(element: E): Boolean {
+        calls++
+        val pending = failure
+        if (pending != null) throw pending
+        return super.contains(element)
+    }
+}
+
+private class ErasedTypedQuery : ErasedCollectionQuerySet<Int>(listOf(1)) {
+    var calls = 0
+    override fun contains(element: Int): Boolean { calls++; return super.contains(element) }
+}
+
+private open class ErasedQueryBound
+private class ErasedBoundedQueries<E : ErasedQueryBound>(private val values: List<E>) : AbstractSet<E>() {
+    var calls = 0
+    override val size: Int get() = values.size
+    override fun iterator(): Iterator<E> = values.iterator()
+    override fun contains(element: E): Boolean { calls++; return super.contains(element) }
+}
+
+private class ErasedOuterQuery<A> {
+    inner class Values<B>(private val values: List<B>) : AbstractSet<B>() {
+        override val size: Int get() = values.size
+        override fun iterator(): Iterator<B> = values.iterator()
+    }
+}
+
+private class ErasedQueryCursor<T>(private val value: T) : ListIterator<T> {
+    var position = 0
+    val exhausted = NoSuchElementException("end")
+    override fun hasNext(): Boolean = position == 0
+    override fun hasPrevious(): Boolean = position == 1
+    override fun next(): T { if (!hasNext()) throw exhausted; position++; return value }
+    override fun previous(): T { if (!hasPrevious()) throw exhausted; position--; return value }
+    override fun nextIndex(): Int = position
+    override fun previousIndex(): Int = position - 1
+}
+
+private fun <T> erasedQueryNext(receiver: () -> Iterator<T>): Any? = receiver().next()
+private fun <T> erasedQueryPrevious(receiver: ListIterator<T>): Any? = receiver.previous()
+
 private fun <T> erasedCollectionQueryLoop(target: Collection<T>, values: Collection<T>): Boolean {
     for (value in values) {
         val alias = value
@@ -50,6 +95,35 @@ class ErasedCollectionQueryTests {
         val reference = Any()
         check(ErasedCollectionQuerySet(listOf(reference)).equals(setOf(reference)))
         check(!ErasedCollectionQuerySet(listOf(reference)).equals(setOf(Any())))
+        check(!integers.equals(strings) && !strings.equals(integers))
+
+        val counted = ErasedCountingQueries(listOf(1))
+        check(!counted.equals(setOf("x")) && counted.calls == 1)
+        check(!counted.equals(setOf<Int?>(null)) && counted.calls == 2)
+        val failure = IllegalStateException("authored")
+        counted.failure = failure
+        try {
+            (counted as Collection<*>).containsAll(listOf("x"))
+            error("contains override exception was suppressed")
+        } catch (actual: IllegalStateException) { check(actual === failure && counted.calls == 3) }
+        val typed = ErasedTypedQuery()
+        check(!typed.equals(setOf("x")) && typed.calls == 0)
+        check(typed.equals(setOf(1)) && typed.calls == 1)
+        val boundedValue = ErasedQueryBound()
+        val bounded = ErasedBoundedQueries(listOf(boundedValue))
+        check(!bounded.equals(setOf("x")) && bounded.calls == 0)
+        check(bounded.equals(setOf(boundedValue)) && bounded.calls == 1)
+        check(ErasedOuterQuery<String>().Values(listOf(1)).contains(1))
+
+        val cursor = ErasedQueryCursor(reference)
+        var receiverCalls = 0
+        check(erasedQueryNext { receiverCalls++; cursor } === reference && receiverCalls == 1)
+        check(erasedQueryPrevious(cursor) === reference && cursor.position == 0)
+        check(erasedQueryNext { receiverCalls++; cursor } === reference && receiverCalls == 2)
+        try {
+            erasedQueryNext { receiverCalls++; cursor }
+            error("iterator exception was suppressed")
+        } catch (actual: NoSuchElementException) { check(actual === cursor.exhausted && receiverCalls == 3) }
 
         val overridden = ErasedCollectionQueryOverride()
         check(overridden.equals(setOf("x")) && overridden.calls == 1)

@@ -17,7 +17,7 @@ static class ErasedElementValues
         ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null)
     {
         var files = roots.OfType<JsonObject>().ToArray();
-        var iteratorValues = new KotlinIteratorValueBinding(files, references);
+        var iteratorValues = new KotlinIteratorValueBinding();
         var interfaces = new Dictionary<string, bool>(StringComparer.Ordinal);
         var frames = references?.NullableTypeFrames.ToDictionary(pair => pair.Key, pair => pair.Value,
             StringComparer.Ordinal) ?? new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal);
@@ -197,30 +197,7 @@ static class ErasedElementValues
         }
 
         TypeNode Bound(TypeNode.Tv variable, HashSet<TypeNode.Tv> visited)
-        {
-            if (!visited.Add(variable)) throw new InvalidOperationException("Cyclic erased array-element bound");
-            var declaration = variable.Scope == "method" ? method : owner;
-            var frame = declaration == null ? null : variable.Scope == "method"
-                ? NullableRepresentationTypes.DeclarationMethodFrame(declaration)
-                : KotlinSupertypesRecord.ReadNullableFrame(declaration);
-            var index = frame?.PhysicalSlot(variable.I).SourceIndex ?? variable.I;
-            var position = frame?.SourcePosition(index) ?? variable.I;
-            var key = variable.Scope == "method" ? NullableGenericErasure.MethodTypeParameterBoundsPre : KotlinSupertypesRecord.PreKey;
-            var source = Text(declaration?[key]) is string encoded
-                ? JsonNode.Parse(encoded)?["bounds"]?[index.ToString()] as JsonArray : null;
-            var parameter = (declaration?["typeParams"] as JsonArray)?[position] as JsonObject;
-            var bounds = (source ?? parameter?["constraints"] as JsonArray ?? new JsonArray())
-                .Select(TypeJson.Read).Where(type => type != null).ToArray();
-            if (source != null)
-            {
-                var mapping = new NullableRepresentationTypes(
-                    owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner),
-                    NullableRepresentationTypes.DeclarationMethodFrame(method), frames, isValue, policy: policy);
-                bounds = bounds.Select(mapping.Slot).ToArray();
-            }
-            var bound = bounds.FirstOrDefault(type => !isInterface(type)) ?? bounds.FirstOrDefault() ?? ObjectType;
-            return bound is TypeNode.Tv parent ? Bound(parent, visited) : bound;
-        }
+            => ErasedBound(variable, method, owner, isInterface, frames, isValue, policy, visited);
         foreach (var statement in executable) Plan(statement);
         foreach (var (read, _) in reads)
         {
@@ -263,6 +240,41 @@ static class ErasedElementValues
             call.Remove("iface");
             call.Remove("recvType");
         }
+    }
+
+    // Shared by erased reads and generic query entry slots. A non-reified parameter promises its declared
+    // upper bound, not the caller's closed CLR instantiation. Representation-frame metadata owns that bound.
+    internal static TypeNode ErasedBound(TypeNode.Tv variable, JsonObject method, JsonObject owner,
+        Func<TypeNode, bool> isInterface, IReadOnlyDictionary<string, NullableRepresentationFrame> frames = null,
+        ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null, HashSet<TypeNode.Tv> visited = null)
+    {
+        visited ??= new HashSet<TypeNode.Tv>();
+        if (!visited.Add(variable)) throw new InvalidOperationException("Cyclic erased element bound");
+        var declaration = variable.Scope == "method" ? method : owner;
+        var frame = declaration == null ? null : variable.Scope == "method"
+            ? NullableRepresentationTypes.DeclarationMethodFrame(declaration)
+            : KotlinSupertypesRecord.ReadNullableFrame(declaration);
+        var index = frame?.PhysicalSlot(variable.I).SourceIndex ?? variable.I;
+        var position = frame?.SourcePosition(index) ?? variable.I;
+        var key = variable.Scope == "method" ? NullableGenericErasure.MethodTypeParameterBoundsPre : KotlinSupertypesRecord.PreKey;
+        var source = Text(declaration?[key]) is string encoded
+            ? JsonNode.Parse(encoded)?["bounds"]?[index.ToString()] as JsonArray : null;
+        var parameters = variable.Scope == "type" ? TypeParameterFrame.Declarations(declaration).ToArray()
+            : (declaration?["typeParams"] as JsonArray ?? new JsonArray()).ToArray();
+        var parameter = position < parameters.Length ? parameters[position] as JsonObject : null;
+        var bounds = (source ?? parameter?["constraints"] as JsonArray ?? new JsonArray())
+            .Select(TypeJson.Read).Where(type => type != null).ToArray();
+        if (source != null)
+        {
+            var mapping = new NullableRepresentationTypes(
+                owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner),
+                NullableRepresentationTypes.DeclarationMethodFrame(method),
+                frames ?? new Dictionary<string, NullableRepresentationFrame>(), isValue ?? (_ => false), policy: policy);
+            bounds = bounds.Select(mapping.Slot).ToArray();
+        }
+        var bound = bounds.FirstOrDefault(type => !isInterface(type)) ?? bounds.FirstOrDefault() ?? ObjectType;
+        return bound is TypeNode.Tv parent
+            ? ErasedBound(parent, method, owner, isInterface, frames, isValue, policy, visited) : bound;
     }
 
     static bool IsObject(TypeNode type) => type is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" }
@@ -409,15 +421,7 @@ static class ErasedElementValues
                 ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "iterator" },
                 ["sty"] = TypeJson.Write(new TypeNode.Tv("method", 0)),
             };
-            var helperName = direction == "next" ? "listIteratorNextErased" : "listIteratorPreviousErased";
-            var helper = new JsonObject {
-                ["fileClass"] = "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt",
-                ["methods"] = new JsonArray(new JsonObject {
-                    ["name"] = helperName, [DeclarationIdentityBinding.Key] = helperName,
-                    ["params"] = new JsonArray(new JsonObject { ["name"] = "receiver", ["type"] = TypeJson.Fqn("kotlin.Any") }),
-                }),
-            };
-            var binding = new KotlinIteratorValueBinding(new[] { helper }, null);
+            var binding = new KotlinIteratorValueBinding();
             foreach (var key in new[] { "super", "clrOwnerResolved" })
             {
                 var exact = read.DeepClone().AsObject();
@@ -430,9 +434,12 @@ static class ErasedElementValues
             if (binding.Element(unrelated) != null)
                 throw new InvalidOperationException("Iterator value binding inferred a protocol from a member name");
             method["body"][0]["init"] = read;
-            ApplyAll(new[] { root, helper }, null);
-            if (Text(read["k"]) != "callStatic" || Text(read[DeclarationIdentityBinding.Key]) != helperName
-                || read["args"] is not JsonArray { Count: 1 }
+            ApplyAll(new[] { root }, null);
+            if (Text(read["k"]) != "valueBlock"
+                || Text(read["result"]["else"][DeclarationIdentityBinding.Key]) != "iterator-" + direction
+                || Text(read["result"]["else"]["k"]) != "callInstance"
+                || Text(read["result"]["then"]["method"]) != (direction == "next" ? "dotktNextValue" : "dotktPreviousValue")
+                || read["stmts"] is not JsonArray { Count: 1 }
                 || TypeJson.Read(method["body"][0]["type"]) != ObjectType
                 || TypeJson.Read(method["body"][1]["type"]) != ObjectType)
                 throw new InvalidOperationException("Iterator value binding lost erased forward/reverse reads or aliases");

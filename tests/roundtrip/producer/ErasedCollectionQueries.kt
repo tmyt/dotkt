@@ -11,3 +11,14 @@ open class QuerySet<E>(private val values: List<E>) : AbstractSet<E>() {
         return true
     }
 }
+
+open class CountingQuerySet<E>(values: List<E>) : QuerySet<E>(values) {
+    var calls = 0
+    var failure: IllegalStateException? = null
+    override fun contains(element: E): Boolean {
+        calls++
+        val pending = failure
+        if (pending != null) throw pending
+        return super.contains(element)
+    }
+}

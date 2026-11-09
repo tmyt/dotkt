@@ -249,6 +249,10 @@ sealed class Pipeline
         var nullableWitnessDemand = NullableWitnessDemand.Collect(birRoots, refs);
         RoundtripMetadata.FreezeSuspendResults(birRoots);
         InheritedMemberOwnerBinding.ProjectOwners(birRoots, refs);
+        // A generic query implementation accepts its declared erased bound, not the closed CLR E.
+        // State that ABI before frame materialization and declaration/use snapshots; typed overrides
+        // retain their concrete signature and their ordinary query guard.
+        KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(birRoots, refs, representationAliases);
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
         // The runtime implementation consumes its paired reference declaration's
