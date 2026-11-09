@@ -98,8 +98,10 @@ static class CollectionHelperBinding
                 || obj["args"] is not JsonArray args)
                 return obj;
             // A concrete or native-aliased Kotlin owner retains its inherited protocol obligations. Dispatch erased queries and
-            // supplemental operations through their selected contract; a super call is deliberately exact.
+            // supplemental operations through their selected contract. An already-selected aliased interface retains
+            // its operation family; a super call is deliberately exact.
             if (obj["super"]?.GetValue<bool>() != true
+                && (!aliases.ContainsKey(owner.Name) || !IsInterface(owner.Name))
                 && (KotlinCollectionSlotSynthesis.ErasedQueryOverride(obj)
                     ?? (obj["overrides"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(marker =>
                         !KotlinCollectionSlotSynthesis.IsMapContractOwner(TypeJson.OwnerName(marker["owner"]))
