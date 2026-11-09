@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Added
+
+- Declare static native CLR events in Kotlin companion blocks, including custom policies and a shared static surface on generic owners.
+
 ### Fixed
 
 - Preserve ordinary property getter slots implemented by native events, including inherited, delegated and cross-DLL declarations.

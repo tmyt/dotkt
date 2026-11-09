@@ -1057,12 +1057,14 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// named `stackBuffer` is not mistaken for the intrinsic.
 	if (callee.fqNameWhenAvailable?.asString() == "kotlin.clr.stackBuffer")
 		return emitStackBuffer(call)
-	fun eventOwnerType(p: IrProperty, recv: IrExpression): String {
+	fun eventOwnerType(p: IrProperty, recv: IrExpression?): String {
 		val declaration = if (p.isFakeOverride)
 			p.getter?.resolveFakeOverride()?.correspondingPropertySymbol?.owner ?: p
 		else p
 		val declarationOwner = declaration.parent as? IrClass
 			?: error("selected event '${declaration.name}' has no declaring class")
+		if (declaration.getter?.isStaticMethodOfClass == true) return fqnJson(typeName(declarationOwner))
+		requireNotNull(recv) { "instance event '${declaration.name}' has no receiver" }
 		return if (anonNames.containsKey(declarationOwner)) ownerSpec(declarationOwner, recv.type).toJson()
 		else correspondingSupertypeInstantiation(recv.type, declarationOwner, allowCapturedArguments = true)
 			?.let(::birType)?.toJson()
@@ -1084,9 +1086,11 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		&& isClrEventProperty(localEventProp)
 		&& localEventOwner != null && !isExternalNetType(localEventOwner)) {
 		val eventRecv = dispatchReceiver(call)
-		if (eventRecv != null) {
+		val isStatic = localEventProp.getter?.isStaticMethodOfClass == true
+		if (eventRecv != null || isStatic) {
 			// A moved default must still address the selected declaration, not an inheriting receiver's class.
-			return """{"k":"clrEventGet","type":${eventOwnerType(localEventProp, eventRecv)},"name":${str(localEventProp.name.asString())},"static":false,"recv":${expr(eventRecv)},"sty":${birType(call.type).toJson()}${eventVisibilityFact(localEventProp)}${overridesJson(callee)}}"""
+			val receiver = eventRecv?.let { ""","recv":${expr(it)}""" }.orEmpty()
+			return """{"k":"clrEventGet","type":${eventOwnerType(localEventProp, eventRecv)},"name":${str(localEventProp.name.asString())},"static":$isStatic$receiver,"sty":${birType(call.type).toJson()}${eventVisibilityFact(localEventProp)}${overridesJson(callee)}}"""
 		}
 	}
 	// RAISE: `handle.invoke(sender, args)` / `handle(sender, args)` (both desugar to `ClrEvent.invoke`). The event handle
@@ -1101,17 +1105,19 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val eventAccess = handle as? IrCall
 		val prop = eventAccess?.symbol?.owner?.correspondingPropertySymbol?.owner
 		val eventRecv = eventAccess?.dispatchReceiver
-		if (prop == null || eventRecv == null || !isClrEventProperty(prop)) {
+		val isStatic = prop?.getter?.isStaticMethodOfClass == true
+		if (prop == null || (eventRecv == null && !isStatic) || !isClrEventProperty(prop)) {
 			hadError = true
 			messageCollector?.report(CompilerMessageSeverity.ERROR,
-				"a .NET event can be raised only through an instance event declaration (`vm.<Event>.invoke(...)`)", locationOf(call))
+				"a .NET event can be raised only through an event declaration (`source.<Event>.invoke(...)`)", locationOf(call))
 			return """{"k":"unsupportedExpr","of":"clr-event-raise-non-instance-handle"}"""
 		}
 		// invoke is `vararg args: Any?` — the individual sender/args arrive wrapped in a single IrVararg; unwrap them.
 		val rawArgs = regularArgs(call)
 		val argExprs = if (rawArgs.size == 1 && rawArgs[0] is IrVararg)
 			(rawArgs[0] as IrVararg).elements.filterIsInstance<IrExpression>() else rawArgs
-		return """{"k":"clrEventRaise","type":${eventOwnerType(prop, eventRecv)},"event":${str(prop.name.asString())},"super":${eventAccess.superQualifierSymbol != null},"recv":${expr(eventRecv)},"args":[${argExprs.joinToString(",") { expr(it) }}]}"""
+		val receiver = eventRecv?.let { ""","recv":${expr(it)}""" }.orEmpty()
+		return """{"k":"clrEventRaise","type":${eventOwnerType(prop, eventRecv)},"event":${str(prop.name.asString())},"static":$isStatic,"super":${eventAccess.superQualifierSymbol != null}$receiver,"args":[${argExprs.joinToString(",") { expr(it) }}]}"""
 	}
 	// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 	((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }
@@ -1334,6 +1340,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			val propKind = if (isSetter) "set" else "get"
 			val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(call), call.endOffset,
 				staticProperty.name.asString(), propKind)?.let(::birType)?.toJson() ?: fqnJson(typeName(staticOwner))
+			if (!isSetter && isClrEventProperty(staticProperty))
+				return """{"k":"clrEventGet","type":$selectedOwner,"name":${str(staticProperty.name.asString())},"static":true,"sty":${birType(call.type).toJson()}${eventVisibilityFact(staticProperty)}}"""
 			val ret = if (isSetter) "" else ""","ret":${birType(call.type).toJson()}"""
 			// A property whose storage IS its user-visible member — `const`, `@ClrField` — emits no
 			// accessor at all (the declaration side gates on the same [fieldRoutedProperty] rule), so its access is

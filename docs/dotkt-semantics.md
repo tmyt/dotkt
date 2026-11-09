@@ -2170,6 +2170,12 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
 - **Static events** subscribe the same way and are reached directly on their declaring type
   (`TaskScheduler.UnobservedTaskException.subscribe(h)` or `System.Console.CancelKeyPress.subscribe(h)`). They bind
   to the event's **static** add/remove accessor (a plain `Call`).
+- **Declaring static events:** a receiverless `companion { val E: ClrEvent<H> by clrEvent() }`
+  declares static add/remove/raise accessors; `clrEvent(policy)` uses static policy storage instead.
+  Subscribe and raise through `Owner.E`, including after DLL projection. A generic owner uses the
+  same non-generic static carrier described in §8c-bis: one event store and one policy initialization,
+  independent of its constructed type arguments. Ordinary objects and companion objects retain
+  their instance event semantics.
 - **Interface events** (`INotifyPropertyChanged.PropertyChanged`) surface as a `ClrEvent<T>` member and **consume**
   the same way on an interface-typed receiver (`n.PropertyChanged.subscribe(h)`). When a Kotlin class **subclasses** a .NET
   class that already implements the interface (`class MyApp : Avalonia.Application`), the inherited concrete

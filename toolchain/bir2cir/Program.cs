@@ -270,6 +270,9 @@ sealed class Pipeline
         // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before
         // any module-wide declaration index is captured.
         GenericStaticOwnerBinding.Materialize(birRoots);
+        // Event handles materialize callbacks before the late static-call binding pass. Their selected event owner
+        // must already be the same physical carrier as the declaration and its accessor shells.
+        GenericStaticOwnerBinding.ApplyEventOwnersAll(birRoots, refs);
         // Companion metadata must freeze its owner's physical path after static nested classifiers are placed.
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // A receiverless companion extension needs its associated Kotlin classifier in the physical member identity.

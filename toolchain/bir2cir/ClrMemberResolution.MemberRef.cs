@@ -78,9 +78,17 @@ static partial class ClrMemberResolution
     // The caller already selected this MethodDef. Do not run another overload search for the fast branch.
     internal static JsonObject ExactInstanceCall(ReferenceMetadataIndex refs, MethodInfo method,
         TypeNode.Fqn declaringOwner, JsonNode receiver, JsonArray arguments)
+        => ExactCall(refs, method, declaringOwner, receiver, arguments, isStatic: false);
+
+    internal static JsonObject ExactStaticCall(ReferenceMetadataIndex refs, MethodInfo method,
+        TypeNode.Fqn declaringOwner, JsonArray arguments)
+        => ExactCall(refs, method, declaringOwner, null, arguments, isStatic: true);
+
+    static JsonObject ExactCall(ReferenceMetadataIndex refs, MethodInfo method,
+        TypeNode.Fqn declaringOwner, JsonNode receiver, JsonArray arguments, bool isStatic)
     {
-        if (method.IsStatic || method.IsGenericMethod)
-            throw new InvalidOperationException("Exact instance dispatch requires a non-generic instance MethodDef");
+        if (method.IsStatic != isStatic || method.IsGenericMethod)
+            throw new InvalidOperationException("Exact dispatch requires a non-generic MethodDef with matching staticness");
         _refs = refs;
         var reference = MemberRefOf(method, MemberRefNode.Kinds.Method, method.DeclaringType, declaringOwner.Args);
         var parameters = method.GetParameters();
@@ -90,15 +98,17 @@ static partial class ClrMemberResolution
         }).ToArray());
         var result = PhysicalTypeOf(method.ReturnType, declaringOwner.Args, typeArg: false);
         var call = new JsonObject {
-            ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(reference.DeclaringType),
-            ["method"] = method.Name, ["virtual"] = true,
-            ["recv"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(reference.DeclaringType), ["e"] = receiver },
+            ["k"] = isStatic ? "callStatic" : "callInstance",
+            [isStatic ? "owner" : "ownerType"] = TypeJson.Write(reference.DeclaringType),
+            ["method"] = method.Name, ["virtual"] = !isStatic,
+            ["recv"] = isStatic ? null : new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(reference.DeclaringType), ["e"] = receiver },
             ["sig"] = new JsonArray(reference.ParameterTypes.Select(TypeJson.Write).ToArray()),
             // This producer has already closed the result in the caller's frame. The matching exact stamp
             // discharges ConstructedMemberReturnSubstitution's contract and prevents a second substitution.
             ["ret"] = TypeJson.Write(result), ["sty"] = TypeJson.Write(result),
             ["args"] = adapted, ["memberRef"] = reference.Write(), [DeclarationIdentityBoundKey] = true,
         };
+        if (isStatic) call.Remove("recv");
         var visibility = method.IsPrivate ? "private" : method.IsAssembly ? "internal"
             : method.IsFamily || method.IsFamilyOrAssembly || method.IsFamilyAndAssembly ? "protected" : null;
         if (visibility != null)

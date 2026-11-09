@@ -142,6 +142,7 @@ internal fun hasStaticPropertyStorage(klass: IrClass, p: IrProperty): Boolean =
 internal fun BirEmitter.staticPropertyFields(klass: IrClass): List<String> =
 	klass.declarations.filterIsInstance<IrProperty>()
 		.filter { hasStaticPropertyStorage(klass, it) }
+		.filterNot { isFieldLikeClrEvent(it) }
 		.mapNotNull { p ->
 			val bf = p.backingField ?: return@mapNotNull null
 			val savedSemanticOwner = activeSemanticOwner
@@ -1374,15 +1375,8 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
 		val delegateCall = clrEventDelegateCall(p) ?: continue
 		val name = p.name.asString()
-		// Declaration-bound events currently have instance accessors (including ordinary companion objects).
-		// A Kotlin 2.4 companion block is instead a receiverless static surface, not another singleton instance.
-		if (isKotlinStaticProperty(p)) {
-			hadError = true
-			messageCollector?.report(CompilerMessageSeverity.ERROR,
-				"CLR event declarations in companion blocks are not supported; " +
-					"declare the event on an instance or companion object", locationOf(p))
-			continue
-		}
+		val isStatic = isKotlinStaticProperty(p)
+		val kotlinStatic = if (isStatic) ""","kotlinStatic":true""" else ""
 		// `var E by clrEvent()` is a hard error — an event is a read-only handle (subscribe/unsubscribe/raise, never reassign).
 		if (p.isVar) {
 			hadError = true
@@ -1418,12 +1412,12 @@ internal fun BirEmitter.synthClrEvents(klass: IrClass): Pair<List<String>, List<
 		val visibility = str(visOf(p))
 		val publishedApi = attrsJson(p.annotations.filter { it.type.classFqName?.asString() == "kotlin.PublishedApi" })
 		fun accessor(mname: String, kind: String, ov: String) =
-			"""{"name":${str(mname)},"static":false,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":$visibility,"params":[{"name":"value","type":$handlerJson}],"ret":$unit,"body":[{"k":"clrEventAccessor","kind":${str(kind)},"event":${str(name)}}],"attrs":[$publishedApi]$ov}"""
+			"""{"name":${str(mname)},"static":$isStatic$kotlinStatic,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":$visibility,"params":[{"name":"value","type":$handlerJson}],"ret":$unit,"body":[{"k":"clrEventAccessor","kind":${str(kind)},"event":${str(name)}}],"attrs":[$publishedApi]$ov}"""
 		val policyField = if (delegateCall.symbol.owner.parameters.any(::isValueParameter)) {
 			val field = p.backingField ?: error("custom CLR event '$name' has no Kotlin delegate field")
 			""","policyField":${str(field.name.asString())}"""
 		} else ""
-		backings.add("""{"k":"clrEventBacking","name":${str(name)},"propertyAssociation":${str(propertyAssociation(p))},"handlerType":$handlerJson,"modality":${str(p.modality.name.lowercase())}$classOverride$policyField}""")
+		backings.add("""{"k":"clrEventBacking","name":${str(name)},"static":$isStatic,"propertyAssociation":${str(propertyAssociation(p))},"handlerType":$handlerJson,"modality":${str(p.modality.name.lowercase())}$classOverride$policyField}""")
 		// Preserve source override owners and modality; bir2cir selects native slot reuse, delegate signatures and
 		// whether a referenced event has a raise slot at all. These shells do not choose that physical representation.
 		methods.add(accessor("add_$name", kind = "add", ov = overridesFor("event-add")))

@@ -530,51 +530,55 @@ sealed partial class Emitter
         var kind = e.GetProperty("kind").GetString();
         var fieldName = e.GetProperty("name").GetString();
         var d = MapType(e.GetProperty("delegateType"));
+        var isStatic = e.GetProperty("static").GetBoolean();
         // S5 (#113): a missing backing field is a bir2cir/kotc synthesis defect — a legible breadcrumb, not an opaque miss.
         if (_curTi == null || !_curTi.Fields.TryGetValue(fieldName, out var field))
             throw new InvalidOperationException($"ilemit: clrEventAccessorImpl backing field '{fieldName}' is absent on '{_curTi?.TB?.Name}'; bir2cir ClrEventImplBinding must insert `<E>$delegate`");
         if (kind == "raise")
         {
-            EmitClrEventRaise(field, d,
+            EmitClrEventRaise(field, d, isStatic,
                 RequiredRef<MethodInfo>(e, "invokeRef", "clrEventAccessorImpl raise"));
             return;
         }
-        EmitClrEventCas(e, field, d, add: kind == "add");
+        EmitClrEventCas(e, field, d, isStatic, add: kind == "add");
     }
 
     // The lock-free add/remove CAS loop over the backing delegate field (C#'s field-like-event accessor shape):
     //   D cur = this.field; do { D cmp = cur; D upd = (D)Delegate.Combine/Remove(cmp, value);
     //       cur = Interlocked.CompareExchange<D>(ref this.field, upd, cmp); } while (cur != cmp);
-    // arg0 = this, arg1 = the handler `value`. Reference comparison (bne.un), not delegate equality.
-    void EmitClrEventCas(JsonElement node, FieldInfo field, Type d, bool add)
+    // Instance: arg0 = this, arg1 = value. Static: arg0 = value. Reference comparison, not delegate equality.
+    void EmitClrEventCas(JsonElement node, FieldInfo field, Type d, bool isStatic, bool add)
     {
         // The three members this loop runs through are named by the pass that authored the accessor.
         var combine = RequiredRef<MethodInfo>(node, add ? "combineRef" : "removeRef", "clrEventAccessorImpl");
         var cmpx = ConstructedMethod(RequiredRef<MethodInfo>(node, "compareExchangeRef", "clrEventAccessorImpl"), d);
         var cur = _il.DeclareLocal(d); var cmp = _il.DeclareLocal(d); var upd = _il.DeclareLocal(d);
         var retry = _il.DefineLabel();
-        _il.Emit(OpCodes.Ldarg_0); EmitField(_il, OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, cur);
+        if (!isStatic) _il.Emit(OpCodes.Ldarg_0);
+        EmitField(_il, isStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, cur);
         _il.MarkLabel(retry);
         _il.Emit(OpCodes.Ldloc, cur); _il.Emit(OpCodes.Stloc, cmp);
-        _il.Emit(OpCodes.Ldloc, cmp); _il.Emit(OpCodes.Ldarg_1);
+        _il.Emit(OpCodes.Ldloc, cmp); _il.Emit(isStatic ? OpCodes.Ldarg_0 : OpCodes.Ldarg_1);
         EmitMethod(_il, OpCodes.Call, combine); _il.Emit(OpCodes.Castclass, d); _il.Emit(OpCodes.Stloc, upd);
-        _il.Emit(OpCodes.Ldarg_0); EmitField(_il, OpCodes.Ldflda, field);
+        if (!isStatic) _il.Emit(OpCodes.Ldarg_0);
+        EmitField(_il, isStatic ? OpCodes.Ldsflda : OpCodes.Ldflda, field);
         _il.Emit(OpCodes.Ldloc, upd); _il.Emit(OpCodes.Ldloc, cmp);
         EmitMethod(_il, OpCodes.Call, cmpx); _il.Emit(OpCodes.Stloc, cur);
         _il.Emit(OpCodes.Ldloc, cur); _il.Emit(OpCodes.Ldloc, cmp); _il.Emit(OpCodes.Bne_Un, retry);
     }
 
     // `raise_<E>(args...)`: snapshot the backing field, and if non-null invoke it with the raise method's own params.
-    // arg0 = this; the raise params (== D.Invoke's params) start at arg1. The null check = C#'s field-like `field?.Invoke`.
-    void EmitClrEventRaise(FieldInfo field, Type d, MethodInfo invoke)
+    // Raise parameters start at arg0 for statics, arg1 for instances. Null check = field?.Invoke.
+    void EmitClrEventRaise(FieldInfo field, Type d, bool isStatic, MethodInfo invoke)
     {
         var handler = _il.DeclareLocal(d);
         var done = _il.DefineLabel();
-        _il.Emit(OpCodes.Ldarg_0); EmitField(_il, OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, handler);
+        if (!isStatic) _il.Emit(OpCodes.Ldarg_0);
+        EmitField(_il, isStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, handler);
         _il.Emit(OpCodes.Ldloc, handler); _il.Emit(OpCodes.Brfalse, done);
         _il.Emit(OpCodes.Ldloc, handler);
         var n = ParametersOf(invoke).Length;
-        for (int i = 0; i < n; i++) _il.Emit(OpCodes.Ldarg, checked((short)(i + 1)));
+        for (int i = 0; i < n; i++) _il.Emit(OpCodes.Ldarg, checked((short)(i + (isStatic ? 0 : 1))));
         EmitMethod(_il, OpCodes.Callvirt, invoke);
         // A raise is a statement even when the selected physical delegate returns a value.
         if (ReturnTypeOf(invoke) != Bcl("System.Void")) _il.Emit(OpCodes.Pop);
