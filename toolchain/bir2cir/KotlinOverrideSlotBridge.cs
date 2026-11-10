@@ -840,6 +840,7 @@ static class KotlinOverrideSlotBridge
                 JsonArray physicalTypeParams = null;
                 NullableRepresentationFrame physicalMethodFrame = null;
                 byte[][] physicalParameterNullableFlags = null;
+                TypeNode[] queryBounds = null;
                 JsonArray declarationSignature = null;
                 string referencedDeclarationId = null;
                 TypeNode logicalSuspendResult = null;
@@ -869,6 +870,12 @@ static class KotlinOverrideSlotBridge
                         declarationSignature = FunctionSignatureIdentity.Signature((JsonArray)source["params"]);
                         physicalTypeParams = source["typeParams"] as JsonArray;
                         physicalMethodFrame = NullableRepresentationTypes.DeclarationMethodFrame(source);
+                        queryBounds = ((JsonArray)source["params"]).OfType<JsonObject>().Select(parameter =>
+                            KotlinCollectionSlotSynthesis.GenericQueryBound(Str(parameter["kotlinType"] ?? parameter["nullableGeneric"]) is string semantic
+                                    ? TypeNode.Parse(semantic) : null,
+                                source, sourceOwner.Node, type => type is TypeNode.Fqn named
+                                    && (defs.TryGetValue(named.Name, out var definition) ? definition.Kind == "interface"
+                                        : refs?.IsInterfaceType(named) == true), refs?.NullableTypeFrames, isValue)).ToArray();
                         sourceParams = ((JsonArray)source["params"]).OfType<JsonObject>()
                             .Select(p => SupertypeGraph.SubstOwnerTvs(TypeJson.Read(p["type"]), args)).ToArray();
                         var openRet = TypeJson.Read(source["ret"]);
@@ -925,6 +932,7 @@ static class KotlinOverrideSlotBridge
                     physicalTypeParams = source.TypeParams;
                     physicalMethodFrame = source.NullableFrame;
                     physicalParameterNullableFlags = source.ParameterNullableFlags;
+                    queryBounds = source.QueryParameterBounds;
                     sourceRet = SupertypeGraph.SubstOwnerTvs(
                         logicalSuspendResult != null ? source.Return : source.PhysicalReturn, args);
                     returnsValue = logicalSuspendResult != null ? !IsVoid(source.Return) : source.ReturnsValue;
@@ -974,6 +982,9 @@ static class KotlinOverrideSlotBridge
                     {
                         var parameter = (JsonObject)((JsonArray)candidate["params"])[i];
                         parameter["type"] = TypeJson.Write(sourceParams[i]);
+                        if (queryBounds?[i] is { } queryBound)
+                            parameter[KotlinCollectionSlotSynthesis.QueryBoundKey] = TypeJson.Write(
+                                SupertypeGraph.SubstOwnerTvs(queryBound, args));
                         if (physicalParameterNullableFlags?[i] is { } flags)
                             parameter["nullableFlags"] = new JsonArray(flags.Select(flag =>
                                 (JsonNode)JsonValue.Create((int)flag)).ToArray());
@@ -2118,6 +2129,11 @@ static class KotlinOverrideSlotBridge
     internal static void SelfTest()
     {
         ExactRenamedSlotSelfTest();
+        var queryCarrier = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+        if (Classify(queryCarrier, new TypeNode.Fqn("kotlin.String"), null, _ => false,
+                returnPosition: false) != Fit.Bridge
+            || !ErasureAligned(queryCarrier, new TypeNode.Fqn("kotlin.String")))
+            throw new InvalidOperationException("Nullable object query slots lost their concrete implementation bridge");
         var localSlotOwners = SupertypeGraph.Collect(new[] { JsonNode.Parse("""
             {"types":[{"name":"LocalSlot","kind":"interface","methods":[]}]}
             """) });
@@ -2339,7 +2355,8 @@ static class KotlinOverrideSlotBridge
         }
     }
 
-    static bool IsBareObject(TypeNode t) => t is TypeNode.Fqn { Name: "object" or "System.Object", Args: null };
+    static bool IsBareObject(TypeNode t) => t is TypeNode.Fqn { Name: "object" or "System.Object", Args: null }
+        || t is TypeNode.Nullable { Of: TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any", Args: null } };
 
     static bool IsSuspendMethod(JsonObject method) =>
         method["mods"] is JsonObject mods && Bool(mods["suspend"]);

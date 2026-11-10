@@ -48,6 +48,27 @@ interface IntegerQueries : Collection<Int>
 interface NullableQueries : Collection<String?>
 open class QueryBound
 class QueryItem : QueryBound()
+open class BoundedQueryMap<K : QueryBound> : AbstractMap<K, Int>() {
+    var calls = 0
+    override val entries: Set<Map.Entry<K, Int>> get() = emptySet()
+    override fun containsKey(key: K): Boolean { calls++; return false }
+}
+open class NullableBoundedQueryMap<K : QueryBound> : AbstractMap<K?, Int>() {
+    var calls = 0
+    override val entries: Set<Map.Entry<K?, Int>> get() = emptySet()
+    override fun containsKey(key: K?): Boolean { calls++; return false }
+}
+open class OrdinaryMapQueries<K, V>(protected val data: Map<K, V>) {
+    var calls = 0
+    open val size: Int get() = data.size
+    open val keys: Set<K> get() = data.keys
+    open val values: Collection<V> get() = data.values
+    open val entries: Set<Map.Entry<K, V>> get() = data.entries
+    open fun isEmpty(): Boolean = data.isEmpty()
+    open fun get(key: K): V? = data[key]
+    open fun containsKey(key: K): Boolean { calls++; return data.containsKey(key) }
+    open fun containsValue(value: V): Boolean = data.containsValue(value)
+}
 class NativeBackedQuerySet<E>(private val values: ArrayList<E>) : AbstractSet<E>() {
     var calls = 0
     override val size: Int get() = values.size

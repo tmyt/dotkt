@@ -3510,6 +3510,28 @@ sealed partial class ReferenceMetadataIndex
             ? flags.Select(value => Convert.ToByte(value.Value)).ToArray() : null;
     }
 
+    TypeNode[] QueryParameterBounds(MemberBinding member, string ownerName)
+    {
+        var parameters = member.DeclarationSemanticParams ?? member.KotlinParameterTypes ?? member.NullableGenericParams;
+        if (parameters == null || !parameters.Any(parameter =>
+                parameter is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })) return null;
+        if (!HasDotKtOwner(ownerName) || !TryReferenceTypeShapeValue(new TypeNode.Fqn(ownerName), out var shape)) return null;
+        var owner = new JsonObject { ["typeParams"] = OwnerTypeParamDeclarations(ownerName) };
+        if (shape.SourceFacts != null) owner[KotlinSupertypesRecord.PreKey] = shape.SourceFacts.ToJsonString();
+        var method = new JsonObject { ["typeParams"] = member.MethodTypeParams?.DeepClone() };
+        if (member.NullableFrame != null)
+            method[NullableRepresentationTypes.MethodFrameKey] = member.NullableFrame.ToJson().ToJsonString();
+        if (member.SemanticMethodTypeParams is JsonArray semanticParameters)
+            method[NullableGenericErasure.MethodTypeParameterBoundsPre] = new JsonObject {
+                ["bounds"] = new JsonObject(semanticParameters.Select((parameter, index) => KeyValuePair.Create(
+                    index.ToString(), (parameter as JsonObject)?["constraints"]?.DeepClone() ?? new JsonArray()))),
+            }.ToJsonString();
+        return member.ParamTypeNodes.Select((physical, index) =>
+            KotlinCollectionSlotSynthesis.GenericQueryBound(
+                index < parameters.Length ? parameters[index] : null, method, owner,
+                type => type is TypeNode.Fqn named && IsInterfaceType(named), NullableTypeFrames, IsValueType)).ToArray();
+    }
+
     // Resolve the declaration selected by the frontend, including the generic-parameter constraint vector that is
     // part of its identity.  This is intentionally a direct declaration lookup: the inherited-default fact names the
     // owner that supplies the body, so walking to a same-shaped ancestor would replace the frontend's decision with a
@@ -3549,7 +3571,7 @@ sealed partial class ReferenceMetadataIndex
             match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
             PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
-        { ParameterNullableFlags = match.ParameterNullableFlags };
+        { ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBounds = QueryParameterBounds(match, ownerFqn) };
         return true;
     }
 
@@ -3604,7 +3626,7 @@ sealed partial class ReferenceMetadataIndex
             match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
             PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
-        { ParameterNullableFlags = match.ParameterNullableFlags };
+        { ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBounds = QueryParameterBounds(match, ownerFqn) };
         return true;
     }
 
@@ -8802,6 +8824,7 @@ sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Para
     string DeclarationId)
 {
     public byte[][] ParameterNullableFlags { get; init; }
+    public TypeNode[] QueryParameterBounds { get; init; }
 }
 
 sealed record ReferencedUnsafeAccessorMethod(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,

@@ -8,12 +8,18 @@ import roundtrip.erasedqueries.QueryItem
 import roundtrip.erasedqueries.BoundedQuerySet
 import roundtrip.erasedqueries.NativeBackedQuerySet
 import roundtrip.erasedqueries.CountingQueryMap
+import roundtrip.erasedqueries.BoundedQueryMap
+import roundtrip.erasedqueries.NullableBoundedQueryMap
+import roundtrip.erasedqueries.OrdinaryMapQueries
 
 private class ImportedErasedQuerySet<E>(values: List<E>) : QuerySet<E>(values)
 private class ImportedIntegerQueries : CountingQuerySet<Int>(listOf(1)), IntegerQueries
 private class ImportedNullableQueries : CountingQuerySet<String?>(listOf(null, "x")), NullableQueries
 private class ImportedItemQueries(item: QueryItem) : BoundedQuerySet<QueryItem>(listOf(item)), ItemQueries
 private class ImportedCountingMap : CountingQueryMap<Int, Int>()
+private class ImportedBoundedMap : BoundedQueryMap<QueryItem>()
+private class ImportedNullableBoundedMap : NullableBoundedQueryMap<QueryItem>()
+private class ImportedOrdinaryMap<K, V>(data: Map<K, V>) : OrdinaryMapQueries<K, V>(data), Map<K, V>
 
 private class ImportedErasedQueryOverride : QuerySet<Int>(listOf(1)) {
     var calls = 0
@@ -37,6 +43,18 @@ class CrossModuleErasedCollectionQueryTests {
             query.containsKey("throwing key")
             error("imported Map exception was suppressed")
         } catch (actual: IllegalStateException) { check(actual === failure && source.calls == 4) }
+        val bounded = ImportedBoundedMap()
+        val boundView: Map<*, *> = bounded
+        check(!boundView.containsKey(null) && !boundView.containsKey("wrong") && bounded.calls == 0)
+        check(!boundView.containsKey(roundtrip.erasedqueries.QueryBound()) && bounded.calls == 1)
+        val nullableBounded = ImportedNullableBoundedMap()
+        val nullableBoundView: Map<*, *> = nullableBounded
+        check(!nullableBoundView.containsKey("wrong") && nullableBounded.calls == 0)
+        check(!nullableBoundView.containsKey(null) && nullableBounded.calls == 1)
+        val ordinary = ImportedOrdinaryMap(mapOf<Int?, String>(null to "present"))
+        val ordinaryView: Map<*, *> = ordinary
+        check(ordinaryView.containsKey(null) && ordinary.calls == 1)
+        check(!ordinaryView.containsKey("wrong") && ordinary.calls == 2)
     }
 
     @TestAttribute
