@@ -201,6 +201,10 @@ class GenericArrayElementTests {
         erasedNullElementUses<Int>()
         erasedNullElementUses<String>()
         check(arrayElementVirtualLabel(arrayOf(ArrayElementBoundItem())) == "item")
+        check(intArrayOf(42).toList().single() == 42)
+        val bounds: ClosedRange<Int> = 1..5
+        check(7.coerceIn(bounds) == 5)
+        check("ab".indexOfAny(listOf("b")) == 1)
     }
 
     @TestAttribute

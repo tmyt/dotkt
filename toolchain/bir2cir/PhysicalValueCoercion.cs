@@ -25,6 +25,8 @@ static class PhysicalValueCoercion
         return source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
         || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+            && !IsVoid(target) && NeedsBox(target, index.IsValue)
+        || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && IsReferenceSlot(target, index.IsValue)
             && target is not TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || source is TypeNode.Fqn carrier && target is TypeNode.Fqn native

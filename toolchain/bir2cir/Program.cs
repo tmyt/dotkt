@@ -254,7 +254,7 @@ sealed class Pipeline
         // State that ABI before frame materialization and declaration/use snapshots; typed overrides
         // retain their concrete signature and their ordinary query guard.
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
-        var scalarSlots = KotlinGenericScalarSlots.ApplyAll(birRoots, genericRepresentations);
+        var scalarSlots = KotlinGenericScalarSlots.ApplyAll(birRoots, genericRepresentations, refs);
         var physicalParameterIndices = scalarSlots.Parameters;
         KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(birRoots, refs, representationAliases);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);

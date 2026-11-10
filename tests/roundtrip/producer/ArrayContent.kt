@@ -49,6 +49,12 @@ fun <T> forwardArrayScalar(value: T): T {
 open class ArrayScalarForwarder {
     open fun <T> render(value: T): String = renderArrayScalar(forwardArrayScalar(value))
 }
+class ArrayScalarOwner<T>(private val values: Array<T>) {
+    fun render(): String {
+        fun keep(value: T): T = value
+        return renderArrayScalar(keep(values[0]))
+    }
+}
 
 inline fun <T> inlineDeepEquals(first: Array<out T>?, second: Array<out T>?, transform: (Boolean) -> Boolean): Boolean = transform(first.contentDeepEquals(second))
 inline fun <T> inlineDeepHash(value: Array<out T>?, transform: (Int) -> Int): Int = transform(value.contentDeepHashCode())

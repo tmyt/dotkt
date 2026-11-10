@@ -9,11 +9,15 @@ using DotKt.Bir;
 static class KotlinGenericScalarSlots
 {
     internal sealed record Projection(Dictionary<string, int[]> Parameters, HashSet<string> Returns,
-        GenericRepresentationPolicy Policy)
+        GenericRepresentationPolicy Policy, HashSet<string> Intrinsics, ReferenceMetadataIndex References)
     {
         internal void ProjectMethod(JsonObject method)
         {
-            if (Policy.HasNativeMethodSignature(method)) return;
+            if (Policy.HasNativeMethodSignature(method)
+                || (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>().Any(edge =>
+                    edge[DeclarationIdentityBinding.Key]?.GetValue<string>() is string id
+                    && (Intrinsics.Contains(id) || References?.TryDeclarationIdentity(id,
+                        out _, out _, out var intrinsic, out _) == true && intrinsic != null))) return;
             var projected = new List<int>();
             var slots = method["params"] as JsonArray ?? new JsonArray();
             // Query entry barriers belong to their selected collection contract;
@@ -33,6 +37,9 @@ static class KotlinGenericScalarSlots
             {
                 method["retKotlinType"] ??= method["nullableGenericRet"]?.DeepClone() ?? JsonValue.Create(TypeNode.ToJson(result));
                 method["ret"] = TypeJson.Fqn("object");
+                // This scalar seam is not nullable-generic erasure. Its use-site
+                // type still owns concrete extraction, not the nullable realigner.
+                method[NullableTvErasureCallRealign.NullableErasureOwnershipKnownKey] = true;
             }
             if (method[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity)
             {
@@ -50,10 +57,23 @@ static class KotlinGenericScalarSlots
             && (Returns.Contains(identity) || refs.IsGenericScalarReturn(identity)) ? variable : null;
     }
 
-    internal static Projection ApplyAll(IEnumerable<JsonNode> roots, GenericRepresentationPolicy policy)
+    internal static Projection ApplyAll(IEnumerable<JsonNode> roots, GenericRepresentationPolicy policy,
+        ReferenceMetadataIndex references)
     {
+        var files = roots.ToArray();
+        var intrinsics = new HashSet<string>();
+        void NativeBindings(JsonObject owner)
+        {
+            foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                if (method[DeclarationIdentityBinding.Key]?.GetValue<string>() is string id
+                    && (method["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                        .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic"))
+                    intrinsics.Add(id);
+            foreach (var type in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) NativeBindings(type);
+        }
+        foreach (var root in files.OfType<JsonObject>()) NativeBindings(root);
         var declarations = new Dictionary<string, JsonObject>();
-        var projection = new Projection(new Dictionary<string, int[]>(), new HashSet<string>(), policy);
+        var projection = new Projection(new Dictionary<string, int[]>(), new HashSet<string>(), policy, intrinsics, references);
         void Method(JsonObject method)
         {
             projection.ProjectMethod(method);
@@ -77,7 +97,6 @@ static class KotlinGenericScalarSlots
             }
             foreach (var type in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Owner(type);
         }
-        var files = roots.ToArray();
         foreach (var root in files.OfType<JsonObject>()) Owner(root);
         void Calls(JsonNode node)
         {
@@ -90,8 +109,9 @@ static class KotlinGenericScalarSlots
                 || !declarations.TryGetValue(identity, out var selected)) return;
             if (projection.Parameters.TryGetValue(identity, out var indices) && operation["sig"] is JsonArray signature)
                 foreach (var index in indices) signature[index] = TypeJson.Fqn("object");
-            if (selected["retKotlinType"] != null && TypeJson.Read(selected["ret"]) is TypeNode.Fqn { Name: "object" })
-                operation["ret"] = TypeJson.Fqn("object");
+            // The invocation retains its caller-facing value type. The selected
+            // declaration supplies the erased physical return independently;
+            // overwriting this hint would lose concrete arithmetic/nullable uses.
         }
         foreach (var root in files) Calls(root);
         return projection;

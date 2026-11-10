@@ -30,6 +30,7 @@ private fun <T> checkImportedScalarForwarding(values: Array<T>, expected: String
     check(renderArrayScalar<T>(values[0]) == expected)
     check(renderArrayScalar<T>(forwardArrayScalar<T>(values[0])) == expected)
     check(base.render<T>(values[0]) == expected && forwarder.calls == 1)
+    check(ArrayScalarOwner(values).render() == expected)
     check(values.joinToString() == expected)
 }
 
