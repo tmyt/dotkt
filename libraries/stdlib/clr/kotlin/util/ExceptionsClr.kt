@@ -42,7 +42,7 @@ private class ExceptionTraceTask(val exception: Throwable, val caption: String, 
 private val nativeExceptionFormatter = (Throwable::class as System.Type)
     .GetMethod("ToString", 0, System.Type.EmptyTypes)!!
 private val nativeExceptionFormatterType = (System.Func1::class as System.Type)
-    .MakeGenericType(arrayOf(String::class as System.Type))
+    .MakeGenericType(String::class as System.Type)
 
 private fun Throwable.exceptionDescription(): String {
     val native = this as System.Exception
