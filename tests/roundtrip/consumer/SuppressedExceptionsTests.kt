@@ -4,6 +4,14 @@ import NUnit.Framework.TestAttribute
 import DotKt.Tests.Suppression.SuppressionGcProbe
 import roundtrip.suppression.suppressInProducer
 import roundtrip.suppression.suppressionSnapshotFromProducer
+import roundtrip.suppression.ProducerCause
+import roundtrip.suppression.InheritedProducerCause
+import roundtrip.suppression.causeFromProducer
+
+private class ConsumerCause(private val local: Throwable?, parent: Throwable?, native: Throwable?) : ProducerCause(parent, native) {
+    override val cause: Throwable? get() = local
+    fun parentCause(): Throwable? = super.cause
+}
 
 class SuppressedExceptionsRoundtripTests {
     @TestAttribute
@@ -18,7 +26,7 @@ class SuppressedExceptionsRoundtripTests {
     }
 
     @TestAttribute
-    fun producerAndConsumerShareSuppressionOnTheSameNativeException() {
+    fun producerAndConsumerShareSuppressionAndCauseOnTheSameNativeException() {
         val primary = IllegalStateException("primary")
         val producerChild = IllegalArgumentException("producer")
         val consumerChild = RuntimeException("consumer")
@@ -32,5 +40,23 @@ class SuppressedExceptionsRoundtripTests {
         check(suppressInProducer(primary, primary) === primary)
         check(suppressionSnapshotFromProducer(primary).size == 2)
         check(suppressionSnapshotFromProducer(RuntimeException("independent")).isEmpty())
+
+        val own = IllegalArgumentException("own-cause")
+        val native = RuntimeException("native-cause")
+        val producer = ProducerCause(own, native)
+        check((producer as Throwable).cause === own && producer.reads == 1)
+        check(causeFromProducer(producer) === own && producer.reads == 2)
+        check(producer.nativeCause() === native && producer.reads == 2)
+        val inherited = InheritedProducerCause(own, native)
+        check(causeFromProducer(inherited) === own)
+        val consumer = ConsumerCause(null, own, native)
+        check((consumer as Throwable).cause == null && causeFromProducer(consumer) == null)
+        check(consumer.parentCause() === own && consumer.reads == 1)
+        check(consumer.nativeCause() === native && consumer.reads == 1)
+        val caught = try { throw consumer } catch (failure: Throwable) { failure }
+        check(caught === consumer && caught.cause == null)
+        val suppressedCause = RuntimeException("logical-cause-suppression")
+        own.addSuppressed(suppressedCause)
+        check(producer.stackTraceToString().contains("logical-cause-suppression"))
     }
 }

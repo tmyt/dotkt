@@ -127,9 +127,9 @@ static class DeclarationRename
 
     // #73 M4-c — the .NET base CLASS owner FQN in an accessor's override closure (a virtual property whose declaring
     // .NET type is a real CLASS, not an interface/struct), else null. Used to stamp `pendingOverrideOwner` so ilemit's
-    // DefineMethodOverride binds the base virtual slot. A property mapping alone is NOT sufficient: Kotlin's open
-    // Throwable.cause maps to the NON-virtual Exception.InnerException getter, so a subclass `override val cause`
-    // must remain a Kotlin virtual newslot rather than attempt an impossible CLR .override.
+    // DefineMethodOverride binds the base virtual slot. A property mapping alone is NOT sufficient: a non-virtual
+    // native accessor cannot receive a CLR .override. Declaration-owned nominal slots preserve logical dispatch
+    // separately when the Kotlin member has no native virtual slot.
     static TypeNode.Fqn ResolveNetClassOwner(JsonObject declaration, JsonArray ovs, ReferenceMetadataIndex refs,
         out TypeNode slotReturn)
     {

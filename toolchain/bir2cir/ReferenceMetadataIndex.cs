@@ -226,12 +226,13 @@ sealed partial class ReferenceMetadataIndex
             : null;
     }
 
-    internal (TypeNode[] Parameters, TypeNode Return) AliasHelperSourceSignature(string id, string ownerName)
+    internal (string Name, TypeNode[] Parameters, TypeNode Return) AliasHelperSourceSignature(string id, string ownerName)
     {
         if (!_declarationById.TryGetValue(id, out var binding) || binding.IsStatic
             || BareOwnerFqn(binding.Owner) != BareOwnerFqn(ownerName))
             throw new InvalidOperationException($"Alias helper source '{id}' does not select an instance declaration on '{ownerName}'");
-        return PhysicalDeclarationSignature(binding);
+        var signature = PhysicalDeclarationSignature(binding);
+        return (binding.Name, signature.Parameters, signature.Return);
     }
 
     static (TypeNode[] Parameters, TypeNode Return) PhysicalDeclarationSignature(MemberBinding binding) =>

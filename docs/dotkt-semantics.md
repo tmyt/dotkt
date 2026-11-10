@@ -537,12 +537,19 @@ cycle marker; fixed labels with depth numbers bound traversal-label overhead.
 The text is CLR-oriented, not a promised JVM layout or a machine-readable format.
 Snapshots are taken and suppression locks released before user formatting or I/O.
 
-Two pre-existing gaps remain bugs, not additional platform deviations: custom
-`toString()` can hide the base stack/cause details ([#1338](https://github.com/tmyt/dotkt/issues/1338)),
-and overridden Kotlin `cause` is lost through a `Throwable`-typed read
-([#1339](https://github.com/tmyt/dotkt/issues/1339)). These are tracked separately;
-the suppression walker does not repair native base formatting or virtual property
-dispatch using reflection or type/name-specific cases.
+Kotlin `cause` reads honor authored overrides through a declaration-owned slot,
+including base-typed and cross-DLL reads. `super.cause` reads the selected base
+implementation; ordinary foreign CLR exceptions use native `InnerException`.
+Native identity is unchanged. The CLR's nonvirtual `InnerException` property,
+native `ToString()` and other CLR consumers still see the constructor's native
+cause, not a Kotlin-only override.
+
+Detailed rendering remains incomplete ([#1338](https://github.com/tmyt/dotkt/issues/1338)):
+custom `toString()` can hide stack/cause details, and an overridden logical cause
+can differ from the chain in the native description. The suppression walker
+follows the logical cause but does not yet describe that chain explicitly. These
+are rendering bugs, not additional platform deviations; no reflection or parsing
+of native text is used to reconstruct missing semantics.
 
 ## 4c. `.await()` binds to the .NET AWAITABLE PATTERN (GetAwaiter), not to Task (#10)
 
