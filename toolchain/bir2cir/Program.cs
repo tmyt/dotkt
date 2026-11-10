@@ -1180,7 +1180,7 @@ sealed class Pipeline
         else
         {
             UnsafeAccessorLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
-            // UnsafeAccessor creates holder TypeDefs and replaces protected/private calls with wrapper calls. Index
+            // UnsafeAccessor creates holder TypeDefs and replaces restricted calls with wrapper calls. Index
             // those exact physical declarations, then flow the new edges through the nullable-generic boundary once.
             // The exact selected declaration stamps the wrapper with one-shot erasure ownership. Local declarations
             // contribute their in-memory carrier; referenced declarations contribute the compiler-authored metadata

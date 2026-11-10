@@ -206,7 +206,7 @@ static class NetInteropBinding
                 && MemberIsStaticPropertyOrField(netType, method)));
         // Restricted edges must retain their declaration facts until physical ownership is final.
         // UnsafeAccessorLowering selects legal access after defaults, closures and suspend bodies move.
-        if (Str(node["memberVisibility"]) is "private" or "protected")
+        if (Str(node["memberVisibility"]) is "private" or "protected" or "internal")
         {
             // Preserve the plain call and its declaration frame for access lowering, but bind
             // the indexed-property role now: UnsafeAccessor names a CLR MethodDef, not Kotlin get/set.
@@ -500,7 +500,7 @@ static class NetInteropBinding
         }
         var name = Str(node["name"]);
         if (name == null || !MemberIsPropertyOrField(netType, name)) return;
-        if (Str(node["memberVisibility"]) is "private" or "protected")
+        if (Str(node["memberVisibility"]) is "private" or "protected" or "internal")
         {
             if (companionStatic == true || MemberIsStaticPropertyOrField(netType, name))
                 node["ownerType"] = CloseStaticOwner(ownerJson, netType);

@@ -313,14 +313,15 @@ sealed partial class ReferenceMetadataIndex
         var physicalOwner = binding.DeclarationPhysicalOwner ?? binding.Owner;
         if (!string.Equals(BareOwnerFqn(physicalOwner), BareOwnerFqn(ownerFqn), StringComparison.Ordinal)
             || binding.MethodArity != methodArity || binding.IsStatic != isStatic
-            || binding.ParamTypeNodes == null || binding.ReturnTypeNode == null)
+            || binding.SignatureParameters == null || binding.SignatureReturn == null)
             return false;
         declaration = new ReferencedUnsafeAccessorMethod(
             binding.Name,
-            binding.ParamTypeNodes,
-            binding.ReturnTypeNode,
+            binding.SignatureParameters,
+            binding.SignatureReturn,
             binding.MethodTypeParams,
-            binding.NullableGenericRet);
+            binding.NullableGenericRet,
+            binding.IsPublic);
         return true;
     }
 
@@ -348,17 +349,26 @@ sealed partial class ReferenceMetadataIndex
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
                     member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
                 && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments)
-                && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
+                && member.SignatureParameters != null && member.SignatureReturn != null)
             .ToList();
         if (matches.Count != 1) return false;
         var match = matches[0];
         declaration = new ReferencedUnsafeAccessorMethod(
             match.Name,
-            match.ParamTypeNodes,
-            match.ReturnTypeNode,
+            match.SignatureParameters,
+            match.SignatureReturn,
             match.MethodTypeParams,
-            match.NullableGenericRet);
+            match.NullableGenericRet,
+            match.IsPublic);
         return true;
+    }
+
+    internal ConstructorInfo UnsafeAccessorConstructor(TypeNode.Fqn owner, string identity)
+    {
+        var definition = ClrMemberResolution.ResolveOwnerType(owner, this)
+            ?? throw new InvalidOperationException($"UnsafeAccessor constructor owner '{owner.Name}' has no referenced TypeDef");
+        return SelectConstructorDeclaration(definition.GetConstructors(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), identity);
     }
 
     // Resolve the exact MethodDef named by the frontend-selected Kotlin declaration identity. The identity selects;
@@ -8722,7 +8732,7 @@ sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Para
     string DeclarationId);
 
 sealed record ReferencedUnsafeAccessorMethod(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
-    JsonArray TypeParams, TypeNode NullableGenericReturn);
+    JsonArray TypeParams, TypeNode NullableGenericReturn, bool IsPublic);
 
 sealed record ReferencedDeclarationSlot(string Owner, string Name, int Arity, TypeNode[] Parameters,
     TypeNode Return, bool IsInterface, bool SignatureAllocated);
