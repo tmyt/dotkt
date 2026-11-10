@@ -191,6 +191,16 @@ static class KotlinCollectionSlotSynthesis
         (operation["overrides"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(marker =>
             Slots.Any(slot => slot.Parameters.Contains(ParameterCarrier.ErasedValue) && MatchesOverride(marker, slot)));
 
+    internal static bool IsErasedQueryParameter(JsonObject operation, int index) =>
+        ErasedQueryOverride(operation) is { } marker && Slots.Any(slot => MatchesOverride(marker, slot)
+            && index < slot.Parameters.Length && slot.Parameters[index] == ParameterCarrier.ErasedValue);
+
+    internal static bool UsesErasedQueryCarrier(TypeNode type) => type switch {
+        TypeNode.Nullable nullable => UsesErasedQueryCarrier(nullable.Of),
+        TypeNode.Oblivious oblivious => UsesErasedQueryCarrier(oblivious.Of),
+        _ => SignatureValueTypes.Of(type) is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any", Args: null },
+    };
+
     internal static void EraseGenericQueryParameters(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> aliases)
     {
@@ -202,18 +212,16 @@ static class KotlinCollectionSlotSynthesis
             foreach (var method in definition.Methods.OfType<JsonObject>())
             {
                 var marker = ErasedQueryOverride(method);
-                if (marker == null || IsMapContractOwner(TypeJson.OwnerName(marker["owner"]))
-                    || method["params"] is not JsonArray parameters) continue;
-                var slot = Slots.First(slot => !IsMapContractOwner(slot.DeclaringInterface)
-                    && slot.Parameters.Contains(ParameterCarrier.ErasedValue) && MatchesOverride(marker, slot));
+                if (marker == null || method["params"] is not JsonArray parameters) continue;
+                var slot = Slots.First(slot => slot.Parameters.Contains(ParameterCarrier.ErasedValue)
+                    && MatchesOverride(marker, slot));
                 for (var i = 0; i < slot.Parameters.Length; i++)
                     if (slot.Parameters[i] == ParameterCarrier.ErasedValue
-                        && parameters[i] is JsonObject parameter && TypeJson.Read(parameter["type"]) is TypeNode.Tv variable)
+                        && parameters[i] is JsonObject parameter
+                        && GenericQueryBound(TypeJson.Read(parameter["type"]), method, definition.Node, IsInterface) is { } bound)
                     {
-                        var bound = ErasedElementValues.ErasedBound(variable, method, definition.Node, IsInterface);
-                        parameter["kotlinType"] ??= TypeNode.ToJson(variable);
-                        parameter["type"] = TypeJson.Write(bound is TypeNode.Fqn { Name: "object" }
-                            ? new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) : bound);
+                        parameter["kotlinType"] ??= TypeNode.ToJson(TypeJson.Read(parameter["type"]));
+                        parameter["type"] = TypeJson.Write(bound);
                     }
             }
     }
@@ -241,7 +249,7 @@ static class KotlinCollectionSlotSynthesis
         var defs = new Dictionary<string, Def>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, defs);
         foreach (var def in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
-            ApplyType(def, defs, inherited.TryGetValue(def.Name, out var methods) ? methods : null);
+            ApplyType(def, defs, inherited.TryGetValue(def.Name, out var methods) ? methods : null, refs);
     }
 
     static void Collect(JsonNode node, Dictionary<string, Def> defs)
@@ -266,24 +274,24 @@ static class KotlinCollectionSlotSynthesis
     }
 
     static void ApplyType(Def cls, IReadOnlyDictionary<string, Def> defs,
-        IReadOnlyList<(TypeNode.Fqn Owner, JsonObject Method)> inheritedMethods)
+        IReadOnlyList<(TypeNode.Fqn Owner, JsonObject Method)> inheritedMethods, ReferenceMetadataIndex refs)
     {
         if (cls.Methods == null) return;
-        // Reuse each slot already supplied by a local base: its virtual forwarding reaches overriding bodies.
-        // Sibling slots on the same capability remain independent and may need their own bridge.
+        // An unchanged inherited implementation can reuse its base's bridge. A new source override needs its own
+        // interface mapping: its physical signature can differ from the erased generic base declaration.
         var inherited = InheritedSlots(cls, defs);
 
         var newBridges = new List<JsonObject>();
         var wanted = new HashSet<string>(StringComparer.Ordinal);
         foreach (var slot in Slots)
         {
-            if (inherited.Members.Contains(SlotKey(slot))) continue;
+            if (inherited.Members.Contains(SlotKey(slot)) && DeclaresConcretely(cls, slot) == null) continue;
             // Does this class PARTICIPATE in the slot? Exactly when a declaration reachable from it overrides the
             // Kotlin member: its own first, else a concrete declaration in its local supertype closure (a base-class
             // body, or an interface DEFAULT method for which the frontend emits nothing on the implementing class).
             if (!TryResolveImplementation(cls, slot, defs, inheritedMethods, out var target)) continue;
             if (cls.Methods.OfType<JsonObject>().Any(m => Str(m["name"]) == slot.Bridge)) continue;
-            newBridges.Add(Bridge(cls, slot, target));
+            newBridges.Add(Bridge(cls, slot, target, defs, refs));
             wanted.Add(slot.SlotInterface);
         }
         if (newBridges.Count == 0) return;
@@ -295,7 +303,6 @@ static class KotlinCollectionSlotSynthesis
         }
         foreach (var iface in wanted)
         {
-            if (inherited.Interfaces.Contains(iface)) continue;
             if (!ifaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == iface))
                 ifaces.Add(TypeJson.Fqn(iface));
         }
@@ -426,10 +433,12 @@ static class KotlinCollectionSlotSynthesis
     /// retain their original reference. The forward is VIRTUAL: the bridge is inherited by
     /// subclasses and must reach the most-derived override.
     /// </summary>
-    static JsonObject Bridge(Def cls, Slot slot, (TypeNode.Fqn Owner, JsonObject Method, bool Closed) target)
+    static JsonObject Bridge(Def cls, Slot slot, (TypeNode.Fqn Owner, JsonObject Method, bool Closed) target,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
     {
-        var declaredParams = (target.Method["params"] as JsonArray)?.OfType<JsonObject>()
-            .Select(p => TypeJson.Read(p["type"])).ToArray() ?? Array.Empty<TypeNode>();
+        var parameterDeclarations = (target.Method["params"] as JsonArray)?.OfType<JsonObject>().ToArray()
+            ?? Array.Empty<JsonObject>();
+        var declaredParams = parameterDeclarations.Select(p => TypeJson.Read(p["type"])).ToArray();
         if (declaredParams.Length != slot.Arity || declaredParams.Any(p => p == null)
             || (slot.Arity != 0 && slot.Parameters.Length != slot.Arity))
             throw new InvalidOperationException(
@@ -438,6 +447,19 @@ static class KotlinCollectionSlotSynthesis
                 + $"{slot.Parameters.Length} carrier fact(s).");
         var ownerArgs = target.Owner.Args ?? Array.Empty<TypeNode>();
         TypeNode InCaller(TypeNode type) => target.Closed ? type : Subst(type, ownerArgs);
+        TypeNode QueryGuard(int index)
+        {
+            var parameter = parameterDeclarations[index];
+            if (!target.Closed && UsesErasedQueryCarrier(declaredParams[index])
+                && defs.TryGetValue(target.Owner.Name, out var owner)
+                && Str(parameter["kotlinType"] ?? parameter["nullableGeneric"]) is string semantic
+                && GenericQueryBound(TypeNode.Parse(semantic), target.Method, owner.Node,
+                    type => type is TypeNode.Fqn named && (defs.TryGetValue(named.Name, out var definition)
+                        ? definition.Kind == "interface" : refs?.IsInterfaceType(named) == true),
+                    refs?.NullableTypeFrames) is { } bound)
+                return InCaller(bound);
+            return InCaller(QueryGuardType(declaredParams[index], parameter));
+        }
         var bridgeParams = new JsonArray();
         var slotParams = new JsonArray();
         var callSig = new JsonArray();
@@ -524,7 +546,7 @@ static class KotlinCollectionSlotSynthesis
                 {
                     ["k"] = "cond",
                     ["type"] = TypeJson.Write(slotRet),
-                    ["cond"] = ErasedValueCompatible(InCaller(declaredParams[i]), "p" + i),
+                    ["cond"] = ErasedValueCompatible(QueryGuard(i), "p" + i),
                     ["then"] = forwarded,
                     ["else"] = ErasedQueryMiss(slot),
                 };
@@ -558,8 +580,34 @@ static class KotlinCollectionSlotSynthesis
         };
         if (cls.Kind == "interface")
             bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
+        // This newly generated body has not visited the value classifier binder. Bind its source-bound tests once,
+        // rather than mistaking a classifier-backed physical Object slot for acceptance of every non-null value.
+        KotlinRuntimeTypeWitness.ValueRepresentations?.BindOperations(bridge);
         return MaterializedExecutable.Normalize(bridge);
     }
+
+    // The selected declaration's erased source bound is distinct from both its physical argument slot and closed K.
+    // This fact belongs only to the transient inherited candidate, not to an emitted MethodDef signature.
+    internal const string QueryBoundKey = "_collectionQueryBound";
+
+    internal static TypeNode GenericQueryBound(TypeNode source, JsonObject method, JsonObject owner,
+        Func<TypeNode, bool> isInterface, IReadOnlyDictionary<string, NullableRepresentationFrame> frames = null,
+        ValueTypeOracle isValue = null)
+    {
+        if ((source is TypeNode.Nullable nullable ? nullable.Of : source) is not TypeNode.Tv variable) return null;
+        var mapping = new NullableRepresentationTypes(KotlinSupertypesRecord.ReadNullableFrame(owner),
+            NullableRepresentationTypes.DeclarationMethodFrame(method),
+            frames ?? new Dictionary<string, NullableRepresentationFrame>(), isValue ?? (_ => false));
+        var bound = ErasedElementValues.ErasedBound((TypeNode.Tv)mapping.Slot(variable), method, owner,
+            isInterface, frames, isValue);
+        if (bound is TypeNode.Fqn { Name: "object" }) bound = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+        return source is TypeNode.Nullable && bound is not TypeNode.Nullable ? new TypeNode.Nullable(bound) : bound;
+    }
+
+    static TypeNode QueryGuardType(TypeNode physical, JsonObject parameter) =>
+        TypeJson.Read(parameter[QueryBoundKey]) ?? (physical is not (TypeNode.Nullable or TypeNode.Oblivious or TypeNode.Tv)
+            && parameter["nullableFlags"] is JsonArray { Count: > 0 } flags && flags[0]?.GetValue<int>() == 2
+                ? new TypeNode.Nullable(physical) : physical);
 
     static JsonObject ErasedValueCompatible(TypeNode declared, string name) => new()
     {
@@ -674,22 +722,63 @@ static class KotlinCollectionSlotSynthesis
         var generic = Query(variable);
         var typed = Query(new TypeNode.Fqn("kotlin.Int"));
         var bounded = Query(variable);
+        var nullableBounded = Query(new TypeNode.Nullable(variable));
         var native = Query(variable);
+        var valueVariable = new TypeNode.Tv("type", 1);
+        JsonObject MapQuery(string member, params TypeNode[] parameters) => new() {
+            ["name"] = member,
+            ["params"] = new JsonArray(parameters.Select((type, i) => (JsonNode)new JsonObject {
+                ["name"] = "p" + i, ["type"] = TypeJson.Write(type),
+            }).ToArray()),
+            ["overrides"] = new JsonArray(new JsonObject {
+                ["owner"] = TypeJson.Fqn(member is "remove" or "replace" ? MutableMap : Map), ["member"] = member,
+                ["kind"] = "method", ["arity"] = parameters.Length,
+            }),
+        };
+        var mapKey = MapQuery("containsKey", variable);
+        var mapValue = MapQuery("containsValue", valueVariable);
+        var mapGet = MapQuery("get", variable);
+        var mapDefault = MapQuery("getOrDefault", variable, valueVariable);
+        var mapRemove = MapQuery("remove", variable, valueVariable);
+        var mapReplace = MapQuery("replace", variable, valueVariable, valueVariable);
         var root = new JsonObject { ["types"] = new JsonArray(
             new JsonObject { ["name"] = "Generic", ["kind"] = "class", ["typeParams"] = new JsonArray("E"),
                 ["methods"] = new JsonArray(generic, typed) },
             new JsonObject { ["name"] = "Bounded", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject {
                 ["name"] = "E", ["constraints"] = new JsonArray(TypeJson.Fqn("Bound")),
-            }), ["methods"] = new JsonArray(bounded) },
+            }), ["methods"] = new JsonArray(bounded, nullableBounded) },
             new JsonObject { ["name"] = "Native", ["kind"] = "interface", ["typeParams"] = new JsonArray("E"),
-                ["methods"] = new JsonArray(native) }) };
+                ["methods"] = new JsonArray(native) },
+            new JsonObject { ["name"] = "GenericMap", ["kind"] = "class", ["typeParams"] = new JsonArray("K", "V"),
+                ["methods"] = new JsonArray(mapKey, mapValue, mapGet, mapDefault, mapRemove, mapReplace) }) };
         EraseGenericQueryParameters(new[] { root }, null, new Dictionary<string, string> { ["Native"] = "System.Native" });
         if (TypeJson.Read(generic["params"][0]["type"]) is not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Any" } }
             || TypeNode.Parse(Str(generic["params"][0]["kotlinType"])) != variable
             || TypeJson.Read(typed["params"][0]["type"]) is not TypeNode.Fqn { Name: "kotlin.Int" }
             || TypeJson.Read(bounded["params"][0]["type"]) is not TypeNode.Fqn { Name: "Bound" }
+            || TypeJson.Read(nullableBounded["params"][0]["type"]) is not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "Bound" } }
             || TypeJson.Read(native["params"][0]["type"]) != variable)
             throw new InvalidOperationException("Query entry erasure lost source bounds, concrete guards or native signatures");
+        bool Erased(JsonObject operation, int index, TypeNode source) =>
+            TypeJson.Read(operation["params"][index]["type"]) is TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Any" } }
+            && TypeNode.Parse(Str(operation["params"][index]["kotlinType"])) == source;
+        if (!Erased(mapKey, 0, variable) || !Erased(mapValue, 0, valueVariable) || !Erased(mapGet, 0, variable)
+            || !Erased(mapDefault, 0, variable) || TypeJson.Read(mapDefault["params"][1]["type"]) != valueVariable
+            || !Erased(mapRemove, 0, variable) || !Erased(mapRemove, 1, valueVariable)
+            || !Erased(mapReplace, 0, variable) || !Erased(mapReplace, 1, valueVariable)
+            || TypeJson.Read(mapReplace["params"][2]["type"]) != valueVariable
+            || !IsErasedQueryParameter(mapReplace, 0) || !IsErasedQueryParameter(mapReplace, 1)
+            || IsErasedQueryParameter(mapReplace, 2) || IsErasedQueryParameter(mapDefault, 1))
+            throw new InvalidOperationException("Map query erasure changed an input role or lost its source variable");
+        var nullableReference = new JsonObject { ["nullableFlags"] = new JsonArray(2) };
+        var nonnullReference = new JsonObject { ["nullableFlags"] = new JsonArray(1) };
+        var physicalObject = new TypeNode.Fqn("System.Object");
+        if (QueryGuardType(physicalObject, nullableReference) is not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "System.Object" } }
+            || QueryGuardType(physicalObject, nonnullReference) != physicalObject
+            || QueryGuardType(variable, nullableReference) != variable
+            || UsesErasedQueryCarrier(variable) || UsesErasedQueryCarrier(new TypeNode.Fqn("Bound"))
+            || !UsesErasedQueryCarrier(new TypeNode.Nullable(physicalObject)))
+            throw new InvalidOperationException("Query guard lost reference nullability or changed a generic physical contract");
         Console.WriteLine("[collection query parameters] self-test OK (erased source bound, typed/native signatures)");
     }
 

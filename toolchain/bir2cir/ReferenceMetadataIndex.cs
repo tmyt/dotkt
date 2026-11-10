@@ -3499,6 +3499,38 @@ sealed partial class ReferenceMetadataIndex
             .Select((p, i) => DeclarationDescribesCall(p, signature[i])).All(x => x)).ToList();
     }
 
+    static byte[] ReferenceParameterNullableFlags(ParameterInfo parameter, TypeNode physical)
+    {
+        if (physical is not (TypeNode.Fqn or TypeNode.Array or TypeNode.Fn))
+            return null;
+        var attribute = parameter.GetCustomAttributesData().FirstOrDefault(attribute =>
+            attribute.AttributeType.FullName == "System.Runtime.CompilerServices.NullableAttribute");
+        if (attribute?.ConstructorArguments.FirstOrDefault().Value is byte flag) return new[] { flag };
+        return attribute?.ConstructorArguments.FirstOrDefault().Value is IEnumerable<CustomAttributeTypedArgument> flags
+            ? flags.Select(value => Convert.ToByte(value.Value)).ToArray() : null;
+    }
+
+    TypeNode QueryParameterBound(MemberBinding member, string ownerName, int index)
+    {
+        var parameters = member.KotlinParameterTypes ?? member.NullableGenericParams;
+        if (!KotlinCollectionSlotSynthesis.UsesErasedQueryCarrier(member.ParamTypeNodes[index])
+            || parameters == null || index >= parameters.Length
+            || parameters[index] is not (TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })) return null;
+        if (!HasDotKtOwner(ownerName) || !TryReferenceTypeShapeValue(new TypeNode.Fqn(ownerName), out var shape)) return null;
+        var owner = new JsonObject { ["typeParams"] = OwnerTypeParamDeclarations(ownerName) };
+        if (shape.SourceFacts != null) owner[KotlinSupertypesRecord.PreKey] = shape.SourceFacts.ToJsonString();
+        var method = new JsonObject { ["typeParams"] = member.MethodTypeParams?.DeepClone() };
+        if (member.NullableFrame != null)
+            method[NullableRepresentationTypes.MethodFrameKey] = member.NullableFrame.ToJson().ToJsonString();
+        if (member.SemanticMethodTypeParams is JsonArray semanticParameters)
+            method[NullableGenericErasure.MethodTypeParameterBoundsPre] = new JsonObject {
+                ["bounds"] = new JsonObject(semanticParameters.Select((parameter, index) => KeyValuePair.Create(
+                    index.ToString(), (parameter as JsonObject)?["constraints"]?.DeepClone() ?? new JsonArray()))),
+            }.ToJsonString();
+        return KotlinCollectionSlotSynthesis.GenericQueryBound(parameters[index], method, owner,
+            type => type is TypeNode.Fqn named && IsInterfaceType(named), NullableTypeFrames, IsValueType);
+    }
+
     // Resolve the declaration selected by the frontend, including the generic-parameter constraint vector that is
     // part of its identity.  This is intentionally a direct declaration lookup: the inherited-default fact names the
     // owner that supplies the body, so walking to a same-shaped ancestor would replace the frontend's decision with a
@@ -3537,7 +3569,8 @@ sealed partial class ReferenceMetadataIndex
             match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
             match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
-            PhysicalDeclarationSignature(match).Parameters, match.DeclarationId);
+            PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
+        { ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBound = index => QueryParameterBound(match, ownerFqn, index) };
         return true;
     }
 
@@ -3591,7 +3624,8 @@ sealed partial class ReferenceMetadataIndex
                 : match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
             match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
-            PhysicalDeclarationSignature(match).Parameters, match.DeclarationId);
+            PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
+        { ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBound = index => QueryParameterBound(match, ownerFqn, index) };
         return true;
     }
 
@@ -5706,6 +5740,9 @@ sealed partial class ReferenceMetadataIndex
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
                             SignatureReturn = DeclarationSignatureSlot(method.ReturnParameter),
+                            ParameterNullableFlags = dotKtAuthored
+                                ? method.GetParameters().Select((parameter, i) => ReferenceParameterNullableFlags(parameter,
+                                    nativeSignature?.Parameters[i] ?? DeclarationTypeNode(parameter.ParameterType))).ToArray() : null,
                             VarargPositions = method.GetParameters()
                                 .Where(parameter => parameter.GetCustomAttributesData().Any(attribute =>
                                     attribute.AttributeType.FullName == "System.ParamArrayAttribute"))
@@ -8776,13 +8813,18 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     public bool SignatureAllocated { get; init; }
     public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }
+    public byte[][] ParameterNullableFlags { get; init; }
     public int[] VarargPositions { get; init; } = Array.Empty<int>();
 }
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, bool ReturnsValue, bool IsVirtual, TypeNode[] PhysicalParameters,
     TypeNode PhysicalReturn, NullableRepresentationFrame NullableFrame, TypeNode[] SignatureParameters,
-    string DeclarationId);
+    string DeclarationId)
+{
+    public byte[][] ParameterNullableFlags { get; init; }
+    public Func<int, TypeNode> QueryParameterBound { get; init; }
+}
 
 sealed record ReferencedUnsafeAccessorMethod(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, TypeNode NullableGenericReturn, bool IsPublic);
