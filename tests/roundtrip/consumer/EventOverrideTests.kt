@@ -8,6 +8,7 @@ import roundtrip.eventoverride.EventMiddle
 import roundtrip.eventoverride.PolicyEventBase
 import roundtrip.eventoverride.RecordingEventPolicy
 import roundtrip.eventoverride.localPolicyDispatch
+import roundtrip.eventoverride.FunctionEventBase
 import kotlin.clr.ClrEvent
 import kotlin.clr.clrEvent
 
@@ -18,6 +19,24 @@ open class CrossDllEvent : EventMiddle<String>() {
 
 class CrossDllEventLeaf : CrossDllEvent()
 
+private open class CrossDllFunctionEvent : FunctionEventBase() {
+    override val Changed by clrEvent()
+    fun fire(value: Int) { Changed(value) }
+}
+
+private open class CrossDllWideFunctionEvent : FunctionEventBase() {
+    override val Changed: ClrEvent<(Any) -> Unit> by clrEvent()
+    fun fire(value: Int) { Changed(value) }
+}
+
+private class LocalFunctionEventLeaf : CrossDllFunctionEvent() {
+    override val Changed by clrEvent()
+}
+
+private class LocalWideFunctionEventLeaf : CrossDllWideFunctionEvent() {
+    override val Changed by clrEvent()
+}
+
 class CrossDllPolicyEvent : PolicyEventBase() {
     val policy = RecordingEventPolicy()
     override val Changed: ClrEvent<System.Action1<Int>> by clrEvent(policy)
@@ -27,6 +46,28 @@ class CrossDllPolicyEvent : PolicyEventBase() {
 class EventOverrideTests {
     @TestAttribute
     fun genericClassEventReusesReferencedSlot() {
+        val inferred = CrossDllFunctionEvent()
+        var functionSum = 0
+        val inferredToken = (inferred as FunctionEventBase).Changed.subscribe { functionSum += it }
+        inferred.fireFromBase(10)
+        inferred.fire(11)
+        inferredToken.close()
+        inferred.fireFromBase(100)
+        val wide = CrossDllWideFunctionEvent()
+        val wideToken = (wide as FunctionEventBase).Changed.subscribe { functionSum += it }
+        wide.fireFromBase(20)
+        wide.fire(21)
+        wideToken.close()
+        wide.fireFromBase(100)
+        assertEquals(62, functionSum)
+        for (leaf: FunctionEventBase in arrayOf(LocalFunctionEventLeaf(), LocalWideFunctionEventLeaf())) {
+            var leafValue = 0
+            val token = leaf.Changed.subscribe { leafValue += it }
+            leaf.fireFromBase(42)
+            token.close()
+            leaf.fireFromBase(100)
+            assertEquals(42, leafValue)
+        }
         val source = CrossDllEventLeaf()
         var received = ""
         val base: EventBase<Int, String> = source

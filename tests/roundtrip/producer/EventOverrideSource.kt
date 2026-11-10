@@ -34,7 +34,7 @@ class LocalPolicyEvent : PolicyEventBase() {
     fun fire(value: Int) { Changed(value) }
 }
 
-private open class FunctionEventBase {
+open class FunctionEventBase {
     open val Changed: ClrEvent<(Int) -> Unit> by clrEvent()
     fun fireFromBase(value: Int) { Changed(value) }
 }
