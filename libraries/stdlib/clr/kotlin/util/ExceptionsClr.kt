@@ -41,8 +41,7 @@ private class ExceptionTraceTask(val exception: Throwable, val caption: String, 
 // virtual slot (not a matching name or a Kotlin/exception classifier).
 private val nativeExceptionFormatter = (Throwable::class as System.Type)
     .GetMethod("ToString", 0, System.Type.EmptyTypes)!!
-private val nativeExceptionFormatterType = (System.Func1::class as System.Type)
-    .MakeGenericType(String::class as System.Type)
+private val nativeExceptionFormatterType = (System.Func1<String> { "" } as System.Object).GetType()
 
 private fun Throwable.exceptionDescription(): String {
     val native = this as System.Exception
