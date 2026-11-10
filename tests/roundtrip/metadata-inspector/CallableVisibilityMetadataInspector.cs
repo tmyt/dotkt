@@ -185,9 +185,8 @@ internal static class CallableVisibilityMetadataInspector
         CheckCarrier(md, helper);
         Require((method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Public,
             "reference helper lost public physical access");
-        // The source parameter and its value-storage companion are distinct physical generic slots. Both value
-        // positions use slot 1, while Kotlin's declaration and constraint remain on source slot 0.
-        Require(md.GetBlobBytes(method.Signature).SequenceEqual(new byte[] { 0x10, 2, 1, 0x1e, 1, 0x1e, 1 }),
+        // Opaque value transport does not remove the independent source/storage frame or its source constraint.
+        Require(md.GetBlobBytes(method.Signature).SequenceEqual(new byte[] { 0x10, 2, 1, 0x1c, 0x1c }),
             "reference generic identity signature changed: " + Convert.ToHexString(md.GetBlobBytes(method.Signature)));
         Require(method.GetGenericParameters().Count == 2, "reference physical generic frame changed");
         var parameter = method.GetGenericParameters().Select(md.GetGenericParameter).Single(parameter => parameter.Index == 0);

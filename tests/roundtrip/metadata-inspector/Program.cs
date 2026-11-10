@@ -1196,13 +1196,20 @@ static void VerifyCovariantPropertyBridge(string producerPath)
         var ownerHandle = md.TypeDefinitions.Single(handle =>
             md.GetString(md.GetTypeDefinition(handle).Name) == ownerName);
         var owner = md.GetTypeDefinition(ownerHandle);
-        var bridge = owner.GetMethods().Single(handle =>
-            md.GetString(md.GetMethodDefinition(handle).Name)
-                .StartsWith("dotkt$covar$prop_get_" + propertyName + "_$", StringComparison.Ordinal));
-        var associated = owner.GetProperties().Where(handle =>
+        var methodImplBodies = owner.GetMethodImplementations()
+            .Select(handle => md.GetMethodImplementation(handle).MethodBody)
+            .Where(handle => handle.Kind == HandleKind.MethodDefinition)
+            .Select(handle => (MethodDefinitionHandle)handle)
+            .ToArray();
+        var getters = owner.GetProperties().Where(handle =>
                 md.GetString(md.GetPropertyDefinition(handle).Name) == propertyName)
             .Select(handle => md.GetPropertyDefinition(handle).GetAccessors().Getter)
-            .Count(getter => getter == bridge);
+            .ToArray();
+        var bridges = getters.Where(methodImplBodies.Contains).Distinct().ToArray();
+        Require(bridges.Length == 1,
+            $"covariant property '{ownerName}.{propertyName}' has no unique associated MethodImpl getter");
+        var bridge = bridges.Single();
+        var associated = getters.Count(getter => getter == bridge);
         Require(associated == 1,
             $"covariant property '{ownerName}.{propertyName}' MethodImpl bridge has no exact CLR Property/MethodSemantics association");
         Require(md.GetMethodDefinition(bridge).GetCustomAttributes()
@@ -1210,11 +1217,6 @@ static void VerifyCovariantPropertyBridge(string producerPath)
                 .Any(attribute => AttributeName(md, attribute) ==
                     "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute"),
             $"covariant property '{ownerName}.{propertyName}' MethodImpl bridge has no exact Kotlin accessor carrier");
-        var methodImplBodies = owner.GetMethodImplementations()
-            .Select(handle => md.GetMethodImplementation(handle).MethodBody)
-            .Where(handle => handle.Kind == HandleKind.MethodDefinition)
-            .Select(handle => (MethodDefinitionHandle)handle)
-            .ToArray();
         Require(methodImplBodies.Contains(bridge),
             $"covariant property '{ownerName}.{propertyName}' MethodImpl is not wired to its associated bridge body; bodies: " +
             string.Join(", ", methodImplBodies.Select(handle =>
@@ -1422,20 +1424,29 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
     static bool IsMethodSlot(JsonNode? node, int slot) => node is JsonObject type
         && Text(type["t"]) == "tv" && Text(type["scope"]) == "method"
         && type["i"] is JsonValue index && index.TryGetValue<int>(out var value) && value == slot;
+    static bool IsOpaqueSlot(JsonNode? node) => Text(node?["t"]) == "fqn"
+        && Text(node?["name"]) is "object" or "System.Object";
+    static JsonObject SourceParameter(JsonObject parameter)
+    {
+        var attribute = parameter["attrs"]!.AsArray().OfType<JsonObject>().Single(attribute =>
+            Text(attribute["attr"]?["name"]) == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
+        return BirCarrier.DecodeBody(Text(attribute["args"]?[0]?["value"])!,
+            Convert.FromBase64String(Text(attribute["args"]?[1]?["bytes"])!)).AsObject();
+    }
     var sparseLocal = primaryLocalMethods.Single(method =>
         Objects(method).Any(node => Text(node["k"]) == "callStatic" && Text(node["method"]) == "selectSecond"));
     Require(Text(sparseLocal["name"])!.EndsWith("_read", StringComparison.Ordinal)
             && sparseLocal["typeParams"] is JsonArray typeParameters && typeParameters.Count == 2,
         "sparse local-function fixture did not materialize as the expected generic read method");
-    Require(IsMethodSlot(sparseLocal["ret"], 1)
+    Require(IsOpaqueSlot(sparseLocal["ret"])
             && sparseLocal["params"] is JsonArray sparseParams
-            && sparseParams.OfType<JsonObject>().All(parameter => IsMethodSlot(parameter["type"], 1)),
-        "sparse lexical generic slots were not compacted into the physical local-method frame");
+            && sparseParams.OfType<JsonObject>().All(parameter => IsOpaqueSlot(parameter["type"])
+                && IsMethodSlot(SourceParameter(parameter), 0)),
+        "opaque local parameters lost the compacted source-generic frame");
     var selectSecondCall = Objects(sparseLocal)
         .Single(node => Text(node["k"]) == "callStatic" && Text(node["method"]) == "selectSecond");
     Require(selectSecondCall["sig"] is JsonArray calleeSignature
-            && calleeSignature.Count == 2 && IsMethodSlot(calleeSignature[0], 2)
-            && IsMethodSlot(calleeSignature[1], 3)
+            && calleeSignature.Count == 2 && calleeSignature.All(IsOpaqueSlot)
             && selectSecondCall["typeArgs"] is JsonArray suppliedTypeArguments
             && suppliedTypeArguments.Count == 4 && IsMethodSlot(suppliedTypeArguments[1], 0)
             && IsMethodSlot(suppliedTypeArguments[3], 1)

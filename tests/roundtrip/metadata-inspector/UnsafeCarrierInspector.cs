@@ -48,7 +48,16 @@ static class UnsafeCarrierInspector
                 ownerName + ": value slot is not a public abstract interface member");
             Signature(producer, slot.Signature, generic, state);
             if (generic)
+            {
                 Require(original.GetGenericParameters().Count == 2, ownerName + ": original method frame lost");
+                var parameter = slot.GetParameters().Select(producer.GetParameter)
+                    .Single(parameter => parameter.SequenceNumber == 1);
+                var sourceType = Fact(producer, parameter.GetCustomAttributes(), "KotlinType")!.Value;
+                Require(sourceType.GetProperty("t").GetString() == "tv"
+                    && sourceType.GetProperty("scope").GetString() == "method"
+                    && sourceType.GetProperty("i").GetInt32() == 0,
+                    ownerName + ": opaque parameter lost its independent Kotlin source type");
+            }
             var slotName = producer.GetString(slot.Name);
             var bridgeRow = producer.GetTypeDefinition(source).GetMethodImplementations()
                 .Select(producer.GetMethodImplementation).Single(row =>
@@ -149,9 +158,9 @@ static class UnsafeCarrierInspector
             "carrier member has the wrong instance/generic frame");
         Require(blob.ReadCompressedInteger() == (generic ? 1 : 0), "carrier parameter count changed");
         if (generic)
-            Require(blob.ReadSignatureTypeCode() == SignatureTypeCode.GenericMethodParameter && blob.ReadCompressedInteger() == 1
-                && blob.ReadSignatureTypeCode() == SignatureTypeCode.GenericMethodParameter && blob.ReadCompressedInteger() == 1,
-                "generic carrier did not retain method storage parameter/return frame");
+            Require(blob.ReadSignatureTypeCode() == SignatureTypeCode.Object
+                && blob.ReadSignatureTypeCode() == SignatureTypeCode.Object,
+                "generic carrier did not retain opaque parameter/return transport");
         else Require(blob.ReadSignatureTypeCode() == (state ? SignatureTypeCode.Boolean : SignatureTypeCode.Object),
             "carrier result does not match its physical value/state contract");
         Require(blob.RemainingBytes == 0, "carrier signature has unaccounted physical slots");
