@@ -787,7 +787,7 @@ Every identifier in the serialization vocabulary is **lowerCamelCase**, uniforml
 **Why it exists.** A Kotlin call evaluates its receiver, then each supplied argument, then the callee's omitted
 defaults — each exactly once, however many emitted positions read it. On the CLR the readers are not one position: a
 same-module default splices an earlier value, a reconstructed cross-module data-class `copy` field reads the receiver,
-a `[kotlin.clr.KotlinDefault]` carrier binds `{defaultArgReceiver kind}` / `{defaultArgParam n}` to the call's own
+a `[DotKt.Runtime.CompilerServices.KotlinDefaultAttribute]` carrier binds `{defaultArgReceiver kind}` / `{defaultArgParam n}` to the call's own
 values. While a call
 was represented TWICE — as expressions substituted into those readers, and as independently hoisted `var`s sorted
 ahead of the call — an illegal storage answer forced one of the two to be abandoned, and **no point in that design
@@ -1038,7 +1038,7 @@ the inert annotation, which has no emitter semantics. These facts do not narrow 
 public declaration signatures, which may legally carry other generic instantiations, including value-type elements.
 
 **`defaultCarrier.lifted` is unchanged.** A carrier's lifted method declarations remain a RAW TOKEN payload parsed out
-of the `[kotlin.clr.KotlinDefault]` attribute string, not plan vocabulary: they are declarations re-hoisted into the
+of the `KotlinDefaultAttribute(index, codec, byte[] content)` payload, not plan vocabulary: they are declarations re-hoisted into the
 consuming file class, and nothing about them is a call-site value. Only the carrier's `expr` is token-substituted, and
 its `{defaultArgReceiver kind}` / `{defaultArgParam n}` tokens resolve to the call's `bindRef`s. Receiver `kind`
 distinguishes `dispatch`, `extension` and an inner constructor's `enclosing` instance; an ordinary `{this}` nested

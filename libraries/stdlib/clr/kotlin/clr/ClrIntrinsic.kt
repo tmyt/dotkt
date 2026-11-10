@@ -117,17 +117,3 @@ public annotation class ClrRefArgument
 // binding vocabulary, not a user-facing interop annotation.
 @Target(AnnotationTarget.VALUE_PARAMETER)
 internal annotation class ClrCountFromExclusiveEnd(val startIndex: Int)
-
-// Carries a parameter's DEFAULT-VALUE expression as embedded BIR so a CROSS-MODULE caller that OMITS the argument can
-// have it filled. The frontend KLIB drops a callee's default VALUES (hands them back as IrErrorExpression), and .NET
-// `[DefaultParameterValue]` metadata can only carry a CONSTANT of the parameter's own type — it cannot represent a
-// non-null object/`CharSequence` default (e.g. `joinToString`'s `prefix: CharSequence = ""`, which is 4-A-coerced to
-// `new <>dotkt_StringCharSequence("")`, a non-constant). So kotc STAMPS this on the defaulted parameter when compiling
-// the CALLEE (the stdlib), where the default expression IS available in the IR — `index` = the parameter's position in
-// the emitted call (extension-receiver-inclusive), `bir` = the default expression as a BIR-json string. bir2cir READS
-// it from the REFERENCE assembly and SPLICES the BIR as the omitted argument (before StringCharSequenceBridge +
-// BirTypeLowering, so a String default is coerced to CharSequence exactly like an explicit argument), mirroring the
-// [KotlinInline] body-splice mechanism. Constant defaults keep riding `[DefaultParameterValue]` (unchanged); this rides
-// the ref.dll only (param attrs are stripped in the runtime build — exactly bir2cir's read surface).
-@Target(AnnotationTarget.VALUE_PARAMETER)
-public annotation class KotlinDefault(val index: Int, val bir: String)

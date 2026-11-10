@@ -13,7 +13,6 @@ using DotKt.Bir;
 // only the exact mapping indexed from producer metadata; it never reconstructs an ABI from generated names.
 static class CompanionExtensionBinding
 {
-    const string KotlinDefault = "kotlin.clr.KotlinDefault";
 
     internal sealed record Binding(string PhysicalName, string PhysicalOwner, string ValueType = null);
 
@@ -934,7 +933,7 @@ static class CompanionExtensionBinding
         }
     }
 
-    // kotc serializes a default expression into the KotlinDefault string before bir2cir selects the CLR owner. Bind
+    // Defaults are frozen before bir2cir selects the CLR owner. Bind
     // that producer-authored BIR now, exactly like the ordinary body beside it, so a later module never needs an alias
     // from the retired semantic file facade to the C# 14 implementation container.
     static void RewriteDefaultCarriers(
@@ -944,17 +943,8 @@ static class CompanionExtensionBinding
     {
         if (node is JsonObject obj)
         {
-            if (TypeJson.OwnerName(obj["attr"]) == KotlinDefault &&
-                obj["args"] is JsonArray args && args.Count >= 2 &&
-                args[1] is JsonObject carrierArg &&
-                (carrierArg["value"] as JsonValue)?.TryGetValue<string>(out var carrierJson) == true &&
-                !string.IsNullOrEmpty(carrierJson))
-            {
-                var payload = JsonNode.Parse(carrierJson)
-                    ?? throw new InvalidOperationException("KotlinDefault carrier decoded to null");
-                RewriteUses(payload, bindings, refs);
-                carrierArg["value"] = payload.ToJsonString();
-            }
+            if (DefaultBirCarrier.IsCarrier(obj))
+                DefaultBirCarrier.Rewrite(obj, payload => RewriteUses(payload, bindings, refs));
 
             foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
                 RewriteDefaultCarriers(child, bindings, refs);

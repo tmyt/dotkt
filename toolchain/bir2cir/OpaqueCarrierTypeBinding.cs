@@ -11,7 +11,6 @@ using DotKt.Bir;
 // there is intentionally no legacy-DLL fallback.
 static class OpaqueCarrierTypeBinding
 {
-    const string KotlinDefault = "kotlin.clr.KotlinDefault";
 
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 
@@ -161,17 +160,9 @@ static class OpaqueCarrierTypeBinding
                 obj["suspendResult"] = payload.ToJsonString();
             }
 
-            if (TypeJson.OwnerName(obj["attr"]) == KotlinDefault
-                && obj["args"] is JsonArray args && args.Count >= 2
-                && args[1] is JsonObject carrierArg
-                && (carrierArg["value"] as JsonValue)?.TryGetValue<string>(out var carrierJson) == true
-                && !string.IsNullOrEmpty(carrierJson))
-            {
-                var payload = JsonNode.Parse(carrierJson)
-                    ?? throw new InvalidOperationException("KotlinDefault carrier decoded to null");
-                BindPayload(payload, physicalBySemantic, preserveInlineParameterSignature: false);
-                carrierArg["value"] = payload.ToJsonString();
-            }
+            if (DefaultBirCarrier.IsCarrier(obj))
+                DefaultBirCarrier.Rewrite(obj,
+                    payload => BindPayload(payload, physicalBySemantic, preserveInlineParameterSignature: false));
 
             foreach (var value in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
                 RewriteCarrierSlots(value, physicalBySemantic);

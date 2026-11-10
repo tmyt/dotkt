@@ -1614,12 +1614,14 @@ default-omission works **everywhere** — trailing, named-middle, reordered, and
   param (a string constant cannot sit in a `[DefaultParameterValue]` on an interface type) and **any non-constant
   default** — a call (`= emptyList()`), an empty lambda (`= {}`, the Avalonia `configure: Panel.() -> Unit = {}` idiom),
   a receiver-reading default (`= this`). Such a parameter is emitted **REQUIRED** for a C# consumer (no `[Optional]`); a
-  **kcc** consumer instead sees it OPTIONAL, because dll2klib surfaces the `@kotlin.clr.KotlinDefault`-carrying param
+  **kcc** consumer instead sees it OPTIONAL, because dll2klib surfaces the `KotlinDefaultAttribute`-carrying param
   with a `nonConst` default marker so the frontend accepts the omission (#146). The default EXPRESSION is carried as a
-  **CLOSED** BIR sub-tree on the `@kotlin.clr.KotlinDefault(index, birJson)` attribute (mirroring `[KotlinInline]`): a
+  **CLOSED** BIR sub-tree on the compiler-generated
+  `DotKt.Runtime.CompilerServices.KotlinDefaultAttribute(index, codec, byte[] content)` (mirroring `[KotlinInline]`): a
   non-capturing lambda default, whose `newDelegate` would point at a library-LOCAL lifted method, is carried as a
   `{"k":"defaultCarrier","expr":…,"lifted":[…]}` envelope embedding that method so it is self-contained (kotc detaches
-  the dead method from the library dll). Capturing closures, SAMs and suspend lambdas need no lifted-declaration
+  the dead method from the library dll). kotc states `defaultBir: {index, body}`; bir2cir selects the physical carrier
+  and uses the shared BIR codec. Capturing closures, SAMs and suspend lambdas need no lifted-declaration
   envelope: their construction nodes carry their capture descriptors, construction values and synthesis facts.
   For a CROSS-MODULE call kotc emits a POSITIONAL `{"k":"defaultArg"}` placeholder for each omitted arg of such a
   callee (so a later provided arg keeps its slot), and `bir2cir.DefaultArgSplice` — integrated into the recursive

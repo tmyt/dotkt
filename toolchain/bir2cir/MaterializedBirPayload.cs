@@ -25,16 +25,10 @@ static class MaterializedBirPayload
             foreach (var item in array) HideSourceSpans(item);
     }
 
-    // KotlinDefault can also be nested as an opaque string on a parameter of an inline carrier.
+    // Defaults nested on inline parameters use the same versioned byte-array carrier.
     public static void HideDefaultSourceSpans(JsonObject obj)
     {
-        if (obj["attr"] == null || TypeJson.OwnerName(obj["attr"]) != "kotlin.clr.KotlinDefault"
-            || obj["args"] is not JsonArray { Count: >= 2 } args || args[1] is not JsonObject argument
-            || argument["value"] is not JsonValue value || !value.TryGetValue<string>(out var json))
-            return;
-        var expression = JsonNode.Parse(json, documentOptions: BirJson.DocOptions);
-        HideSourceSpans(expression);
-        argument["value"] = expression.ToJsonString();
+        if (DefaultBirCarrier.IsCarrier(obj)) DefaultBirCarrier.Rewrite(obj, HideSourceSpans);
     }
 
     public static void Normalize(JsonNode payload)

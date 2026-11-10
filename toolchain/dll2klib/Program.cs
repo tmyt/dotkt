@@ -3834,7 +3834,7 @@ internal sealed class AssemblyScanner : IDisposable
                 Name = names.String(string.IsNullOrEmpty(name) ? $"arg{i}" : name),
                 Type = type,
                 Flags = (entry.Row.Attributes & (ParameterAttributes.Optional | ParameterAttributes.HasDefault)) != 0 ||
-                    attrs.Has(entry.Handle, "kotlin.clr.KotlinDefault", requireTrust: false)
+                    attrs.Has(entry.Handle, "DotKt.Runtime.CompilerServices.KotlinDefaultAttribute")
                         ? 1 << 1
                         : 0,
             };
@@ -7180,7 +7180,7 @@ internal sealed class AssemblyScanner : IDisposable
                 ? ProjectType(entry.Handle, types[i], methodHandle, names, signatures, context)
                 : signatures.FromTypeNode(semanticTypes[i]);
             var flags = (row.Attributes & (ParameterAttributes.Optional | ParameterAttributes.HasDefault)) != 0 ||
-                _attrs.Has(entry.Handle, "kotlin.clr.KotlinDefault", requireTrust: false) ? 1 << 1 : 0;
+                _attrs.Has(entry.Handle, "DotKt.Runtime.CompilerServices.KotlinDefaultAttribute") ? 1 << 1 : 0;
             var value = new ValueParameter
             {
                 Name = names.String(string.IsNullOrEmpty(name) ? $"arg{i}" : name),

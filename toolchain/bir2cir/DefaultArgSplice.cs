@@ -189,7 +189,7 @@ static class DefaultArgSplice
                 var parameter = (JsonObject)parameters[parameterIndex];
                 JsonNode expression;
                 if (parameter["default"] is JsonNode constant) expression = constant.DeepClone();
-                else if (InlineSplice.KotlinDefaultCarrier(parameter) is string carrier)
+                else if (InlineSplice.KotlinDefaultCarrier(parameter) is JsonNode carrier)
                     expression = MaterializeDefault(carrier, hoist, refs, TypeJson.OwnerName(call["callee"]), parameterIndex, owner);
                 else throw new InvalidOperationException("bir2cir: omitted inline argument has no default carrier");
                 ClosureSynthesis.PrebindSplicedFrames(expression);
@@ -254,16 +254,14 @@ static class DefaultArgSplice
         var defaults = DefaultsForCall(node, ownerNode, owner, method, sig, refs, out var parameterNames);
         if (defaults == null) ThrowUnrepresentable(args.Count);
 
-        // Parse the complete tail before mutating the call. A non-constant KotlinDefault carrier may read the receiver
+        // Clone the complete tail before mutating the call. A non-constant KotlinDefault carrier may read the receiver
         // or an earlier parameter and therefore needs callEval bindings; accept only leaf metadata constants. An enum
         // constant is the same leaf with an explicit declared enum slot plus underlying bits, not an entry-name lookup.
         var fills = new List<JsonNode>();
         for (var pos = args.Count; pos < sig.Count; pos++)
         {
             if (!defaults.TryGetValue(pos, out var bir)) ThrowUnrepresentable(pos);
-            JsonNode parsed;
-            try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); }
-            catch { ThrowUnrepresentable(pos); return; }
+            var parsed = bir.DeepClone();
             MaterializedBirPayload.Normalize(parsed);
             // The metadata expression is authored in the selected declaration's method/type frame. Close it exactly
             // as the planned splice path does before admitting it into this caller; otherwise default(T) from a CLR
@@ -452,7 +450,7 @@ static class DefaultArgSplice
     // already exact for compiler-produced methods; plain CLR calls use the shared structural resolver. The existing
     // owner/signature indexes remain only for call shapes that resolver cannot yet represent, never after it selected
     // a MethodDef with no default (which would incorrectly fall through to a sibling declaration).
-    static Dictionary<int, string> DefaultsForCall(JsonObject node, JsonNode ownerNode, string owner, string method,
+    static Dictionary<int, JsonNode> DefaultsForCall(JsonObject node, JsonNode ownerNode, string owner, string method,
         JsonArray signature, ReferenceMetadataIndex refs, out string[] parameterNames)
     {
         parameterNames = null;
@@ -502,7 +500,7 @@ static class DefaultArgSplice
     /// `{defaultArgParam n}` token becomes a clone of that slot's `bindRef` — a duplicated READ, never a duplicated
     /// evaluation. Receiver tokens are supplied separately from the call shape so dispatch/extension/enclosing values
     /// can coexist without sharing a positional meaning.
-    static void Fill(JsonArray args, JsonObject[] slotBinding, int sigCount, Dictionary<int, string> defaults,
+    static void Fill(JsonArray args, JsonObject[] slotBinding, int sigCount, Dictionary<int, JsonNode> defaults,
         string label, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner, JsonNode semanticOwner,
         JsonArray methodTypeArgs, JsonArray ownerTypeArgs, JsonNode dispatchReceiver, JsonNode extensionReceiver,
         JsonNode enclosingReceiver)
@@ -594,10 +592,10 @@ static class DefaultArgSplice
 
     static bool IsPlaceholder(JsonNode n) => n is JsonObject o && Str(o["k"]) == "defaultArg";
 
-    // Parse a @KotlinDefault BIR-json string, unwrap a `defaultCarrier` (re-hoisting its lifted methods app-local), and
+    // Clone a decoded default payload, unwrap a `defaultCarrier` (re-hoisting its lifted methods app-local), and
     // bind the callee's explicit receiver/parameter tokens to THIS call's own bound values. A deep-fresh subtree per
     // occurrence.
-    static JsonNode SpliceOne(string bir, JsonNode dispatchReceiver, JsonNode extensionReceiver,
+    static JsonNode SpliceOne(JsonNode bir, JsonNode dispatchReceiver, JsonNode extensionReceiver,
         JsonNode enclosingReceiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method,
         int slot, JsonNode localOwner, JsonNode semanticOwner,
         JsonArray methodTypeArgs = null, JsonArray ownerTypeArgs = null)
@@ -664,13 +662,13 @@ static class DefaultArgSplice
                 RenameFqnRefs(child, oldName, newName);
     }
 
-    // SHARED with InlineSplice (#34 — omitted defaulted param of an inline callee): parse a @KotlinDefault BIR string,
+    // SHARED with InlineSplice: clone a decoded default payload,
     // unwrap a `defaultCarrier` (re-hoisting its lifted methods into `hoist`),
     // and return the raw default EXPR (still carrying `{defaultArgReceiver kind}` / `{defaultArgParam idx}` tokens — the
-    // caller binds them to its own receiver/param frame via SubstituteTokens). Returns null on an unparseable string.
-    internal static JsonNode MaterializeDefault(string bir, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner)
+    // caller binds them to its own receiver/param frame via SubstituteTokens).
+    internal static JsonNode MaterializeDefault(JsonNode bir, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner)
     {
-        JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return null; }
+        var parsed = bir.DeepClone();
         MaterializedBirPayload.Normalize(parsed);
         AssertPlaceholdersPlanned(parsed, inBindingExpr: false);
         var lexicalIdsFreshened = false;

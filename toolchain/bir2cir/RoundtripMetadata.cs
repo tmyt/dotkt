@@ -1071,6 +1071,7 @@ static class RoundtripMetadata
             AttrClass(AKFunction, Ctor(Param("System.Int32"))),
             AttrClass(AKFileClass, Ctor()),
             AttrClass(AKInline, Ctor(Param("System.String"), Param(ByteArrayType()))),
+            AttrClass(DefaultBirCarrier.AttributeName, Ctor(Param("System.Int32"), Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKReadOnly, Ctor()),
             AttrClass(AKLateinit, Ctor()),
             AttrClass(AKLateinitState, Ctor(Param("System.String"), Param(ByteArrayType()))),
