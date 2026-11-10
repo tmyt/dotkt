@@ -1349,16 +1349,12 @@ internal fun BirEmitter.clrEventDelegateCall(p: IrProperty): IrCall? {
 internal fun BirEmitter.isFieldLikeClrEvent(p: IrProperty): Boolean =
 	clrEventDelegateCall(p)?.let { call -> call.symbol.owner.parameters.none(::isValueParameter) } == true
 
-/** #187 missing-`by clrEvent()` diagnostic (kotc EMISSION time — the frontend can't enforce it via an abstract member:
- *  a .NET base that explicitly implements an interface event with a different-signature same-name public event can never
- *  satisfy an abstract slot, so an abstract interface event member would wrongly break `class MyApp : Avalonia.Application`).
- *  A class DIRECTLY implementing a .NET interface event must write `override val E by clrEvent()` (a DECLARED delegated
- *  property, not a fake-override) — otherwise it emits an invalid type (missing add_/remove_ -> TypeLoadException). Flag
- *  the unsatisfied case: a `ClrEvent<T>` FAKE-OVERRIDE provided by NEITHER a base CLASS that declares it (a Kotlin base
- *  that synthesized it, e.g. `PersonViewModel : ViewModelBase()`) NOR an external .NET base class (`MyApp :
- *  Avalonia.Application` — the .NET base implements its interfaces at the CLR level). Never a false positive; the sole gap
- *  is a false-NEGATIVE for `class X : UnrelatedNetBase(), IEvented` (kotc-purity forbids reading .NET metadata to know
- *  which interface a .NET base implements). */
+/** Declared native-event implementations require `by clrEvent()` or `by clrEvent(policy)`; an ordinary handle-valued
+ *  property cannot supply add/remove accessors. Abstract containers and abstract fake accessors defer implementation
+ *  to concrete classes/enum entries, whose missing abstract members are rejected by the Kotlin frontend. An enum can
+ *  retain an abstract fake accessor even when its Kotlin modality is not ABSTRACT; richEnumDef preserves that obligation.
+ *  The remaining concrete fake overrides must come from a declaring base class or an external .NET base. External-base
+ *  interface satisfaction is not inferred here: the physical relation belongs to bir2cir's reference metadata. */
 internal fun BirEmitter.checkUnimplementedClrEvents(klass: IrClass) {
 	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
 		if (!isClrEventProperty(p) || p.isFakeOverride || p.getter?.modality == Modality.ABSTRACT ||

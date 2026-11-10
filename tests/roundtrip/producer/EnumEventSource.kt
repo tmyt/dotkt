@@ -27,7 +27,7 @@ enum class EntryImplementedMode : INotifyPropertyChanged {
         override val PropertyChanged: ClrEvent<PropertyChangedEventHandler> by clrEvent()
         override fun fire() { PropertyChanged(this, PropertyChangedEventArgs(name)) }
     };
-    abstract fun fire()
+    open fun fire() { error("entry implementation must be selected") }
 }
 
 interface EntryEventHandle { val PropertyChanged: ClrEvent<PropertyChangedEventHandler> }
