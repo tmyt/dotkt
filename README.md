@@ -125,7 +125,7 @@ A DotKt project builds with `dotnet build` / `dotnet run`. Configure the
 [DotKt NuGet source](docs/user/getting-started.md#2-install) before restoring the SDK:
 
 ```xml
-<Project Sdk="DotKt.Sdk/0.9.23">
+<Project Sdk="DotKt.Sdk/0.9.24">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
