@@ -191,6 +191,16 @@ static class KotlinCollectionSlotSynthesis
         (operation["overrides"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(marker =>
             Slots.Any(slot => slot.Parameters.Contains(ParameterCarrier.ErasedValue) && MatchesOverride(marker, slot)));
 
+    internal static bool IsErasedQueryParameter(JsonObject operation, int index) =>
+        ErasedQueryOverride(operation) is { } marker && Slots.Any(slot => MatchesOverride(marker, slot)
+            && index < slot.Parameters.Length && slot.Parameters[index] == ParameterCarrier.ErasedValue);
+
+    internal static bool UsesErasedQueryCarrier(TypeNode type) => type switch {
+        TypeNode.Nullable nullable => UsesErasedQueryCarrier(nullable.Of),
+        TypeNode.Oblivious oblivious => UsesErasedQueryCarrier(oblivious.Of),
+        _ => SignatureValueTypes.Of(type) is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any", Args: null },
+    };
+
     internal static void EraseGenericQueryParameters(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> aliases)
     {
@@ -440,7 +450,8 @@ static class KotlinCollectionSlotSynthesis
         TypeNode QueryGuard(int index)
         {
             var parameter = parameterDeclarations[index];
-            if (!target.Closed && defs.TryGetValue(target.Owner.Name, out var owner)
+            if (!target.Closed && UsesErasedQueryCarrier(declaredParams[index])
+                && defs.TryGetValue(target.Owner.Name, out var owner)
                 && Str(parameter["kotlinType"] ?? parameter["nullableGeneric"]) is string semantic
                 && GenericQueryBound(TypeNode.Parse(semantic), target.Method, owner.Node,
                     type => type is TypeNode.Fqn named && (defs.TryGetValue(named.Name, out var definition)
@@ -755,14 +766,18 @@ static class KotlinCollectionSlotSynthesis
             || !Erased(mapDefault, 0, variable) || TypeJson.Read(mapDefault["params"][1]["type"]) != valueVariable
             || !Erased(mapRemove, 0, variable) || !Erased(mapRemove, 1, valueVariable)
             || !Erased(mapReplace, 0, variable) || !Erased(mapReplace, 1, valueVariable)
-            || TypeJson.Read(mapReplace["params"][2]["type"]) != valueVariable)
+            || TypeJson.Read(mapReplace["params"][2]["type"]) != valueVariable
+            || !IsErasedQueryParameter(mapReplace, 0) || !IsErasedQueryParameter(mapReplace, 1)
+            || IsErasedQueryParameter(mapReplace, 2) || IsErasedQueryParameter(mapDefault, 1))
             throw new InvalidOperationException("Map query erasure changed an input role or lost its source variable");
         var nullableReference = new JsonObject { ["nullableFlags"] = new JsonArray(2) };
         var nonnullReference = new JsonObject { ["nullableFlags"] = new JsonArray(1) };
         var physicalObject = new TypeNode.Fqn("System.Object");
         if (QueryGuardType(physicalObject, nullableReference) is not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "System.Object" } }
             || QueryGuardType(physicalObject, nonnullReference) != physicalObject
-            || QueryGuardType(variable, nullableReference) != variable)
+            || QueryGuardType(variable, nullableReference) != variable
+            || UsesErasedQueryCarrier(variable) || UsesErasedQueryCarrier(new TypeNode.Fqn("Bound"))
+            || !UsesErasedQueryCarrier(new TypeNode.Nullable(physicalObject)))
             throw new InvalidOperationException("Query guard lost reference nullability or changed a generic physical contract");
         Console.WriteLine("[collection query parameters] self-test OK (erased source bound, typed/native signatures)");
     }

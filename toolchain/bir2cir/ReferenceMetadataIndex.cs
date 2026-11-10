@@ -3510,11 +3510,12 @@ sealed partial class ReferenceMetadataIndex
             ? flags.Select(value => Convert.ToByte(value.Value)).ToArray() : null;
     }
 
-    TypeNode[] QueryParameterBounds(MemberBinding member, string ownerName)
+    TypeNode QueryParameterBound(MemberBinding member, string ownerName, int index)
     {
-        var parameters = member.DeclarationSemanticParams ?? member.KotlinParameterTypes ?? member.NullableGenericParams;
-        if (parameters == null || !parameters.Any(parameter =>
-                parameter is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })) return null;
+        var parameters = member.KotlinParameterTypes ?? member.NullableGenericParams;
+        if (!KotlinCollectionSlotSynthesis.UsesErasedQueryCarrier(member.ParamTypeNodes[index])
+            || parameters == null || index >= parameters.Length
+            || parameters[index] is not (TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })) return null;
         if (!HasDotKtOwner(ownerName) || !TryReferenceTypeShapeValue(new TypeNode.Fqn(ownerName), out var shape)) return null;
         var owner = new JsonObject { ["typeParams"] = OwnerTypeParamDeclarations(ownerName) };
         if (shape.SourceFacts != null) owner[KotlinSupertypesRecord.PreKey] = shape.SourceFacts.ToJsonString();
@@ -3526,10 +3527,8 @@ sealed partial class ReferenceMetadataIndex
                 ["bounds"] = new JsonObject(semanticParameters.Select((parameter, index) => KeyValuePair.Create(
                     index.ToString(), (parameter as JsonObject)?["constraints"]?.DeepClone() ?? new JsonArray()))),
             }.ToJsonString();
-        return member.ParamTypeNodes.Select((physical, index) =>
-            KotlinCollectionSlotSynthesis.GenericQueryBound(
-                index < parameters.Length ? parameters[index] : null, method, owner,
-                type => type is TypeNode.Fqn named && IsInterfaceType(named), NullableTypeFrames, IsValueType)).ToArray();
+        return KotlinCollectionSlotSynthesis.GenericQueryBound(parameters[index], method, owner,
+            type => type is TypeNode.Fqn named && IsInterfaceType(named), NullableTypeFrames, IsValueType);
     }
 
     // Resolve the declaration selected by the frontend, including the generic-parameter constraint vector that is
@@ -3571,7 +3570,7 @@ sealed partial class ReferenceMetadataIndex
             match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
             PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
-        { ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBounds = QueryParameterBounds(match, ownerFqn) };
+        { ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBound = index => QueryParameterBound(match, ownerFqn, index) };
         return true;
     }
 
@@ -3626,7 +3625,7 @@ sealed partial class ReferenceMetadataIndex
             match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
             PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
-        { ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBounds = QueryParameterBounds(match, ownerFqn) };
+        { ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBound = index => QueryParameterBound(match, ownerFqn, index) };
         return true;
     }
 
@@ -8824,7 +8823,7 @@ sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Para
     string DeclarationId)
 {
     public byte[][] ParameterNullableFlags { get; init; }
-    public TypeNode[] QueryParameterBounds { get; init; }
+    public Func<int, TypeNode> QueryParameterBound { get; init; }
 }
 
 sealed record ReferencedUnsafeAccessorMethod(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
