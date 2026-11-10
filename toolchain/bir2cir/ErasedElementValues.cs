@@ -202,6 +202,9 @@ static class ErasedElementValues
             foreach (var (key, child) in obj)
             {
                 if (key is "attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey) continue;
+                // A materialized lambda body owns its generic frame. Its capture
+                // expressions still execute in the enclosing declaration.
+                if (key == "body" && kind is "newClosure" or "newSam" or "newSuspendLambda") continue;
                 if (key == "args" && child is JsonArray arguments)
                 {
                     var parameters = obj["memberRef"]?["parameterTypes"] as JsonArray
@@ -288,7 +291,8 @@ static class ErasedElementValues
                 && (TypeJson.Read(obj["type"]) is TypeNode.Tv || TypeJson.Read(obj["sty"]) is TypeNode.Tv))
                 erasedResults.Add(obj);
             foreach (var (key, child) in obj)
-                if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)) Plan(child);
+                if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)
+                    && !(key == "body" && Text(obj["k"]) is "newClosure" or "newSam" or "newSuspendLambda")) Plan(child);
         }
 
         TypeNode Bound(TypeNode.Tv variable, HashSet<TypeNode.Tv> visited)
@@ -403,6 +407,22 @@ static class ErasedElementValues
          ]}]}
         """).AsObject();
         var pristine = root.DeepClone();
+        var nestedRoot = pristine.DeepClone();
+        var enclosingMethod = nestedRoot["methods"][0].AsObject();
+        enclosingMethod[NullableRepresentationTypes.MethodFrameKey] =
+            new NullableRepresentationFrame(1, System.Array.Empty<int>()).ToJson().ToJsonString();
+        var nestedLambda = JsonNode.Parse("""
+        {"k":"newSuspendLambda","typeParams":["A","B","C"],"params":[],
+         "body":[{"k":"var","name":"inner","type":{"t":"tv","scope":"method","i":2},
+          "init":{"k":"arrayGet","array":{"k":"local","name":"xs","sty":
+           {"t":"array","elem":{"t":"tv","scope":"method","i":2}}},
+           "index":{"k":"const","type":{"t":"fqn","name":"kotlin.Int"},"value":0}}}]}
+        """).AsObject();
+        var nestedBody = nestedLambda["body"].DeepClone();
+        enclosingMethod["body"].AsArray().Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = nestedLambda });
+        ApplyAll(new[] { nestedRoot }, null);
+        if (!JsonNode.DeepEquals(nestedBody, nestedLambda["body"]))
+            throw new InvalidOperationException("An enclosing value projection rewrote a lambda's independent generic frame");
         ApplyAll(new[] { root }, null);
         var method = root["methods"][0];
         if (TypeJson.Read(method["params"][0]["type"]) is not TypeNode.Array { Elem: TypeNode.Tv }

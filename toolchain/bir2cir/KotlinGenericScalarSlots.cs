@@ -98,6 +98,8 @@ static class KotlinGenericScalarSlots
             {
                 foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     Method(method);
+                foreach (var inherited in (owner["inheritedClassMethods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                    projection.ProjectMethod(inherited);
                 foreach (var property in (owner["properties"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     if (!policy.HasNativeMethodSignature(property)
                         && TypeJson.Read(property["type"]) is TypeNode.Tv variable)

@@ -237,6 +237,16 @@ static class KotlinOverrideSlotBridge
         }
         bool CanForwardClassReturn(TypeNode source, TypeNode target, JsonObject implementation)
         {
+            if (LowersToObject(source, refs)
+                && Str(implementation["retKotlinType"]) is string encodedReturn
+                && TypeNode.Parse(encodedReturn) is TypeNode.Tv semanticReturn)
+            {
+                var frame = semanticReturn.Scope == "method"
+                    ? NullableRepresentationTypes.DeclarationMethodFrame(implementation)
+                    : sourceMapping.OwnerFrame;
+                source = frame?.Variable(semanticReturn, NullableRepresentationFrame.Role.Ordinary)
+                    ?? semanticReturn;
+            }
             var seen = new HashSet<TypeNode.Tv>();
             bool Prove(TypeNode value)
             {
@@ -1701,7 +1711,7 @@ static class KotlinOverrideSlotBridge
                     ? sourceSignature : ReadParameterTypes(impl);
                 if (implementationSignature.Length != ps.Count || implementationSignature.Any(type => type == null))
                     continue;
-                if (suspendValues && inheritedSignatures != null
+                if (inheritedSignatures != null
                     && inheritedSignatures.TryGetValue(impl, out var inheritedSignature))
                     implementationSignature = inheritedSignature;
                 string selectedPhysicalMember = null;
@@ -1755,6 +1765,25 @@ static class KotlinOverrideSlotBridge
                     selectedPhysicalMember = suspendDeclaration.PhysicalMember;
                     selectedSlotTypeParams = suspendDeclaration.TypeParams;
                     slotReturnsValue = !IsVoid(slotRet0);
+                }
+                else if (accessorKind != null && phase == Phase.PhysicalBridges)
+                {
+                    // The late MethodImpl must use the referenced MethodDef, not
+                    // the property's semantic return (which can contain a star
+                    // application whose CLR value is an existential carrier).
+                    if (!refs.TrySelectedOverrideDeclaration(selectedSpec.Name, member, accessorKind,
+                            methodArity, implementationSignature, selectedArgs,
+                            impl["typeParams"] as JsonArray, ownArgs, selectedSuspend: false,
+                            out var propertyDeclaration,
+                            selectedDeclarationId: Str(o["physicalDeclarationId"])
+                                ?? Str(o[DeclarationIdentityBinding.Key]))) continue;
+                    slotRet0 = propertyDeclaration.PhysicalReturn;
+                    slotParams0 = propertyDeclaration.PhysicalParameters;
+                    selectedPhysicalMember = propertyDeclaration.PhysicalMember;
+                    signatureParameters = propertyDeclaration.SignatureParameters;
+                    selectedSlotTypeParams = propertyDeclaration.TypeParams is { Count: > 0 }
+                        ? propertyDeclaration.TypeParams : null;
+                    refused = null;
                 }
                 else
                 {

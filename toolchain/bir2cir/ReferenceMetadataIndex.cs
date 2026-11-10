@@ -3250,7 +3250,7 @@ sealed partial class ReferenceMetadataIndex
         }
         else
         {
-            physicalOwner = ReflectedOwnerFqn(sourceOwner);
+            physicalOwner = ExactReflectedOwner(sourceOwner, ownerArity);
             ownerType = ResolveNetType(physicalOwner, ownerArity);
         }
         if (paramCount < 0 || accessorSignature == null) return false;

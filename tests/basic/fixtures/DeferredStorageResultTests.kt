@@ -9,6 +9,8 @@ private class DeferredStorageReader<T>(private val seed: T) {
 
     private fun consume(value: T): Int = value.hashCode()
 
+    fun typedValue(raw: Any?): T = read(raw)
+
     fun readWhenRequested(use: Boolean, raw: Any?): Int {
         val value = read(raw)
         if (!use) return 7
@@ -24,7 +26,7 @@ private class DeferredMethodStorageReader {
 
     private fun <T> consume(value: T): Int = value.hashCode()
 
-    // The value parameter demands the caller's method-scoped storage companion.
+    // Ordinary generic forwarding retains the opaque value until a concrete use.
     fun <T> readWhenRequested(seed: T, use: Boolean, raw: Any?): Int {
         val value = read<T>(raw)
         if (!use) return 7
@@ -46,9 +48,10 @@ class DeferredStorageResultTests {
     @TestAttribute
     fun consumedPrimitiveResultIsNarrowedAtItsTypedArgument() {
         assertEquals(42, DeferredStorageReader(0).readWhenRequested(true, 42))
+        assertEquals("not an Int".hashCode(), DeferredStorageReader(0).readWhenRequested(true, "not an Int"))
         var failed = false
         try {
-            DeferredStorageReader(0).readWhenRequested(true, "not an Int")
+            check(DeferredStorageReader(0).typedValue("not an Int") + 1 == 0)
         } catch (_: System.InvalidCastException) {
             failed = true
         }
@@ -64,9 +67,10 @@ class DeferredStorageResultTests {
     @TestAttribute
     fun consumedReferenceResultRetainsItsTypedArgumentCheck() {
         assertEquals("value".hashCode(), DeferredStorageReader("").readWhenRequested(true, "value"))
+        assertEquals(42, DeferredStorageReader("").readWhenRequested(true, 42))
         var failed = false
         try {
-            DeferredStorageReader("").readWhenRequested(true, 42)
+            check(DeferredStorageReader("").typedValue(42).length == 0)
         } catch (_: System.InvalidCastException) {
             failed = true
         }

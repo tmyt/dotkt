@@ -349,6 +349,20 @@ static class PhysicalValueCoercion
             if (Str(edge["init"]["k"]) != "cast"
                 || TypeJson.Read(edge["init"]["e"]["ret"]) != new TypeNode.Fqn(expected))
                 throw new InvalidOperationException("Opaque reference projection lost an exact local/native result contract");
+        var genericResults = JsonNode.Parse("""
+          {"fileClass":"GenericResults","methods":[
+            {"name":"read","typeParams":["T"],"params":[],"ret":{"t":"tv","scope":"method","i":0},"body":[]},
+            {"name":"probe","typeParams":["T"],"params":[],"ret":{"t":"fqn","name":"void"},"body":[
+              {"k":"var","name":"value","type":{"t":"fqn","name":"object"},"init":
+                {"k":"callStatic","owner":{"t":"fqn","name":"GenericResults"},"method":"read",
+                 "typeArgs":[{"t":"tv","scope":"method","i":0}],"sig":[],"args":[],"ret":{"t":"fqn","name":"object"}}}]}]}
+          """).AsObject();
+        ApplyAll(new JsonNode[] { genericResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
+        var genericBox = genericResults["methods"][1]["body"][0]["init"];
+        if (Str(genericBox["k"]) != "cast"
+            || TypeJson.Read(genericBox["type"]) != new TypeNode.Fqn("object")
+            || TypeJson.Read(genericBox["e"]["ret"]) != new TypeNode.Tv("method", 0))
+            throw new InvalidOperationException("A generic physical return lost boxing at its opaque value boundary");
         var valueResults = JsonNode.Parse("""
           {"fileClass":"ValueResults","methods":[
             {"name":"read","params":[],"ret":{"t":"fqn","name":"object"},"body":[]},
@@ -1162,6 +1176,12 @@ static class PhysicalValueCoercion
         var genericObjectProjection = declared is TypeNode.Tv
             && actual is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
+        // Generated exact helpers may still return a CLR generic stack value
+        // while the surrounding Kotlin value is opaque. State its boxing before
+        // a later consumer attempts an object-to-generic extraction.
+        var objectGenericProjection = actual is TypeNode.Tv
+            && declared is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+            && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
         // An invocation's result hint is caller-relative. Its exact member or
         // local declaration may return T while the Kotlin value uses Storage(T).
         // State that conversion explicitly, with the native result on the inner
@@ -1185,7 +1205,7 @@ static class PhysicalValueCoercion
             && SignatureValueTypes.Of(actual) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && Str(expression["k"]) is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
                 or "callStatic" or "callInstance" or "constrainedCall" or "delegateInvoke";
-        if (!genericObjectProjection && !genericSlotProjection && !arrayStorageProjection && !opaqueReferenceProjection
+        if (!genericObjectProjection && !objectGenericProjection && !genericSlotProjection && !arrayStorageProjection && !opaqueReferenceProjection
             && !opaqueValueProjection
             && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
         var physical = expression.DeepClone().AsObject();

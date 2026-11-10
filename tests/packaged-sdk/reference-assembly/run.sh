@@ -91,10 +91,12 @@ foreach (var handle in md.MethodDefinitions)
 {
     var method = md.GetMethodDefinition(handle);
     var name = md.GetString(method.Name);
+    var owner = md.GetString(md.GetTypeDefinition(method.GetDeclaringType()).Name);
     var rva = method.RelativeVirtualAddress;
     if (rva != 0 && !pe.GetMethodBody(rva).GetILBytes().SequenceEqual(new byte[] { 0x14, 0x7a }))
         throw new Exception($"Non-stub reference body: {md.GetString(method.Name)}.");
-    if ((name == "action" && rva != 0) || (name == "echo" && rva == 0))
+    if ((owner == "AbstractApi" && name == "action" && rva != 0) ||
+        (owner == "Box`2" && name == "echo" && rva == 0))
         throw new Exception($"Wrong reference body presence for {name}.");
 }
 EOF

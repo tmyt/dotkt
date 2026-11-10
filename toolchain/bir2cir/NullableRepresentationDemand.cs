@@ -217,8 +217,20 @@ static partial class NullableRepresentationDemand
                     if (policy?.OwnsMethodValueSlots(method.Declaration) == true)
                     {
                         foreach (var parameter in (method.Declaration["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                        {
                             DemandMethodValue(parameter["type"]);
+                            DemandSourceScalar(parameter["kotlinType"]);
+                        }
                         DemandMethodValue(method.Declaration["ret"]);
+                        DemandSourceScalar(method.Declaration["retKotlinType"]);
+                        // Object transport does not delete the declaration's
+                        // independent construction/storage witnesses. Those also
+                        // keep generic dispatch frames consistent across overrides.
+                        void DemandSourceScalar(JsonNode fact)
+                        {
+                            if (Text(fact) is string encoded)
+                                DemandMethodValue(TypeJson.Write(TypeNode.Parse(encoded)));
+                        }
                         void DemandMethodValue(JsonNode source)
                         {
                             if (TypeJson.Read(source) is TypeNode.Tv { Scope: "method" } variable)

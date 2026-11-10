@@ -776,6 +776,14 @@ static class NullableRepresentationMaterialization
                "inheritedImplementation":{"owner":{"t":"fqn","name":"StorageBody"},
                  "member":"identity","kind":"method","arity":1,"typeParams":["T"]}}]}]}
           """).AsObject();
+        var erasedStorage = inheritedStorage.DeepClone().AsObject();
+        var erasedPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { erasedStorage });
+        KotlinGenericScalarSlots.ApplyAll(new[] { erasedStorage }, erasedPolicy, null);
+        Apply(new[] { erasedStorage }, _ => false, policy: erasedPolicy);
+        if (erasedStorage["types"][0]["methods"][0]["typeParams"].AsArray().Count != 2
+            || TypeJson.Read(erasedStorage["types"][0]["methods"][0]["params"][0]["type"])
+                is not TypeNode.Fqn { Name: "object" })
+            throw new InvalidOperationException("Opaque value transport deleted the independent generic witness frame");
         Apply(new[] { inheritedStorage }, _ => false, policy: new GenericRepresentationPolicy(
             new Dictionary<string, string>(), roots: new[] { inheritedStorage }));
         var storageBody = inheritedStorage["types"][0]["methods"][0];
