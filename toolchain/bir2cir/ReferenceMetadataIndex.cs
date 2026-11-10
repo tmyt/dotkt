@@ -1107,7 +1107,7 @@ sealed partial class ReferenceMetadataIndex
     /// is unspeakable in Kotlin, so it can never collide with a real method a `new`'s owner declares.
     internal const string CtorKeyName = ".ctor";
 
-    // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> default-expression BIR-json). #146:
+    // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> decoded default-expression BIR). #146:
     // dll2klib-projected calls already carry their exact file-facade `ownerType` in BIR, so use that structural identity
     // first. Truly ownerless Kotlin calls retain the conservative name+arity index; conflicting owners remain ambiguous
     // and are refused. Running this at phase 1 does not imply throwing away an owner kotc has already projected.
@@ -5841,7 +5841,7 @@ sealed partial class ReferenceMetadataIndex
                                 metadata.CollectionFactories[method.Name] = cf;
                         }
                     }
-                    // @KotlinDefault(index, bir) on a CONSTRUCTOR's params -> the splice source for a `new` that omits a
+                    // KotlinDefaultAttribute(index, codec, content) on a CONSTRUCTOR's params -> the splice source for a `new` that omits a
                     // non-constant default (#235). A ctor has no name of its own, so the key is `<owner>|.ctor|<declared
                     // param count>`: the args array a `new` carries is POSITIONALLY complete (kotc emits a placeholder for
                     // every omitted slot), so its length is that same declared count and each stamped index indexes it.

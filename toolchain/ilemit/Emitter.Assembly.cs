@@ -1182,12 +1182,10 @@ sealed partial class Emitter
     }
 
     // Define a type's constructors from its CIR (idempotent). Normally runs in pass 3, but BuildAttribute pulls it EARLY when
-    // stamping a param/method attribute whose attribute type is emitted in THIS assembly (e.g. `@kotlin.clr.KotlinDefault
-    // (index, bir)` on a defaulted stdlib parameter): pass 3 declares members type-by-type, so a `@KotlinDefault`
-    // application on an EARLIER type's method would otherwise reach BuildAttribute before KotlinDefault's own `(int,string)`
-    // ctor was defined — the old `ti.Ctors[0] ?? DefineDefaultConstructor()` then minted a bogus parameterless ctor per
-    // application and every stamp failed "Parameter count does not match". Defining ctors on demand (guarded) makes the
-    // real ctor available whenever it is first needed. Interfaces/enums/file classes have no CIR ctors.
+    // stamping a param/method attribute whose attribute type is emitted in THIS assembly (e.g. the generated
+    // `KotlinDefaultAttribute(int,string,byte[])` on a defaulted parameter). Pass 3 declares members type-by-type,
+    // so an attribute on an earlier type may need a constructor declared by a later type. Defining constructors
+    // on demand makes that exact constructor available at its first use. Interfaces/enums/file classes have no CIR ctors.
     void EnsureCtorsDefined(TypeInfo ti)
     {
         if (ti.CtorsDefined) return;
