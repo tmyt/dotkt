@@ -385,6 +385,12 @@ static partial class ConstrainedTypeParameterReceiverBinding
                                 || ConstraintDispatchWasErased(tv, iface.Name, typeParams, methodParams)
                                 || HasAllocatedCarrierConstraint(tv, iface);
                             call.Remove(ErasedConstraintDispatchKey);
+                            if (AllocatedDispatchOwner(iface) is TypeNode.Fqn physicalConstraint
+                                && ConstraintAt(tv, physicalConstraint.Name, typeParams, methodParams, out _) != null)
+                            {
+                                iface = physicalConstraint;
+                                selectedConstraintWasErased = false;
+                            }
                             if (selectedConstraintWasErased)
                             {
                                 // A use-site-projected Kotlin alias constraint has no invariant CLR construction to

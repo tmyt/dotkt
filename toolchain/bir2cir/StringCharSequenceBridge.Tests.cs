@@ -12,7 +12,8 @@ static partial class StringCharSequenceBridge
             "name": "boundaries", "params": [
               {"name":"text", "type":{"t":"fqn","name":"kotlin.String"}},
               {"name":"custom", "type":{"t":"fqn","name":"dotkt$CharSequence"}},
-              {"name":"nullable", "type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.String"}}}
+              {"name":"nullable", "type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.String"}}},
+              {"name":"boxed", "type":{"t":"fqn","name":"object"}}
             ],
             "ret":{"t":"fqn","name":"object"},
             "body":[
@@ -26,7 +27,11 @@ static partial class StringCharSequenceBridge
               {"k":"return", "value":{"k":"cond", "type":{"t":"nullable","of":{"t":"fqn","name":"dotkt$CharSequence"}},
                "cond":{"k":"const","type":{"t":"fqn","name":"kotlin.Boolean"},"value":true},
                "then":{"k":"local","name":"nullable"},
-               "else":{"k":"const","type":{"t":"nullable","of":{"t":"fqn","name":"dotkt$CharSequence"}},"value":null}}}
+               "else":{"k":"const","type":{"t":"nullable","of":{"t":"fqn","name":"dotkt$CharSequence"}},"value":null}}},
+              {"k":"return", "value":{"k":"cast","type":{"t":"fqn","name":"dotkt$CharSequence"},
+               "e":{"k":"local","name":"boxed"}}},
+              {"k":"return", "value":{"k":"cast","type":{"t":"array","elem":{"t":"fqn","name":"dotkt$CharSequence"}},
+               "e":{"k":"local","name":"boxed"}}}
             ]
           }], "types":[]
         }
@@ -50,6 +55,28 @@ static partial class StringCharSequenceBridge
         Require(Str(nullableCore["k"]) == "cond" && nullableCore["then"]["value"] == null
             && AdapterNode(nullableCore["else"]), "nullable branch must preserve null and adapt non-null String");
         Require(nullable["else"]["value"] == null, "null branch must remain null");
+        var restored = body[4]["value"];
+        Require(Str(restored["k"]) == "valueBlock" && restored["stmts"].AsArray().Count == 1
+            && Str(restored["stmts"][0]["init"]["name"]) == "boxed"
+            && AdapterNode(restored["result"]["then"])
+            && Str(restored["result"]["else"]["else"]["k"]) == "cast",
+            "opaque consumption must evaluate once, adapt strings, and preserve the existing/null view");
+        Require(Str(body[5]["value"]["k"]) == "cast",
+            "a CharSequence array must retain its array cast rather than restore one scalar view");
+        var member = JsonNode.Parse("""
+        {"k":"callInstance", "ownerType":{"t":"fqn","name":"dotkt$CharSequence"},
+         "method":"length", "prop":"get", "args":[],
+         "recv":{"k":"callInstance", "ownerType":{"t":"fqn","name":"ImportedSlot"},
+          "method":"read", "args":[], "ret":{"t":"fqn","name":"dotkt$CharSequence"}}}
+        """);
+        var stringMember = CharSeqStringLowering.Apply(member, null);
+        Require(Str(stringMember["k"]) == "clrPropGet"
+            && Str(stringMember["recv"]["method"]) == "toString"
+            && Str(stringMember["recv"]["args"][0]["method"]) == "read",
+            "a String member must normalize an imported generic result before native consumption");
+        member["recv"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.String"), ["value"] = "ok" };
+        Require(Str(CharSeqStringLowering.Apply(member, null)["k"]) == "clrPropGet",
+            "a proven String receiver must retain its direct native member lowering");
         Console.WriteLine("[selftest] String/CharSequence receiver and conditional boundaries: OK");
     }
 }

@@ -218,7 +218,9 @@ static class DeclarationSignatureIdentity
             var targetParameters = descriptor["params"].AsArray();
             var bodyParameters = new JsonArray(((JsonArray)method["params"]).OfType<JsonObject>()
                 .Select(parameter => parameter["type"].DeepClone()).ToArray());
-            if (!JsonNode.DeepEquals(targetParameters, bodyParameters))
+            if (!targetParameters.Select(parameter => DeclarationIdentityBinding.PhysicalTypeSignature(TypeJson.Read(parameter)))
+                    .SequenceEqual(bodyParameters.Select(parameter =>
+                        DeclarationIdentityBinding.PhysicalTypeSignature(TypeJson.Read(parameter)))))
             {
                 var bridgeName = name + "$signature$" + Convert.ToHexString(SHA256.HashData(
                     Encoding.UTF8.GetBytes(Text(method[DeclarationIdentityBinding.Key]) + "|" + slotKey)));
@@ -581,8 +583,17 @@ static class DeclarationSignatureIdentity
             || JsonNode.DeepEquals(virtualPlan["first-ctor"], virtualPlan["second-ctor"]))
             throw new InvalidOperationException("Virtual/constructor overloads lost their selected signature identities");
         Apply(new[] { virtualRoot }, virtualPlan);
+        TypeNode ObjectAlias(TypeNode type) => type switch
+        {
+            TypeNode.Mod modifier => modifier with { Of = ObjectAlias(modifier.Of) },
+            TypeNode.Fqn { Name: "System.Object" } => new TypeNode.Fqn("object"),
+            _ => type,
+        };
+        foreach (var method in implementations)
+            method["params"][0]["type"] = TypeJson.Write(ObjectAlias(TypeJson.Read(method["params"][0]["type"])));
         BindSelectedOverrides(new[] { virtualRoot }, virtualPlan, null, _ => false);
-        if (implementations.OfType<JsonObject>().Any(method => method["clrInterfaceImpls"]?.AsArray().Count != 1))
+        if (implementations.Count != 2
+            || implementations.OfType<JsonObject>().Any(method => method["clrInterfaceImpls"]?.AsArray().Count != 1))
             throw new InvalidOperationException("A selected virtual override lost its exact MethodImpl descriptor");
         var implicitRoot = JsonNode.Parse("""
         {"fileClass":"ImplicitSignatureProbe","methods":[],"types":[

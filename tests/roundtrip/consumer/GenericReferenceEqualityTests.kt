@@ -30,12 +30,12 @@ class GenericReferenceEqualityTests {
         assertFalse(throughSplice<Int>(7, 7))
         assertFalse(Holder<Int>(null, 7).same())
         assertFalse(Holder<Int>(null, 7).reversed())
-        assertTrue(rawSame(1000, 1000))
+        assertFalse(rawSame(1000, 1000))
         assertFalse(localCondition<Int>(null, 7))
         assertFalse(localCondition<Int>(7, 7))
         assertFalse(callResults<Int>(null, 7))
         assertFalse(callResults<Int>(7, 7))
-        assertTrue(projectedResult(Result.success(1000), 1000))
+        assertFalse(projectedResult(Result.success(1000), 1000))
     }
     @TestAttribute
     fun referenceComparisonDoesNotCallEquals() {
@@ -67,6 +67,7 @@ class GenericReferenceEqualityTests {
         assertFalse(different<Int?>(null, null))
         assertTrue(throughSplice<Int?>(null, null))
         val boxed: Any = 1000
+        assertTrue(rawSame(boxed, boxed))
         assertTrue(nullableFirst<Any>(boxed, boxed))
         assertTrue(nullableLast<Any>(boxed, boxed))
         assertFalse(nullableFirst<Any>(null, boxed))

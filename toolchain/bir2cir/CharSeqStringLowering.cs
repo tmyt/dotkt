@@ -261,7 +261,7 @@ static class CharSeqStringLowering
         // synthetic interface's own length/get/subSequence.
         if (k == "callInstance" && IsCharSeqSlot(node["ownerType"]))
         {
-            var rewritten = RewriteMemberRead(node);
+            var rewritten = RewriteMemberRead(node, env);
             if (rewritten != null) return rewritten;
         }
 
@@ -365,9 +365,12 @@ static class CharSeqStringLowering
     // `cs.length` -> System.String.Length; `cs[i]` (get) -> get_Chars; `cs.subSequence(a,b)` -> Substring(a, b-a).
     // Structurally identical to the dotkt$StringCharSequence adapter's proven bodies. Returns null for an
     // unrecognized member (leave as-is).
-    static JsonObject RewriteMemberRead(JsonObject node)
+    static JsonObject RewriteMemberRead(JsonObject node, Env env)
     {
         var recv = node["recv"];
+        // Imported generic results retain their declaration's physical representation.
+        // Normalize them into this pass's selected String view just like a String slot.
+        if (recv != null) recv = CoerceOrNull(recv, env, nullableTarget: false) ?? recv;
         var args = node["args"] as JsonArray;
         var member = Str(node["method"]);
         var propertyAccess = Str(node["prop"]);

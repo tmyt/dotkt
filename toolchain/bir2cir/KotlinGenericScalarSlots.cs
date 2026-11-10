@@ -117,17 +117,24 @@ static class KotlinGenericScalarSlots
             if (node is not JsonObject operation) return;
             foreach (var (key, child) in operation.ToArray())
                 if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)) Calls(child);
-            if (operation["k"]?.GetValue<string>() is not ("callStatic" or "callInstance" or "constrainedCall")
-                || operation[DeclarationIdentityBinding.Key]?.GetValue<string>() is not string identity) return;
-            declarations.TryGetValue(identity, out var selected);
-            var indices = projection.Parameters.TryGetValue(identity, out var localIndices)
-                ? localIndices : references?.GenericScalarParameters(identity) ?? System.Array.Empty<int>();
+            if (operation["k"]?.GetValue<string>() is not ("callStatic" or "callInstance" or "constrainedCall")) return;
+            var identity = operation[DeclarationIdentityBinding.Key]?.GetValue<string>();
+            // A fake override can carry only its exact override closure. Project a position
+            // only when every selected declaration agrees on the opaque parameter contract.
+            var identities = identity != null ? new[] { identity }
+                : (operation["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                    .Select(edge => edge[DeclarationIdentityBinding.Key]?.GetValue<string>()).ToArray();
+            if (identities.Length == 0 || identities.Any(id => id == null)) return;
+            int[] Parameters(string id) => projection.Parameters.TryGetValue(id, out var localIndices)
+                ? localIndices : references?.GenericScalarParameters(id) ?? System.Array.Empty<int>();
+            var indices = identities.Select(Parameters).Aggregate((left, right) => left.Intersect(right).ToArray());
+            var selected = identity != null ? declarations.GetValueOrDefault(identity) : null;
             if (operation["sig"] is JsonArray signature)
                 foreach (var index in indices) signature[index] = TypeJson.Fqn("object");
             // The invocation retains its caller-facing value type. The selected
             // declaration supplies the erased physical return independently;
             // overwriting this hint would lose concrete arithmetic/nullable uses.
-            if (projection.Returns.Contains(identity))
+            if (identity != null && projection.Returns.Contains(identity))
                 operation["ret"] ??= operation["sty"]?.DeepClone() ?? operation["dynRet"]?.DeepClone()
                     ?? selected?["ret"]?.DeepClone();
         }

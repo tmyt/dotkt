@@ -854,29 +854,29 @@ slots, generic/reference, and nullable-value/object pairs. It does not unbox an 
 to the other operand's type or call `Equals`; reference-valued instantiations retain
 their identity. Homogeneous generic/value comparisons keep the raw comparison below.
 
-Here, homogeneous means that both physical operands retain the same generic slot,
-as in `fun <T> ident(a: T, b: T) = a === b`. This differs from
-`fun <T> nullableIdent(a: T?, b: T) = a === b`: on DotKt,
-`ident<Int>(1000, 1000)` is `true`, while `nullableIdent<Int>(1000, 1000)` is
-`false`, because the latter compares two separately boxed references. The nullable
-signature does not imply that a non-null argument uses the homogeneous value path.
+Here, homogeneous means that both physical operands retain the same unboxed generic
+slot, such as an exact native location. Ordinary Kotlin generic scalar parameters and
+results instead transport opaque object values. Thus both
+`fun <T> ident(a: T, b: T) = a === b` and
+`fun <T> nullableIdent(a: T?, b: T) = a === b` compare references: passing two separately
+boxed `1000` values returns `false`, while passing the same saved boxed value twice
+returns `true`. The independent generic construction witnesses do not unbox these values.
 
 An open `Array<T>` element read is likewise an erased object value, not a native generic slot.
 Reading a native value-component array twice can produce two distinct boxes, so
 `fun <T> twice(xs: Array<T>) = xs[0] === xs[0]` can be `false` at `T = Int`.
 A saved local alias, an already-boxed array element, and reference-component elements retain reference identity.
-A real typed return or argument still requires extraction; comparisons between equal native generic slots
+A concrete or native typed return or argument still requires extraction; comparisons between equal native generic slots
 retain the homogeneous behavior above. Identity never calls structural `Equals` to reconcile these representations.
 
 Because CLR generics are **reified** (§2) and a basic `enum class` is a real CLR
 value-type `enum` (`BirEmitterDeclarations.kt`, `BirEmitter.enumDef`), that single `ceq` lowering produces
-three JVM-diverging outcomes:
+the following physical distinctions:
 
-- **A generic type parameter instantiated over a primitive compares by VALUE, not identity.**
-  `fun <T> ident(a: T, b: T) = a === b; ident(1000, 1000)` → **`true`** on DotKt. At the CLR the
-  generic method is JIT-specialized per value-type instantiation, so `T = Int` is an unboxed
-  `System.Int32`; `ceq` on the raw values IS a value compare. On the JVM, `T` erases to `Object`, so
-  `a`/`b` are two separately autoboxed `Integer`s outside the `-128..127` cache → **`false`**.
+- **An unboxed primitive compares by value; an ordinary generic parameter compares boxed references.**
+  CLR generic witnesses may still name `System.Int32`, but an ordinary scalar parameter's value slot is
+  `object`. `ident(1000, 1000)` therefore returns **`false`**, as on Kotlin/JVM outside its boxing cache.
+  This does not change direct primitive comparison or exact native generic-location comparisons.
 - **A boxed primitive has no identity cache.** `val a: Any = 1; val b: Any = 1; a === b` → **`false`**
   on DotKt (each widening to `Any` boxes fresh; `ceq` is a genuine reference compare here), where the
   JVM returns **`true`** for values in `-128..127` (`Integer.valueOf` cache). DotKt has no such

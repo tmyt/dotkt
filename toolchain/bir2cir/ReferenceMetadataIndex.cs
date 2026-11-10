@@ -8227,6 +8227,26 @@ sealed partial class ReferenceMetadataIndex
             if (!carrierIndex.GenericScalarParameters("scalar").SequenceEqual(new[] { 0 })
                 || carrierIndex.GenericScalarParameters("native").Length != 0)
                 throw new InvalidOperationException("Referenced scalar projection lost its exact physical parameter proof");
+            JsonObject Call(params string[] ids) => new()
+            {
+                ["k"] = "callInstance", ["method"] = "read",
+                ["sig"] = new JsonArray(TypeJson.Write(source), TypeJson.Write(function)),
+                ["overrides"] = new JsonArray(ids.Select(id => (JsonNode)new JsonObject
+                    { [DeclarationIdentityBinding.Key] = id }).ToArray()),
+            };
+            var opaque = Call("scalar");
+            var mixed = Call("scalar", "native");
+            var root = new JsonObject { ["fileClass"] = "ScalarCaller", ["methods"] = new JsonArray(new JsonObject
+            {
+                ["name"] = "test", ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),
+                ["body"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = opaque },
+                    new JsonObject { ["k"] = "exprStmt", ["expr"] = mixed }),
+            }) };
+            KotlinGenericScalarSlots.ApplyAll(new[] { root }, new GenericRepresentationPolicy(
+                new Dictionary<string, string>(), roots: new[] { root }), carrierIndex);
+            if (TypeJson.Read(opaque["sig"][0]) is not TypeNode.Fqn { Name: "object" }
+                || TypeJson.Read(opaque["sig"][1]) != function || TypeJson.Read(mixed["sig"][0]) != source)
+                throw new InvalidOperationException("Fake override projection guessed a parameter contract not shared by its declarations");
         }
         var nullableSourceVariable = new TypeNode.Nullable(new TypeNode.Tv("type", 0));
         var nullableSourceAny = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));

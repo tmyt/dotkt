@@ -103,6 +103,16 @@ static class ErasedElementValues
         GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues, bool captureStorageOnly = false,
         Func<JsonObject, TypeNode.Tv> scalarResults = null, bool retainSourceVariables = false)
     {
+        if (method["k"] == null && method["body"] is JsonArray nativeBody)
+        {
+            var constructor = method["ret"] == null;
+            var prologue = constructor ? method["preStmts"] as JsonArray ?? new JsonArray() : nativeBody;
+            PhysicalValueCoercion.AllocateNativeLocals((method["preStmts"] as JsonArray ?? new JsonArray())
+                .Concat(method["thisArgs"] as JsonArray ?? method["baseArgs"] as JsonArray ?? new JsonArray())
+                .Concat(nativeBody), (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>(), prologue,
+                genericParametersOnly: true);
+            if (constructor && method["preStmts"] == null && prologue.Count != 0) method["preStmts"] = prologue;
+        }
         var executable = (method["preStmts"] as JsonArray ?? new JsonArray())
             .Concat(method["thisArgs"] as JsonArray ?? method["baseArgs"] as JsonArray ?? new JsonArray())
             .Concat(method["body"] as JsonArray ?? new JsonArray()).ToArray();
@@ -113,6 +123,7 @@ static class ErasedElementValues
         var scalarReads = new HashSet<JsonObject>();
         var captures = new List<JsonObject>();
         var uses = new Dictionary<JsonObject, Slot>();
+        var addressed = new HashSet<Slot>();
         var slots = new List<Slot>();
         var loopSlots = new Dictionary<JsonObject, Slot>();
         var valueResults = new HashSet<JsonObject>();
@@ -156,7 +167,11 @@ static class ErasedElementValues
             var kind = Text(obj["k"]);
             if (kind is "newClosure" or "newSam" or "newSuspendLambda") captures.Add(obj);
             if (kind is "local" or "setLocal" && Text(obj["name"]) is string used
-                && scope.TryGetValue(used, out var slot)) uses[obj] = slot;
+                && scope.TryGetValue(used, out var slot))
+            {
+                uses[obj] = slot;
+                if (location) addressed.Add(slot);
+            }
             if (!captureStorageOnly && kind == "arrayGet" && !location && Element(obj, scope) is { } read) reads[obj] = read;
             if (!location && scalarResults?.Invoke(obj) is { } scalarResult)
             {
@@ -208,7 +223,8 @@ static class ErasedElementValues
                 if (key == "args" && child is JsonArray arguments)
                 {
                     var parameters = obj["memberRef"]?["parameterTypes"] as JsonArray
-                        ?? obj["sig"] as JsonArray ?? obj["argTypes"] as JsonArray;
+                        ?? obj["resolvedMemberParams"] as JsonArray ?? obj["sig"] as JsonArray
+                        ?? obj["shapeTypes"] as JsonArray ?? obj["argTypes"] as JsonArray;
                     for (var i = 0; i < arguments.Count; i++)
                         Bind(arguments[i], scope, parameters != null && i < parameters.Count
                             && SignatureValueTypes.Of(TypeJson.Read(parameters[i])) is TypeNode.ByRef);
@@ -243,7 +259,7 @@ static class ErasedElementValues
         }
         bool Record(Slot slot, JsonNode value)
         {
-            if (origins.ContainsKey(slot) || Origin(value) is not { } source) return false;
+            if (addressed.Contains(slot) || origins.ContainsKey(slot) || Origin(value) is not { } source) return false;
             if (slot.Type is TypeNode.Tv variable) origins[slot] = variable;
             else if (IsObject(slot.Type)) origins[slot] = source;
             else return false;

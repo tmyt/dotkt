@@ -5255,6 +5255,15 @@ static partial class FBoundStarProjectionErasure
         if (inner["dynRet"] != null) inner["dynRet"] = TypeJson.Write(physicalResult);
         if (inner["sty"] != null) inner["sty"] = TypeJson.Write(physicalResult);
 
+        var restored = StringCharSequenceBridge.RestoreMaterializedValue(inner, physicalResult, semanticResult);
+        if (restored != null)
+        {
+            call.Clear();
+            foreach (var pair in restored) call[pair.Key] = pair.Value?.DeepClone();
+            if (hadSty) call["sty"] = TypeJson.Write(semanticResult);
+            return;
+        }
+
         foreach (var key in call.Select(pair => pair.Key).ToList()) call.Remove(key);
         call["k"] = "cast";
         call["type"] = TypeJson.Write(semanticResult);

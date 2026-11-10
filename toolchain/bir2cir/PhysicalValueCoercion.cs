@@ -598,7 +598,7 @@ static class PhysicalValueCoercion
     // lifetime tracking is involved, and repeated arguments name the same slot.
     internal static void AllocateNativeLocals(IEnumerable<JsonNode> body,
         IEnumerable<JsonObject> parameterDeclarations, JsonArray prologue,
-        GenericArrayStorageLowering.FreshNames arrayNames = null)
+        GenericArrayStorageLowering.FreshNames arrayNames = null, bool genericParametersOnly = false)
     {
         var required = new Dictionary<JsonObject, TypeNode>();
         var parameters = parameterDeclarations.ToArray();
@@ -631,15 +631,19 @@ static class PhysicalValueCoercion
             if (Str(obj["k"]) is ("callStatic" or "callInstance" or "constrainedCall"
                     or "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "new" or "newClr")
                 && obj["args"] is JsonArray arguments
-                && ParameterTypes(obj) is { } parameters && parameters.Length == arguments.Count)
-                for (var i = 0; i < parameters.Length; i++)
+                && ParameterTypes(obj) is { } callParameters && callParameters.Length == arguments.Count)
+                for (var i = 0; i < callParameters.Length; i++)
                 {
-                    if (SignatureValueTypes.Of(parameters[i]) is not TypeNode.ByRef reference
+                    if (SignatureValueTypes.Of(callParameters[i]) is not TypeNode.ByRef reference
                         || arguments[i] is not JsonObject argument) continue;
                     var location = Str(argument["k"]) == "byrefOf" ? argument["inner"] as JsonObject : argument;
                     if (location == null || Str(location["k"]) != "local"
                         || Str(location["name"]) is not string local
                         || !declarations.TryGetValue(local, out var declaration)) continue;
+                    // The early dispatch boundary knows a bare generic parameter's frame,
+                    // but constructed local locations still await full ABI materialization.
+                    if (genericParametersOnly && (!parameters.Contains(declaration)
+                        || SignatureValueTypes.Of(reference.Of) is not TypeNode.Tv)) continue;
                     // A managed-reference local already stores the pointer, not
                     // the addressed value. Never replace it with value storage.
                     if (SignatureValueTypes.Of(TypeJson.Read(declaration["type"])) is TypeNode.ByRef)
@@ -670,7 +674,10 @@ static class PhysicalValueCoercion
             string name;
             do { name = "$nativeArgument$" + ordinal++; } while (!names.Add(name));
             foreach (var reference in uses.GetValueOrDefault(declaration) ?? new List<JsonObject>())
+            {
                 reference["name"] = name;
+                if (Str(reference["k"]) == "local") reference["sty"] = TypeJson.Write(type);
+            }
             prefix.Add(new JsonObject {
                 ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(type),
                 ["init"] = new JsonObject { ["k"] = "local", ["name"] = Str(declaration["name"]) },
@@ -1344,7 +1351,8 @@ static class PhysicalValueCoercion
         }
         // NetInteropBinding carries the selected declaration here until the final MemberRef is materialized.
         parameters ??= ReadTypes(node["resolvedMemberParams"] as JsonArray)
-            ?? ReadTypes(node["sig"] as JsonArray) ?? ReadTypes(node["argTypes"] as JsonArray);
+            ?? ReadTypes(node["sig"] as JsonArray) ?? ReadTypes(node["shapeTypes"] as JsonArray)
+            ?? ReadTypes(node["argTypes"] as JsonArray);
         if (parameters == null) return null;
         var methodArgs = MethodArgs(node);
         return parameters.Select(p => Close(p, ownerArgs ?? CallOwner(node)?.Args, methodArgs)).ToArray();
