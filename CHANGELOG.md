@@ -5,6 +5,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.24 (2026-11-11)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.24`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Preserve authored generic Map query behavior and ordinary Kotlin generic scalar
+  forwarding across CLR and DLL boundaries.
+- Preserve Kotlin logical exception causes and detailed exception rendering.
+- Continue to require the .NET 10 SDK and a .NET runtime of **10.0.12 or later**.
+
 ### Fixed
 
 - Preserve authored generic Map query effects and exceptions for heterogeneous and null keys, including private generic captures across DLLs, while retaining concrete, source-bound and native guards.
