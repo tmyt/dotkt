@@ -29,6 +29,21 @@ open class CountingQuerySet<E>(values: List<E>) : QuerySet<E>(values) {
     }
 }
 
+open class CountingQueryMap<K, V> : AbstractMap<K, V>() {
+    var calls = 0
+    var lastKey: Any? = null
+    var failure: IllegalStateException? = null
+    override val entries: Set<Map.Entry<K, V>> get() = emptySet()
+    private fun observe(key: K): Any? {
+        val alias = key
+        val captured = { alias }
+        val pending = failure
+        if (pending != null) throw pending
+        return captured()
+    }
+    override fun containsKey(key: K): Boolean { calls++; lastKey = observe(key); return false }
+}
+
 interface IntegerQueries : Collection<Int>
 interface NullableQueries : Collection<String?>
 open class QueryBound

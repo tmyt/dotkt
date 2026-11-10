@@ -7,11 +7,13 @@ import roundtrip.erasedqueries.ItemQueries
 import roundtrip.erasedqueries.QueryItem
 import roundtrip.erasedqueries.BoundedQuerySet
 import roundtrip.erasedqueries.NativeBackedQuerySet
+import roundtrip.erasedqueries.CountingQueryMap
 
 private class ImportedErasedQuerySet<E>(values: List<E>) : QuerySet<E>(values)
 private class ImportedIntegerQueries : CountingQuerySet<Int>(listOf(1)), IntegerQueries
 private class ImportedNullableQueries : CountingQuerySet<String?>(listOf(null, "x")), NullableQueries
 private class ImportedItemQueries(item: QueryItem) : BoundedQuerySet<QueryItem>(listOf(item)), ItemQueries
+private class ImportedCountingMap : CountingQueryMap<Int, Int>()
 
 private class ImportedErasedQueryOverride : QuerySet<Int>(listOf(1)) {
     var calls = 0
@@ -19,6 +21,24 @@ private class ImportedErasedQueryOverride : QuerySet<Int>(listOf(1)) {
 }
 
 class CrossModuleErasedCollectionQueryTests {
+    @TestAttribute
+    fun importedMapQueriesPreserveEffectsThroughPrivateGenericCaptures() {
+        val source = ImportedCountingMap()
+        val query: Map<*, *> = source
+        var expectedCalls = 0
+        for (key in listOf<Any?>(1, "x", null)) {
+            check(!query.containsKey(key))
+            expectedCalls++
+            check(source.calls == expectedCalls && source.lastKey == key)
+        }
+        val failure = IllegalStateException("authored Map query across DLL")
+        source.failure = failure
+        try {
+            query.containsKey("throwing key")
+            error("imported Map exception was suppressed")
+        } catch (actual: IllegalStateException) { check(actual === failure && source.calls == 4) }
+    }
+
     @TestAttribute
     fun importedGenericBasePreservesErasedQueriesAndVirtualOverrides() {
         val integers = ImportedErasedQuerySet(listOf(1))

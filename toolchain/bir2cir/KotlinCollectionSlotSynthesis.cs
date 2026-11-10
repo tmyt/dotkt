@@ -202,10 +202,9 @@ static class KotlinCollectionSlotSynthesis
             foreach (var method in definition.Methods.OfType<JsonObject>())
             {
                 var marker = ErasedQueryOverride(method);
-                if (marker == null || IsMapContractOwner(TypeJson.OwnerName(marker["owner"]))
-                    || method["params"] is not JsonArray parameters) continue;
-                var slot = Slots.First(slot => !IsMapContractOwner(slot.DeclaringInterface)
-                    && slot.Parameters.Contains(ParameterCarrier.ErasedValue) && MatchesOverride(marker, slot));
+                if (marker == null || method["params"] is not JsonArray parameters) continue;
+                var slot = Slots.First(slot => slot.Parameters.Contains(ParameterCarrier.ErasedValue)
+                    && MatchesOverride(marker, slot));
                 for (var i = 0; i < slot.Parameters.Length; i++)
                     if (slot.Parameters[i] == ParameterCarrier.ErasedValue
                         && parameters[i] is JsonObject parameter && TypeJson.Read(parameter["type"]) is TypeNode.Tv variable)
@@ -675,6 +674,23 @@ static class KotlinCollectionSlotSynthesis
         var typed = Query(new TypeNode.Fqn("kotlin.Int"));
         var bounded = Query(variable);
         var native = Query(variable);
+        var valueVariable = new TypeNode.Tv("type", 1);
+        JsonObject MapQuery(string member, params TypeNode[] parameters) => new() {
+            ["name"] = member,
+            ["params"] = new JsonArray(parameters.Select((type, i) => (JsonNode)new JsonObject {
+                ["name"] = "p" + i, ["type"] = TypeJson.Write(type),
+            }).ToArray()),
+            ["overrides"] = new JsonArray(new JsonObject {
+                ["owner"] = TypeJson.Fqn(member is "remove" or "replace" ? MutableMap : Map), ["member"] = member,
+                ["kind"] = "method", ["arity"] = parameters.Length,
+            }),
+        };
+        var mapKey = MapQuery("containsKey", variable);
+        var mapValue = MapQuery("containsValue", valueVariable);
+        var mapGet = MapQuery("get", variable);
+        var mapDefault = MapQuery("getOrDefault", variable, valueVariable);
+        var mapRemove = MapQuery("remove", variable, valueVariable);
+        var mapReplace = MapQuery("replace", variable, valueVariable, valueVariable);
         var root = new JsonObject { ["types"] = new JsonArray(
             new JsonObject { ["name"] = "Generic", ["kind"] = "class", ["typeParams"] = new JsonArray("E"),
                 ["methods"] = new JsonArray(generic, typed) },
@@ -682,7 +698,9 @@ static class KotlinCollectionSlotSynthesis
                 ["name"] = "E", ["constraints"] = new JsonArray(TypeJson.Fqn("Bound")),
             }), ["methods"] = new JsonArray(bounded) },
             new JsonObject { ["name"] = "Native", ["kind"] = "interface", ["typeParams"] = new JsonArray("E"),
-                ["methods"] = new JsonArray(native) }) };
+                ["methods"] = new JsonArray(native) },
+            new JsonObject { ["name"] = "GenericMap", ["kind"] = "class", ["typeParams"] = new JsonArray("K", "V"),
+                ["methods"] = new JsonArray(mapKey, mapValue, mapGet, mapDefault, mapRemove, mapReplace) }) };
         EraseGenericQueryParameters(new[] { root }, null, new Dictionary<string, string> { ["Native"] = "System.Native" });
         if (TypeJson.Read(generic["params"][0]["type"]) is not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Any" } }
             || TypeNode.Parse(Str(generic["params"][0]["kotlinType"])) != variable
@@ -690,6 +708,15 @@ static class KotlinCollectionSlotSynthesis
             || TypeJson.Read(bounded["params"][0]["type"]) is not TypeNode.Fqn { Name: "Bound" }
             || TypeJson.Read(native["params"][0]["type"]) != variable)
             throw new InvalidOperationException("Query entry erasure lost source bounds, concrete guards or native signatures");
+        bool Erased(JsonObject operation, int index, TypeNode source) =>
+            TypeJson.Read(operation["params"][index]["type"]) is TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Any" } }
+            && TypeNode.Parse(Str(operation["params"][index]["kotlinType"])) == source;
+        if (!Erased(mapKey, 0, variable) || !Erased(mapValue, 0, valueVariable) || !Erased(mapGet, 0, variable)
+            || !Erased(mapDefault, 0, variable) || TypeJson.Read(mapDefault["params"][1]["type"]) != valueVariable
+            || !Erased(mapRemove, 0, variable) || !Erased(mapRemove, 1, valueVariable)
+            || !Erased(mapReplace, 0, variable) || !Erased(mapReplace, 1, valueVariable)
+            || TypeJson.Read(mapReplace["params"][2]["type"]) != valueVariable)
+            throw new InvalidOperationException("Map query erasure changed an input role or lost its source variable");
         Console.WriteLine("[collection query parameters] self-test OK (erased source bound, typed/native signatures)");
     }
 

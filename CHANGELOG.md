@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- Preserve authored generic Map query effects and exceptions for heterogeneous and null keys, including private generic captures across DLLs, while retaining concrete, source-bound and native guards.
 - Preserve erased values through ordinary Kotlin generic scalar parameters and results, including lexical/SAM/virtual and cross-DLL forwarding; native CLR and concrete storage boundaries remain exact. Generic reference comparisons retain boxed identity rather than comparing unboxed numeric values. Kotlin-authored generic CLR method signatures now use object transport and may require explicit casts and construction/storage witness arguments from C#.
 - Include available stacks and logical causes in Kotlin detailed exception rendering even when a custom short description omits them.
 - Preserve Kotlin `Throwable.cause` overrides through base-typed and cross-DLL reads while retaining native CLR exception identity and non-virtual `super.cause` behavior.
