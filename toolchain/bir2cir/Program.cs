@@ -253,8 +253,10 @@ sealed class Pipeline
         // A generic query implementation accepts its declared erased bound, not the closed CLR E.
         // State that ABI before frame materialization and declaration/use snapshots; typed overrides
         // retain their concrete signature and their ordinary query guard.
-        KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(birRoots, refs, representationAliases);
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
+        var scalarSlots = KotlinGenericScalarSlots.ApplyAll(birRoots, genericRepresentations);
+        var physicalParameterIndices = scalarSlots.Parameters;
+        KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(birRoots, refs, representationAliases);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
         // The runtime implementation consumes its paired reference declaration's
         // ABI by exact source identity, independently of body-only demand. Ordinary
@@ -703,6 +705,9 @@ sealed class Pipeline
             RoundtripMetadata.FreezeSuspendResults(new[] { bir.Root });
             NullableGenericErasure.Apply(bir.Root, isValueFqn);
             FunctionValueRepresentation.Apply(bir.Root, refs.IsByRefLikeFqn);
+            if (!_options.RefBuild)
+                ErasedElementValues.ApplyAll(new[] { bir.Root }, refs, isValueFqn, genericRepresentations,
+                    call => scalarSlots.Result(call, refs), scalarCallsOnly: true);
             // GENERIC-BOUNDARY nullable-Tv USE realignment — THE USE AXIS of #86's erasure invariant (#4;
             // #113/#117/#120/#142). The DEF-side erasure above turns a member's `T?`/`…Ref<T?>…` into
             // `object`/`…Ref<object>…`, but a CALL site kotc emitted with T already substituted carries the concrete
@@ -926,7 +931,6 @@ sealed class Pipeline
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         CapturedGenericInvocation.CaptureParameterWitnesses(staged.Select(s => s.Root));
-        var physicalParameterIndices = new Dictionary<string, int[]>(StringComparer.Ordinal);
         var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
         genericRepresentations.RecordNativeFields(staged.Select(s => s.Root));
         var localExistentialOwners =

@@ -2576,13 +2576,20 @@ Native delegate slots retain the selected CLR declaration's convention. For exam
 `Func<object, object>`; SAM conversion bridges these signatures without changing an authored method's slots.
 
 A directly generic Kotlin storage slot uses a separate value-storage companion while its ordinary argument
-retains the original CLR construction. A directly method-generic Kotlin parameter or result owns that companion
-in its declaration too: an abstract interface method and its implementation publish the same value frame,
+retains the original CLR construction. A Kotlin callable and its implementation publish the same declared value frame,
 independently of the implementation body. Compiler-generated shared cells follow the same storage rule.
 A CLR override or intrinsic instead retains the selected native declaration's generic arity and signature.
 Additional representations required only by a virtual implementation belong to a private body entry; they do
 not enlarge its published dispatch slot. Source constraints and role correspondence remain explicit metadata,
 not facts reconstructed from a physical companion's index or a method's spelling.
+An ordinary Kotlin callable's directly generic scalar parameter or result transports
+an opaque `object` value instead of extracting its caller's closed CLR `T`. Its source
+type and generic construction witnesses remain explicit metadata. This also applies
+to inherited and virtual Kotlin callables and DLL consumers. Concrete scalar slots,
+native CLR declarations, constructors/fields and supported managed-reference locations
+retain their exact physical types; consuming an opaque value there performs the
+required checked extraction. Collection query entry barriers retain their selected
+contract's representative-bound/concrete guard rather than using this ordinary-call rule.
 An array argument's value-storage companion is `System.Array` for both open and closed
 instantiations; its ordinary argument still names the exact native array witness. This
 keeps a separately compiled `Cargo<Array<T?>, U>` consistent with its concrete consumer.
@@ -2610,8 +2617,8 @@ no such meeting to arrange: nothing is reified over it, so it keeps the CLR-nati
 caller expects to see and what interop is written in. `object` is not an approximation for the boxed case, it is the
 CLR's own boxed form of a nullable value: boxing an empty `Nullable<V>` produces a genuine null reference, and
 `unbox.any Nullable<V>` accepts a null back into an empty one, so the two interconvert in one verifier-clean
-instruction and **null stays distinct from `0`**. A bare `T` stays monomorphized and unboxed and `List<Int>` keeps
-`int32` storage — only the `?` moves anything.
+instruction and **null stays distinct from `0`**. Native scalar storage and native `List<Int>` element storage
+remain monomorphized and unboxed; opaque Kotlin generic callable values use the separate rule above.
 
 Frame demand is structural, not inferred by chasing upper bounds. A nullable argument can require a companion even
 when its source variable has a reference-only bound. Ordinary source parameters retain their constraints. Companions
@@ -2737,7 +2744,9 @@ What this is observable as, beyond the boxing already listed above:
   from `Array<T>` does not by itself narrow to the caller's concrete `T`; ordinary local aliases, assignments,
   loop variables, object consumers and constructor delegation can retain that erased value, including null.
   An explicit non-reified generic cast checks its representative bound. Bound-member dispatch checks the
-  selected member's owner, while typed calls and returns still require their actual physical slots. A local
+  selected member's owner. Ordinary non-reified Kotlin generic scalar forwarding
+  retains the opaque value, including through a generic return and another DLL;
+  concrete/native calls and storage still require their actual physical slots. A local
   passed by managed reference keeps the selected native parameter's exact element type for its whole storage
   lifetime; initialization and later assignments must satisfy that location, and repeated references alias it.
   Fresh value-component reads can therefore be distinct boxes for `===`; a saved alias or an existing boxed/reference

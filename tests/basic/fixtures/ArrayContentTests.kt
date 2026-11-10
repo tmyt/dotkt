@@ -44,6 +44,7 @@ private fun <T : ArrayElementBoundNode> erasedArrayElementUses() {
     check(direct is ArrayElementBoundNode && direct !is ArrayElementBoundItem)
     check(conditionalArrayValue(values, true) === direct && conditionalArrayValue(values, false) === direct)
     check(blockArrayValue(values) === direct)
+    check(arrayScalarForward(values) == "node" && values.joinToString() == "node")
     val first = values[0]
     val alias = first
     check(first === alias)
@@ -72,6 +73,8 @@ private fun <T> erasedNullElementUses() {
     check(direct == null && alias == null && alias !is ArrayElementBoundNode)
     check(conditionalArrayValue(values, true) == null && conditionalArrayValue(values, false) == null)
     check(blockArrayValue(values) == null)
+    check(arrayScalarForward(values) == "null" && values.joinToString() == "null")
+    check(values.joinToString { it.toString() } == "null")
     check(alias.hashCode() == 0 && alias.toString() == "null")
     for (value in values) check(value == null)
 }
@@ -82,6 +85,13 @@ private fun <T : ArrayElementBoundNode> typedArrayElementReturn(): T {
     return values[0]
 }
 private fun <T> typedArrayElementCall(value: T): Boolean = value === value
+private fun <T> arrayScalarRender(value: T): String = value.toString()
+private fun <T> arrayScalarIdentity(value: T): T = value
+private fun <T> arrayScalarForward(values: Array<T>): String = arrayScalarRender(arrayScalarIdentity(values[0]))
+@Suppress("UNCHECKED_CAST")
+private fun <T> arrayTransformNull(transform: (T) -> CharSequence): String =
+    (arrayOfNulls<Any>(1) as Array<T>).joinToString(transform = transform)
+private fun consumeConcreteArrayItem(value: ArrayElementBoundItem): String = value.label()
 private fun <T> conditionalArrayValue(values: Array<T>, choose: Boolean): Any? {
     val value = if (choose) values[0] else values[0]
     return value
@@ -198,7 +208,7 @@ class GenericArrayElementTests {
         val values = arrayOf(1000)
         check(!arrayReadSame(values, 1000) && !arrayReadTwice(values))
         check(arraySavedAliasSame(values))
-        check(typedArrayElementCall(1000) && typedArrayValueSame(values, 1000))
+        check(typedArrayElementCall(1000) && !typedArrayValueSame(values, 1000))
         val boxed: Any = 1000
         check(arrayReadSame(arrayOf(boxed), boxed) && arrayReadTwice(arrayOf(boxed)))
         val first = ArrayIdentityElement()
@@ -226,11 +236,15 @@ class GenericArrayElementTests {
 
     @TestAttribute
     fun typedConsumersAndNativeLocationsKeepTheirExactChecks() {
-        arrayElementMustReject { typedArrayElementReturn<ArrayElementBoundItem>() }
-        arrayElementMustReject { typedExpressionArrayReturn<ArrayElementBoundItem>(true, false) }
-        arrayElementMustReject { typedExpressionArrayReturn<ArrayElementBoundItem>(false, false) }
-        arrayElementMustReject { typedExpressionArrayReturn<ArrayElementBoundItem>(true, true) }
-        arrayElementMustReject { consumeTypedArrayElement<ArrayElementBoundItem>() }
+        arrayElementMustReject { consumeConcreteArrayItem(typedArrayElementReturn<ArrayElementBoundItem>()) }
+        arrayElementMustReject { consumeConcreteArrayItem(typedExpressionArrayReturn<ArrayElementBoundItem>(true, false)) }
+        arrayElementMustReject { consumeConcreteArrayItem(typedExpressionArrayReturn<ArrayElementBoundItem>(false, false)) }
+        arrayElementMustReject { consumeConcreteArrayItem(typedExpressionArrayReturn<ArrayElementBoundItem>(true, true)) }
+        check(consumeTypedArrayElement<ArrayElementBoundItem>())
+        var rejectedTransform = false
+        try { arrayTransformNull<Int> { (it + 1).toString() } }
+        catch (_: System.NullReferenceException) { rejectedTransform = true }
+        check(rejectedTransform)
         arrayElementMustReject { arrayOf(ArrayElementBoundNode()) as Array<ArrayElementBoundItem> }
         arrayElementMustReject { reifiedArrayElementBoundary<ArrayElementBoundItem>(arrayOf(ArrayElementBoundNode())) }
         check(nativeArrayElementLocal(arrayOf(1), 2) == 2)

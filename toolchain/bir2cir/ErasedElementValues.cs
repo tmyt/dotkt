@@ -39,7 +39,8 @@ static class ErasedElementValues
     }
 
     internal static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references,
-        ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null)
+        ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null,
+        Func<JsonObject, TypeNode.Tv> scalarResults = null, bool scalarCallsOnly = false)
     {
         var files = roots.OfType<JsonObject>().ToArray();
         var iteratorValues = new KotlinIteratorValueBinding();
@@ -62,9 +63,11 @@ static class ErasedElementValues
         void Container(JsonObject container, JsonObject owner)
         {
             foreach (var method in (container["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                Project(method, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues);
+                Project(method, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues,
+                    captureStorageOnly: scalarCallsOnly, scalarResults: scalarResults);
             foreach (var constructor in (container["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                Project(constructor, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues);
+                Project(constructor, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues,
+                    captureStorageOnly: scalarCallsOnly, scalarResults: scalarResults);
             foreach (var type in (container["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Container(type, type);
         }
@@ -79,7 +82,8 @@ static class ErasedElementValues
 
     static void Project(JsonObject method, JsonObject owner, Func<TypeNode, bool> isInterface,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
-        GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues, bool captureStorageOnly = false)
+        GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues, bool captureStorageOnly = false,
+        Func<JsonObject, TypeNode.Tv> scalarResults = null)
     {
         var executable = (method["preStmts"] as JsonArray ?? new JsonArray())
             .Concat(method["thisArgs"] as JsonArray ?? method["baseArgs"] as JsonArray ?? new JsonArray())
@@ -88,6 +92,7 @@ static class ErasedElementValues
         var reads = new Dictionary<JsonObject, TypeNode.Tv>();
         var iteratorReads = new HashSet<JsonObject>();
         var fieldReads = new HashSet<JsonObject>();
+        var scalarReads = new HashSet<JsonObject>();
         var captures = new List<JsonObject>();
         var uses = new Dictionary<JsonObject, Slot>();
         var slots = new List<Slot>();
@@ -135,6 +140,11 @@ static class ErasedElementValues
             if (kind is "local" or "setLocal" && Text(obj["name"]) is string used
                 && scope.TryGetValue(used, out var slot)) uses[obj] = slot;
             if (!captureStorageOnly && kind == "arrayGet" && !location && Element(obj, scope) is { } read) reads[obj] = read;
+            if (!location && scalarResults?.Invoke(obj) is { } scalarResult)
+            {
+                reads[obj] = scalarResult;
+                scalarReads.Add(obj);
+            }
             if (!location && kind == "field" && Text(obj["recv"]?["k"]) == "this"
                 && TypeJson.OwnerName(obj["ownerType"]) == Text(owner?["name"])
                 && Text(obj["name"]) is string fieldName && erasedFields.TryGetValue(fieldName, out var fieldVariable))
@@ -257,7 +267,12 @@ static class ErasedElementValues
                 iteratorValues.Bind(read);
                 continue;
             }
-            if (!fieldReads.Contains(read)) read["elem"] = TypeJson.Write(ObjectType);
+            if (scalarReads.Contains(read))
+            {
+                read["ret"] = TypeJson.Write(ObjectType);
+                if (read["dynRet"] != null) read["dynRet"] = TypeJson.Write(ObjectType);
+            }
+            else if (!fieldReads.Contains(read)) read["elem"] = TypeJson.Write(ObjectType);
             read["sty"] = TypeJson.Write(ObjectType);
         }
         foreach (var (loop, _) in loopSlots) loop["elem"] = TypeJson.Write(ObjectType);

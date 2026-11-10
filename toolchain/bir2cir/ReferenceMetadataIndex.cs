@@ -280,6 +280,10 @@ sealed partial class ReferenceMetadataIndex
             && binding.MethodArity == methodArity && binding.IsStatic == isStatic
                 ? binding.ReturnTypeNode : null;
 
+    internal bool IsGenericScalarReturn(string id) =>
+        _declarationById.TryGetValue(id, out var binding) && binding.KotlinReturnType is TypeNode.Tv
+        && binding.ReturnTypeNode is TypeNode.Fqn { Name: "object" or "System.Object" };
+
     // A preserved override edge selects this declaration before signature erasure. Return its complete open CLR
     // signature, including modifiers; the consumer closes the selected declaring owner through its supertype graph.
     internal bool TryDeclarationSignatureSlot(string id, out ReferencedDeclarationSlot declaration)

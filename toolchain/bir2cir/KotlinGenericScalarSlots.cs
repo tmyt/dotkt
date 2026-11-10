@@ -1,0 +1,92 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json.Nodes;
+using DotKt.Bir;
+
+// A non-reified Kotlin scalar parameter/result transports a value, not a request to
+// extract the caller's exact CLR T. Keep that witness in the declaration's generic
+// frame; native signatures, managed locations and concrete scalar slots remain exact.
+static class KotlinGenericScalarSlots
+{
+    internal sealed record Projection(Dictionary<string, int[]> Parameters, HashSet<string> Returns)
+    {
+        internal TypeNode.Tv Result(JsonObject call, ReferenceMetadataIndex refs) =>
+            call["k"]?.GetValue<string>() is "callStatic" or "callInstance"
+            && TypeJson.Read(call["sty"] ?? call["dynRet"]) is TypeNode.Tv variable
+            && call[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity
+            && (Returns.Contains(identity) || refs.IsGenericScalarReturn(identity)) ? variable : null;
+    }
+
+    internal static Projection ApplyAll(IEnumerable<JsonNode> roots, GenericRepresentationPolicy policy)
+    {
+        var declarations = new Dictionary<string, JsonObject>();
+        var parameters = new Dictionary<string, int[]>();
+        var returns = new HashSet<string>();
+        void Method(JsonObject method)
+        {
+            if (policy.HasNativeMethodSignature(method)) return;
+            var projected = new List<int>();
+            var slots = method["params"] as JsonArray ?? new JsonArray();
+            // Query entry barriers belong to their selected collection contract;
+            // its dedicated lowering retains concrete/representative-bound guards.
+            var query = KotlinCollectionSlotSynthesis.ErasedQueryOverride(method) != null;
+            for (var index = 0; index < slots.Count; index++)
+            {
+                var parameter = slots[index].AsObject();
+                if (!query && TypeJson.Read(parameter["type"]) is TypeNode.Tv variable)
+                {
+                    parameter["kotlinType"] ??= TypeNode.ToJson(variable);
+                    parameter["type"] = TypeJson.Fqn("object");
+                    projected.Add(index);
+                }
+            }
+            if (TypeJson.Read(method["ret"]) is TypeNode.Tv result)
+            {
+                method["retKotlinType"] ??= TypeNode.ToJson(result);
+                method["ret"] = TypeJson.Fqn("object");
+            }
+            if (method[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity)
+            {
+                declarations[identity] = method;
+                if (projected.Count != 0) parameters[identity] = projected.ToArray();
+                if (method["retKotlinType"]?.GetValue<string>() is string sourceReturn
+                    && TypeNode.Parse(sourceReturn) is TypeNode.Tv)
+                    returns.Add(identity);
+            }
+        }
+        void Owner(JsonObject owner)
+        {
+            var name = (owner["name"] ?? owner["fileClass"])?.GetValue<string>();
+            if (!policy.IsBindingAlias(name))
+            {
+                foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                    Method(method);
+                foreach (var property in (owner["properties"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                    if (TypeJson.Read(property["type"]) is TypeNode.Tv variable)
+                    {
+                        property["kotlinType"] ??= TypeNode.ToJson(variable);
+                        property["type"] = TypeJson.Fqn("object");
+                    }
+            }
+            foreach (var type in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Owner(type);
+        }
+        var files = roots.ToArray();
+        foreach (var root in files.OfType<JsonObject>()) Owner(root);
+        void Calls(JsonNode node)
+        {
+            if (node is JsonArray array) { foreach (var child in array) Calls(child); return; }
+            if (node is not JsonObject operation) return;
+            foreach (var (key, child) in operation.ToArray())
+                if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)) Calls(child);
+            if (operation["k"]?.GetValue<string>() is not ("callStatic" or "callInstance" or "constrainedCall")
+                || operation[DeclarationIdentityBinding.Key]?.GetValue<string>() is not string identity
+                || !declarations.TryGetValue(identity, out var selected)) return;
+            if (parameters.TryGetValue(identity, out var indices) && operation["sig"] is JsonArray signature)
+                foreach (var index in indices) signature[index] = TypeJson.Fqn("object");
+            if (selected["retKotlinType"] != null && TypeJson.Read(selected["ret"]) is TypeNode.Fqn { Name: "object" })
+                operation["ret"] = TypeJson.Fqn("object");
+        }
+        foreach (var root in files) Calls(root);
+        return new Projection(parameters, returns);
+    }
+}
