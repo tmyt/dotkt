@@ -530,10 +530,12 @@ duplicate-preserving entries by reference identity; self-suppression is ignored.
 `use` retains the primary body exception when closing also fails.
 
 `stackTraceToString()` and both `printStackTrace()` paths retain the native virtual
-`ToString()` base description and append stored suppression, including nested and
-cause-side suppression. Graph expansion and explicit description visitation are
-tracked independently by reference identity. Repeated descriptions have a shared/
-cycle marker; fixed labels with depth numbers bound traversal-label overhead.
+`ToString()` description, explicitly append each available CLR stack, and describe
+the Kotlin logical cause and stored suppression graph, including nested and
+cause-side suppression. Each object is expanded and described once by reference
+identity. Repeated references have a shared/cycle marker; fixed labels with depth
+numbers bound traversal-label overhead. Descriptions are opaque and may themselves
+contain native details; the renderer does not parse or deduplicate their contents.
 The text is CLR-oriented, not a promised JVM layout or a machine-readable format.
 Snapshots are taken and suppression locks released before user formatting or I/O.
 
@@ -544,12 +546,10 @@ Native identity is unchanged. The CLR's nonvirtual `InnerException` property,
 native `ToString()` and other CLR consumers still see the constructor's native
 cause, not a Kotlin-only override.
 
-Detailed rendering remains incomplete ([#1338](https://github.com/tmyt/dotkt/issues/1338)):
-custom `toString()` can hide stack/cause details, and an overridden logical cause
-can differ from the chain in the native description. The suppression walker
-follows the logical cause but does not yet describe that chain explicitly. These
-are rendering bugs, not additional platform deviations; no reflection or parsing
-of native text is used to reconstruct missing semantics.
+Custom short `toString()` overrides do not hide available stacks or logical causes.
+An opaque native description can mention a different native cause, but the explicit
+graph follows Kotlin `cause` rather than expanding native-only edges. No reflection
+or parsing of native text is used to reconstruct exception semantics.
 
 ## 4c. `.await()` binds to the .NET AWAITABLE PATTERN (GetAwaiter), not to Task (#10)
 

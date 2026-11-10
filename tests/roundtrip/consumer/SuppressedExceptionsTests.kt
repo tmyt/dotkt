@@ -57,6 +57,9 @@ class SuppressedExceptionsRoundtripTests {
         check(caught === consumer && caught.cause == null)
         val suppressedCause = RuntimeException("logical-cause-suppression")
         own.addSuppressed(suppressedCause)
-        check(producer.stackTraceToString().contains("logical-cause-suppression"))
+        native.addSuppressed(RuntimeException("native-only-suppression"))
+        val rendered = producer.stackTraceToString()
+        check(rendered.contains("logical-cause-suppression") && rendered.contains("own-cause"))
+        check(!rendered.contains("native-only-suppression"))
     }
 }
