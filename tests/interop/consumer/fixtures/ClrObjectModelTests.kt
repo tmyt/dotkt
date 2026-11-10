@@ -88,7 +88,7 @@ class ClrObjectModelTests {
         val caught = try { throw e } catch (failure: Throwable) { failure }
         assertTrue(caught === e && caught.cause === own)
         assertEquals("base", (e as System.Exception).InnerException!!.Message)
-        val native = RuntimeException("native", own)
+        val native = RuntimeException(message = "native", cause = own)
         assertTrue(native.cause === own)
         val foreign = System.IO.IOException("foreign", own as System.Exception) as Throwable
         assertTrue(foreign.cause === own)

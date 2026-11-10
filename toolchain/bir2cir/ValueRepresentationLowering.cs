@@ -675,6 +675,11 @@ sealed class ValueRepresentationLowering
             {"name":"AliasMiddle","kind":"class","base":{"t":"fqn","name":"Union"},"methods":[],
              "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]}]}
             """));
+        root["types"].AsArray().Add(JsonNode.Parse("""
+            {"name":"AliasLeaf","kind":"class","base":{"t":"fqn","name":"AliasMiddle"},"methods":[
+             {"name":"convert","declarationId":"leaf-convert","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},
+              "overrides":[{"declarationId":"convert"}],"abstract":false}]}
+            """));
         var referenceRoot = root.DeepClone();
         var policy = new ValueRepresentationLowering(new[] { root }, null, false);
         var inheritedCall = JsonNode.Parse("""
@@ -742,9 +747,16 @@ sealed class ValueRepresentationLowering
         new ValueRepresentationLowering(new[] { referenceRoot }, null, true)
             .SynthesizeSlots(new[] { referenceRoot }, _ => false);
         foreach (var face in new[] { root, referenceRoot })
+        {
             if (face["types"][3]["methods"].AsArray().Count != 0
                 || (face["types"][3]["interfaces"] as JsonArray)?.Count > 0)
                 throw new InvalidOperationException("An erased alias acquired a nonexistent physical slot bridge");
+            var leafBridge = face["types"][4]["methods"].AsArray().OfType<JsonObject>()
+                .Single(method => Bool(method["generated"]));
+            if (Bool(leafBridge["override"])
+                || Text(leafBridge["body"][0]["value"][DeclarationIdentityBinding.Key]) != "leaf-convert")
+                throw new InvalidOperationException("A concrete descendant inherited an erased alias's phantom bridge");
+        }
         var referenceBridge = referenceRoot["types"][1]["methods"].AsArray().OfType<JsonObject>()
             .SingleOrDefault(method => Bool(method["generated"]));
         if (referenceBridge == null || Bool(referenceBridge["abstract"])
