@@ -73,6 +73,15 @@ var defaultValue = parameter.GetCustomAttributes().Select(metadata.GetCustomAttr
     && metadata.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).GetDeclaringType() is var parent
     && metadata.GetString(metadata.GetTypeDefinition(parent).Name) == "KotlinDefaultAttribute");
 var defaultCarrier = metadata.GetBlobReader(defaultValue.Value);
+var defaultConstructor = metadata.GetMethodDefinition((MethodDefinitionHandle)defaultValue.Constructor);
+var defaultSignature = metadata.GetBlobReader(defaultConstructor.Signature);
+Require(defaultSignature.ReadSignatureHeader().IsInstance && defaultSignature.ReadCompressedInteger() == 3
+    && defaultSignature.ReadSignatureTypeCode() == SignatureTypeCode.Void
+    && defaultSignature.ReadSignatureTypeCode() == SignatureTypeCode.Int32
+    && defaultSignature.ReadSignatureTypeCode() == SignatureTypeCode.String
+    && defaultSignature.ReadSignatureTypeCode() == SignatureTypeCode.SZArray
+    && defaultSignature.ReadSignatureTypeCode() == SignatureTypeCode.Byte
+    && defaultSignature.RemainingBytes == 0, "Unexpected physical default carrier constructor.");
 Require(defaultCarrier.ReadUInt16() == 1 && defaultCarrier.ReadInt32() == 0, "Unexpected default carrier.");
 var defaultCodec = defaultCarrier.ReadSerializedString()!;
 Require(defaultCodec == DotKt.Bir.BirCarrier.JsonV1, "Unexpected default codec.");

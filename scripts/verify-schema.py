@@ -980,7 +980,9 @@ class V:
                 if k == "lateinitIsInitialized" and f.endswith(".cir.json"):
                     self.err(f, path, "lateinitIsInitialized must be physically lowered before CIR")
                 self.kinds_seen.add(k)
-                if k not in KINDS:
+                default_payload = (f.endswith(".bir.json") and "/defaultBir/body" in path
+                                   and k in ("defaultCarrier", "defaultArgReceiver", "defaultArgParam"))
+                if k not in KINDS and not default_payload:
                     self.err(f, path, f"unknown node kind k={k!r}")
                 for required in REQUIRED_NODE_FIELDS.get(k, ()):
                     if required not in o:
@@ -1342,6 +1344,12 @@ class V:
             clr_owner = o.get("k") in CLR_OWNER_KINDS
             for key, val in o.items():
                 p = path + "/" + key
+                if key == "defaultBir":
+                    if (not f.endswith(".bir.json") or not isinstance(val, dict)
+                            or set(val) != {"index", "body"}
+                            or type(val.get("index")) is not int or val["index"] < 0
+                            or not isinstance(val.get("body"), dict)):
+                        self.err(f, p, "defaultBir must be a source default with an argument index and body")
                 if key == "classifier" and o.get("t") == "fqn":
                     continue  # type_node validated the complete Kotlin ClassId object
                 if key == "typeAliases":

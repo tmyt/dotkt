@@ -28,11 +28,11 @@ static class DefaultBirCarrier
     internal static JsonObject Create(int index, JsonNode body) => new()
     {
         ["attr"] = TypeJson.Fqn(AttributeName),
-        ["argTypes"] = new JsonArray(TypeJson.Fqn("kotlin.Int"), TypeJson.Fqn("kotlin.String"),
+        ["argTypes"] = new JsonArray(TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.String"),
             new JsonObject { ["t"] = "array", ["elem"] = TypeJson.Fqn("System.Byte") }),
         ["args"] = new JsonArray(
-            new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = index },
-            new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.String"), ["value"] = BirCarrier.JsonV1 },
+            new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = index },
+            new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.String"), ["value"] = BirCarrier.JsonV1 },
             new JsonObject { ["bytes"] = Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, body)) }),
     };
 
@@ -63,6 +63,9 @@ static class DefaultBirCarrier
         if (source["defaultBir"] != null || !JsonNode.DeepEquals(OfParameter(source), body))
             throw new InvalidOperationException("Default BIR source fact did not round-trip through the shared codec");
         var attribute = (JsonObject)source["attrs"][0];
+        if (TypeJson.OwnerName(attribute["argTypes"][0]) != "System.Int32"
+            || TypeJson.OwnerName(attribute["argTypes"][1]) != "System.String")
+            throw new InvalidOperationException("Default carrier must name its exact physical constructor slots");
         MaterializedBirPayload.HideSourceSpans(attribute);
         if (Decode(attribute)["span"] != null || body["span"] == null
             || attribute["args"][0]["value"].GetValue<int>() != 2)
