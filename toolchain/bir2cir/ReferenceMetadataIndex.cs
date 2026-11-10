@@ -3499,6 +3499,17 @@ sealed partial class ReferenceMetadataIndex
             .Select((p, i) => DeclarationDescribesCall(p, signature[i])).All(x => x)).ToList();
     }
 
+    static byte[] ReferenceParameterNullableFlags(ParameterInfo parameter, TypeNode physical)
+    {
+        if (physical is not (TypeNode.Fqn or TypeNode.Array or TypeNode.Fn))
+            return null;
+        var attribute = parameter.GetCustomAttributesData().FirstOrDefault(attribute =>
+            attribute.AttributeType.FullName == "System.Runtime.CompilerServices.NullableAttribute");
+        if (attribute?.ConstructorArguments.FirstOrDefault().Value is byte flag) return new[] { flag };
+        return attribute?.ConstructorArguments.FirstOrDefault().Value is IEnumerable<CustomAttributeTypedArgument> flags
+            ? flags.Select(value => Convert.ToByte(value.Value)).ToArray() : null;
+    }
+
     // Resolve the declaration selected by the frontend, including the generic-parameter constraint vector that is
     // part of its identity.  This is intentionally a direct declaration lookup: the inherited-default fact names the
     // owner that supplies the body, so walking to a same-shaped ancestor would replace the frontend's decision with a
@@ -3537,7 +3548,8 @@ sealed partial class ReferenceMetadataIndex
             match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
             match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
-            PhysicalDeclarationSignature(match).Parameters, match.DeclarationId);
+            PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
+        { ParameterNullableFlags = match.ParameterNullableFlags };
         return true;
     }
 
@@ -3591,7 +3603,8 @@ sealed partial class ReferenceMetadataIndex
                 : match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
             match.MethodTypeParams, match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
-            PhysicalDeclarationSignature(match).Parameters, match.DeclarationId);
+            PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
+        { ParameterNullableFlags = match.ParameterNullableFlags };
         return true;
     }
 
@@ -5706,6 +5719,9 @@ sealed partial class ReferenceMetadataIndex
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
                             SignatureReturn = DeclarationSignatureSlot(method.ReturnParameter),
+                            ParameterNullableFlags = dotKtAuthored
+                                ? method.GetParameters().Select((parameter, i) => ReferenceParameterNullableFlags(parameter,
+                                    nativeSignature?.Parameters[i] ?? DeclarationTypeNode(parameter.ParameterType))).ToArray() : null,
                             VarargPositions = method.GetParameters()
                                 .Where(parameter => parameter.GetCustomAttributesData().Any(attribute =>
                                     attribute.AttributeType.FullName == "System.ParamArrayAttribute"))
@@ -8776,13 +8792,17 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     public bool SignatureAllocated { get; init; }
     public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }
+    public byte[][] ParameterNullableFlags { get; init; }
     public int[] VarargPositions { get; init; } = Array.Empty<int>();
 }
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, bool ReturnsValue, bool IsVirtual, TypeNode[] PhysicalParameters,
     TypeNode PhysicalReturn, NullableRepresentationFrame NullableFrame, TypeNode[] SignatureParameters,
-    string DeclarationId);
+    string DeclarationId)
+{
+    public byte[][] ParameterNullableFlags { get; init; }
+}
 
 sealed record ReferencedUnsafeAccessorMethod(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams, TypeNode NullableGenericReturn, bool IsPublic);

@@ -268,15 +268,15 @@ static class KotlinCollectionSlotSynthesis
         IReadOnlyList<(TypeNode.Fqn Owner, JsonObject Method)> inheritedMethods)
     {
         if (cls.Methods == null) return;
-        // Reuse each slot already supplied by a local base: its virtual forwarding reaches overriding bodies.
-        // Sibling slots on the same capability remain independent and may need their own bridge.
+        // An unchanged inherited implementation can reuse its base's bridge. A new source override needs its own
+        // interface mapping: its physical signature can differ from the erased generic base declaration.
         var inherited = InheritedSlots(cls, defs);
 
         var newBridges = new List<JsonObject>();
         var wanted = new HashSet<string>(StringComparer.Ordinal);
         foreach (var slot in Slots)
         {
-            if (inherited.Members.Contains(SlotKey(slot))) continue;
+            if (inherited.Members.Contains(SlotKey(slot)) && DeclaresConcretely(cls, slot) == null) continue;
             // Does this class PARTICIPATE in the slot? Exactly when a declaration reachable from it overrides the
             // Kotlin member: its own first, else a concrete declaration in its local supertype closure (a base-class
             // body, or an interface DEFAULT method for which the frontend emits nothing on the implementing class).
@@ -294,7 +294,6 @@ static class KotlinCollectionSlotSynthesis
         }
         foreach (var iface in wanted)
         {
-            if (inherited.Interfaces.Contains(iface)) continue;
             if (!ifaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == iface))
                 ifaces.Add(TypeJson.Fqn(iface));
         }
@@ -427,8 +426,9 @@ static class KotlinCollectionSlotSynthesis
     /// </summary>
     static JsonObject Bridge(Def cls, Slot slot, (TypeNode.Fqn Owner, JsonObject Method, bool Closed) target)
     {
-        var declaredParams = (target.Method["params"] as JsonArray)?.OfType<JsonObject>()
-            .Select(p => TypeJson.Read(p["type"])).ToArray() ?? Array.Empty<TypeNode>();
+        var parameterDeclarations = (target.Method["params"] as JsonArray)?.OfType<JsonObject>().ToArray()
+            ?? Array.Empty<JsonObject>();
+        var declaredParams = parameterDeclarations.Select(p => TypeJson.Read(p["type"])).ToArray();
         if (declaredParams.Length != slot.Arity || declaredParams.Any(p => p == null)
             || (slot.Arity != 0 && slot.Parameters.Length != slot.Arity))
             throw new InvalidOperationException(
@@ -523,7 +523,7 @@ static class KotlinCollectionSlotSynthesis
                 {
                     ["k"] = "cond",
                     ["type"] = TypeJson.Write(slotRet),
-                    ["cond"] = ErasedValueCompatible(InCaller(declaredParams[i]), "p" + i),
+                    ["cond"] = ErasedValueCompatible(InCaller(QueryGuardType(declaredParams[i], parameterDeclarations[i])), "p" + i),
                     ["then"] = forwarded,
                     ["else"] = ErasedQueryMiss(slot),
                 };
@@ -559,6 +559,11 @@ static class KotlinCollectionSlotSynthesis
             bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
         return MaterializedExecutable.Normalize(bridge);
     }
+
+    static TypeNode QueryGuardType(TypeNode physical, JsonObject parameter) =>
+        physical is not (TypeNode.Nullable or TypeNode.Oblivious or TypeNode.Tv)
+            && parameter["nullableFlags"] is JsonArray { Count: > 0 } flags && flags[0]?.GetValue<int>() == 2
+                ? new TypeNode.Nullable(physical) : physical;
 
     static JsonObject ErasedValueCompatible(TypeNode declared, string name) => new()
     {
@@ -717,6 +722,13 @@ static class KotlinCollectionSlotSynthesis
             || !Erased(mapReplace, 0, variable) || !Erased(mapReplace, 1, valueVariable)
             || TypeJson.Read(mapReplace["params"][2]["type"]) != valueVariable)
             throw new InvalidOperationException("Map query erasure changed an input role or lost its source variable");
+        var nullableReference = new JsonObject { ["nullableFlags"] = new JsonArray(2) };
+        var nonnullReference = new JsonObject { ["nullableFlags"] = new JsonArray(1) };
+        var physicalObject = new TypeNode.Fqn("System.Object");
+        if (QueryGuardType(physicalObject, nullableReference) is not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "System.Object" } }
+            || QueryGuardType(physicalObject, nonnullReference) != physicalObject
+            || QueryGuardType(variable, nullableReference) != variable)
+            throw new InvalidOperationException("Query guard lost reference nullability or changed a generic physical contract");
         Console.WriteLine("[collection query parameters] self-test OK (erased source bound, typed/native signatures)");
     }
 

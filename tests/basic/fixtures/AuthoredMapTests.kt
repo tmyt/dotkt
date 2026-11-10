@@ -5,13 +5,13 @@ private fun authoredMapQuery(source: Any, key: Any?): Any? = (source as Map<*, *
 
 @Suppress("UNCHECKED_CAST")
 private fun <K, V> authoredMapReplace(target: MutableMap<K, V>, key: Any?, value: V): V? =
-    target.replace(key as K, value)
+    (target as MutableMap<Any?, V>).replace(key, value)
 @Suppress("UNCHECKED_CAST")
 private fun <K, V> authoredMapRemoveEntry(target: MutableMap<K, V>, key: Any?, value: Any?): Boolean =
-    target.remove(key as K, value as V)
+    (target as MutableMap<Any?, Any?>).remove(key, value)
 @Suppress("UNCHECKED_CAST")
 private fun <K, V> authoredMapReplaceEntry(target: MutableMap<K, V>, key: Any?, old: Any?, value: V): Boolean =
-    target.replace(key as K, old as V, value)
+    (target as MutableMap<Any?, Any?>).replace(key, old, value)
 
 open class AuthoredPlainMapOperations<K, V>(protected val data: MutableMap<K, V>) {
     open val size: Int get() = data.size
@@ -42,7 +42,7 @@ open class AuthoredReadOnlyMap<K, V>(protected val backing: MutableMap<K, V>) : 
     var queryFailure: IllegalStateException? = null
     private fun observeKey(key: K): Any? {
         val alias = key
-        val captured = { alias }
+        val captured: () -> Any? = { alias }
         val pending = queryFailure
         if (pending != null) throw pending
         return captured()

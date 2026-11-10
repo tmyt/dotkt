@@ -839,6 +839,7 @@ static class KotlinOverrideSlotBridge
                 string physicalMember = null;
                 JsonArray physicalTypeParams = null;
                 NullableRepresentationFrame physicalMethodFrame = null;
+                byte[][] physicalParameterNullableFlags = null;
                 JsonArray declarationSignature = null;
                 string referencedDeclarationId = null;
                 TypeNode logicalSuspendResult = null;
@@ -923,6 +924,7 @@ static class KotlinOverrideSlotBridge
                     referencedDeclarationId = source.DeclarationId;
                     physicalTypeParams = source.TypeParams;
                     physicalMethodFrame = source.NullableFrame;
+                    physicalParameterNullableFlags = source.ParameterNullableFlags;
                     sourceRet = SupertypeGraph.SubstOwnerTvs(
                         logicalSuspendResult != null ? source.Return : source.PhysicalReturn, args);
                     returnsValue = logicalSuspendResult != null ? !IsVoid(source.Return) : source.ReturnsValue;
@@ -969,7 +971,13 @@ static class KotlinOverrideSlotBridge
                     else if (candidate["mods"] is JsonObject candidateMods)
                         candidateMods.Remove("suspend");
                     for (var i = 0; i < sourceParams.Length; i++)
-                        ((JsonObject)((JsonArray)candidate["params"])[i])["type"] = TypeJson.Write(sourceParams[i]);
+                    {
+                        var parameter = (JsonObject)((JsonArray)candidate["params"])[i];
+                        parameter["type"] = TypeJson.Write(sourceParams[i]);
+                        if (physicalParameterNullableFlags?[i] is { } flags)
+                            parameter["nullableFlags"] = new JsonArray(flags.Select(flag =>
+                                (JsonNode)JsonValue.Create((int)flag)).ToArray());
+                    }
                     if (returnsValue && IsUnitValueSlot(sourceRet)) candidate[BirTypeLowering.ValueReturnKey] = true;
                     candidates.Add(candidate);
                     inheritedOwners.Add(candidate, callOwner);

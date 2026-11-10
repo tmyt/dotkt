@@ -36,7 +36,7 @@ open class CountingQueryMap<K, V> : AbstractMap<K, V>() {
     override val entries: Set<Map.Entry<K, V>> get() = emptySet()
     private fun observe(key: K): Any? {
         val alias = key
-        val captured = { alias }
+        val captured: () -> Any? = { alias }
         val pending = failure
         if (pending != null) throw pending
         return captured()
