@@ -1,0 +1,3 @@
+class 'MissingDeferredNativeAccessors' is not abstract and does not implement abstract member
+enum entry 'MissingEnumNativeAccessors.Missing' does not implement abstract member
+PropertyChanged
