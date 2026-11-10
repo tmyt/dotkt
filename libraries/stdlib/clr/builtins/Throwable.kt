@@ -5,8 +5,7 @@
 
 @file:Suppress("ACTUAL_WITHOUT_EXPECT", "NO_ACTUAL_FOR_EXPECT", "UNCHECKED_CAST", "NOTHING_TO_INLINE", "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS")
 
-// Step-1 CLR stub mirroring the JVM `actual`; bodies are `TODO` pending the `@Clr`/BCL
-// binding step (see docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP").
+// CLR actual declarations retain native exception identity; member bindings preserve Kotlin dispatch.
 
 package kotlin
 
@@ -18,13 +17,17 @@ package kotlin
  */
 @kotlin.clr.ClrTypeAlias("System.Exception")
 public actual open class Throwable actual constructor(
-    // The CLR-property member bindings for the @ClrTypeAlias("System.Exception") owner: bir2cir reads @ClrProperty from
-    // the ref.dll get_message/get_cause accessors and substitutes the read to clrPropGet on System.Exception — replacing
-    // the retired kotc/ilemit Throwable.message/cause -> Message/InnerException double-lowering (layer purity). `cause`
-    // binds to InnerException (System.Exception, which @ClrTypeAlias-maps back to Throwable). READ-only (both are `val`).
+    // Message has a real CLR virtual slot. Cause needs a Kotlin slot because InnerException is non-virtual.
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Message") public open actual val message: String?,
-    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "InnerException") public open actual val cause: Throwable?
+    cause: Throwable?
 ) {
+    @kotlin.clr.ClrValueMember(
+        "DotKt.Runtime.CompilerServices.ThrowableRuntimeKt.throwableCause",
+        "DotKt.Runtime.CompilerServices.ThrowableSlots.dotktCause",
+    )
+    public open actual val cause: Throwable?
+        get() = DotKt.Runtime.CompilerServices.nativeThrowableCause(this)
+
     public actual constructor(message: String?) : this(message, null)
 
     public actual constructor(cause: Throwable?) : this(cause?.toString(), cause)

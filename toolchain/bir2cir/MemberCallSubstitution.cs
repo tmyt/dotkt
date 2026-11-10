@@ -3206,6 +3206,7 @@ static class MemberCallSubstitution
             // Select that exact declaration by identity and project its complete signature using
             // the same receiver insertion and generic-frame transfer as AliasHelperHoist.
             var selected = refs.AliasHelperSourceSignature(sourceIdentity, ownerName);
+            call["method"] = selected.Name;
             var linkage = new JsonArray();
             if (instance && node["recv"] != null) linkage.Add(sigParts[0].DeepClone());
             foreach (var parameter in selected.Parameters)
