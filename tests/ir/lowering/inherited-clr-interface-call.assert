@@ -3,15 +3,15 @@
 +"type":{"t":"fqn","name":"System.IDisposable"},"method":"Dispose"
 +"declaringType":{"t":"fqn","name":"System.IDisposable"},"name":"Dispose"
 
-# An ordinary Kotlin generic collection uses its declaration-owned carrier, retaining ArrayDeque<String>
-# in KotlinType metadata. Its resolved MemberRefs still distinguish the selected two- and one-argument overloads.
-+"ownerType":{"t":"fqn","name":"kotlin.collections.ArrayDeque$star"}
-+"declaringType":{"t":"fqn","name":"kotlin.collections.ArrayDeque$star"},"name":"$star$add$20"
-+"parameterTypes":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}]
+# The Kotlin collection remains opaque with ArrayDeque<String> in KotlinType metadata. Its two-argument add
+# retains the selected native IList<String>.Insert contract; the one-argument overload keeps Kotlin Boolean dispatch.
++"ownerType":{"t":"fqn","name":"System.Collections.Generic.IList\u00601","args":[{"t":"fqn","name":"System.String"}]},"method":"Insert"
++"declaringType":{"t":"fqn","name":"System.Collections.Generic.IList\u00601","args":[{"t":"fqn","name":"System.String"}]},"name":"Insert"
++"parameterTypes":[{"t":"fqn","name":"System.Int32"},{"t":"tv","scope":"type","i":0}]
 +"bytes":"eyJ0IjoiZnFuIiwibmFtZSI6ImtvdGxpbi5jb2xsZWN0aW9ucy5BcnJheURlcXVlIiwiYXJncyI6W3sidCI6ImZxbiIsIm5hbWUiOiJrb3RsaW4uU3RyaW5nIn1dfQ=="
 
 # The inherited one-argument add retains Kotlin Boolean dispatch through the projected collection contract.
-+"name":"clrProjectedCollAdd","genericArity":2,"returnType":{"t":"fqn","name":"System.Boolean"},"callingConvention":"static","parameterTypes":[{"t":"fqn","name":"System.Object"},{"t":"tv","scope":"method","i":1}]
++"name":"clrProjectedCollAdd","genericArity":1,"returnType":{"t":"fqn","name":"System.Boolean"},"callingConvention":"static","parameterTypes":[{"t":"fqn","name":"System.Object"},{"t":"fqn","name":"System.Object"}]
 
 # A local subclass with no declaration of its own still selects the inherited external interface slot.
 # Its opaque Kotlin collection receiver goes through the exact-token runtime, with the static closure retained.

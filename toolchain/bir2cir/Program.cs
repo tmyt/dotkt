@@ -1194,12 +1194,13 @@ sealed class Pipeline
             {
                 NullableTvErasureCallRealign.CollectNewSyntheticTypes(stagedFile.Root, nullableTvDeclRets);
                 NullableTvErasureCallRealign.CollectNewSyntheticMembers(stagedFile.Root, nullableTvDeclRets);
-                NullableTvErasureCallRealign.ConsumeNullableErasureOwnership(stagedFile.Root);
             }
             foreach (var stagedFile in staged)
                 NullableTvErasureCallRealign.ApplyAfterUnsafeAccessorSynthesis(
                     stagedFile.Root, nullableTvDeclRets, isValueFqn, refs);
         }
+        foreach (var stagedFile in staged)
+            NullableTvErasureCallRealign.ConsumeNullableErasureOwnership(stagedFile.Root);
         FBoundStarProjectionErasure.RemoveTransientFacts(staged.Select(s => s.Root), preserveExactOuter: true);
 
         // Resolve the Kotlin `lateinitGet` failure path to an ordinary UPAE construction before constructor binding.
