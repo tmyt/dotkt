@@ -19,14 +19,22 @@ open class CrossDllEvent : EventMiddle<String>() {
 
 class CrossDllEventLeaf : CrossDllEvent()
 
-private class CrossDllFunctionEvent : FunctionEventBase() {
+private open class CrossDllFunctionEvent : FunctionEventBase() {
     override val Changed by clrEvent()
     fun fire(value: Int) { Changed(value) }
 }
 
-private class CrossDllWideFunctionEvent : FunctionEventBase() {
+private open class CrossDllWideFunctionEvent : FunctionEventBase() {
     override val Changed: ClrEvent<(Any) -> Unit> by clrEvent()
     fun fire(value: Int) { Changed(value) }
+}
+
+private class LocalFunctionEventLeaf : CrossDllFunctionEvent() {
+    override val Changed by clrEvent()
+}
+
+private class LocalWideFunctionEventLeaf : CrossDllWideFunctionEvent() {
+    override val Changed by clrEvent()
 }
 
 class CrossDllPolicyEvent : PolicyEventBase() {
@@ -52,6 +60,14 @@ class EventOverrideTests {
         wideToken.close()
         wide.fireFromBase(100)
         assertEquals(62, functionSum)
+        for (leaf: FunctionEventBase in arrayOf(LocalFunctionEventLeaf(), LocalWideFunctionEventLeaf())) {
+            var leafValue = 0
+            val token = leaf.Changed.subscribe { leafValue += it }
+            leaf.fireFromBase(42)
+            token.close()
+            leaf.fireFromBase(100)
+            assertEquals(42, leafValue)
+        }
         val source = CrossDllEventLeaf()
         var received = ""
         val base: EventBase<Int, String> = source
