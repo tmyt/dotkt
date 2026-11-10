@@ -543,13 +543,14 @@ private class ClrRawMutableListIterator<T>(private val list: ClrRawMutableList) 
 // without the exact last-returned occurrence.
 private class ClrErasedMutableCollectionIterator<T>(
     private val collection: Any,
-    private val snapshot: MutableList<T>,
-) : MutableIterator<T> {
+    private val snapshot: MutableList<Any?>,
+) : MutableIterator<T>, KotlinIteratorValueSlot {
     private var index = 0
     private var lastIndex = -1
 
     override fun hasNext(): Boolean = index < snapshot.size
-    override fun next(): T {
+    override fun next(): T = dotktNextValue() as T
+    override fun dotktNextValue(): Any? {
         if (!hasNext()) throw NoSuchElementException()
         val value = snapshot[index]
         lastIndex = index
@@ -584,10 +585,10 @@ public fun <T> clrMutableIterator(iterable: Any): MutableIterator<T> {
     if (slots != null) return ClrErasedMutableIteratorAdapter(slots.dotktIterator())
     val list = iterable as? ClrRawMutableList
     if (list != null) return ClrRawMutableListIterator(list)
-    val snapshot = ArrayList<T>()
+    val snapshot = ArrayList<Any?>()
     val source = iteratorOverRawEnumerable(iterable)
-    while (source.hasNext()) snapshot.add(source.next() as T)
-    return ClrErasedMutableCollectionIterator(iterable, snapshot)
+    while (source.hasNext()) snapshot.add(source.next())
+    return ClrErasedMutableCollectionIterator<T>(iterable, snapshot)
 }
 
 /** Star-projected twin: both capability tests and BCL fallbacks are independent of the erased element type. */
@@ -599,7 +600,7 @@ public fun clrMutableIteratorErased(iterable: Any): MutableIterator<Any?> {
     val snapshot = ArrayList<Any?>()
     val source = iteratorOverRawEnumerable(iterable)
     while (source.hasNext()) snapshot.add(source.next())
-    return ClrErasedMutableCollectionIterator(iterable, snapshot)
+    return ClrErasedMutableCollectionIterator<Any?>(iterable, snapshot)
 }
 
 public fun <T> clrMutableListListIterator(list: MutableList<T>, index: Int): MutableListIterator<T> =
