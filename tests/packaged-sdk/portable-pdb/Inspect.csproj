@@ -8,5 +8,6 @@
   <ItemGroup>
     <Compile Include="$(DotKtSharedIrDirectory)/TypeNode.cs" Link="TypeNode.cs" />
     <Compile Include="$(DotKtSharedIrDirectory)/BirJson.cs" Link="BirJson.cs" />
+    <Compile Include="$(DotKtSharedIrDirectory)/../dll2klib/MetadataAttributes.cs" Link="MetadataAttributes.cs" />
   </ItemGroup>
 </Project>

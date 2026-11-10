@@ -67,7 +67,8 @@ Require(payload.Contains("\"k\":\"sourcePoint\"") && !payload.Contains("\"span\"
 
 var supplied = metadata.MethodDefinitions.Select(metadata.GetMethodDefinition)
     .Single(method => metadata.GetString(method.Name) == "supplied");
-var parameter = supplied.GetParameters().Select(metadata.GetParameter).Single(p => p.SequenceNumber == 1);
+var parameterHandle = supplied.GetParameters().Single(handle => metadata.GetParameter(handle).SequenceNumber == 1);
+var parameter = metadata.GetParameter(parameterHandle);
 var defaultValue = parameter.GetCustomAttributes().Select(metadata.GetCustomAttribute).Single(attribute =>
     attribute.Constructor.Kind == HandleKind.MethodDefinition
     && metadata.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).GetDeclaringType() is var parent
@@ -85,8 +86,13 @@ Require(defaultSignature.ReadSignatureHeader().IsInstance && defaultSignature.Re
 Require(defaultCarrier.ReadUInt16() == 1 && defaultCarrier.ReadInt32() == 0, "Unexpected default carrier.");
 var defaultCodec = defaultCarrier.ReadSerializedString()!;
 Require(defaultCodec == DotKt.Bir.BirCarrier.JsonV1, "Unexpected default codec.");
-var defaultPayload = DotKt.Bir.BirCarrier.DecodeBody(defaultCodec,
-    defaultCarrier.ReadBytes(defaultCarrier.ReadInt32())).ToJsonString();
+var defaultBytes = defaultCarrier.ReadBytes(defaultCarrier.ReadInt32());
+var defaultFacts = new MetadataAttributes(metadata).Find(parameterHandle,
+    "DotKt.Runtime.CompilerServices.KotlinDefaultAttribute");
+Require(defaultFacts is { Int32Value: 0 } && defaultFacts.StringValue == defaultCodec
+    && defaultFacts.BytesValue!.SequenceEqual(defaultBytes),
+    "The projection metadata reader did not preserve the indexed default carrier.");
+var defaultPayload = DotKt.Bir.BirCarrier.DecodeBody(defaultFacts.StringValue!, defaultFacts.BytesValue!).ToJsonString();
 Require(defaultPayload.Contains("\"k\":\"sourcePoint\"") && !defaultPayload.Contains("\"span\":"),
     "The default expression carrier must not contain the producer's source spans.");
 

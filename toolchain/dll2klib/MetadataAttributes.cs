@@ -251,6 +251,7 @@ internal sealed class MetadataAttributes
                 or DotKtNs + "KotlinExtensionReceiverAttribute"
                 or DotKtNs + "KotlinNothingAttribute"))
         {
+            int? parameterIndex = name == DotKtNs + "KotlinDefaultAttribute" ? reader.ReadInt32() : null;
             var version = reader.ReadSerializedString();
             var count = reader.ReadInt32();
             if (version is null || count < 0 || count > reader.RemainingBytes - 2)
@@ -258,7 +259,7 @@ internal sealed class MetadataAttributes
             var bytes = reader.ReadBytes(count);
             if (reader.ReadUInt16() != 0 || reader.RemainingBytes != 0)
                 throw new BadImageFormatException("carrier named arguments");
-            return new(name, StringValue: version, BytesValue: bytes);
+            return new(name, Int32Value: parameterIndex, StringValue: version, BytesValue: bytes);
         }
         return new(name);
     }
