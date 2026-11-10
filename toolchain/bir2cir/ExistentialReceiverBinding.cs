@@ -106,7 +106,8 @@ static class ExistentialReceiverBinding
          "recv":{"k":"local","name":"receiver"},"args":[{"k":"local","name":"value"}]}
         """);
         BindCall(call, new Dictionary<string, TypeNode>(), index, ReferenceMetadataIndex.Build(Array.Empty<string>()), null);
-        if (Str(call["method"]) != "physicalSlot" || call[DeclarationIdentityBinding.Key] != null
+        if (Str(call["method"]) != "physicalSlot" || Str(call[DeclarationIdentityBinding.Key])
+                != FBoundStarProjectionErasure.ExistentialSlotIdentity("source-id", "ProbeSource")
             || call["memberRef"] != null)
             throw new InvalidOperationException("Existential slot retained the generic source declaration binding");
         index.SemanticOwnerByPhysical["ChildCarrier"] = "ChildSource";
@@ -243,6 +244,7 @@ static class ExistentialReceiverBinding
             .Select(TypeJson.Read).ToArray();
         if (authoredSignature?.Any(t => t == null) == true) authoredSignature = null;
         string physicalMethod = null;
+        string physicalDeclarationId = null;
         TypeNode[] physicalParameters = null;
         TypeNode[] physicalSignature = null;
         TypeNode physicalResult = null;
@@ -289,6 +291,7 @@ static class ExistentialReceiverBinding
             {
                 physicalOwner = new TypeNode.Fqn(candidates[0].Owner);
                 physicalMethod = candidates[0].Slot.Name;
+                physicalDeclarationId = candidates[0].Slot.DeclarationId;
                 physicalParameters = candidates[0].Slot.Parameters;
                 physicalSignature = candidates[0].Slot.SignatureParameters ?? physicalParameters;
                 physicalResult = candidates[0].Slot.Return;
@@ -326,7 +329,8 @@ static class ExistentialReceiverBinding
         if (physicalMethod == null) return; // ambiguous or absent: never guess a physical slot
         // This exact existential slot replaces the selected generic source declaration. Keeping the source
         // identity (or an earlier descriptor) would let final reference binding retarget it to G<T> again.
-        call.Remove(DeclarationIdentityBinding.Key);
+        if (physicalDeclarationId != null) call[DeclarationIdentityBinding.Key] = physicalDeclarationId;
+        else call.Remove(DeclarationIdentityBinding.Key);
         call.Remove("memberRef");
         call.Remove("memberVisibility");
         call.Remove("memberOwnerTypeParams");

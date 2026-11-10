@@ -104,6 +104,15 @@ static class DeclarationSignatureIdentity
             foreach (var child in array) RemoveCapturedFacts(child);
     }
 
+    internal static void RewriteParameterFacts(JsonObject parameter, Func<TypeNode, TypeNode> rewrite)
+    {
+        if (TypeJson.Read(parameter[NominalKey]) is TypeNode nominal)
+            parameter[NominalKey] = TypeJson.Write(rewrite(nominal));
+        if (parameter[BoundsKey] is JsonArray bounds)
+            parameter[BoundsKey] = new JsonArray(bounds.Select(TypeJson.Read)
+                .Select(rewrite).Select(TypeJson.Write).ToArray());
+    }
+
     public static IReadOnlyDictionary<string, JsonArray> Plan(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs = null)
     {
         var methods = new List<(string Owner, string Name, JsonObject Method)>();
@@ -483,6 +492,18 @@ static class DeclarationSignatureIdentity
         }
         finally { ReferencedModifiers.Remove(referencedKey); }
         var modified = new TypeNode.Mod(false, new TypeNode.Fqn("Probe.Marker", new TypeNode[] { tv }), tv);
+        var ownerVariable = new TypeNode.Tv("type", 0);
+        var signatureFacts = new JsonObject {
+            [NominalKey] = TypeJson.Write(new TypeNode.Fqn("Probe.Marker", new TypeNode[] { ownerVariable, tv })),
+            [BoundsKey] = new JsonArray(TypeJson.Write(ownerVariable), TypeJson.Write(tv)),
+        };
+        RewriteParameterFacts(signatureFacts, type => SupertypeGraph.SubstOwnerTvs(type,
+            new TypeNode[] { new TypeNode.Fqn("object") }));
+        if (TypeJson.Read(signatureFacts[NominalKey]) != new TypeNode.Fqn("Probe.Marker",
+                new TypeNode[] { new TypeNode.Fqn("object"), tv })
+            || TypeJson.Read(signatureFacts[BoundsKey][0]) != new TypeNode.Fqn("object")
+            || TypeJson.Read(signatureFacts[BoundsKey][1]) != tv)
+            throw new InvalidOperationException("Projected signature facts lost their exact independent owner/method frames");
         if (SignatureValueTypes.Of(modified) != tv
             || !MethodVariables(new TypeNode.Nullable(tv)).SequenceEqual(new[] { 0 })
             || !MethodVariables(new TypeNode.Fqn("Probe.Box", new TypeNode[] { tv })).SequenceEqual(new[] { 0 }))

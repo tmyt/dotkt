@@ -12,6 +12,24 @@ static class ErasedElementValues
 {
     sealed record Slot(JsonObject Declaration, string Name, TypeNode Type);
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
+    const string SourceVariableKey = "_erasedValueVariable";
+
+    internal static void RetainVariable(JsonObject value, TypeNode.Tv variable) =>
+        value[SourceVariableKey] = TypeJson.Write(variable);
+
+    internal static TypeNode.Tv RetainedVariable(JsonObject value) =>
+        TypeJson.Read(value[SourceVariableKey]) as TypeNode.Tv;
+
+    internal static void ClearRetainedVariables(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            obj.Remove(SourceVariableKey);
+            foreach (var child in obj.Select(pair => pair.Value)) ClearRetainedVariables(child);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array) ClearRetainedVariables(child);
+    }
 
     internal static void ApplyType(JsonObject type, ReferenceMetadataIndex references,
         IReadOnlyDictionary<string, JsonObject> definitions,
@@ -64,10 +82,10 @@ static class ErasedElementValues
         {
             foreach (var method in (container["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Project(method, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues,
-                    captureStorageOnly: scalarCallsOnly, scalarResults: scalarResults);
+                    captureStorageOnly: scalarCallsOnly, scalarResults: scalarResults, retainSourceVariables: true);
             foreach (var constructor in (container["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Project(constructor, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues,
-                    captureStorageOnly: scalarCallsOnly, scalarResults: scalarResults);
+                    captureStorageOnly: scalarCallsOnly, scalarResults: scalarResults, retainSourceVariables: true);
             foreach (var type in (container["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Container(type, type);
         }
@@ -83,7 +101,7 @@ static class ErasedElementValues
     static void Project(JsonObject method, JsonObject owner, Func<TypeNode, bool> isInterface,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
         GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues, bool captureStorageOnly = false,
-        Func<JsonObject, TypeNode.Tv> scalarResults = null)
+        Func<JsonObject, TypeNode.Tv> scalarResults = null, bool retainSourceVariables = false)
     {
         var executable = (method["preStmts"] as JsonArray ?? new JsonArray())
             .Concat(method["thisArgs"] as JsonArray ?? method["baseArgs"] as JsonArray ?? new JsonArray())
@@ -240,11 +258,27 @@ static class ErasedElementValues
         var casts = new Dictionary<JsonObject, TypeNode>();
         var constrained = new HashSet<JsonObject>();
         var erasedResults = new HashSet<JsonObject>();
+        TypeNode.Tv LogicalVariable(JsonObject value)
+        {
+            TypeNode.Tv variable;
+            if (Text(value["k"]) == "local" && uses.TryGetValue(value, out var slot))
+                variable = slot.Type as TypeNode.Tv ?? parameterOrigins.GetValueOrDefault(slot);
+            else variable = reads.GetValueOrDefault(value)
+                ?? Variable(TypeJson.Read(value["sty"] ?? value["type"] ?? value["ret"]));
+            if (variable == null) return null;
+            var frame = variable.Scope == "method" ? NullableRepresentationTypes.DeclarationMethodFrame(method)
+                : owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner);
+            return frame == null ? variable : frame.Variable(
+                new TypeNode.Tv(variable.Scope, frame.PhysicalSlot(variable.I).SourceIndex),
+                NullableRepresentationFrame.Role.Ordinary);
+        }
         void Plan(JsonNode node)
         {
             if (node is JsonArray array) { foreach (var child in array) Plan(child); return; }
             if (node is not JsonObject obj) return;
             if (obj["k"] == null && obj["params"] is JsonArray && obj["body"] is JsonArray) return;
+            if (retainSourceVariables && Origin(obj) != null && LogicalVariable(obj) is { } sourceVariable)
+                RetainVariable(obj, sourceVariable);
             if (Text(obj["k"]) == "cast" && NullableBool(obj["reifiedTypeOperand"]) == false
                 && TypeJson.Read(obj["type"]) is TypeNode.Tv target && Origin(obj["e"]) == target)
                 casts[obj] = Bound(target, new HashSet<TypeNode.Tv>());
@@ -377,6 +411,23 @@ static class ErasedElementValues
             || TypeJson.Read(method["body"][1]["type"]) != ObjectType
             || TypeJson.Read(method["body"][2]["value"]["type"]) != ObjectType)
             throw new InvalidOperationException("Open array values lost erased locals or their separate array signature");
+        var aliasRead = method["body"][2]["value"]["e"].AsObject();
+        if (RetainedVariable(aliasRead) != new TypeNode.Tv("method", 0))
+            throw new InvalidOperationException("Erased alias lost its generic meaning before bound-owner selection");
+        ClearRetainedVariables(root);
+        if (RetainedVariable(aliasRead) != null)
+            throw new InvalidOperationException("Value-source facts survived their owning projection phase");
+        var objectAlias = pristine.DeepClone();
+        var objectBody = objectAlias["methods"][0]["body"].AsArray();
+        objectBody.Insert(2, new JsonObject {
+            ["k"] = "var", ["name"] = "any", ["type"] = TypeJson.Write(ObjectType),
+            ["init"] = new JsonObject { ["k"] = "local", ["name"] = "alias" },
+        });
+        objectBody[3] = new JsonObject { ["k"] = "return",
+            ["value"] = new JsonObject { ["k"] = "local", ["name"] = "any" } };
+        ApplyAll(new[] { objectAlias }, null);
+        if (RetainedVariable(objectBody[3]["value"].AsObject()) != null)
+            throw new InvalidOperationException("An Object alias invented a generic receiver type");
 
         foreach (var blockResult in new[] { false, true })
         {

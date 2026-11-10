@@ -349,11 +349,13 @@ static partial class ConstrainedTypeParameterReceiverBinding
                             CastResolvedPropertyReceiver(call, closedPropertyOwner);
                     }
                     var clrCall = kind is "clrInstance" or "clrGenericInstance";
-                    var ownerKey = clrCall ? "type" : "ownerType";
-                    if (!resolvedPropertiesOnly && (kind == "callInstance" || clrCall)
+                    var clrAccess = close && kind is "clrPropGet" or "clrPropSet";
+                    var ownerKey = clrCall || clrAccess ? "type" : "ownerType";
+                    if (!resolvedPropertiesOnly && (kind == "callInstance" || clrCall || clrAccess)
                         && TypeJson.Read(call[ownerKey]) is TypeNode.Fqn owner
                         && call["recv"] is JsonObject recv
-                        && ReceiverTypeVariable(recv, scope, locals) is TypeNode.Tv tv)
+                        && ((close ? ErasedElementValues.RetainedVariable(recv) : null)
+                            ?? ReceiverTypeVariable(recv, scope, locals)) is TypeNode.Tv tv)
                     {
                         if (close)
                         {

@@ -13,6 +13,13 @@ open class OwnerSuspendSink<in T> {
         pause()
         return value
     }
+
+    suspend fun <R : System.Collections.Generic.IReadOnlyCollection<T>> count(value: R, pause: suspend () -> Unit): String {
+        pause()
+        val alias = value
+        check(value.Count == alias.Count)
+        return alias.Count.toString()
+    }
 }
 
 open class OwnerSuspendAnimal
@@ -56,8 +63,12 @@ class OwnerSuspendComparer : System.Collections.Generic.IComparer<Any> {
 class OwnerSuspendCovariantValue<out T>(val item: T) {
     suspend fun <R : System.Collections.Generic.IComparer<T>> render(value: R, pause: suspend () -> Unit): String {
         pause()
+        val alias = value
+        val read = { alias.Compare(item, item) }
+        check(alias.Compare(item, item) == read())
         return value.Compare(item, item).toString()
     }
+
 }
 
 class OwnerSuspendProjectedValue<out T> {
@@ -100,6 +111,9 @@ class OwnerConstrainedSuspendTests {
         ownerSuspendRun("default:text") { pause -> defaultSink.render("text", pause) }
         val covariant: OwnerSuspendCovariantValue<Any> = OwnerSuspendCovariantValue(19)
         ownerSuspendRun("19") { pause -> covariant.render(OwnerSuspendComparer(), pause) }
+        val collection = System.Collections.Generic.List<Int>()
+        collection.Add(1)
+        ownerSuspendRun("1") { pause -> generic.count(collection, pause) }
         val projected: OwnerSuspendProjectedValue<Any> = OwnerSuspendProjectedValue<Int>()
         ownerSuspendRun("2") { pause -> projected.size(mutableListOf<Any>(1, 2), pause) }
         val projectedStrings: OwnerSuspendProjectedValue<String> = OwnerSuspendProjectedValue<Nothing>()

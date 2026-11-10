@@ -124,7 +124,8 @@ static class KotlinGenericScalarSlots
             // declaration supplies the erased physical return independently;
             // overwriting this hint would lose concrete arithmetic/nullable uses.
             if (projection.Returns.Contains(identity))
-                operation["ret"] ??= operation["sty"]?.DeepClone() ?? operation["dynRet"]?.DeepClone();
+                operation["ret"] ??= operation["sty"]?.DeepClone() ?? operation["dynRet"]?.DeepClone()
+                    ?? selected["ret"]?.DeepClone();
         }
         foreach (var root in files) Calls(root);
         return projection;
