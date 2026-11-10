@@ -484,7 +484,8 @@ sealed class ValueRepresentationLowering
         var bridges = new Dictionary<(string Owner, string Slot), JsonObject>();
         void Apply(SupertypeGraph.Def cls)
         {
-            if (completed.Contains(cls.Name) || cls.Kind != "class") return;
+            // Alias declarations disappear from runtime output; they cannot own an inherited physical bridge.
+            if (completed.Contains(cls.Name) || cls.Kind != "class" || aliases.ContainsKey(cls.Name)) return;
             if (!active.Add(cls.Name)) throw new InvalidOperationException("Cyclic nominal-slot base graph");
             if (cls.Base != null && defs.TryGetValue(cls.Base.Name, out var parent)) Apply(parent);
             var reachable = SupertypeGraph.Reachable(cls, defs, refs).Select(edge => edge.spec.Name).ToHashSet(StringComparer.Ordinal);
@@ -670,6 +671,10 @@ sealed class ValueRepresentationLowering
                 "args":[{"value":"Helpers.convert"},{"value":"Slots.convert"}]}],
               "overrides":[{"declarationId":"convert"}]}]}
             """));
+        root["types"].AsArray().Add(JsonNode.Parse("""
+            {"name":"AliasMiddle","kind":"class","base":{"t":"fqn","name":"Union"},"methods":[],
+             "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]}]}
+            """));
         var referenceRoot = root.DeepClone();
         var policy = new ValueRepresentationLowering(new[] { root }, null, false);
         var inheritedCall = JsonNode.Parse("""
@@ -736,6 +741,10 @@ sealed class ValueRepresentationLowering
             throw new InvalidOperationException("Nominal slots lost exact override/member bindings");
         new ValueRepresentationLowering(new[] { referenceRoot }, null, true)
             .SynthesizeSlots(new[] { referenceRoot }, _ => false);
+        foreach (var face in new[] { root, referenceRoot })
+            if (face["types"][3]["methods"].AsArray().Count != 0
+                || (face["types"][3]["interfaces"] as JsonArray)?.Count > 0)
+                throw new InvalidOperationException("An erased alias acquired a nonexistent physical slot bridge");
         var referenceBridge = referenceRoot["types"][1]["methods"].AsArray().OfType<JsonObject>()
             .SingleOrDefault(method => Bool(method["generated"]));
         if (referenceBridge == null || Bool(referenceBridge["abstract"])
