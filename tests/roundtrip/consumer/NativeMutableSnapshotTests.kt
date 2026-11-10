@@ -66,9 +66,8 @@ class NativeMutableSnapshotTests {
         check(erasedSnapshotNext { duplicateCursor } === first)
         check(erasedSnapshotNext { duplicateCursor } === second)
         duplicateCursor.remove()
-        val remaining = ArrayList<Any?>()
-        for (value in duplicates) remaining.add(value)
-        check(remaining.size == 2 && remaining[0] === first && remaining[1] === third)
+        // Native node properties inspect the actual closed collection, independently of the unchecked Kotlin view.
+        check(duplicates.Count == 2 && duplicates.First!!.Value === first && duplicates.Last!!.Value === third)
         check(erasedSnapshotNext { duplicateCursor } === third && !duplicateCursor.hasNext())
 
         val failure = NativeSnapshotFailure()
