@@ -18,6 +18,11 @@ private class RenderOpaqueException(cause: Throwable) : RuntimeException("opaque
     override fun toString(): String = "opaque-description"
 }
 
+private class RenderCountingException : RuntimeException("counted-leaf") {
+    var calls: Int = 0
+    override fun toString(): String { calls++; return "counted-leaf-description" }
+}
+
 // Console.Error is process-wide; do not race other fixtures while capturing it.
 @NonParallelizableAttribute
 class SuppressedExceptionRenderingTests {
@@ -28,13 +33,12 @@ class SuppressedExceptionRenderingTests {
         val nativeException = plain as System.Exception
         val native = nativeException.ToString()
         val initial = plain.stackTraceToString()
-        check(initial.startsWith(native))
+        check(initial.contains("native-primary") && initial.contains("native-cause"))
         check(initial.contains(nativeException.StackTrace!!))
         check(initial.contains("Caused by"))
         plain.addSuppressed(IllegalArgumentException("suppressed-first-marker"))
         plain.addSuppressed(RuntimeException("suppressed-second-marker"))
         val text = plain.stackTraceToString()
-        check(text.startsWith(native))
         check(text.contains("native-primary") && text.contains("native-cause")) { "Native: $native\nRendered: $text" }
         val first = text.indexOf("suppressed-first-marker")
         val second = text.indexOf("suppressed-second-marker")
@@ -113,6 +117,14 @@ class SuppressedExceptionRenderingTests {
         val text = root.stackTraceToString()
         check(text.contains("depth-${depth - 1}"))
         check(text.length < depth * 200)
+
+        val leaf = RenderCountingException()
+        var causeChain: Throwable = leaf
+        for (index in 0 until depth) causeChain = RuntimeException("cause-depth-$index", causeChain)
+        val causeText = causeChain.stackTraceToString()
+        check(causeText.contains("counted-leaf-description") && causeText.contains("cause-depth-${depth - 1}"))
+        check(leaf.calls == 1)
+        check(causeText.length < (depth + 1) * 200)
     }
 
     @TestAttribute

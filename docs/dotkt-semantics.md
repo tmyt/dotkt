@@ -529,13 +529,18 @@ duplicate-preserving entries by reference identity; self-suppression is ignored.
 `suppressedExceptions` returns a detached snapshot, including across DLL calls.
 `use` retains the primary body exception when closing also fails.
 
-`stackTraceToString()` and both `printStackTrace()` paths retain the native virtual
-`ToString()` description, explicitly append each available CLR stack, and describe
+`stackTraceToString()` and both `printStackTrace()` paths use a short type/message
+heading for the default CLR `Exception.ToString` slot, preserve custom virtual
+descriptions, explicitly append each available CLR stack, and describe
 the Kotlin logical cause and stored suppression graph, including nested and
 cause-side suppression. Each object is expanded and described once by reference
 identity. Repeated references have a shared/cycle marker; fixed labels with depth
-numbers bound traversal-label overhead. Descriptions are opaque and may themselves
-contain native details; the renderer does not parse or deduplicate their contents.
+numbers bound traversal-label overhead. The actual CLR virtual slot determines
+whether a description is custom; hidden/new-slot or generic overloads do not count.
+This avoids repeatedly rendering every suffix of a native default cause chain.
+Custom descriptions remain opaque and may themselves contain native details; the
+renderer does not parse or deduplicate their contents or control callbacks made
+inside user formatting code.
 The text is CLR-oriented, not a promised JVM layout or a machine-readable format.
 Snapshots are taken and suppression locks released before user formatting or I/O.
 
@@ -548,8 +553,9 @@ cause, not a Kotlin-only override.
 
 Custom short `toString()` overrides do not hide available stacks or logical causes.
 An opaque native description can mention a different native cause, but the explicit
-graph follows Kotlin `cause` rather than expanding native-only edges. No reflection
-or parsing of native text is used to reconstruct exception semantics.
+graph follows Kotlin `cause` rather than expanding native-only edges. Native virtual
+slot metadata is used only to distinguish the default formatter from overrides;
+it does not reconstruct Kotlin semantics or parse native text.
 
 ## 4c. `.await()` binds to the .NET AWAITABLE PATTERN (GetAwaiter), not to Task (#10)
 

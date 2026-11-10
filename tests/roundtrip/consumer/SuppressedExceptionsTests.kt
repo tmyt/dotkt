@@ -2,6 +2,8 @@ package roundtriptests.suppression
 
 import NUnit.Framework.TestAttribute
 import DotKt.Tests.Suppression.SuppressionGcProbe
+import DotKt.Tests.Suppression.NativeCustomDescription
+import DotKt.Tests.Suppression.NativeHiddenDescriptionChild
 import roundtrip.suppression.suppressInProducer
 import roundtrip.suppression.suppressionSnapshotFromProducer
 import roundtrip.suppression.ProducerCause
@@ -61,5 +63,8 @@ class SuppressedExceptionsRoundtripTests {
         val rendered = producer.stackTraceToString()
         check(rendered.contains("logical-cause-suppression") && rendered.contains("own-cause"))
         check(!rendered.contains("native-only-suppression"))
+        check((NativeCustomDescription() as Throwable).stackTraceToString().startsWith("native-custom-description"))
+        val hiddenText = (NativeHiddenDescriptionChild() as Throwable).stackTraceToString()
+        check(hiddenText.contains("native-hidden-message") && !hiddenText.contains("not-object-tostring"))
     }
 }

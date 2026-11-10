@@ -36,8 +36,32 @@ public actual fun Throwable.printStackTrace(): Unit = printStackTraceImpl(this)
 
 private class ExceptionTraceTask(val exception: Throwable, val caption: String, val depth: Int)
 
-// A virtual description is opaque: it may omit the stack or describe a native cause
-// different from Kotlin's logical cause. Never parse it or assume it covers a child.
+// The native default ToString recursively formats InnerException. Do not invoke
+// every suffix of that chain. Preserve independent overrides, selected by the CLR
+// virtual slot (not a matching name or a Kotlin/exception classifier).
+private fun Throwable.exceptionDescription(): String {
+    val native = this as System.Exception
+    val nativeDefault = Throwable::class as System.Type
+    val objectOwner = Any::class as System.Type
+    val flags = System.Reflection.BindingFlags.Public or System.Reflection.BindingFlags.NonPublic or
+        System.Reflection.BindingFlags.Instance or System.Reflection.BindingFlags.DeclaredOnly
+    val runtimeType = native.GetType()
+    var current: System.Type? = runtimeType
+    while (current != null) {
+        val method = current.GetMethod("ToString", 0, flags, null, System.Type.EmptyTypes, null)
+        if (method != null && method.IsVirtual && method.GetBaseDefinition().DeclaringType == objectOwner) {
+            if (method.DeclaringType != nativeDefault) return native.ToString()
+            break
+        }
+        current = current.BaseType
+    }
+    val name = runtimeType.FullName ?: runtimeType.Name
+    val message = native.Message
+    return if (message == null || message.isEmpty()) name else "$name: $message"
+}
+
+// Custom descriptions are opaque. The explicit traversal still supplies available
+// stacks and the logical cause rather than interpreting text as a graph.
 @SinceKotlin("1.4")
 public actual fun Throwable.stackTraceToString(): String {
     val text = StringBuilder()
@@ -52,7 +76,7 @@ public actual fun Throwable.stackTraceToString(): String {
         val cause = if (expand) task.exception.cause else null
         if (text.length != 0) text.append('\n')
         if (task.depth != 0) text.append(task.caption).append(" (depth ").append(task.depth).append("): ")
-        text.append(if (expand) task.exception.toString() else "[circular/shared reference]")
+        text.append(if (expand) task.exception.exceptionDescription() else "[circular/shared reference]")
         if (!expand) continue
         val stack = (task.exception as System.Exception).StackTrace
         if (stack != null) text.append('\n').append(stack)
