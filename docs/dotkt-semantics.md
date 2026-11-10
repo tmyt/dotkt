@@ -2597,6 +2597,8 @@ native CLR declarations, constructors/fields and supported managed-reference loc
 retain their exact physical types; consuming an opaque value there performs the
 required checked extraction. Collection query entry barriers retain their selected
 contract's representative-bound/concrete guard rather than using this ordinary-call rule.
+Suspend return transport remains owned by suspend lowering: its cold object entry
+and exact public CLR Task result are not ordinary scalar MethodDef return slots.
 An array argument's value-storage companion is `System.Array` for both open and closed
 instantiations; its ordinary argument still names the exact native array witness. This
 keeps a separately compiled `Cargo<Array<T?>, U>` consistent with its concrete consumer.

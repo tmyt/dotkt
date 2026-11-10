@@ -154,7 +154,9 @@ static class UncheckedGenericCastReturnErasure
             if (!IsObject(TypeJson.Read(method["ret"]))
                 || Str(method["retKotlinType"]) is not string encoded
                 || TypeNode.Parse(encoded) is not TypeNode.Tv source) continue;
-            var frame = KotlinSupertypesRecord.ReadNullableFrame(source.Scope == "method" ? method : owner);
+            var frame = source.Scope == "method"
+                ? NullableRepresentationTypes.DeclarationMethodFrame(method)
+                : KotlinSupertypesRecord.ReadNullableFrame(owner);
             var physical = frame == null ? source : frame.Variable(source,
                 frame.StorageIndices.Contains(source.I) ? NullableRepresentationFrame.Role.Storage
                     : NullableRepresentationFrame.Role.Ordinary);

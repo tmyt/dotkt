@@ -13,6 +13,14 @@ static class KotlinGenericScalarSlots
     {
         internal void ProjectMethod(JsonObject method)
         {
+            TypeNode SourceVariable(TypeNode.Tv physical)
+            {
+                var owner = method.Parent?.Parent as JsonObject;
+                var frame = physical.Scope == "method"
+                    ? NullableRepresentationTypes.DeclarationMethodFrame(method)
+                    : owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner);
+                return frame?.SemanticVariable(physical) ?? physical;
+            }
             if (Policy.HasNativeMethodSignature(method)
                 || (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>().Any(edge =>
                     edge[DeclarationIdentityBinding.Key]?.GetValue<string>() is string id
@@ -28,14 +36,20 @@ static class KotlinGenericScalarSlots
                 var parameter = slots[index].AsObject();
                 if (!query && TypeJson.Read(parameter["type"]) is TypeNode.Tv variable)
                 {
-                    parameter["kotlinType"] ??= parameter["nullableGeneric"]?.DeepClone() ?? JsonValue.Create(TypeNode.ToJson(variable));
+                    parameter["kotlinType"] ??= parameter["nullableGeneric"]?.DeepClone()
+                        ?? JsonValue.Create(TypeNode.ToJson(SourceVariable(variable)));
                     parameter["type"] = TypeJson.Fqn("object");
                     projected.Add(index);
                 }
             }
-            if (TypeJson.Read(method["ret"]) is TypeNode.Tv result)
+            // A suspend declaration has no ordinary scalar CLR return slot:
+            // its cold Object result and exact hot Task signature belong to
+            // suspend lowering, independently of scalar parameter transport.
+            if (method["mods"]?["suspend"]?.GetValue<bool>() != true
+                && TypeJson.Read(method["ret"]) is TypeNode.Tv result)
             {
-                method["retKotlinType"] ??= method["nullableGenericRet"]?.DeepClone() ?? JsonValue.Create(TypeNode.ToJson(result));
+                method["retKotlinType"] ??= method["nullableGenericRet"]?.DeepClone()
+                    ?? JsonValue.Create(TypeNode.ToJson(SourceVariable(result)));
                 method["ret"] = TypeJson.Fqn("object");
             }
             if (method[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity)
