@@ -39,22 +39,17 @@ private class ExceptionTraceTask(val exception: Throwable, val caption: String, 
 // The native default ToString recursively formats InnerException. Do not invoke
 // every suffix of that chain. Preserve independent overrides, selected by the CLR
 // virtual slot (not a matching name or a Kotlin/exception classifier).
+private val nativeExceptionFormatter = (Throwable::class as System.Type)
+    .GetMethod("ToString", 0, System.Type.EmptyTypes)!!
+
 private fun Throwable.exceptionDescription(): String {
     val native = this as System.Exception
-    val nativeDefault = Throwable::class as System.Type
-    val objectOwner = Any::class as System.Type
-    val flags = System.Reflection.BindingFlags.Public or System.Reflection.BindingFlags.NonPublic or
-        System.Reflection.BindingFlags.Instance or System.Reflection.BindingFlags.DeclaredOnly
+    // Binding a closed delegate resolves the actual virtual target, including a
+    // MethodImpl whose body has a different name. Hidden/new-slot methods do not
+    // replace the selected Exception.ToString slot.
+    val formatter = nativeExceptionFormatter.CreateDelegate<System.Func1<String>>(native)
+    if (formatter.Method != nativeExceptionFormatter) return formatter()
     val runtimeType = native.GetType()
-    var current: System.Type? = runtimeType
-    while (current != null) {
-        val method = current.GetMethod("ToString", 0, flags, null, System.Type.EmptyTypes, null)
-        if (method != null && method.IsVirtual && method.GetBaseDefinition().DeclaringType == objectOwner) {
-            if (method.DeclaringType != nativeDefault) return native.ToString()
-            break
-        }
-        current = current.BaseType
-    }
     val name = runtimeType.FullName ?: runtimeType.Name
     val message = native.Message
     return if (message == null || message.isEmpty()) name else "$name: $message"

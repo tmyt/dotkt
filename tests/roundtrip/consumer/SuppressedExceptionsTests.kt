@@ -4,6 +4,7 @@ import NUnit.Framework.TestAttribute
 import DotKt.Tests.Suppression.SuppressionGcProbe
 import DotKt.Tests.Suppression.NativeCustomDescription
 import DotKt.Tests.Suppression.NativeHiddenDescriptionChild
+import DotKt.Tests.Suppression.NativeDescriptionFactory
 import roundtrip.suppression.suppressInProducer
 import roundtrip.suppression.suppressionSnapshotFromProducer
 import roundtrip.suppression.ProducerCause
@@ -66,5 +67,7 @@ class SuppressedExceptionsRoundtripTests {
         check((NativeCustomDescription() as Throwable).stackTraceToString().startsWith("native-custom-description"))
         val hiddenText = (NativeHiddenDescriptionChild() as Throwable).stackTraceToString()
         check(hiddenText.contains("native-hidden-message") && !hiddenText.contains("not-object-tostring"))
+        check((NativeDescriptionFactory.RenamedOverride() as Throwable).stackTraceToString()
+            .startsWith("renamed-native-slot-description"))
     }
 }
