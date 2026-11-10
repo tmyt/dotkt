@@ -42,7 +42,10 @@ fun <T : ImportedArrayBound> importedArrayVirtualLabel(values: Array<T>): String
 }
 
 fun <T> renderArrayScalar(value: T): String = value.toString()
-fun <T> forwardArrayScalar(value: T): T = value
+fun <T> forwardArrayScalar(value: T): T {
+    fun <U> localIdentity(input: U): U = input
+    return localIdentity(value)
+}
 open class ArrayScalarForwarder {
     open fun <T> render(value: T): String = renderArrayScalar(forwardArrayScalar(value))
 }

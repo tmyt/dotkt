@@ -20,7 +20,7 @@ static class LocalFunctionLowering
 
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 
-    public static void Apply(JsonObject file, ReferenceMetadataIndex refs)
+    public static void Apply(JsonObject file, ReferenceMetadataIndex refs, Action<JsonObject> projectValueSignature = null)
     {
         var fileClass = Str(file["fileClass"])
             ?? throw new InvalidOperationException("BIR file has no fileClass while lowering local functions");
@@ -71,6 +71,7 @@ static class LocalFunctionLowering
                     declaration[DeclarationIdentityBinding.Key] = declarationId;
                     declaration["declarationSourceName"] = sourceName;
                     var byRefCaptures = PrepareCaptureLocations(declaration);
+                    projectValueSignature?.Invoke(declaration);
                     var binding = PrepareGenericOwnerBinding(declaration, physicalOwner, ownerType);
                     binding = binding with { ByRefCaptureSlots = byRefCaptures };
                     binding = binding with { SemanticOwnerArgOrder = SemanticOwnerArgOrder(ownerType) };
@@ -273,9 +274,13 @@ static class LocalFunctionLowering
                         TypeJson.Read(JsonNode.Parse(encoded)), sourceMapping));
             }
             RewriteSourceCarrier(method, "nullableGenericRet");
+            RewriteSourceCarrier(method, "retKotlinType");
             if (method["params"] is JsonArray parameters)
                 foreach (var parameter in parameters.OfType<JsonObject>())
+                {
                     RewriteSourceCarrier(parameter, "nullableGeneric");
+                    RewriteSourceCarrier(parameter, "kotlinType");
+                }
             RewriteCapturedTypeVariables(method, capturedToPhysical);
             method.Remove("_syntheticTypeArgs");
             if (keep.Count == 0)

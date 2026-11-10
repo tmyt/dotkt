@@ -8,23 +8,12 @@ using DotKt.Bir;
 // frame; native signatures, managed locations and concrete scalar slots remain exact.
 static class KotlinGenericScalarSlots
 {
-    internal sealed record Projection(Dictionary<string, int[]> Parameters, HashSet<string> Returns)
+    internal sealed record Projection(Dictionary<string, int[]> Parameters, HashSet<string> Returns,
+        GenericRepresentationPolicy Policy)
     {
-        internal TypeNode.Tv Result(JsonObject call, ReferenceMetadataIndex refs) =>
-            call["k"]?.GetValue<string>() is "callStatic" or "callInstance"
-            && TypeJson.Read(call["sty"] ?? call["dynRet"]) is TypeNode.Tv variable
-            && call[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity
-            && (Returns.Contains(identity) || refs.IsGenericScalarReturn(identity)) ? variable : null;
-    }
-
-    internal static Projection ApplyAll(IEnumerable<JsonNode> roots, GenericRepresentationPolicy policy)
-    {
-        var declarations = new Dictionary<string, JsonObject>();
-        var parameters = new Dictionary<string, int[]>();
-        var returns = new HashSet<string>();
-        void Method(JsonObject method)
+        internal void ProjectMethod(JsonObject method)
         {
-            if (policy.HasNativeMethodSignature(method)) return;
+            if (Policy.HasNativeMethodSignature(method)) return;
             var projected = new List<int>();
             var slots = method["params"] as JsonArray ?? new JsonArray();
             // Query entry barriers belong to their selected collection contract;
@@ -35,24 +24,41 @@ static class KotlinGenericScalarSlots
                 var parameter = slots[index].AsObject();
                 if (!query && TypeJson.Read(parameter["type"]) is TypeNode.Tv variable)
                 {
-                    parameter["kotlinType"] ??= TypeNode.ToJson(variable);
+                    parameter["kotlinType"] ??= parameter["nullableGeneric"]?.DeepClone() ?? JsonValue.Create(TypeNode.ToJson(variable));
                     parameter["type"] = TypeJson.Fqn("object");
                     projected.Add(index);
                 }
             }
             if (TypeJson.Read(method["ret"]) is TypeNode.Tv result)
             {
-                method["retKotlinType"] ??= TypeNode.ToJson(result);
+                method["retKotlinType"] ??= method["nullableGenericRet"]?.DeepClone() ?? JsonValue.Create(TypeNode.ToJson(result));
                 method["ret"] = TypeJson.Fqn("object");
             }
             if (method[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity)
             {
-                declarations[identity] = method;
-                if (projected.Count != 0) parameters[identity] = projected.ToArray();
+                if (projected.Count != 0) Parameters[identity] = projected.ToArray();
                 if (method["retKotlinType"]?.GetValue<string>() is string sourceReturn
                     && TypeNode.Parse(sourceReturn) is TypeNode.Tv)
-                    returns.Add(identity);
+                    Returns.Add(identity);
             }
+        }
+
+        internal TypeNode.Tv Result(JsonObject call, ReferenceMetadataIndex refs) =>
+            call["k"]?.GetValue<string>() is "callStatic" or "callInstance"
+            && TypeJson.Read(call["sty"] ?? call["dynRet"]) is TypeNode.Tv variable
+            && call[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity
+            && (Returns.Contains(identity) || refs.IsGenericScalarReturn(identity)) ? variable : null;
+    }
+
+    internal static Projection ApplyAll(IEnumerable<JsonNode> roots, GenericRepresentationPolicy policy)
+    {
+        var declarations = new Dictionary<string, JsonObject>();
+        var projection = new Projection(new Dictionary<string, int[]>(), new HashSet<string>(), policy);
+        void Method(JsonObject method)
+        {
+            projection.ProjectMethod(method);
+            if (method[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity)
+                declarations[identity] = method;
         }
         void Owner(JsonObject owner)
         {
@@ -82,12 +88,12 @@ static class KotlinGenericScalarSlots
             if (operation["k"]?.GetValue<string>() is not ("callStatic" or "callInstance" or "constrainedCall")
                 || operation[DeclarationIdentityBinding.Key]?.GetValue<string>() is not string identity
                 || !declarations.TryGetValue(identity, out var selected)) return;
-            if (parameters.TryGetValue(identity, out var indices) && operation["sig"] is JsonArray signature)
+            if (projection.Parameters.TryGetValue(identity, out var indices) && operation["sig"] is JsonArray signature)
                 foreach (var index in indices) signature[index] = TypeJson.Fqn("object");
             if (selected["retKotlinType"] != null && TypeJson.Read(selected["ret"]) is TypeNode.Fqn { Name: "object" })
                 operation["ret"] = TypeJson.Fqn("object");
         }
         foreach (var root in files) Calls(root);
-        return new Projection(parameters, returns);
+        return projection;
     }
 }

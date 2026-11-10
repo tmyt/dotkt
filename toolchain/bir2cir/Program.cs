@@ -510,7 +510,7 @@ sealed class Pipeline
             // Kotlin local functions remain lexical BIR declarations through every raw-body splice above. Consume the
             // explicit declaration-id relation now and select their CLR MethodDef owner before representation synthesis
             // (closures/suspend lambdas may carry calls to those declarations). No FileClass/name heuristic is involved.
-            LocalFunctionLowering.Apply((JsonObject)bir.Root, refs);
+            LocalFunctionLowering.Apply((JsonObject)bir.Root, refs, scalarSlots.ProjectMethod);
             // Bind local and ProjectReference companion values after every raw-BIR splice and before an evaluation
             // plan can materialize a representation-less flat receiver as a CLR local.
             CompanionRepresentationLowering.BindUses(
