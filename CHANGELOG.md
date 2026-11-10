@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- Include available stacks and logical causes in Kotlin detailed exception rendering even when a custom short description omits them.
 - Preserve Kotlin `Throwable.cause` overrides through base-typed and cross-DLL reads while retaining native CLR exception identity and non-virtual `super.cause` behavior.
 
 ## 0.9.23 (2026-11-09)

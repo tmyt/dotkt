@@ -6,8 +6,8 @@
     "NO_ACTUAL_CLASS_MEMBER_FOR_EXPECTED_CLASS",
     "PLATFORM_CLASS_MAPPED_TO_KOTLIN",
 )
-// Throwable maps to System.Exception. Native descriptions are supplemented with
-// the Kotlin suppression graph; CLR-wide ToString behavior is unchanged.
+// Throwable maps to System.Exception. Detailed output preserves opaque descriptions
+// and explicitly adds stack and logical graph details; CLR-wide ToString is unchanged.
 // See docs/design-stdlib-compilation.md "THE CANONICAL ROADMAP".
 
 package kotlin
@@ -34,34 +34,51 @@ internal fun printStackTraceImpl(throwable: Throwable): Unit = clrStdErr().write
 // expect/actual; app call sites resolve to the Throwable MEMBER (see builtins/Throwable.kt) which shares printStackTraceImpl.
 public actual fun Throwable.printStackTrace(): Unit = printStackTraceImpl(this)
 
-private class ExceptionTraceTask(val exception: Throwable, val caption: String, val depth: Int, val render: Boolean)
+private class ExceptionTraceTask(val exception: Throwable, val caption: String, val depth: Int)
 
-// Native base descriptions normally include their cause chains. Walk causes for
-// suppression, but do not count a cause-only visit as an explicit description:
-// an opaque native override may omit a subsequently suppressed shared node.
+// The native default ToString recursively formats InnerException. Do not invoke
+// every suffix of that chain. Preserve independent overrides, selected by the CLR
+// virtual slot (not a matching name or a Kotlin/exception classifier).
+private val nativeExceptionFormatter = (Throwable::class as System.Type)
+    .GetMethod("ToString", 0, System.Type.EmptyTypes)!!
+private val nativeExceptionFormatterType = (System.Func1<String> { "" } as System.Object).GetType()
+
+private fun Throwable.exceptionDescription(): String {
+    val native = this as System.Exception
+    // Binding a closed delegate resolves the actual virtual target, including a
+    // MethodImpl whose body has a different name. Hidden/new-slot methods do not
+    // replace the selected Exception.ToString slot.
+    val formatter = nativeExceptionFormatter.CreateDelegate(nativeExceptionFormatterType, native)
+    if (formatter.Method != nativeExceptionFormatter) return native.ToString()
+    val runtimeType = native.GetType()
+    val name = runtimeType.FullName ?: runtimeType.Name
+    val message = native.Message
+    return if (message == null || message.isEmpty()) name else "$name: $message"
+}
+
+// Custom descriptions are opaque. The explicit traversal still supplies available
+// stacks and the logical cause rather than interpreting text as a graph.
 @SinceKotlin("1.4")
 public actual fun Throwable.stackTraceToString(): String {
     val text = StringBuilder()
     val expanded = System.Collections.Generic.HashSet<Throwable>(System.Collections.Generic.ReferenceEqualityComparer.Instance)
-    val described = System.Collections.Generic.HashSet<Throwable>(System.Collections.Generic.ReferenceEqualityComparer.Instance)
     val pending = ArrayList<ExceptionTraceTask>()
-    pending.add(ExceptionTraceTask(this, "", 0, true))
+    pending.add(ExceptionTraceTask(this, "", 0))
     while (pending.isNotEmpty()) {
         val task = pending.removeAt(pending.size - 1)
         val expand = expanded.Add(task.exception)
         // Take detached state before invoking any overridable formatting code.
         val suppressed = if (expand) task.exception.suppressedExceptions else emptyList()
         val cause = if (expand) task.exception.cause else null
-        if (task.render) {
-            if (text.length != 0) text.append('\n')
-            if (task.depth != 0) text.append(task.caption).append(" (depth ").append(task.depth).append("): ")
-            text.append(if (described.Add(task.exception)) task.exception.toString() else "[circular/shared reference]")
-        }
+        if (text.length != 0) text.append('\n')
+        if (task.depth != 0) text.append(task.caption).append(" (depth ").append(task.depth).append("): ")
+        text.append(if (expand) task.exception.exceptionDescription() else "[circular/shared reference]")
         if (!expand) continue
-        if (cause != null) pending.add(ExceptionTraceTask(cause, "Caused by", task.depth + 1, false))
+        val stack = (task.exception as System.Exception).StackTrace
+        if (stack != null) text.append('\n').append(stack)
+        if (cause != null) pending.add(ExceptionTraceTask(cause, "Caused by", task.depth + 1))
         for (index in (suppressed.size - 1) downTo 0) {
-            pending.add(ExceptionTraceTask(suppressed[index],
-                if (task.render) "Suppressed" else "Suppressed in cause", task.depth + 1, true))
+            pending.add(ExceptionTraceTask(suppressed[index], "Suppressed", task.depth + 1))
         }
     }
     return text.toString()
