@@ -281,6 +281,17 @@ sealed partial class ReferenceMetadataIndex
             && binding.MethodArity == methodArity && binding.IsStatic == isStatic
                 ? binding.ReturnTypeNode : null;
 
+    internal bool IsGenericScalarReturn(string id) =>
+        _declarationById.TryGetValue(id, out var binding) && binding.KotlinReturnType is TypeNode.Tv
+        && binding.ReturnTypeNode is TypeNode.Fqn { Name: "object" or "System.Object" };
+
+    internal int[] GenericScalarParameters(string id) =>
+        _declarationById.TryGetValue(id, out var binding) && binding.KotlinParameterTypes is { } source
+        && binding.ParamTypeNodes is { } physical && source.Length == physical.Length
+            ? Enumerable.Range(0, source.Length).Where(index => source[index] is TypeNode.Tv
+                && physical[index] is TypeNode.Fqn { Name: "object" or "System.Object" }).ToArray()
+            : Array.Empty<int>();
+
     // A preserved override edge selects this declaration before signature erasure. Return its complete open CLR
     // signature, including modifiers; the consumer closes the selected declaring owner through its supertype graph.
     internal bool TryDeclarationSignatureSlot(string id, out ReferencedDeclarationSlot declaration)
@@ -485,9 +496,14 @@ sealed partial class ReferenceMetadataIndex
         // Generated cold entries retain each parameter's trusted type carrier, including suspend
         // function shapes whose CLR value slot is object. Validate those authored facts too;
         // do not treat object as a wildcard for a function or search a sibling overload.
+        // A call can already project its scalar slots while retaining function carriers.
+        // Validate each position against that exact MethodDef's physical or semantic slot.
         var parameterCarriersMatch = binding.KotlinParameterTypes?.Length == callSignature.Count
             && binding.KotlinParameterTypes.Select((type, index) =>
-                SemanticDeclarationDescribesCall(type, callSignature[index])).All(matchesCall => matchesCall);
+                SemanticDeclarationDescribesCall(type, callSignature[index])
+                || selectedSignature[index] != null
+                    && DeclarationDescribesCall(selectedSignature[index], completedCallSignature[index]))
+                .All(matchesCall => matchesCall);
         var signatureMatches = !requiresParameterValidation || semanticMatches || physicalMatches || parameterCarriersMatch;
         if (selectedSignature.Any(type => type == null) || !signatureMatches)
         {
@@ -3246,7 +3262,7 @@ sealed partial class ReferenceMetadataIndex
         }
         else
         {
-            physicalOwner = ReflectedOwnerFqn(sourceOwner);
+            physicalOwner = ExactReflectedOwner(sourceOwner, ownerArity);
             ownerType = ResolveNetType(physicalOwner, ownerArity);
         }
         if (paramCount < 0 || accessorSignature == null) return false;
@@ -4414,6 +4430,9 @@ sealed partial class ReferenceMetadataIndex
                 // Object slot as a nullable erasure would overwrite the instantiated Kotlin expression type.
                 declaredRet = propertyName != null && !includeClosedPropertyReturn && IsUncheckedGenericObjectGetter(member)
                     ? default
+                    : (includeUnchangedMethodReturn || includeClosedPropertyReturn)
+                        && member.KotlinReturnType is TypeNode.Tv && IsObjectType(member.ReturnTypeNode)
+                    ? new SlotFact(member.ReturnTypeNode, false)
                     : explicitNullableFrame
                     ? FramedSlot(member.NullableGenericRet, member.ReturnTypeNode,
                         selectedPhysicalMember == null, includeUnchangedMethodReturn)
@@ -8196,6 +8215,39 @@ sealed partial class ReferenceMetadataIndex
         if (!ConstructedDeclarationDescribesCall(new[] { ownerSlot }, new TypeNode[] { stringSlot }, new TypeNode[] { stringSlot })
             || ConstructedDeclarationDescribesCall(new[] { ownerSlot }, new TypeNode[] { intSlot }, new TypeNode[] { stringSlot }))
             throw new InvalidOperationException("Constructed declaration validation lost exact owner substitution");
+        {
+            var carrierIndex = Build(Array.Empty<string>());
+            var source = new TypeNode.Tv("method", 0);
+            var function = TypeNode.Parse("""{"t":"fn","suspend":true,"params":[],"ret":{"t":"fqn","name":"kotlin.Unit"}}""");
+            var binding = new MemberBinding("ColdCarrier", "read", 2, null, false, false,
+                MethodArity: 2, ParamTypeNodes: new TypeNode[] { new TypeNode.Fqn("object"), new TypeNode.Fqn("object") },
+                KotlinParameterTypes: new TypeNode[] { source, function });
+            carrierIndex._declarationById.Add("scalar", binding);
+            carrierIndex._declarationById.Add("native", binding with { ParamTypeNodes = new TypeNode[] { source, new TypeNode.Fqn("object") } });
+            if (!carrierIndex.GenericScalarParameters("scalar").SequenceEqual(new[] { 0 })
+                || carrierIndex.GenericScalarParameters("native").Length != 0)
+                throw new InvalidOperationException("Referenced scalar projection lost its exact physical parameter proof");
+            JsonObject Call(params string[] ids) => new()
+            {
+                ["k"] = "callInstance", ["method"] = "read",
+                ["sig"] = new JsonArray(TypeJson.Write(source), TypeJson.Write(function)),
+                ["overrides"] = new JsonArray(ids.Select(id => (JsonNode)new JsonObject
+                    { [DeclarationIdentityBinding.Key] = id }).ToArray()),
+            };
+            var opaque = Call("scalar");
+            var mixed = Call("scalar", "native");
+            var root = new JsonObject { ["fileClass"] = "ScalarCaller", ["methods"] = new JsonArray(new JsonObject
+            {
+                ["name"] = "test", ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),
+                ["body"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = opaque },
+                    new JsonObject { ["k"] = "exprStmt", ["expr"] = mixed }),
+            }) };
+            KotlinGenericScalarSlots.ApplyAll(new[] { root }, new GenericRepresentationPolicy(
+                new Dictionary<string, string>(), roots: new[] { root }), carrierIndex);
+            if (TypeJson.Read(opaque["sig"][0]) is not TypeNode.Fqn { Name: "object" }
+                || TypeJson.Read(opaque["sig"][1]) != function || TypeJson.Read(mixed["sig"][0]) != source)
+                throw new InvalidOperationException("Fake override projection guessed a parameter contract not shared by its declarations");
+        }
         var nullableSourceVariable = new TypeNode.Nullable(new TypeNode.Tv("type", 0));
         var nullableSourceAny = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
         if (SourceDeclarationDescribesCall(nullableSourceVariable, new TypeNode.Fqn("object"))

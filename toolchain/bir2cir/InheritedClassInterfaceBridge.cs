@@ -377,8 +377,9 @@ static class InheritedClassInterfaceBridge
             {
                 new JsonObject
                 {
-                    ["owner"] = TypeJson.Fqn(iface.Name), ["member"] = name,
+                    ["owner"] = TypeJson.Write(ifaceSpec), ["member"] = name,
                     ["kind"] = "method", ["arity"] = slotParams.Length,
+                    [DeclarationIdentityBinding.Key] = im[DeclarationIdentityBinding.Key]?.DeepClone(),
                 }
             },
         };
@@ -393,6 +394,24 @@ static class InheritedClassInterfaceBridge
         CopyNullableGenericFact(im, bridge, "nullableGenericRet", ifaceArgs);
         if (im["typeParams"] is JsonArray tps)
             bridge["typeParams"] = KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(tps, ifaceArgs);
+        if (!suspend)
+        {
+            bridge[KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true;
+            // This pass selected the exact local interface MethodDef. Preserve
+            // that physical obligation instead of asking a later source-name
+            // matcher to recover it after the inherited body is renamed.
+            var descriptor = new JsonObject {
+                ["owner"] = TypeJson.Write(ifaceSpec), ["member"] = name,
+                ["arity"] = methodTpCount,
+                ["params"] = new JsonArray(ps.OfType<JsonObject>().Select(parameter =>
+                    TypeJson.Write(SubstOwnerTvs(TypeJson.Read(FunctionSignatureIdentity.SignatureType(parameter)), ifaceArgs))).ToArray()),
+                ["ret"] = TypeJson.Write(slotRet),
+            };
+            if (bridge["typeParams"] is JsonArray { Count: > 0 } bridgeTypeParameters)
+                descriptor["typeParams"] = bridgeTypeParameters.DeepClone();
+            bridge["clrInterfaceImpls"] = new JsonArray(descriptor);
+            DeclarationSignatureIdentity.RecordSelectedImplementationSlot(bridge, im);
+        }
         return MaterializedExecutable.Normalize(bridge);
     }
 

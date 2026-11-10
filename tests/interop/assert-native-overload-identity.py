@@ -73,9 +73,17 @@ original = next(method for method in fixture["methods"]
 original_calls = [node for node in nodes(original) if node.get("memberRef", {}).get("name") == "Echo"]
 assert len(original_calls) == 1, original_calls
 assert original_calls[0]["memberRef"]["returnType"] == fqn("System.String"), original_calls
-constrained = [node for node in cir_calls if node.get("k") == "constrainedCall"]
-assert {node["memberRef"]["name"] for node in constrained} == {"Plain", "Echo"}, constrained
-assert all("resolvedMemberParams" not in node for node in constrained), constrained
+for name, target in (("nativeConstrainedPlain", "Plain"), ("nativeConstrainedEcho", "Echo")):
+    method = next(method for method in cir["methods"] if method["name"] == name)
+    assert method["params"][0]["type"] == fqn("object"), method
+    calls = [node for node in nodes(method) if node.get("memberRef", {}).get("name") == target]
+    assert len(calls) == 1, calls
+    call = calls[0]
+    assert call["k"] in ("clrInstance", "clrGenericInstance"), call
+    receiver = call["recv"]
+    assert receiver["k"] == "cast" and receiver["type"] == call["memberRef"]["declaringType"], call
+    assert receiver["e"] == {"k": "local", "name": "slot"}, call
+    assert "resolvedMemberParams" not in call, call
 
 for owner_name, member_name, minimum in (
     ("NativeOverloadIdentity.ClassSlot`1", "Echo", 3),

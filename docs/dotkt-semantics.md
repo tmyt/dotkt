@@ -854,29 +854,29 @@ slots, generic/reference, and nullable-value/object pairs. It does not unbox an 
 to the other operand's type or call `Equals`; reference-valued instantiations retain
 their identity. Homogeneous generic/value comparisons keep the raw comparison below.
 
-Here, homogeneous means that both physical operands retain the same generic slot,
-as in `fun <T> ident(a: T, b: T) = a === b`. This differs from
-`fun <T> nullableIdent(a: T?, b: T) = a === b`: on DotKt,
-`ident<Int>(1000, 1000)` is `true`, while `nullableIdent<Int>(1000, 1000)` is
-`false`, because the latter compares two separately boxed references. The nullable
-signature does not imply that a non-null argument uses the homogeneous value path.
+Here, homogeneous means that both physical operands retain the same unboxed generic
+slot, such as an exact native location. Ordinary Kotlin generic scalar parameters and
+results instead transport opaque object values. Thus both
+`fun <T> ident(a: T, b: T) = a === b` and
+`fun <T> nullableIdent(a: T?, b: T) = a === b` compare references: passing two separately
+boxed `1000` values returns `false`, while passing the same saved boxed value twice
+returns `true`. The independent generic construction witnesses do not unbox these values.
 
 An open `Array<T>` element read is likewise an erased object value, not a native generic slot.
 Reading a native value-component array twice can produce two distinct boxes, so
 `fun <T> twice(xs: Array<T>) = xs[0] === xs[0]` can be `false` at `T = Int`.
 A saved local alias, an already-boxed array element, and reference-component elements retain reference identity.
-A real typed return or argument still requires extraction; comparisons between equal native generic slots
+A concrete or native typed return or argument still requires extraction; comparisons between equal native generic slots
 retain the homogeneous behavior above. Identity never calls structural `Equals` to reconcile these representations.
 
 Because CLR generics are **reified** (§2) and a basic `enum class` is a real CLR
 value-type `enum` (`BirEmitterDeclarations.kt`, `BirEmitter.enumDef`), that single `ceq` lowering produces
-three JVM-diverging outcomes:
+the following physical distinctions:
 
-- **A generic type parameter instantiated over a primitive compares by VALUE, not identity.**
-  `fun <T> ident(a: T, b: T) = a === b; ident(1000, 1000)` → **`true`** on DotKt. At the CLR the
-  generic method is JIT-specialized per value-type instantiation, so `T = Int` is an unboxed
-  `System.Int32`; `ceq` on the raw values IS a value compare. On the JVM, `T` erases to `Object`, so
-  `a`/`b` are two separately autoboxed `Integer`s outside the `-128..127` cache → **`false`**.
+- **An unboxed primitive compares by value; an ordinary generic parameter compares boxed references.**
+  CLR generic witnesses may still name `System.Int32`, but an ordinary scalar parameter's value slot is
+  `object`. `ident(1000, 1000)` therefore returns **`false`**, as on Kotlin/JVM outside its boxing cache.
+  This does not change direct primitive comparison or exact native generic-location comparisons.
 - **A boxed primitive has no identity cache.** `val a: Any = 1; val b: Any = 1; a === b` → **`false`**
   on DotKt (each widening to `Any` boxes fresh; `ceq` is a genuine reference compare here), where the
   JVM returns **`true`** for values in `-128..127` (`Integer.valueOf` cache). DotKt has no such
@@ -2589,13 +2589,22 @@ Native delegate slots retain the selected CLR declaration's convention. For exam
 `Func<object, object>`; SAM conversion bridges these signatures without changing an authored method's slots.
 
 A directly generic Kotlin storage slot uses a separate value-storage companion while its ordinary argument
-retains the original CLR construction. A directly method-generic Kotlin parameter or result owns that companion
-in its declaration too: an abstract interface method and its implementation publish the same value frame,
+retains the original CLR construction. A Kotlin callable and its implementation publish the same declared value frame,
 independently of the implementation body. Compiler-generated shared cells follow the same storage rule.
 A CLR override or intrinsic instead retains the selected native declaration's generic arity and signature.
 Additional representations required only by a virtual implementation belong to a private body entry; they do
 not enlarge its published dispatch slot. Source constraints and role correspondence remain explicit metadata,
 not facts reconstructed from a physical companion's index or a method's spelling.
+An ordinary Kotlin callable's directly generic scalar parameter or result transports
+an opaque `object` value instead of extracting its caller's closed CLR `T`. Its source
+type and generic construction witnesses remain explicit metadata. This also applies
+to inherited and virtual Kotlin callables and DLL consumers. Concrete scalar slots,
+native CLR declarations, constructors/fields and supported managed-reference locations
+retain their exact physical types; consuming an opaque value there performs the
+required checked extraction. Collection query entry barriers retain their selected
+contract's representative-bound/concrete guard rather than using this ordinary-call rule.
+Suspend return transport remains owned by suspend lowering: its cold object entry
+and exact public CLR Task result are not ordinary scalar MethodDef return slots.
 An array argument's value-storage companion is `System.Array` for both open and closed
 instantiations; its ordinary argument still names the exact native array witness. This
 keeps a separately compiled `Cargo<Array<T?>, U>` consistent with its concrete consumer.
@@ -2623,8 +2632,8 @@ no such meeting to arrange: nothing is reified over it, so it keeps the CLR-nati
 caller expects to see and what interop is written in. `object` is not an approximation for the boxed case, it is the
 CLR's own boxed form of a nullable value: boxing an empty `Nullable<V>` produces a genuine null reference, and
 `unbox.any Nullable<V>` accepts a null back into an empty one, so the two interconvert in one verifier-clean
-instruction and **null stays distinct from `0`**. A bare `T` stays monomorphized and unboxed and `List<Int>` keeps
-`int32` storage — only the `?` moves anything.
+instruction and **null stays distinct from `0`**. Native scalar storage and native `List<Int>` element storage
+remain monomorphized and unboxed; opaque Kotlin generic callable values use the separate rule above.
 
 Frame demand is structural, not inferred by chasing upper bounds. A nullable argument can require a companion even
 when its source variable has a reference-only bound. Ordinary source parameters retain their constraints. Companions
@@ -2750,7 +2759,9 @@ What this is observable as, beyond the boxing already listed above:
   from `Array<T>` does not by itself narrow to the caller's concrete `T`; ordinary local aliases, assignments,
   loop variables, object consumers and constructor delegation can retain that erased value, including null.
   An explicit non-reified generic cast checks its representative bound. Bound-member dispatch checks the
-  selected member's owner, while typed calls and returns still require their actual physical slots. A local
+  selected member's owner. Ordinary non-reified Kotlin generic scalar forwarding
+  retains the opaque value, including through a generic return and another DLL;
+  concrete/native calls and storage still require their actual physical slots. A local
   passed by managed reference keeps the selected native parameter's exact element type for its whole storage
   lifetime; initialization and later assignments must satisfy that location, and repeated references alias it.
   Fresh value-component reads can therefore be distinct boxes for `===`; a saved alias or an existing boxed/reference

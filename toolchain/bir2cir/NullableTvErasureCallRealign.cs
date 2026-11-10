@@ -331,6 +331,10 @@ static partial class NullableTvErasureCallRealign
     static DeclSig ReadSig(JsonObject mo)
     {
         var ownershipKnown = Bool(mo[NullableErasureOwnershipKnownKey]);
+        // An explicit non-nullable scalar source carrier owns an independent
+        // object transport seam, not nullable erasure. Keep concrete use hints.
+        ownershipKnown |= TypeJson.Read(mo["ret"]) is TypeNode.Fqn { Name: "object" or "System.Object" }
+            && Str(mo["retKotlinType"]) is string source && TypeNode.Parse(source) is TypeNode.Tv;
         if (ReadDeclaredSlot(mo, "ret", "nullableGenericRet", ownershipKnown) is not TypeNode rt) return null;
         return ReadParams(mo["params"], ownershipKnown) is TypeNode[] ps
             ? new DeclSig { Ret = rt, Params = ps, NullableErasureOwnershipKnown = ownershipKnown }

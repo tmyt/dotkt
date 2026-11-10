@@ -12,6 +12,24 @@ static class ErasedElementValues
 {
     sealed record Slot(JsonObject Declaration, string Name, TypeNode Type);
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
+    const string SourceVariableKey = "_erasedValueVariable";
+
+    internal static void RetainVariable(JsonObject value, TypeNode.Tv variable) =>
+        value[SourceVariableKey] = TypeJson.Write(variable);
+
+    internal static TypeNode.Tv RetainedVariable(JsonObject value) =>
+        TypeJson.Read(value[SourceVariableKey]) as TypeNode.Tv;
+
+    internal static void ClearRetainedVariables(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            obj.Remove(SourceVariableKey);
+            foreach (var child in obj.Select(pair => pair.Value)) ClearRetainedVariables(child);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array) ClearRetainedVariables(child);
+    }
 
     internal static void ApplyType(JsonObject type, ReferenceMetadataIndex references,
         IReadOnlyDictionary<string, JsonObject> definitions,
@@ -39,7 +57,8 @@ static class ErasedElementValues
     }
 
     internal static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references,
-        ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null)
+        ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null,
+        Func<JsonObject, TypeNode.Tv> scalarResults = null, bool scalarCallsOnly = false)
     {
         var files = roots.OfType<JsonObject>().ToArray();
         var iteratorValues = new KotlinIteratorValueBinding();
@@ -62,9 +81,11 @@ static class ErasedElementValues
         void Container(JsonObject container, JsonObject owner)
         {
             foreach (var method in (container["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                Project(method, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues);
+                Project(method, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues,
+                    captureStorageOnly: scalarCallsOnly, scalarResults: scalarResults, retainSourceVariables: true);
             foreach (var constructor in (container["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                Project(constructor, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues);
+                Project(constructor, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues,
+                    captureStorageOnly: scalarCallsOnly, scalarResults: scalarResults, retainSourceVariables: true);
             foreach (var type in (container["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Container(type, type);
         }
@@ -79,8 +100,19 @@ static class ErasedElementValues
 
     static void Project(JsonObject method, JsonObject owner, Func<TypeNode, bool> isInterface,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
-        GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues, bool captureStorageOnly = false)
+        GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues, bool captureStorageOnly = false,
+        Func<JsonObject, TypeNode.Tv> scalarResults = null, bool retainSourceVariables = false)
     {
+        if (method["k"] == null && method["body"] is JsonArray nativeBody)
+        {
+            var constructor = method["ret"] == null;
+            var prologue = constructor ? method["preStmts"] as JsonArray ?? new JsonArray() : nativeBody;
+            PhysicalValueCoercion.AllocateNativeLocals((method["preStmts"] as JsonArray ?? new JsonArray())
+                .Concat(method["thisArgs"] as JsonArray ?? method["baseArgs"] as JsonArray ?? new JsonArray())
+                .Concat(nativeBody), (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>(), prologue,
+                genericParametersOnly: true);
+            if (constructor && method["preStmts"] == null && prologue.Count != 0) method["preStmts"] = prologue;
+        }
         var executable = (method["preStmts"] as JsonArray ?? new JsonArray())
             .Concat(method["thisArgs"] as JsonArray ?? method["baseArgs"] as JsonArray ?? new JsonArray())
             .Concat(method["body"] as JsonArray ?? new JsonArray()).ToArray();
@@ -88,8 +120,10 @@ static class ErasedElementValues
         var reads = new Dictionary<JsonObject, TypeNode.Tv>();
         var iteratorReads = new HashSet<JsonObject>();
         var fieldReads = new HashSet<JsonObject>();
+        var scalarReads = new HashSet<JsonObject>();
         var captures = new List<JsonObject>();
         var uses = new Dictionary<JsonObject, Slot>();
+        var addressed = new HashSet<Slot>();
         var slots = new List<Slot>();
         var loopSlots = new Dictionary<JsonObject, Slot>();
         var valueResults = new HashSet<JsonObject>();
@@ -133,8 +167,17 @@ static class ErasedElementValues
             var kind = Text(obj["k"]);
             if (kind is "newClosure" or "newSam" or "newSuspendLambda") captures.Add(obj);
             if (kind is "local" or "setLocal" && Text(obj["name"]) is string used
-                && scope.TryGetValue(used, out var slot)) uses[obj] = slot;
+                && scope.TryGetValue(used, out var slot))
+            {
+                uses[obj] = slot;
+                if (location) addressed.Add(slot);
+            }
             if (!captureStorageOnly && kind == "arrayGet" && !location && Element(obj, scope) is { } read) reads[obj] = read;
+            if (!location && scalarResults?.Invoke(obj) is { } scalarResult)
+            {
+                reads[obj] = scalarResult;
+                scalarReads.Add(obj);
+            }
             if (!location && kind == "field" && Text(obj["recv"]?["k"]) == "this"
                 && TypeJson.OwnerName(obj["ownerType"]) == Text(owner?["name"])
                 && Text(obj["name"]) is string fieldName && erasedFields.TryGetValue(fieldName, out var fieldVariable))
@@ -174,10 +217,14 @@ static class ErasedElementValues
             foreach (var (key, child) in obj)
             {
                 if (key is "attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey) continue;
+                // A materialized lambda body owns its generic frame. Its capture
+                // expressions still execute in the enclosing declaration.
+                if (key == "body" && kind is "newClosure" or "newSam" or "newSuspendLambda") continue;
                 if (key == "args" && child is JsonArray arguments)
                 {
                     var parameters = obj["memberRef"]?["parameterTypes"] as JsonArray
-                        ?? obj["sig"] as JsonArray ?? obj["argTypes"] as JsonArray;
+                        ?? obj["resolvedMemberParams"] as JsonArray ?? obj["sig"] as JsonArray
+                        ?? obj["shapeTypes"] as JsonArray ?? obj["argTypes"] as JsonArray;
                     for (var i = 0; i < arguments.Count; i++)
                         Bind(arguments[i], scope, parameters != null && i < parameters.Count
                             && SignatureValueTypes.Of(TypeJson.Read(parameters[i])) is TypeNode.ByRef);
@@ -212,7 +259,7 @@ static class ErasedElementValues
         }
         bool Record(Slot slot, JsonNode value)
         {
-            if (origins.ContainsKey(slot) || Origin(value) is not { } source) return false;
+            if (addressed.Contains(slot) || origins.ContainsKey(slot) || Origin(value) is not { } source) return false;
             if (slot.Type is TypeNode.Tv variable) origins[slot] = variable;
             else if (IsObject(slot.Type)) origins[slot] = source;
             else return false;
@@ -230,11 +277,27 @@ static class ErasedElementValues
         var casts = new Dictionary<JsonObject, TypeNode>();
         var constrained = new HashSet<JsonObject>();
         var erasedResults = new HashSet<JsonObject>();
+        TypeNode.Tv LogicalVariable(JsonObject value)
+        {
+            TypeNode.Tv variable;
+            if (Text(value["k"]) == "local" && uses.TryGetValue(value, out var slot))
+                variable = slot.Type as TypeNode.Tv ?? parameterOrigins.GetValueOrDefault(slot);
+            else variable = reads.GetValueOrDefault(value)
+                ?? Variable(TypeJson.Read(value["sty"] ?? value["type"] ?? value["ret"]));
+            if (variable == null) return null;
+            var frame = variable.Scope == "method" ? NullableRepresentationTypes.DeclarationMethodFrame(method)
+                : owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner);
+            return frame == null ? variable : frame.Variable(
+                new TypeNode.Tv(variable.Scope, frame.PhysicalSlot(variable.I).SourceIndex),
+                NullableRepresentationFrame.Role.Ordinary);
+        }
         void Plan(JsonNode node)
         {
             if (node is JsonArray array) { foreach (var child in array) Plan(child); return; }
             if (node is not JsonObject obj) return;
             if (obj["k"] == null && obj["params"] is JsonArray && obj["body"] is JsonArray) return;
+            if (retainSourceVariables && Origin(obj) != null && LogicalVariable(obj) is { } sourceVariable)
+                RetainVariable(obj, sourceVariable);
             if (Text(obj["k"]) == "cast" && NullableBool(obj["reifiedTypeOperand"]) == false
                 && TypeJson.Read(obj["type"]) is TypeNode.Tv target && Origin(obj["e"]) == target)
                 casts[obj] = Bound(target, new HashSet<TypeNode.Tv>());
@@ -244,7 +307,8 @@ static class ErasedElementValues
                 && (TypeJson.Read(obj["type"]) is TypeNode.Tv || TypeJson.Read(obj["sty"]) is TypeNode.Tv))
                 erasedResults.Add(obj);
             foreach (var (key, child) in obj)
-                if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)) Plan(child);
+                if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)
+                    && !(key == "body" && Text(obj["k"]) is "newClosure" or "newSam" or "newSuspendLambda")) Plan(child);
         }
 
         TypeNode Bound(TypeNode.Tv variable, HashSet<TypeNode.Tv> visited)
@@ -257,7 +321,12 @@ static class ErasedElementValues
                 iteratorValues.Bind(read);
                 continue;
             }
-            if (!fieldReads.Contains(read)) read["elem"] = TypeJson.Write(ObjectType);
+            if (scalarReads.Contains(read))
+            {
+                read["ret"] = TypeJson.Write(ObjectType);
+                if (read["dynRet"] != null) read["dynRet"] = TypeJson.Write(ObjectType);
+            }
+            else if (!fieldReads.Contains(read)) read["elem"] = TypeJson.Write(ObjectType);
             read["sty"] = TypeJson.Write(ObjectType);
         }
         foreach (var (loop, _) in loopSlots) loop["elem"] = TypeJson.Write(ObjectType);
@@ -354,6 +423,22 @@ static class ErasedElementValues
          ]}]}
         """).AsObject();
         var pristine = root.DeepClone();
+        var nestedRoot = pristine.DeepClone();
+        var enclosingMethod = nestedRoot["methods"][0].AsObject();
+        enclosingMethod[NullableRepresentationTypes.MethodFrameKey] =
+            new NullableRepresentationFrame(1, System.Array.Empty<int>()).ToJson().ToJsonString();
+        var nestedLambda = JsonNode.Parse("""
+        {"k":"newSuspendLambda","typeParams":["A","B","C"],"params":[],
+         "body":[{"k":"var","name":"inner","type":{"t":"tv","scope":"method","i":2},
+          "init":{"k":"arrayGet","array":{"k":"local","name":"xs","sty":
+           {"t":"array","elem":{"t":"tv","scope":"method","i":2}}},
+           "index":{"k":"const","type":{"t":"fqn","name":"kotlin.Int"},"value":0}}}]}
+        """).AsObject();
+        var nestedBody = nestedLambda["body"].DeepClone();
+        enclosingMethod["body"].AsArray().Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = nestedLambda });
+        ApplyAll(new[] { nestedRoot }, null);
+        if (!JsonNode.DeepEquals(nestedBody, nestedLambda["body"]))
+            throw new InvalidOperationException("An enclosing value projection rewrote a lambda's independent generic frame");
         ApplyAll(new[] { root }, null);
         var method = root["methods"][0];
         if (TypeJson.Read(method["params"][0]["type"]) is not TypeNode.Array { Elem: TypeNode.Tv }
@@ -362,6 +447,23 @@ static class ErasedElementValues
             || TypeJson.Read(method["body"][1]["type"]) != ObjectType
             || TypeJson.Read(method["body"][2]["value"]["type"]) != ObjectType)
             throw new InvalidOperationException("Open array values lost erased locals or their separate array signature");
+        var aliasRead = method["body"][2]["value"]["e"].AsObject();
+        if (RetainedVariable(aliasRead) != new TypeNode.Tv("method", 0))
+            throw new InvalidOperationException("Erased alias lost its generic meaning before bound-owner selection");
+        ClearRetainedVariables(root);
+        if (RetainedVariable(aliasRead) != null)
+            throw new InvalidOperationException("Value-source facts survived their owning projection phase");
+        var objectAlias = pristine.DeepClone();
+        var objectBody = objectAlias["methods"][0]["body"].AsArray();
+        objectBody.Insert(2, new JsonObject {
+            ["k"] = "var", ["name"] = "any", ["type"] = TypeJson.Write(ObjectType),
+            ["init"] = new JsonObject { ["k"] = "local", ["name"] = "alias" },
+        });
+        objectBody[3] = new JsonObject { ["k"] = "return",
+            ["value"] = new JsonObject { ["k"] = "local", ["name"] = "any" } };
+        ApplyAll(new[] { objectAlias }, null);
+        if (RetainedVariable(objectBody[3]["value"].AsObject()) != null)
+            throw new InvalidOperationException("An Object alias invented a generic receiver type");
 
         foreach (var blockResult in new[] { false, true })
         {

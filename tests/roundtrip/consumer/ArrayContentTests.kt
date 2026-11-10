@@ -19,6 +19,28 @@ private fun <T> checkImportedDeepContents(first: Array<out T>?, second: Array<ou
     check(callbacks == 3 && evaluations == 3)
 }
 
+private class ConsumerArrayScalarForwarder : ArrayScalarForwarder() {
+    var calls = 0
+    override fun <T> render(value: T): String { calls++; return renderArrayScalar(forwardArrayScalar(value)) }
+}
+
+private fun <T> checkImportedScalarForwarding(values: Array<T>, expected: String) {
+    val forwarder = ConsumerArrayScalarForwarder()
+    val base: ArrayScalarForwarder = forwarder
+    check(renderArrayScalar<T>(values[0]) == expected)
+    check(renderArrayScalar<T>(forwardArrayScalar<T>(values[0])) == expected)
+    check(base.render<T>(values[0]) == expected && forwarder.calls == 1)
+    check(ArrayScalarOwner(values).render() == expected)
+    check(values.joinToString() == expected)
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> checkImportedNullScalar() = checkImportedScalarForwarding(arrayOfNulls<Any>(1) as Array<T>, "null")
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : ImportedArrayBound> checkImportedBoundScalar() =
+    checkImportedScalarForwarding(arrayOf(ImportedArrayBound()) as Array<T>, "node")
+
 class ArrayContentTests {
     @TestAttribute
     fun importedGenericArrayOperationsDoNotForceTheCallersElementType() {
@@ -32,6 +54,12 @@ class ArrayContentTests {
         check(importedNullArrayContent<String>("hash") == 31)
         check(importedNullArrayContent<String>("string") == "[null]")
         check(importedArrayVirtualLabel(arrayOf(ImportedArrayItem())) == "item")
+        checkImportedNullScalar<Int>()
+        checkImportedNullScalar<String>()
+        checkImportedNullScalar<Int?>()
+        checkImportedBoundScalar<ImportedArrayItem>()
+        checkImportedScalarForwarding(arrayOf(42), "42")
+        checkImportedScalarForwarding(arrayOf<Int?>(null), "null")
     }
 
     @TestAttribute

@@ -44,6 +44,8 @@ private fun <T : ArrayElementBoundNode> erasedArrayElementUses() {
     check(direct is ArrayElementBoundNode && direct !is ArrayElementBoundItem)
     check(conditionalArrayValue(values, true) === direct && conditionalArrayValue(values, false) === direct)
     check(blockArrayValue(values) === direct)
+    check(arrayScalarForward(values) == "node" && values.joinToString() == "node")
+    check(arrayScalarSam(values) == "node")
     val first = values[0]
     val alias = first
     check(first === alias)
@@ -72,6 +74,9 @@ private fun <T> erasedNullElementUses() {
     check(direct == null && alias == null && alias !is ArrayElementBoundNode)
     check(conditionalArrayValue(values, true) == null && conditionalArrayValue(values, false) == null)
     check(blockArrayValue(values) == null)
+    check(arrayScalarForward(values) == "null" && values.joinToString() == "null")
+    check(arrayScalarSam(values) == "null")
+    check(values.joinToString { it.toString() } == "null")
     check(alias.hashCode() == 0 && alias.toString() == "null")
     for (value in values) check(value == null)
 }
@@ -82,6 +87,15 @@ private fun <T : ArrayElementBoundNode> typedArrayElementReturn(): T {
     return values[0]
 }
 private fun <T> typedArrayElementCall(value: T): Boolean = value === value
+private fun <T> arrayScalarRender(value: T): String = value.toString()
+private fun <T> arrayScalarIdentity(value: T): T = value
+private fun <T> arrayScalarForward(values: Array<T>): String = arrayScalarRender(arrayScalarIdentity(values[0]))
+private fun interface ArrayScalarRenderer<T> { fun render(value: T): String }
+private fun <T> arrayScalarSam(values: Array<T>): String = ArrayScalarRenderer<T> { it.toString() }.render(values[0])
+@Suppress("UNCHECKED_CAST")
+private fun <T> arrayTransformNull(transform: (T) -> CharSequence): String =
+    (arrayOfNulls<Any>(1) as Array<T>).joinToString(transform = transform)
+private fun consumeConcreteArrayItem(value: ArrayElementBoundItem): String = value.label()
 private fun <T> conditionalArrayValue(values: Array<T>, choose: Boolean): Any? {
     val value = if (choose) values[0] else values[0]
     return value
@@ -191,6 +205,15 @@ class GenericArrayElementTests {
         erasedNullElementUses<Int>()
         erasedNullElementUses<String>()
         check(arrayElementVirtualLabel(arrayOf(ArrayElementBoundItem())) == "item")
+        check(intArrayOf(42).toList().single() == 42)
+        val bounds: ClosedRange<Int> = 1..5
+        check(7.coerceIn(bounds) == 5)
+        check("ab".indexOfAny(listOf("b")) == 1)
+        val deque = ArrayDeque<Any?>()
+        @Suppress("UNCHECKED_CAST")
+        val view = deque as ArrayDeque<String>
+        view.add(0, "x")
+        check(deque.size == 1 && deque[0] == "x")
     }
 
     @TestAttribute
@@ -198,7 +221,7 @@ class GenericArrayElementTests {
         val values = arrayOf(1000)
         check(!arrayReadSame(values, 1000) && !arrayReadTwice(values))
         check(arraySavedAliasSame(values))
-        check(typedArrayElementCall(1000) && typedArrayValueSame(values, 1000))
+        check(typedArrayElementCall(1000) && !typedArrayValueSame(values, 1000))
         val boxed: Any = 1000
         check(arrayReadSame(arrayOf(boxed), boxed) && arrayReadTwice(arrayOf(boxed)))
         val first = ArrayIdentityElement()
@@ -226,11 +249,15 @@ class GenericArrayElementTests {
 
     @TestAttribute
     fun typedConsumersAndNativeLocationsKeepTheirExactChecks() {
-        arrayElementMustReject { typedArrayElementReturn<ArrayElementBoundItem>() }
-        arrayElementMustReject { typedExpressionArrayReturn<ArrayElementBoundItem>(true, false) }
-        arrayElementMustReject { typedExpressionArrayReturn<ArrayElementBoundItem>(false, false) }
-        arrayElementMustReject { typedExpressionArrayReturn<ArrayElementBoundItem>(true, true) }
-        arrayElementMustReject { consumeTypedArrayElement<ArrayElementBoundItem>() }
+        arrayElementMustReject { consumeConcreteArrayItem(typedArrayElementReturn<ArrayElementBoundItem>()) }
+        arrayElementMustReject { consumeConcreteArrayItem(typedExpressionArrayReturn<ArrayElementBoundItem>(true, false)) }
+        arrayElementMustReject { consumeConcreteArrayItem(typedExpressionArrayReturn<ArrayElementBoundItem>(false, false)) }
+        arrayElementMustReject { consumeConcreteArrayItem(typedExpressionArrayReturn<ArrayElementBoundItem>(true, true)) }
+        check(consumeTypedArrayElement<ArrayElementBoundItem>())
+        var rejectedTransform = false
+        try { arrayTransformNull<Int> { (it + 1).toString() } }
+        catch (_: System.NullReferenceException) { rejectedTransform = true }
+        check(rejectedTransform)
         arrayElementMustReject { arrayOf(ArrayElementBoundNode()) as Array<ArrayElementBoundItem> }
         arrayElementMustReject { reifiedArrayElementBoundary<ArrayElementBoundItem>(arrayOf(ArrayElementBoundNode())) }
         check(nativeArrayElementLocal(arrayOf(1), 2) == 2)

@@ -31,12 +31,12 @@ erased_overload = next(method for method in overloads if method["params"][0]["ty
 typed_overload = next(method for method in overloads if method != erased_overload)
 assert erased_overload["declarationId"] != typed_overload["declarationId"]
 
-for caller, selected, owner, erased in (
-    ("deferred", source["read"], bir["fileClass"], True),
-    ("ordinary", readers[0], reader["fileClass"], True),
-    ("deferredOverload", erased_overload, bir["fileClass"], True),
-    ("ordinaryOverload", typed_overload, bir["fileClass"], False),
-    ("forwarded", source["read"], bir["fileClass"], True),
+for caller, selected, owner in (
+    ("deferred", source["read"], bir["fileClass"]),
+    ("ordinary", readers[0], reader["fileClass"]),
+    ("deferredOverload", erased_overload, bir["fileClass"]),
+    ("ordinaryOverload", typed_overload, bir["fileClass"]),
+    ("forwarded", source["read"], bir["fileClass"]),
 ):
     declarations = [node for node in objects(source[caller]["body"]) if node.get("k") == "var"]
     assert len(declarations) == 1, (caller, declarations)
@@ -46,11 +46,8 @@ for caller, selected, owner, erased in (
     lowered = [node for node in objects(physical[caller]["body"]) if node.get("k") == "var"]
     assert len(lowered) == 1, (caller, lowered)
     local = lowered[0]
-    assert (local["type"].get("name") == "object") == erased, (caller, local)
-    if erased:
-        assert local["init"]["ret"] == {"t": "fqn", "name": "object"}, (caller, local)
-    else:
-        assert local["type"]["t"] == "tv", local
+    assert local["type"] == {"t": "fqn", "name": "object"}, (caller, local)
+    assert local["init"]["ret"] == {"t": "fqn", "name": "object"}, (caller, local)
 
 concrete_read = [node for node in objects(source["concrete"]["body"])
                  if node.get("k") == "callStatic" and node.get("method") == "read"]
@@ -87,11 +84,17 @@ forward_calls = [node for node in objects(physical["forwarded"]["body"])
 assert len(forward_calls) == 1, forward_calls
 forward_call = forward_calls[0]
 parameter = physical["identity"]["params"][0]["type"]
-assert parameter["t"] == "tv" and parameter["scope"] == "method", parameter
-expected = forward_call["typeArgs"][parameter["i"]]
-assert forward_call["args"][0]["k"] == "cast", forward_call
-assert forward_call["args"][0]["type"] == expected, forward_call
-assert forward_call["args"][0]["e"]["k"] == "local", forward_call
+expected = {"t": "fqn", "name": "object"}
+assert parameter == expected and forward_call["sig"] == [expected], forward_call
+assert forward_call["typeArgs"] == [
+    {"t": "tv", "scope": "method", "i": 0},
+    {"t": "tv", "scope": "method", "i": 1},
+], forward_call
+argument = forward_call["args"][0]
+if argument["k"] == "cast":
+    assert argument["type"] == expected, argument
+    argument = argument["e"]
+assert argument["k"] == "local", forward_call
 assert forward_call["ret"] == expected == physical["forwarded"]["ret"], forward_call
 
 static_source = next(node for node in objects(source["deferredStatic"]["body"]) if node.get("k") == "var")

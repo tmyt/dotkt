@@ -253,8 +253,10 @@ sealed class Pipeline
         // A generic query implementation accepts its declared erased bound, not the closed CLR E.
         // State that ABI before frame materialization and declaration/use snapshots; typed overrides
         // retain their concrete signature and their ordinary query guard.
-        KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(birRoots, refs, representationAliases);
         var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
+        var scalarSlots = KotlinGenericScalarSlots.ApplyAll(birRoots, genericRepresentations, refs);
+        var physicalParameterIndices = scalarSlots.Parameters;
+        KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(birRoots, refs, representationAliases);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
         // The runtime implementation consumes its paired reference declaration's
         // ABI by exact source identity, independently of body-only demand. Ordinary
@@ -508,7 +510,7 @@ sealed class Pipeline
             // Kotlin local functions remain lexical BIR declarations through every raw-body splice above. Consume the
             // explicit declaration-id relation now and select their CLR MethodDef owner before representation synthesis
             // (closures/suspend lambdas may carry calls to those declarations). No FileClass/name heuristic is involved.
-            LocalFunctionLowering.Apply((JsonObject)bir.Root, refs);
+            LocalFunctionLowering.Apply((JsonObject)bir.Root, refs, scalarSlots.ProjectMethod);
             // Bind local and ProjectReference companion values after every raw-BIR splice and before an evaluation
             // plan can materialize a representation-less flat receiver as a CLR local.
             CompanionRepresentationLowering.BindUses(
@@ -544,7 +546,7 @@ sealed class Pipeline
             // demanded call witnesses and capture lifted-frame witnesses before ClosureSynthesis/physical type
             // lowering can erase those facts; Kotlin `reified` remains a separate round-trip declaration fact.
             ReifiedNullabilityWitnessLowering.Apply(bir.Root, nullableWitnessDemand, refs);
-            ClosureSynthesis.Apply(bir.Root, refs);
+            ClosureSynthesis.Apply(bir.Root, refs, scalarSlots.ProjectMethod);
             SharedSyntheticSynthesis.Apply(bir.Root, refs, sharedCells);
             // Heap ref-cell types only become declarations in the transition above. Preserve their pristine element
             // slots in the nullable-generic use index before the declaration erasure below. Otherwise a late
@@ -703,6 +705,9 @@ sealed class Pipeline
             RoundtripMetadata.FreezeSuspendResults(new[] { bir.Root });
             NullableGenericErasure.Apply(bir.Root, isValueFqn);
             FunctionValueRepresentation.Apply(bir.Root, refs.IsByRefLikeFqn);
+            if (!_options.RefBuild)
+                ErasedElementValues.ApplyAll(new[] { bir.Root }, refs, isValueFqn, genericRepresentations,
+                    call => scalarSlots.Result(call, refs), scalarCallsOnly: true);
             // GENERIC-BOUNDARY nullable-Tv USE realignment — THE USE AXIS of #86's erasure invariant (#4;
             // #113/#117/#120/#142). The DEF-side erasure above turns a member's `T?`/`…Ref<T?>…` into
             // `object`/`…Ref<object>…`, but a CALL site kotc emitted with T already substituted carries the concrete
@@ -799,7 +804,7 @@ sealed class Pipeline
             // ClosureSynthesis pass ran earlier, before event binding. Give the exact materialized roots to its late
             // entry contract so only these newly-created callback classes are assembled.
             var materializedEventClosureTypes = ClosureSynthesis.ApplyMaterialized(
-                hoisted, materializedEventHandles, refs);
+                hoisted, materializedEventHandles, refs, scalarSlots.ProjectMethod);
             if (DelegateTargetSlotAlignment.ApplyMaterialized(
                     materializedEventHandles, materializedEventClosureTypes, isValueFqn))
                 foreach (var materializedType in materializedEventClosureTypes)
@@ -869,7 +874,7 @@ sealed class Pipeline
             // `(P...) -> String` delegate and exposes `(P...) -> CharSequence` (#190). Assemble those late closure
             // ingredients now; all earlier source/inline/event closures were already consumed by the main passes.
             var materializedDelegateAdapterTypes = ClosureSynthesis.ApplyMaterialized(
-                substituted, materializedDelegateAdapters, refs);
+                substituted, materializedDelegateAdapters, refs, scalarSlots.ProjectMethod);
             foreach (var materializedType in materializedDelegateAdapterTypes)
                 SharedSyntheticSynthesis.DropSyntheticTypeArgs(materializedType);
             // CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (IndexOutOfBoundsException)` @ClrTypeAlias-es to a
@@ -926,7 +931,6 @@ sealed class Pipeline
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         CapturedGenericInvocation.CaptureParameterWitnesses(staged.Select(s => s.Root));
-        var physicalParameterIndices = new Dictionary<string, int[]>(StringComparer.Ordinal);
         var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
         genericRepresentations.RecordNativeFields(staged.Select(s => s.Root));
         var localExistentialOwners =
@@ -1190,12 +1194,13 @@ sealed class Pipeline
             {
                 NullableTvErasureCallRealign.CollectNewSyntheticTypes(stagedFile.Root, nullableTvDeclRets);
                 NullableTvErasureCallRealign.CollectNewSyntheticMembers(stagedFile.Root, nullableTvDeclRets);
-                NullableTvErasureCallRealign.ConsumeNullableErasureOwnership(stagedFile.Root);
             }
             foreach (var stagedFile in staged)
                 NullableTvErasureCallRealign.ApplyAfterUnsafeAccessorSynthesis(
                     stagedFile.Root, nullableTvDeclRets, isValueFqn, refs);
         }
+        foreach (var stagedFile in staged)
+            NullableTvErasureCallRealign.ConsumeNullableErasureOwnership(stagedFile.Root);
         FBoundStarProjectionErasure.RemoveTransientFacts(staged.Select(s => s.Root), preserveExactOuter: true);
 
         // Resolve the Kotlin `lateinitGet` failure path to an ordinary UPAE construction before constructor binding.

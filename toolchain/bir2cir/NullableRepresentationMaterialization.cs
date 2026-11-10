@@ -351,9 +351,15 @@ static class NullableRepresentationMaterialization
             };
             // A body-dispatch helper's storage companions are deliberately instantiated with object.
             // Its private value signature does not turn an erased dispatch fact into a CLR constraint.
+            bool SourceScalar(JsonObject slot, string key) => Text(slot[key]) is string encoded
+                && TypeNode.Parse(encoded) is TypeNode.Tv sourceVariable
+                && sourceVariable.Scope == scope && sourceVariable.I == sourceIndex;
             var publishedSlot = !bodyOnlyStorage && (
                 new[] { "params", "ret", "fields", "properties", "base", "interfaces" }
                     .Any(key => Mentions(declaration[key]))
+                || SourceScalar(declaration, "retKotlinType")
+                || declaration["params"] is JsonArray valueParameters
+                    && valueParameters.OfType<JsonObject>().Any(parameter => SourceScalar(parameter, "kotlinType"))
                 || declaration["ctors"] is JsonArray constructors
                     && constructors.OfType<JsonObject>().Any(constructor => Mentions(constructor["params"])));
             if (publishedSlot)
@@ -770,6 +776,14 @@ static class NullableRepresentationMaterialization
                "inheritedImplementation":{"owner":{"t":"fqn","name":"StorageBody"},
                  "member":"identity","kind":"method","arity":1,"typeParams":["T"]}}]}]}
           """).AsObject();
+        var erasedStorage = inheritedStorage.DeepClone().AsObject();
+        var erasedPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { erasedStorage });
+        KotlinGenericScalarSlots.ApplyAll(new[] { erasedStorage }, erasedPolicy, null);
+        Apply(new[] { erasedStorage }, _ => false, policy: erasedPolicy);
+        if (erasedStorage["types"][0]["methods"][0]["typeParams"].AsArray().Count != 2
+            || TypeJson.Read(erasedStorage["types"][0]["methods"][0]["params"][0]["type"])
+                is not TypeNode.Fqn { Name: "object" })
+            throw new InvalidOperationException("Opaque value transport deleted the independent generic witness frame");
         Apply(new[] { inheritedStorage }, _ => false, policy: new GenericRepresentationPolicy(
             new Dictionary<string, string>(), roots: new[] { inheritedStorage }));
         var storageBody = inheritedStorage["types"][0]["methods"][0];
@@ -846,10 +860,14 @@ static class NullableRepresentationMaterialization
         var boundFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), new[] { 1, 0 }, storageIndices: new[] { 0 });
         var privateBoundMethod = (JsonObject)boundMethod.DeepClone();
         privateBoundMethod["params"] = new JsonArray();
+        var erasedBoundMethod = (JsonObject)boundMethod.DeepClone();
+        erasedBoundMethod["params"][0]["type"] = TypeJson.Fqn("object");
+        erasedBoundMethod["params"][0]["kotlinType"] = TypeNode.ToJson(new TypeNode.Tv("method", 0));
         var boundOwner = (JsonObject)privateBoundMethod.DeepClone();
         boundOwner["base"] = TypeJson.Write(new TypeNode.Fqn("Base", new TypeNode[] { new TypeNode.Tv("type", 0) }));
         AppendParameters(boundMethod, boundFrame, policy: boundPolicy);
         AppendParameters(privateBoundMethod, boundFrame, policy: boundPolicy);
+        AppendParameters(erasedBoundMethod, boundFrame, policy: boundPolicy);
         AppendParameters(boundOwner, boundFrame, "type", policy: boundPolicy);
         var carrierBound = new TypeNode.Fqn("ValueBound", new TypeNode[] { new TypeNode.Star() });
         if (TypeJson.Read(boundMethod["typeParams"][0]["constraints"][0]) != carrierBound
@@ -859,7 +877,9 @@ static class NullableRepresentationMaterialization
             || boundMethod["typeParams"][1]["constraints"].AsArray().Count != 3
             || !boundMethod["typeParams"][1]["constraints"].AsArray().Select(TypeJson.Read).Contains(carrierBound)
             || privateBoundMethod["typeParams"][0]["constraints"] != null
-            || !boundOwner["typeParams"][0]["constraints"].AsArray().Select(TypeJson.Read).Contains(carrierBound)
+            || !JsonNode.DeepEquals(erasedBoundMethod["typeParams"], boundMethod["typeParams"]))
+            throw new InvalidOperationException("Scalar value erasure changed its declaration's classifier witnesses");
+        if (!boundOwner["typeParams"][0]["constraints"].AsArray().Select(TypeJson.Read).Contains(carrierBound)
             || TypeJson.Read(privateBoundMethod["typeParams"][0][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0]) != carrierBound)
             throw new InvalidOperationException("Storage bound lost its physical role, narrowed a native bound, or constrained a boxed private body");
         var scalarBoundPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] {

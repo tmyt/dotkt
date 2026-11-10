@@ -41,16 +41,24 @@ slots = [item for item in carrier["methods"]
 assert len(slots) == 1
 slot = slots[0]
 assert slot["name"] == method["name"] == "read" and len(slot["typeParams"]) == 2
-assert [parameter["type"] for parameter in slot["params"]][-1] == {"t": "tv", "scope": "method", "i": 1}
-assert payloads(slot["params"][2], "KotlinNullableGeneric") == [{"t": "tv", "scope": "method", "i": 0}]
+assert slot["params"][-1]["type"].get("name") in ("object", "System.Object")
+assert payloads(slot["params"][2], "KotlinType") == [{"t": "tv", "scope": "method", "i": 0}]
 calls = [node for node in nodes(consumer) if node.get("k") == "callInstance"
          and node.get("ownerType", {}).get("name") == carrier["name"] and node.get("method") == slot["name"]]
 assert len(calls) == 1
 call = calls[0]
 assert call["memberRef"]["declaringType"] == call["ownerType"]
 assert call["memberRef"]["genericArity"] == len(call["typeArgs"]) == 2
-assert call["memberRef"]["parameterTypes"] == call["calleeParams"] == [parameter["type"] for parameter in slot["params"]]
-assert call["memberRef"]["parameterTypes"][-1] == {"t": "tv", "scope": "method", "i": 1}
+assert call["memberRef"]["parameterTypes"] == call["calleeParams"]
+def physical_type(value):
+    if isinstance(value, dict):
+        return {key: ("object" if key == "name" and child == "System.Object" else physical_type(child))
+                for key, child in value.items()}
+    if isinstance(value, list):
+        return [physical_type(child) for child in value]
+    return value
+assert physical_type(call["calleeParams"]) == physical_type([parameter["type"] for parameter in slot["params"]])
+assert call["memberRef"]["parameterTypes"][-1].get("name") in ("object", "System.Object")
 selected_descriptor = {key: call.get(key) for key in
                        ("ownerType", "memberRef", "sig", "calleeParams", "typeArgs", "ret", "dynRet", "sty")}
 assert not any(node.get("t") == "tv" and node.get("scope") == "type" for node in nodes(selected_descriptor))

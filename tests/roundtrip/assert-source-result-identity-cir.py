@@ -54,18 +54,21 @@ for root, owner_name in ((producer, "roundtrip.innerresults.ResultHost"),
     assert len(owner["typeParams"]) == 8
     method = next(item for item in owner["methods"] if item["name"] == "check")
     casts = [item for item in nodes(method["body"]) if item.get("k") == "cast"]
-    for name, index in (("own", 4), ("readOwn", 4), ("value", 5), ("readValue", 5)):
-        conversions = [item for item in casts if item.get("e", {}).get("k") == "callInstance"
-                       and item["e"].get("method") == selected[name]]
-        assert len(conversions) == 1 and conversions[0]["type"] == tv(index)
-    for name, index in (("ownCell", 6), ("valueCell", 7)):
-        conversions = [item for item in casts if item.get("e", {}).get("k") == "callInstance"
-                       and any(call.get("k") == "callInstance" and call.get("method") == selected[name]
-                               for call in nodes(item["e"].get("recv")))]
-        assert len(conversions) == 1 and conversions[0]["type"] == tv(index)
-        getter = conversions[0]["e"]
+    for name in ("own", "readOwn", "value", "readValue"):
+        call, = [item for item in nodes(method["body"]) if item.get("k") == "callInstance"
+                 and item.get("method") == selected[name] and item.get("ownerType", {}).get("name") == carrier["name"]]
+        assert call["ret"].get("name") in ("object", "System.Object"), call
+        assert not any(item.get("e") is call and item["type"].get("t") == "tv" for item in casts)
+    for name in ("ownCell", "valueCell"):
+        getter, = [item for item in nodes(method["body"]) if item.get("k") == "callInstance"
+                   and item.get("method") == cell_getter["name"]
+                   and any(call.get("k") == "callInstance" and call.get("method") == selected[name]
+                           for call in nodes(item.get("recv")))]
+        assert getter["ret"].get("name") in ("object", "System.Object"), getter
+        assert not any(item.get("e") is getter and item["type"].get("t") == "tv" for item in casts)
         assert getter["ownerType"] == {"t": "fqn", "name": cell["name"]}
-        assert getter["method"] == cell_getter["name"] and getter["ret"] == cell_getter["ret"]
+        assert getter["method"] == cell_getter["name"]
+        assert cell_getter["ret"].get("name") in ("object", "System.Object")
         assert getter["sig"] == [param["type"] for param in cell_getter["params"]] == []
         if root is consumer:
             assert getter["memberRef"]["declaringType"] == getter["ownerType"]
@@ -75,6 +78,7 @@ for root, owner_name in ((producer, "roundtrip.innerresults.ResultHost"),
     construction, = [item for item in nodes(method["body"]) if item.get("k") == "new"
                      and item.get("type", {}).get("name") == child_name]
     assert construction["type"]["args"] == [tv(index) for index in (0, 1, 2, 3, 7, 4, 5, 6)]
+    assert [argument["type"] for argument in construction["args"][-2:]] == [tv(4), tv(5)]
     if root is consumer:
         assert construction["memberRef"]["declaringType"] == construction["type"]
 
@@ -107,4 +111,4 @@ spliced, = [item for item in nodes(iterable) if item.get("k") == "new"
             and item.get("type", {}).get("name") == selected_new["type"]["name"]]
 assert spliced["type"]["args"] == [{"t": "fqn", "name": "System.String"}] * 2
 assert spliced["memberRef"]["kind"] == "ctor" and spliced["memberRef"]["declaringType"] == spliced["type"]
-print("direct and chained results keep caller storage frames; imported/inline readonly classifiers stay readonly")
+print("opaque direct/chained results retain exact constructor frames; imported/inline classifiers stay readonly")

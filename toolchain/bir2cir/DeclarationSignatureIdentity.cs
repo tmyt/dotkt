@@ -104,6 +104,15 @@ static class DeclarationSignatureIdentity
             foreach (var child in array) RemoveCapturedFacts(child);
     }
 
+    internal static void RewriteParameterFacts(JsonObject parameter, Func<TypeNode, TypeNode> rewrite)
+    {
+        if (TypeJson.Read(parameter[NominalKey]) is TypeNode nominal)
+            parameter[NominalKey] = TypeJson.Write(rewrite(nominal));
+        if (parameter[BoundsKey] is JsonArray bounds)
+            parameter[BoundsKey] = new JsonArray(bounds.Select(TypeJson.Read)
+                .Select(rewrite).Select(TypeJson.Write).ToArray());
+    }
+
     public static IReadOnlyDictionary<string, JsonArray> Plan(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs = null)
     {
         var methods = new List<(string Owner, string Name, JsonObject Method)>();
@@ -132,16 +141,18 @@ static class DeclarationSignatureIdentity
                 && sourceMethods.TryGetValue(id[..^5], out var source) && Authored(source);
         }
         var result = new Dictionary<string, JsonArray>(StringComparer.Ordinal);
+        static string PhysicalParameters(JsonArray parameters) => string.Join(";", parameters
+            .Select(parameter => DeclarationIdentityBinding.PhysicalTypeSignature(TypeJson.Read(parameter))));
         foreach (var group in methods.GroupBy(item =>
                      (item.Owner, item.Name, Signature: DeclarationIdentityBinding.PhysicalSignature(item.Method))))
         {
             var candidates = group.ToArray();
             if (candidates.Length < 2 || candidates.Any(item => !Eligible(item.Method))) continue;
             var projected = candidates.Select(item => (item.Method, Parameters: Project(item.Method))).ToArray();
-            if (projected.Select(item => item.Parameters.ToJsonString()).Distinct(StringComparer.Ordinal).Count()
+            if (projected.Select(item => PhysicalParameters(item.Parameters)).Distinct(StringComparer.Ordinal).Count()
                 != candidates.Length)
                 projected = candidates.Select(item => (item.Method, Parameters: Project(item.Method, nominal: true))).ToArray();
-            if (projected.Select(item => item.Parameters.ToJsonString()).Distinct(StringComparer.Ordinal).Count()
+            if (projected.Select(item => PhysicalParameters(item.Parameters)).Distinct(StringComparer.Ordinal).Count()
                 != candidates.Length) continue;
             foreach (var (method, parameters) in projected)
                 result.Add(Text(method[DeclarationIdentityBinding.Key]), parameters);
@@ -207,7 +218,9 @@ static class DeclarationSignatureIdentity
             var targetParameters = descriptor["params"].AsArray();
             var bodyParameters = new JsonArray(((JsonArray)method["params"]).OfType<JsonObject>()
                 .Select(parameter => parameter["type"].DeepClone()).ToArray());
-            if (!JsonNode.DeepEquals(targetParameters, bodyParameters))
+            if (!targetParameters.Select(parameter => DeclarationIdentityBinding.PhysicalTypeSignature(TypeJson.Read(parameter)))
+                    .SequenceEqual(bodyParameters.Select(parameter =>
+                        DeclarationIdentityBinding.PhysicalTypeSignature(TypeJson.Read(parameter)))))
             {
                 var bridgeName = name + "$signature$" + Convert.ToHexString(SHA256.HashData(
                     Encoding.UTF8.GetBytes(Text(method[DeclarationIdentityBinding.Key]) + "|" + slotKey)));
@@ -481,6 +494,18 @@ static class DeclarationSignatureIdentity
         }
         finally { ReferencedModifiers.Remove(referencedKey); }
         var modified = new TypeNode.Mod(false, new TypeNode.Fqn("Probe.Marker", new TypeNode[] { tv }), tv);
+        var ownerVariable = new TypeNode.Tv("type", 0);
+        var signatureFacts = new JsonObject {
+            [NominalKey] = TypeJson.Write(new TypeNode.Fqn("Probe.Marker", new TypeNode[] { ownerVariable, tv })),
+            [BoundsKey] = new JsonArray(TypeJson.Write(ownerVariable), TypeJson.Write(tv)),
+        };
+        RewriteParameterFacts(signatureFacts, type => SupertypeGraph.SubstOwnerTvs(type,
+            new TypeNode[] { new TypeNode.Fqn("object") }));
+        if (TypeJson.Read(signatureFacts[NominalKey]) != new TypeNode.Fqn("Probe.Marker",
+                new TypeNode[] { new TypeNode.Fqn("object"), tv })
+            || TypeJson.Read(signatureFacts[BoundsKey][0]) != new TypeNode.Fqn("object")
+            || TypeJson.Read(signatureFacts[BoundsKey][1]) != tv)
+            throw new InvalidOperationException("Projected signature facts lost their exact independent owner/method frames");
         if (SignatureValueTypes.Of(modified) != tv
             || !MethodVariables(new TypeNode.Nullable(tv)).SequenceEqual(new[] { 0 })
             || !MethodVariables(new TypeNode.Fqn("Probe.Box", new TypeNode[] { tv })).SequenceEqual(new[] { 0 }))
@@ -508,10 +533,10 @@ static class DeclarationSignatureIdentity
         RemoveCapturedFacts(sourceCarrier);
         if (sourceCarrier["methods"].AsArray().Any(method => method["params"][0][NominalKey] != null))
             throw new InvalidOperationException("Physical signature capture leaked into a source carrier");
-        foreach (var method in aliases["methods"].AsArray())
-            method["params"][0]["type"] = TypeJson.Fqn("System.Object");
+        aliases["methods"][0]["params"][0]["type"] = TypeJson.Fqn("object");
+        aliases["methods"][1]["params"][0]["type"] = TypeJson.Fqn("System.Object");
         var aliasPlan = Plan(new[] { aliases });
-        if (aliasPlan.Count != 2)
+        if (aliasPlan.Count != 2 || aliasPlan.Values.Any(parameters => TypeJson.Read(parameters[0]) is not TypeNode.Mod))
             throw new InvalidOperationException("Nominal aliases lost their independent signature identities");
         aliases["methods"].AsArray().Add(new JsonObject {
             ["name"] = "access", ["unsafeTargetDeclarationId"] = "first",
@@ -519,10 +544,11 @@ static class DeclarationSignatureIdentity
                 new JsonObject { ["type"] = TypeJson.Fqn("System.Object") }),
         });
         Apply(new[] { aliases }, aliasPlan);
-        if (aliases["methods"].AsArray().Take(2).Any(method => SignatureValueTypes.Of(
-                TypeJson.Read(method["params"][0]["type"])) is not TypeNode.Fqn { Name: "System.Object" }))
+        if (aliases["methods"].AsArray().Take(2).Select((method, index) => SignatureValueTypes.Of(
+                TypeJson.Read(method["params"][0]["type"])) != new TypeNode.Fqn(index == 0 ? "object" : "System.Object")).Any(changed => changed))
             throw new InvalidOperationException("Nominal signature identity changed a CLR value slot");
-        if (!JsonNode.DeepEquals(aliases["methods"][0]["params"][0]["type"], aliases["methods"][2]["params"][1]["type"]))
+        if (DeclarationIdentityBinding.PhysicalTypeSignature(TypeJson.Read(aliases["methods"][0]["params"][0]["type"]))
+            != DeclarationIdentityBinding.PhysicalTypeSignature(TypeJson.Read(aliases["methods"][2]["params"][1]["type"])))
             throw new InvalidOperationException("UnsafeAccessor lost its selected target's signature identity");
         var slots = sourceCarrier["methods"].DeepClone().AsArray();
         foreach (var method in slots.OfType<JsonObject>()) { method["virtual"] = true; method["abstract"] = true; }
@@ -557,8 +583,17 @@ static class DeclarationSignatureIdentity
             || JsonNode.DeepEquals(virtualPlan["first-ctor"], virtualPlan["second-ctor"]))
             throw new InvalidOperationException("Virtual/constructor overloads lost their selected signature identities");
         Apply(new[] { virtualRoot }, virtualPlan);
+        TypeNode ObjectAlias(TypeNode type) => type switch
+        {
+            TypeNode.Mod modifier => modifier with { Of = ObjectAlias(modifier.Of) },
+            TypeNode.Fqn { Name: "System.Object" } => new TypeNode.Fqn("object"),
+            _ => type,
+        };
+        foreach (var method in implementations)
+            method["params"][0]["type"] = TypeJson.Write(ObjectAlias(TypeJson.Read(method["params"][0]["type"])));
         BindSelectedOverrides(new[] { virtualRoot }, virtualPlan, null, _ => false);
-        if (implementations.OfType<JsonObject>().Any(method => method["clrInterfaceImpls"]?.AsArray().Count != 1))
+        if (implementations.Count != 2
+            || implementations.OfType<JsonObject>().Any(method => method["clrInterfaceImpls"]?.AsArray().Count != 1))
             throw new InvalidOperationException("A selected virtual override lost its exact MethodImpl descriptor");
         var implicitRoot = JsonNode.Parse("""
         {"fileClass":"ImplicitSignatureProbe","methods":[],"types":[

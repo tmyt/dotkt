@@ -11,7 +11,7 @@ class MapVarianceTests {
     @TestAttribute
     fun physicalFlagsRetainLegalImportedVarianceButNotInvariantMapVariance() {
         val producer = System.Reflection.Assembly.Load("RoundtripProducer")
-        val map = producer.GetType("roundtrip.mapvariance.ProjectedMap`4", true)!!
+        val map = producer.GetType("roundtrip.mapvariance.ProjectedMap`2", true)!!
         assertTrue(map.GetGenericArguments()[1].GenericParameterAttributes == System.Reflection.GenericParameterAttributes.None)
         val consumer = System.Reflection.Assembly.GetExecutingAssembly()
         val source = consumer.GetType("roundtriptests.mapvariance.ImportedSource`1", true)!!

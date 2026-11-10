@@ -254,6 +254,7 @@ static partial class FBoundStarProjectionErasure
         SynchronizeGeneratedOwnerConstraintPrefixes(defs, weakenedOwnerSlots);
         OwnerConstrainedMethodLowering.Apply(ContainsOwnerTv,
             bound => ProjectOwnerMethodBound(bound, owners, refs));
+        foreach (var root in rootList) ErasedElementValues.ClearRetainedVariables(root);
         return owners.Values.Where(o => o.Needed)
             .ToDictionary(o => o.Name, o => o.ErasedName, StringComparer.Ordinal);
     }
@@ -3017,6 +3018,7 @@ static partial class FBoundStarProjectionErasure
             copy["type"] = TypeJson.Write(erased);
             if (TypeJson.Read(copy[FunctionSignatureIdentity.Key]) is TypeNode signatureType)
                 copy[FunctionSignatureIdentity.Key] = TypeJson.Write(EraseOwnerTv(signatureType, owners, refs));
+            DeclarationSignatureIdentity.RewriteParameterFacts(copy, type => EraseOwnerTv(type, owners, refs));
             result.Add(copy);
         }
         return result;
@@ -5252,6 +5254,15 @@ static partial class FBoundStarProjectionErasure
         inner["ret"] = TypeJson.Write(physicalResult);
         if (inner["dynRet"] != null) inner["dynRet"] = TypeJson.Write(physicalResult);
         if (inner["sty"] != null) inner["sty"] = TypeJson.Write(physicalResult);
+
+        var restored = StringCharSequenceBridge.RestoreMaterializedValue(inner, physicalResult, semanticResult);
+        if (restored != null)
+        {
+            call.Clear();
+            foreach (var pair in restored) call[pair.Key] = pair.Value?.DeepClone();
+            if (hadSty) call["sty"] = TypeJson.Write(semanticResult);
+            return;
+        }
 
         foreach (var key in call.Select(pair => pair.Key).ToList()) call.Remove(key);
         call["k"] = "cast";

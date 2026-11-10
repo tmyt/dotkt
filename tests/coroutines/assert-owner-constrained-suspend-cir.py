@@ -49,6 +49,7 @@ assert constructions[0]["type"]["args"] == [
     {"t": "tv", "scope": "method", "i": 0},
     {"t": "tv", "scope": "method", "i": 1},
 ], constructions[0]["type"]
+assert len(cold["typeParams"]) == 2 and cold["params"][0]["type"] == {"t": "fqn", "name": "object"}, cold
 
 slots = types["OwnerSuspendSink$star"]["methods"]
 for name in ("render", "echo"):

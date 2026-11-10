@@ -27,6 +27,21 @@ static partial class FBoundStarProjectionErasure
             foreach (var declaration in definitions.Values.Concat(roots))
             {
                 Register(declaration, !Bool(declaration["generated"]));
+                foreach (var field in (declaration["fields"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                    if (_valueSlots.IsNativeField(field)) NativeLocationArguments(field["type"]);
+                void NativeLocationArguments(JsonNode type)
+                {
+                    if (type is JsonObject && TypeJson.Read(type) is TypeNode.Tv { Scope: "type" } variable)
+                    {
+                        // A native FieldDef owns its exact argument witness even when
+                        // no classifier constraint is required on that parameter.
+                        rows[declaration].TryAdd(variable.I, new List<TypeNode>());
+                    }
+                    else if (type is JsonObject obj)
+                        foreach (var child in obj) NativeLocationArguments(child.Value);
+                    else if (type is JsonArray array)
+                        foreach (var child in array) NativeLocationArguments(child);
+                }
                 foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 {
                     Register(method, false);
@@ -332,6 +347,10 @@ static partial class FBoundStarProjectionErasure
             {"kind":"class","name":"System.IO.MemoryStream"}]}
           """).AsObject();
         var declaration = root["types"][1].AsObject();
+        root["types"].AsArray().Add(JsonNode.Parse("""
+          {"kind":"class","name":"NativeFieldWitness","typeParams":["Native","Other"],"fields":[
+            {"name":"value","_nativeLocation":true,"type":{"t":"tv","scope":"type","i":0}}]}
+          """));
         KotlinSupertypesRecord.Merge(declaration, new JsonObject {
             [NullableRepresentationFrame.MetadataKey] = new NullableRepresentationFrame(2,
                 Array.Empty<int>(), storageIndices: new[] { 1 }).ToJson(),
@@ -409,7 +428,8 @@ static partial class FBoundStarProjectionErasure
                 || !plan.IsPhysicalConstraint(copiedMethod["typeParams"][1]["constraints"].AsArray(), methodProof)
                 || plan.IsPhysicalConstraint(privateBody["typeParams"][1]["constraints"].AsArray(), methodProof))
                 throw new InvalidOperationException("Authored physical method proof transfer changed a separate storage contract");
-            if (!plan.ExactTypeArgument("Owner", 1) || plan.ExactTypeArgument("Owner", 2)
+            if (!plan.ExactTypeArgument("NativeFieldWitness", 0) || plan.ExactTypeArgument("NativeFieldWitness", 1)
+                || !plan.ExactTypeArgument("Owner", 1) || plan.ExactTypeArgument("Owner", 2)
                 || !plan.ExactTypeArgument("LateLocal", 1) || plan.ExactTypeArgument("LateLocal", 2)
                 || plan.ExactTypeArgument("SelfOwner", 0)
                 || plan.ReadRows(physical, false).Count != 0

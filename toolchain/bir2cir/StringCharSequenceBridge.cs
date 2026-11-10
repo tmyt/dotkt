@@ -128,10 +128,23 @@ static partial class StringCharSequenceBridge
         var walked = Walk(root, new Env());
         // Emit the app-local adapter type into this file's `types` if a wrap fired here and no other file already got
         // it (one per assembly). ilemit resolves a wrap in a sibling file against it via the assembly-wide `_types`.
-        if (_fired && walked is JsonObject fileObj) EmitAdapter(fileObj);
+        if (!_adapterEmitted && (_fired || UsesCharSequenceView(walked)) && walked is JsonObject fileObj) EmitAdapter(fileObj);
         materializedDelegateAdapters = _materializedDelegateAdapters;
         return walked;
     }
+
+    // An opaque result may acquire its concrete view during later member binding.
+    // Publish the shared adapter before declaration/property allocation, not during that late conversion.
+    static bool UsesCharSequenceView(JsonNode node) => node switch
+    {
+        JsonObject obj => IsCharSeqT(TypeJson.Read(obj)) || obj.Any(pair => UsesCharSequenceView(pair.Value)),
+        JsonArray array => array.Any(UsesCharSequenceView),
+        _ => false,
+    };
+
+    internal static JsonObject RestoreMaterializedValue(JsonObject value, TypeNode source, TypeNode target) =>
+        source is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" } && IsScalarCharSequence(target)
+            ? MaterializedExecutable.Normalize(RestoreErasedCharSequence(value, TypeJson.Write(target)).AsObject()) : null;
 
     static void EmitAdapter(JsonObject fileObj)
     {
@@ -671,24 +684,32 @@ static partial class StringCharSequenceBridge
         TypeNode.Array a => IsSourceCharSeqT(a.Elem),
         _ => false,
     };
+    static bool IsScalarCharSequence(TypeNode type) => type switch
+    {
+        TypeNode.Fqn { Name: CharSeq } => true,
+        TypeNode.Nullable nullable => IsScalarCharSequence(nullable.Of),
+        TypeNode.Oblivious platform => IsScalarCharSequence(platform.Of),
+        _ => false,
+    };
     static bool IsStringTokT(TypeNode t) => t is TypeNode.Fqn { Args: null } f && StringTokens.Contains(f.Name);
 
     // (e): `as CharSequence` on a static String -> REPLACE the (would-be InvalidCast) `castclass dotkt$CharSequence`
-    // with the materializing adapter. A non-statically-String cast (an `Any?`->CharSequence runtime check) is left as
-    // the plain cast — a runtime-type-check adapter helper for that is a follow-up (see docs 【4-A】).
+    // with the materializing adapter. An opaque value can also contain a String; restore its
+    // physical interface view at this consumption boundary without changing value transport.
     static JsonNode WrapCast(JsonObject node, Env env)
     {
         var functionRestore = node.Remove(FunctionValueRepresentation.RestorationKey);
-        if (functionRestore && IsCharSeqT(TypeJson.Read(node["type"])) && node["e"] is JsonNode value)
-            return RestoreFunctionCharSequence(value, node["type"]);
-        if (IsCharSeqT(TypeJson.Read(node["type"])) && node["e"] is JsonNode e && IsStaticString(e, env))
+        if (IsScalarCharSequence(TypeJson.Read(node["type"])) && node["e"] is JsonNode value
+            && (functionRestore || ExprType(value, env) is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" }))
+            return RestoreErasedCharSequence(value, node["type"]);
+        if (IsScalarCharSequence(TypeJson.Read(node["type"])) && node["e"] is JsonNode e && IsStaticString(e, env))
             return WrapAdapter(e);
         return null;
     }
 
-    // An ordinary function carrier retains the original boxed value. Restore its CharSequence
-    // representation at typed consumption without adapting (and changing the identity of) the function.
-    static JsonNode RestoreFunctionCharSequence(JsonNode value, JsonNode target)
+    // Opaque carriers retain the original boxed value. Restore its CharSequence representation
+    // only at typed consumption, evaluating the value once and preserving null and existing views.
+    static JsonNode RestoreErasedCharSequence(JsonNode value, JsonNode target)
     {
         var name = "__csrestore$" + System.Threading.Interlocked.Increment(ref _counter);
         JsonObject Read() => new() { ["k"] = "local", ["name"] = name };
@@ -703,7 +724,13 @@ static partial class StringCharSequenceBridge
             ["then"] = converted, ["else"] = otherwise,
         };
         var unchanged = new JsonObject { ["k"] = "cast", ["type"] = target.DeepClone(), ["e"] = Read() };
-        var builder = Branch("System.Text.StringBuilder", WrapStringBuilder(Cast("System.Text.StringBuilder")), unchanged);
+        var snapshot = new JsonObject
+        {
+            ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Text.StringBuilder"),
+            ["method"] = "ToString", ["ret"] = TypeJson.Fqn("System.String"),
+            ["recv"] = Cast("System.Text.StringBuilder"), ["args"] = new JsonArray(),
+        };
+        var builder = Branch("System.Text.StringBuilder", WrapAdapter(snapshot), unchanged);
         return new JsonObject
         {
             ["k"] = "valueBlock",

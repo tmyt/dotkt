@@ -6,6 +6,7 @@ class CharSequenceSupertypeTests {
     fun importedInterfaceRetainsKotlinCharSequenceArgument() {
         val slot: Slot<CharSequence> = Text()
         check(slot.read().toString() == "ok")
+        check(slot.read().length == 2)
         check(Text().read().toString() == "ok")
         val unchanged: Slot<String> = UnchangedText()
         check(unchanged.read() == "unchanged")
@@ -20,7 +21,8 @@ class CharSequenceSupertypeTests {
         val present = NullableText(true)
         val nonNull: Slot<CharSequence?> = present
         check(nonNull.read().toString() == "nullable")
-        check(present.reads == 1)
+        check(nonNull.read()!!.length == 8)
+        check(present.reads == 2)
     }
 
     @TestAttribute

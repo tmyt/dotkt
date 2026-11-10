@@ -25,6 +25,8 @@ static class PhysicalValueCoercion
         return source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
         || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+            && !IsVoid(target) && NeedsBox(target, index.IsValue)
+        || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && IsReferenceSlot(target, index.IsValue)
             && target is not TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || source is TypeNode.Fqn carrier && target is TypeNode.Fqn native
@@ -347,6 +349,20 @@ static class PhysicalValueCoercion
             if (Str(edge["init"]["k"]) != "cast"
                 || TypeJson.Read(edge["init"]["e"]["ret"]) != new TypeNode.Fqn(expected))
                 throw new InvalidOperationException("Opaque reference projection lost an exact local/native result contract");
+        var genericResults = JsonNode.Parse("""
+          {"fileClass":"GenericResults","methods":[
+            {"name":"read","typeParams":["T"],"params":[],"ret":{"t":"tv","scope":"method","i":0},"body":[]},
+            {"name":"probe","typeParams":["T"],"params":[],"ret":{"t":"fqn","name":"void"},"body":[
+              {"k":"var","name":"value","type":{"t":"fqn","name":"object"},"init":
+                {"k":"callStatic","owner":{"t":"fqn","name":"GenericResults"},"method":"read",
+                 "typeArgs":[{"t":"tv","scope":"method","i":0}],"sig":[],"args":[],"ret":{"t":"fqn","name":"object"}}}]}]}
+          """).AsObject();
+        ApplyAll(new JsonNode[] { genericResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
+        var genericBox = genericResults["methods"][1]["body"][0]["init"];
+        if (Str(genericBox["k"]) != "cast"
+            || TypeJson.Read(genericBox["type"]) != new TypeNode.Fqn("object")
+            || TypeJson.Read(genericBox["e"]["ret"]) != new TypeNode.Tv("method", 0))
+            throw new InvalidOperationException("A generic physical return lost boxing at its opaque value boundary");
         var valueResults = JsonNode.Parse("""
           {"fileClass":"ValueResults","methods":[
             {"name":"read","params":[],"ret":{"t":"fqn","name":"object"},"body":[]},
@@ -582,7 +598,7 @@ static class PhysicalValueCoercion
     // lifetime tracking is involved, and repeated arguments name the same slot.
     internal static void AllocateNativeLocals(IEnumerable<JsonNode> body,
         IEnumerable<JsonObject> parameterDeclarations, JsonArray prologue,
-        GenericArrayStorageLowering.FreshNames arrayNames = null)
+        GenericArrayStorageLowering.FreshNames arrayNames = null, bool genericParametersOnly = false)
     {
         var required = new Dictionary<JsonObject, TypeNode>();
         var parameters = parameterDeclarations.ToArray();
@@ -615,15 +631,19 @@ static class PhysicalValueCoercion
             if (Str(obj["k"]) is ("callStatic" or "callInstance" or "constrainedCall"
                     or "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "new" or "newClr")
                 && obj["args"] is JsonArray arguments
-                && ParameterTypes(obj) is { } parameters && parameters.Length == arguments.Count)
-                for (var i = 0; i < parameters.Length; i++)
+                && ParameterTypes(obj) is { } callParameters && callParameters.Length == arguments.Count)
+                for (var i = 0; i < callParameters.Length; i++)
                 {
-                    if (SignatureValueTypes.Of(parameters[i]) is not TypeNode.ByRef reference
+                    if (SignatureValueTypes.Of(callParameters[i]) is not TypeNode.ByRef reference
                         || arguments[i] is not JsonObject argument) continue;
                     var location = Str(argument["k"]) == "byrefOf" ? argument["inner"] as JsonObject : argument;
                     if (location == null || Str(location["k"]) != "local"
                         || Str(location["name"]) is not string local
                         || !declarations.TryGetValue(local, out var declaration)) continue;
+                    // The early dispatch boundary knows a bare generic parameter's frame,
+                    // but constructed local locations still await full ABI materialization.
+                    if (genericParametersOnly && (!parameters.Contains(declaration)
+                        || SignatureValueTypes.Of(reference.Of) is not TypeNode.Tv)) continue;
                     // A managed-reference local already stores the pointer, not
                     // the addressed value. Never replace it with value storage.
                     if (SignatureValueTypes.Of(TypeJson.Read(declaration["type"])) is TypeNode.ByRef)
@@ -654,7 +674,10 @@ static class PhysicalValueCoercion
             string name;
             do { name = "$nativeArgument$" + ordinal++; } while (!names.Add(name));
             foreach (var reference in uses.GetValueOrDefault(declaration) ?? new List<JsonObject>())
+            {
                 reference["name"] = name;
+                if (Str(reference["k"]) == "local") reference["sty"] = TypeJson.Write(type);
+            }
             prefix.Add(new JsonObject {
                 ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(type),
                 ["init"] = new JsonObject { ["k"] = "local", ["name"] = Str(declaration["name"]) },
@@ -1160,6 +1183,12 @@ static class PhysicalValueCoercion
         var genericObjectProjection = declared is TypeNode.Tv
             && actual is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
+        // Generated exact helpers may still return a CLR generic stack value
+        // while the surrounding Kotlin value is opaque. State its boxing before
+        // a later consumer attempts an object-to-generic extraction.
+        var objectGenericProjection = actual is TypeNode.Tv
+            && declared is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+            && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
         // An invocation's result hint is caller-relative. Its exact member or
         // local declaration may return T while the Kotlin value uses Storage(T).
         // State that conversion explicitly, with the native result on the inner
@@ -1183,7 +1212,7 @@ static class PhysicalValueCoercion
             && SignatureValueTypes.Of(actual) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && Str(expression["k"]) is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
                 or "callStatic" or "callInstance" or "constrainedCall" or "delegateInvoke";
-        if (!genericObjectProjection && !genericSlotProjection && !arrayStorageProjection && !opaqueReferenceProjection
+        if (!genericObjectProjection && !objectGenericProjection && !genericSlotProjection && !arrayStorageProjection && !opaqueReferenceProjection
             && !opaqueValueProjection
             && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
         var physical = expression.DeepClone().AsObject();
@@ -1322,7 +1351,8 @@ static class PhysicalValueCoercion
         }
         // NetInteropBinding carries the selected declaration here until the final MemberRef is materialized.
         parameters ??= ReadTypes(node["resolvedMemberParams"] as JsonArray)
-            ?? ReadTypes(node["sig"] as JsonArray) ?? ReadTypes(node["argTypes"] as JsonArray);
+            ?? ReadTypes(node["sig"] as JsonArray) ?? ReadTypes(node["shapeTypes"] as JsonArray)
+            ?? ReadTypes(node["argTypes"] as JsonArray);
         if (parameters == null) return null;
         var methodArgs = MethodArgs(node);
         return parameters.Select(p => Close(p, ownerArgs ?? CallOwner(node)?.Args, methodArgs)).ToArray();

@@ -85,7 +85,8 @@ static class UncheckedGenericCastReturnErasure
         switch (node)
         {
             case JsonObject obj:
-                if (Str(obj["k"]) == "return" && obj["value"] is JsonObject value
+                var value = ReturnedValue(obj);
+                if (value != null
                     && Str(value["k"]) == "cast"
                     && !KotlinTypeWitness.NeedsWitness(value)
                     && TypeJson.Read(value["type"]) is TypeNode.Tv cast && cast == ret
@@ -120,6 +121,7 @@ static class UncheckedGenericCastReturnErasure
     public static void Apply(JsonNode root, DeclIndex index)
     {
         if (root is not JsonObject obj) return;
+        RetypeProjectedReturnBodies(obj);
 
         // The global index owns cross-file ABI facts, not permission to lower a later root early.
         // Mutate only declarations currently owned by this root, after its semantic guards have been bound.
@@ -140,6 +142,28 @@ static class UncheckedGenericCastReturnErasure
         if (obj["types"] is JsonArray types)
             foreach (var type in types)
                 if (type != null) ApplyCallsOnly(type, index);
+    }
+
+    // Signature projection can already have erased a scalar return before this
+    // pass's index snapshot. Its body still owns the same deferred unchecked cast;
+    // consume source metadata in the exact materialized owner/method frame.
+    static void RetypeProjectedReturnBodies(JsonObject owner)
+    {
+        foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+        {
+            if (!IsObject(TypeJson.Read(method["ret"]))
+                || Str(method["retKotlinType"]) is not string encoded
+                || TypeNode.Parse(encoded) is not TypeNode.Tv source) continue;
+            var frame = source.Scope == "method"
+                ? NullableRepresentationTypes.DeclarationMethodFrame(method)
+                : KotlinSupertypesRecord.ReadNullableFrame(owner);
+            var physical = frame == null ? source : frame.Variable(source,
+                frame.StorageIndices.Contains(source.I) ? NullableRepresentationFrame.Role.Storage
+                    : NullableRepresentationFrame.Role.Ordinary);
+            RetypeReturnedCasts(method["body"], physical);
+        }
+        foreach (var type in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+            RetypeProjectedReturnBodies(type);
     }
 
     static bool OwnedBy(JsonNode declaration, JsonNode root)
@@ -428,7 +452,7 @@ static class UncheckedGenericCastReturnErasure
         switch (node)
         {
             case JsonObject obj:
-                if (Str(obj["k"]) == "return" && obj["value"] is JsonObject value
+                if (ReturnedValue(obj) is JsonObject value
                     && Str(value["k"]) == "cast"
                     && !KotlinTypeWitness.NeedsWitness(value)
                     && TypeJson.Read(value["type"]) is TypeNode.Tv cast && cast == ret
@@ -442,6 +466,21 @@ static class UncheckedGenericCastReturnErasure
                     RetypeReturnedCasts(child, ret);
                 break;
         }
+    }
+
+    static JsonObject ReturnedValue(JsonObject statement)
+    {
+        var value = Str(statement["k"]) == "return" ? statement["value"] as JsonObject : null;
+        // Return-slot coercion can already have boxed the value. Preserve that
+        // edge and its guards while locating the cast supplying the return.
+        while (value != null)
+        {
+            if (Str(value["k"]) == "cast" && IsObject(TypeJson.Read(value["type"])))
+                value = value["e"] as JsonObject;
+            else if (Str(value["k"]) == "valueBlock") value = value["result"] as JsonObject;
+            else break;
+        }
+        return value;
     }
 
     internal static void SelfTest()

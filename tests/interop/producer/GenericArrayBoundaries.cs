@@ -11,6 +11,11 @@ public interface Transform
     T[] Apply<T>(T[] values);
 }
 
+public interface ScalarValue<T>
+{
+    T Value { get; }
+}
+
 public interface JaggedTransform
 {
     T[][] Apply<T>(T[][] values);
@@ -18,6 +23,12 @@ public interface JaggedTransform
 
 public static class Api
 {
+    public static T ReadScalar<T>(ScalarValue<T> value) => value.Value;
+    public static bool ScalarSignatureMatches(object value)
+    {
+        var property = value.GetType().GetProperty("Value")!;
+        return property.PropertyType == property.GetMethod!.ReturnType;
+    }
     public static T[] Echo<T>(T[] values) => values;
     public static void Replace<T>(ref T[] value, T[] replacement) => value = replacement;
     public static ref T[] Live<T>(Cell<T> cell) => ref cell.Value;

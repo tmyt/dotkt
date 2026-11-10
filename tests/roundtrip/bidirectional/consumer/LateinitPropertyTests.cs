@@ -7,13 +7,13 @@ using roundtrip.lateinitstorage;
 public class LateinitPropertyClrTests
 {
     [Test]
-    public void TypedPropertiesUsePrivateObjectStorageAndObserveCSharpWrites()
+    public void GenericPropertiesUseOpaqueValuesAndObserveCSharpWrites()
     {
         var type = typeof(LateinitBox<int, int>);
         var property = type.GetProperty("value")!;
-        Assert.That(property.PropertyType, Is.EqualTo(typeof(int)));
-        Assert.That(property.GetMethod!.ReturnType, Is.EqualTo(typeof(int)));
-        Assert.That(property.SetMethod!.GetParameters().Single().ParameterType, Is.EqualTo(typeof(int)));
+        Assert.That(property.PropertyType, Is.EqualTo(typeof(object)));
+        Assert.That(property.GetMethod!.ReturnType, Is.EqualTo(typeof(object)));
+        Assert.That(property.SetMethod!.GetParameters().Single().ParameterType, Is.EqualTo(typeof(object)));
         Assert.That(type.GetFields(BindingFlags.Public | BindingFlags.Instance), Is.Empty);
         var storage = type.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly).Single();
         Assert.That(storage.IsPrivate, Is.True);

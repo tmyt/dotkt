@@ -30,7 +30,7 @@ public static class NativeBoxApi
     public static Box<string, string> InvokeFactory(NativeBoxFactory factory) => factory();
     public static object InvokeConsumer(NativeBoxConsumer consumer, Box<string, string> value) => consumer(value);
     public static StoredVariant<int, int> CreateVariant() => new(42);
-    public static int ReadVariant(StoredVariant<int, int> value) => value.value;
+    public static int ReadVariant(StoredVariant<int, int> value) => (int)value.value;
     public static object Dispatch(NativeBoxReceiver receiver, Box<string, string> value) => receiver.Accept(value);
 
     public static bool ReplaceAliased(ref Box<string, string> first, ref Box<string, string> second)

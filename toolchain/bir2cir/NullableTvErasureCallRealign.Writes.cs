@@ -281,8 +281,11 @@ static partial class NullableTvErasureCallRealign
         // callInstance arm. Its resolved declaration owner is the same fixed bare owner slot: a proven-present
         // Nullable<V> receiver must yield V before ilemit performs the already-resolved one-to-one member dispatch.
         // Ordinary calls/constructors carry it in `type`; CLR delegate constructions carry it in `clrType`.
+        // Object transport must wait for bound/variance owner projection; the
+        // final physical coercion pass converts that resolved consuming edge.
         if (obj["recv"] is JsonObject recv
             && owner != null
+            && recvType is not TypeNode.Fqn { Name: "object" or "System.Object" }
             && CoerceForTarget(recv, recvType, owner) is JsonNode coercedReceiver)
             obj["recv"] = coercedReceiver;
         var ownerArgs = OwnerArguments(owner);
@@ -313,6 +316,7 @@ static partial class NullableTvErasureCallRealign
         var owner = ClrOwner(obj);
         if (obj["recv"] is JsonObject recv
             && owner != null
+            && recvType is not TypeNode.Fqn { Name: "object" or "System.Object" }
             && CoerceForTarget(recv, recvType, owner) is JsonNode coercedReceiver)
             obj["recv"] = coercedReceiver;
         if (obj["value"] != null) Eval(obj["value"], ctx);

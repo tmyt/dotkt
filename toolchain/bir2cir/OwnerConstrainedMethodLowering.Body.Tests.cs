@@ -40,9 +40,22 @@ static partial class OwnerConstrainedMethodLowering
             }
 
             var parent = new JsonArray();
-            foreach (var argument in new[] { "First", "Second" })
+            foreach (var (argument, scalar) in new[] {
+                ("First", false), ("Second", false), ("First", true), ("Second", true) })
             {
                 var bodyOwner = Body();
+                if (scalar)
+                {
+                    foreach (var parameter in bodyOwner["params"].AsArray())
+                    {
+                        parameter["kotlinType"] = TypeNode.ToJson(TypeJson.Read(parameter["type"]));
+                        parameter["type"] = TypeJson.Fqn("object");
+                    }
+                    foreach (var call in new[] { bodyOwner["body"][0], bodyOwner["body"][1],
+                        bodyOwner["body"][2]["capValues"][0], bodyOwner["body"][2]["body"][0] })
+                        ErasedElementValues.RetainVariable(call["recv"].AsObject(), new TypeNode.Tv(
+                            call["recv"]["name"].GetValue<string>() == "m" ? "method" : "type", 0));
+                }
                 parent.Add(bodyOwner);
                 var originalBody = bodyOwner["body"];
                 var originalParameters = bodyOwner["params"];
@@ -72,6 +85,8 @@ static partial class OwnerConstrainedMethodLowering
                 // With no method frame, type-owner binding is still required. A sibling's bound must not leak.
                 var typeOnly = new JsonObject { ["params"] = originalParameters.DeepClone(),
                     ["body"] = new JsonArray(Call("TypeOwner", "t")) };
+                if (scalar) ErasedElementValues.RetainVariable(typeOnly["body"][0]["recv"].AsObject(),
+                    new TypeNode.Tv("type", 0));
                 CloseBodyOwnerViews(typeOnly, new JsonObject(), owner, _ => false, type => type);
                 Expect(TypeJson.Read(typeOnly["body"][0]["ownerType"])
                     == TypeJson.Read(originalBody[1]["ownerType"]), "empty method frame suppressed type binding");
