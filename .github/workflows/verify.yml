@@ -130,7 +130,7 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
       - name: Install ilverify
-        run: dotnet tool install -g dotnet-ilverify
+        run: dotnet tool install -g dotnet-ilverify --version 10.0.15
 
       - uses: actions/download-artifact@v4
         with:
@@ -187,7 +187,7 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
       - name: Install ilverify
-        run: dotnet tool install -g dotnet-ilverify
+        run: dotnet tool install -g dotnet-ilverify --version 10.0.15
 
       # Packs the 5 nupkgs fresh from source and drives exe / library / cross-module async coroutine / mpp /
       # template scenarios that resolve them from a local feed only (isolated globalPackagesFolder — no cache
