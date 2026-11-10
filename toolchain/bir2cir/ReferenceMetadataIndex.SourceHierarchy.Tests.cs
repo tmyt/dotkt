@@ -73,6 +73,8 @@ sealed partial class ReferenceMetadataIndex
         });
         if (!index.SemanticDeclarationDescribesCall(sourceUse, physicalUse))
             throw new InvalidOperationException("Declaration validation lost nested source/application correspondence");
+        if (!index.SourceArgumentsOfPhysicalOwner(physicalUse).SequenceEqual(sourceUse.Args))
+            throw new InvalidOperationException("Late source hierarchy retained nullable companion arguments");
         if (!index.SemanticDeclarationDescribesCall(sourceUse,
                 new TypeNode.Fqn("probe.NullableOuter.Inner", sourceUse.Args))
             || index.SemanticDeclarationDescribesCall(sourceUse,

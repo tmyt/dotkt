@@ -20,7 +20,9 @@ using DotKt.Bir;
 // and the positional-fact model (suspendFnType, retNothing, nullableGenericRet) — record the PRE-collapse Kotlin
 // type of every moved declaration position. Method returns/params, ctor params, properties and fields use the
 // per-slot [KotlinCollectionIdentity] carrier. Base/interface edges and type-parameter bounds merge into the shared
-// type-level [KotlinSupertypes] payload. Each pass-local fact is an OPAQUE canonical TypeNode JSON STRING, so the
+// type-level [KotlinSupertypes] payload. Mutable collection supertype edges also retain their source declaration:
+// the physical ICollection/IList storage edge alone does not prove a Kotlin mutable-collection obligation.
+// Each pass-local fact is an OPAQUE canonical TypeNode JSON STRING, so the
 // intervening lowering passes leave it untouched until RoundtripMetadata authors the carrier and dll2klib restores
 // `List` vs `MutableList` from the recorded truth.
 //
@@ -86,7 +88,9 @@ static class CollectionIdentityRecord
         {
             var moved = new JsonArray();
             foreach (var edge in interfaces)
-                if (TypeJson.Read(edge) is TypeNode type && NestsCollapsingReadonly(type))
+                if (TypeJson.Read(edge) is TypeNode type && (NestsCollapsingReadonly(type)
+                    || type is TypeNode.Fqn { Name: "kotlin.collections.MutableCollection"
+                        or "kotlin.collections.MutableList" or "kotlin.collections.MutableSet" }))
                     moved.Add(edge?.DeepClone());
             if (moved.Count > 0) pre["interfaces"] = moved;
         }

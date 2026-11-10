@@ -1647,13 +1647,31 @@ static class KotlinOverrideSlotBridge
                 var accessorKind = overrideKind switch { "getter" => "get", "setter" => "set", _ => null };
                 // dll2klib preserves every flattened property override owner even when the emitted CLR interface
                 // hierarchy cannot preserve the semantic @ClrTypeAlias edge (Collection -> IReadOnlyCollection).
-                // That exact frontend-selected owner is sufficient for a property slot. Ordinary methods retain the
-                // independent reachability proof that prevents an unrelated same-shaped interface from capturing a
-                // marker while walking another referenced spec.
+                // That exact frontend-selected owner is sufficient for a property slot. Ordinary methods need
+                // declaration reachability or the exact trusted alias-to-TypeDef binding below; shape alone cannot
+                // let an unrelated interface capture a marker while walking another referenced spec.
                 // The graph already contains physical companion arguments; the override marker retains
                 // source arity. Compare declarations in the recorded frame, not by mismatched arities.
+                var selectedSlotSpec = spec;
                 if (accessorKind == null && !SupertypeGraph.ReachesDeclaration(spec,
-                        (TypeNode.Fqn)sourceMapping.Slot(owner), defs, refs)) continue;
+                        (TypeNode.Fqn)sourceMapping.Slot(owner), defs, refs))
+                {
+                    // A referenced interface records its physical native parents, while the frontend's override
+                    // still names the exact Kotlin alias declaration. That explicit representation binding proves
+                    // this native obligation only when both resolve to the same CLR TypeDef. Read the selected
+                    // declaration in its own argument frame; do not turn aliases into general source identities.
+                    if (!nativeAliases || !supIsInterface
+                        || !refs.Aliases.ContainsKey(ReferenceMetadataIndex.BareOwnerFqn(owner.Name))) continue;
+                    var nativeDeclaration = BirTypeLowering.LowerPhysicalType(
+                        (TypeNode.Fqn)sourceMapping.Slot(owner), refs.Aliases, isValue, refs.PhysicalTypeNames,
+                        typeArg: false, localTypeNames: null, nullableFrames: refs.NullableTypeFrames) as TypeNode.Fqn;
+                    var reached = refs.ResolveNetType(spec.Name, supArgs.Length);
+                    if (nativeDeclaration == null || reached == null
+                        || reached != refs.ResolveNetType(nativeDeclaration.Name, nativeDeclaration.Args?.Length ?? 0))
+                        continue;
+                    selectedSlotSpec = owner;
+                }
+                var selectedSlotArgs = selectedSlotSpec.Args ?? Array.Empty<TypeNode>();
                 // A referenced interface can redeclare a Kotlin property while its flattened override facts also name
                 // an inherited semantic declaration whose CLR slot has a different identity. Resolve each property
                 // marker against the declaration OWNER it names, not only against the directly-listed interface spec:
@@ -1744,9 +1762,9 @@ static class KotlinOverrideSlotBridge
                         ? refs.TryNullableGenericPropertySlot(selectedSpec.Name, member, accessorKind, isStatic: false,
                             ps.Count, methodArity, implementationSignature, selectedArgs,
                             out slotRet0, out slotParams0, out refused, includeUnchanged: true)
-                        : refs.TrySelectedNullableGenericSlot(spec.Name, member, isStatic: false, ps.Count, methodArity,
+                        : refs.TrySelectedNullableGenericSlot(selectedSlotSpec.Name, member, isStatic: false, ps.Count, methodArity,
                             implementationSignature, bindingReturn,
-                            spec.Args ?? Array.Empty<TypeNode>(),
+                            selectedSlotArgs,
                             phase == Phase.DeclarationMoves ? AuthoredMethodTypeParameters(impl) : impl["typeParams"] as JsonArray, ownArgs,
                             out slotRet0, out slotParams0, out refused,
                             out selectedPhysicalMember, out selectedSlotTypeParams, out slotReturnsValue,
@@ -1768,7 +1786,7 @@ static class KotlinOverrideSlotBridge
                 // Never erase a native Nullable<V> nested in a reified slot into an unrelated Kotlin object slot.
                 var slotParams = slotParams0
                     .Select(t => SupertypeGraph.SubstOwnerTvs(DeclaredSlot(t, isValue, physical: physicalProjection != null || nativeOwner != null),
-                        accessorKind != null ? physicalSelectedArgs : supArgs))
+                        accessorKind != null ? physicalSelectedArgs : selectedSlotArgs))
                     .ToArray();
                 // A null RETURN fact is the opposite: the reader states a return only while it still says something a
                 // call site completes (a carrier, or a physical type still holding a type variable), so `null` means
@@ -1777,7 +1795,7 @@ static class KotlinOverrideSlotBridge
                 var slotRet = slotRet0 == null
                     ? SupertypeGraph.SubstOwnerTvs(TypeJson.Read(impl["ret"]), ownArgs)
                     : SupertypeGraph.SubstOwnerTvs(DeclaredSlot(slotRet0, isValue, physical: physicalProjection != null || nativeOwner != null),
-                        accessorKind != null ? physicalSelectedArgs : supArgs);
+                        accessorKind != null ? physicalSelectedArgs : selectedSlotArgs);
                 if (slotRet == null) continue;
                 if (accessorKind != null) slotReturnsValue = slotRet0 != null && !IsVoid(slotRet0);
                 // The CLR slot's own NAME. A referenced Kotlin interface that is `@ClrTypeAlias`'d onto a BCL one
@@ -1867,7 +1885,7 @@ static class KotlinOverrideSlotBridge
                             typeArg: false, localTypeNames: null, nullableFrames: refs.NullableTypeFrames)).ToArray();
                         if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(
                                 refs, loweredOwner, descriptorMember, methodArity, comparableParams,
-                                selectedSlotTypeParams, supArgs,
+                                selectedSlotTypeParams, selectedSlotArgs,
                                 out var declarationOwner, out var declarationMember,
                                 out var physicalParams, out var physicalRet,
                                 // Bindings such as Comparable deliberately collapse their owner arguments.
@@ -1895,7 +1913,7 @@ static class KotlinOverrideSlotBridge
                 // Alias resolution above replaces the declaration and therefore owns its signature instead.
                 TypeNode WithModifiers(TypeNode signature, TypeNode value) => signature is TypeNode.Mod modifier
                     ? new TypeNode.Mod(modifier.Req,
-                        SupertypeGraph.SubstOwnerTvs(modifier.M, accessorKind != null ? physicalSelectedArgs : supArgs),
+                        SupertypeGraph.SubstOwnerTvs(modifier.M, accessorKind != null ? physicalSelectedArgs : selectedSlotArgs),
                         WithModifiers(modifier.Of, value))
                     : value;
                 var slotSignature = signatureParameters?.Select((signature, index) =>

@@ -27,7 +27,7 @@ private interface CollectionAddResultDefault : MutableCollection<Int> {
     override fun add(element: Int): Boolean { values[0] = element; return true }
 }
 
-private class CollectionAddResultDefaultCollection : CollectionAddResultDefault, MutableCollection<Int> {
+private class CollectionAddResultDefaultCollection : CollectionAddResultDefault {
     override val values: MutableList<Int> = mutableListOf(1)
     override val size: Int get() = values.size
     override fun isEmpty() = values.isEmpty()

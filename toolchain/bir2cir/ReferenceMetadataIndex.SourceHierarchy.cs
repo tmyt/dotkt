@@ -5,6 +5,12 @@ using DotKt.Bir;
 
 sealed partial class ReferenceMetadataIndex
 {
+    // A late semantic-supertype query starts with a materialized physical application. Select its authored
+    // ordinary arguments before following source edges; subsequent source applications already have source arity.
+    internal TypeNode[] SourceArgumentsOfPhysicalOwner(TypeNode.Fqn owner) =>
+        SourceHierarchyFrame(owner.Name)?.OrdinaryArguments(owner.Args ?? Array.Empty<TypeNode>())
+            ?? owner.Args ?? Array.Empty<TypeNode>();
+
     // Source carriers use declaration-relative TVs; a Kotlin inner application is own-first.
     // Close those TVs through the authored declaration/application correspondence, before representation lowering.
     public JsonArray SourceDeclarationArguments(JsonNode ownerNode)

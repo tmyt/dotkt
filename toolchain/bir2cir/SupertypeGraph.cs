@@ -72,23 +72,24 @@ static class SupertypeGraph
     // (transitively, so a base interface's redeclared slot is reached) and the base-class chain. Bounded by a visited
     // set keyed on the constructed spec, so cyclic or repeated metadata terminates.
     public static IEnumerable<(TypeNode.Fqn spec, bool isInterface)> Reachable(Def cls,
-        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs, bool sourceFrames = false)
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs, bool sourceFrames = false,
+        bool physicalSourceApplications = false)
     {
-        var queue = new Queue<(TypeNode.Fqn, bool)>();
-        foreach (var i in cls.Interfaces) queue.Enqueue((i, true));
-        if (cls.Base != null) queue.Enqueue((cls.Base, false));
+        var queue = new Queue<(TypeNode.Fqn, bool, bool)>();
+        foreach (var i in cls.Interfaces) queue.Enqueue((i, true, physicalSourceApplications));
+        if (cls.Base != null) queue.Enqueue((cls.Base, false, physicalSourceApplications));
         var seen = new HashSet<string>(StringComparer.Ordinal);
         while (queue.Count > 0)
         {
-            var (spec, isInterface) = queue.Dequeue();
+            var (spec, isInterface, physicalApplication) = queue.Dequeue();
             if (!seen.Add(TypeKey(spec))) continue;
             yield return (spec, isInterface);
             if (defs.TryGetValue(spec.Name, out var def))
             {
                 var args = EffectiveArgs(spec, def.Arity);
                 if (args == null) continue;
-                foreach (var parent in def.Interfaces) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(parent, args), true));
-                if (def.Base != null) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(def.Base, args), false));
+                foreach (var parent in def.Interfaces) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(parent, args), true, physicalApplication));
+                if (def.Base != null) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(def.Base, args), false, physicalApplication));
                 continue;
             }
             // A REFERENCED supertype's own graph continues the walk, so a slot DECLARED one level up is reached as a
@@ -102,17 +103,17 @@ static class SupertypeGraph
             {
                 if (!refs.TryReferenceSourceTypeShape(spec, out var arity, out var baseType, out var interfaces))
                     continue;
-                var sourceArgs = EffectiveArgs(spec, arity);
+                var sourceArgs = physicalApplication ? refs.SourceArgumentsOfPhysicalOwner(spec) : EffectiveArgs(spec, arity);
                 if (sourceArgs == null) continue;
                 foreach (var parent in interfaces)
-                    queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(parent, sourceArgs), true));
-                if (baseType != null) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(baseType, sourceArgs), false));
+                    queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(parent, sourceArgs), true, false));
+                if (baseType != null) queue.Enqueue(((TypeNode.Fqn)SubstOwnerTvs(baseType, sourceArgs), false, false));
                 continue;
             }
             var refArgs = spec.Args ?? Array.Empty<TypeNode>();
             foreach (var (parent, parentIsInterface) in refs.ReferencedSupertypes(spec))
                 if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
-                    queue.Enqueue((constructed, parentIsInterface));
+                    queue.Enqueue((constructed, parentIsInterface, physicalApplication));
         }
     }
 

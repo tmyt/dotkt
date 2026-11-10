@@ -60,6 +60,7 @@ static class Bir2Cir
                 IntrinsicExtensionRepresentation.SelfTest();
                 ReferenceExistentialAbiBinding.SelfTest();
                 KotlinCollectionSlotSynthesis.SelfTest();
+                CollectionBclSlotSynthesis.SelfTest();
                 KotlinOverrideSlotBridge.SelfTest();
                 ContinuationErasure.SelfTest();
                 ReferenceNullableStrip.FunctionSelfTest();
@@ -1260,6 +1261,8 @@ sealed class Pipeline
         // declarations together with the source-to-slot relation carried by their allocating passes.
         var existentialReceiverMembers = ExistentialReceiverBinding.Collect(
             staged.Select(s => s.Root), physicalDeclarationSources);
+        if (!_options.RefBuild)
+            CollectionBclSlotSynthesis.RecordContracts(staged.Select(s => s.Root), refs);
         foreach (var (substituted, outputName) in staged)
         {
             // §11 CONTINUATION-ERASURE (bundle-6 bug #5 ROOT): make the coroutine ABI monomorphic on
@@ -1422,6 +1425,10 @@ sealed class Pipeline
         // PHASE 3A — complete every representation synthesis module-wide before any pass snapshots the final type
         // graph. A derived type can precede its base in another file; resolving interface manifests inside this loop
         // would otherwise make their contents depend on source-file order.
+        if (!_options.RefBuild)
+            CollectionBclSlotSynthesis.ApplyAll(loweredRoots.Select(s => s.Root), refs,
+                type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValueFqn,
+                    refs.PhysicalTypeNames, typeArg: true, nullableFrames: refs.NullableTypeFrames));
         foreach (var (lowered, _) in loweredRoots)
         {
             // `.size` (Count) on a STAR-PROJECTED / `Any`-erased collection receiver: StarProjectionLowering already
@@ -1430,15 +1437,6 @@ sealed class Pipeline
             // -> EntryPointNotFound. Re-point such Count reads at the VARIANCE-IMMUNE non-generic
             // `System.Collections.ICollection.Count`. App build only; runs AFTER MemberCallSubstitution so Count is bound.
             if (attributeTopLevelOwner) StarProjectionCountLowering.Apply(lowered);
-            // BCL-only collection slots (non-ref builds): a CONCRETE Kotlin class implementing @ClrTypeAlias'd
-            // `MutableCollection`/`MutableList` (ICollection<E>/IList<E>) is missing the BCL members Kotlin's collection
-            // interfaces lack — `Contains`/`CopyTo`/`get_IsReadOnly` (ICollection) and `IndexOf` (IList) — so the concrete
-            // type (kotlin.collections.ArrayDeque, the AbstractMutable* bases, a MutableMap keys/values view) fails to LOAD
-            // ("... does not have an implementation"), surfacing at the referencing app as "cannot resolve .NET type". Fill
-            // each missing slot with an ordinary public forwarding member. Return-DROPPING slots
-            // (Add/set_Item/RemoveAt) are allocated by the common KotlinOverrideSlotBridge pass below, which carries
-            // their exact MethodImpl descriptors to ilemit.
-            if (!_options.RefBuild) CollectionBclSlotSynthesis.Apply(lowered, refs);
             // The READ-ONLY sibling of every mutable collection face this unit's types name. Kotlin's `MutableList<E>`
             // IS-A `List<E>`, but their lowered CLR faces (`IList<T>` / `IReadOnlyList<T>`) are unrelated interfaces,
             // so the read-only view is real only when the emitted type declares it. Runs AFTER the mutable faces are
