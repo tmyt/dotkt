@@ -16,6 +16,10 @@ def objects(node):
             yield from objects(value)
 
 
+def clr_name(node):
+    return "System.Object" if node == {"t": "fqn", "name": "object"} else node.get("name")
+
+
 if len(sys.argv) != 2:
     raise SystemExit(
         "usage: assert-star-copy-default-fields-cir.py <DefaultArgumentTests.cir.json>"
@@ -69,7 +73,7 @@ for helper, star_owner in (
         and node.get("sig") == []
     ]
     returns = sorted(
-        node.get("ret", {}).get("name")
+        clr_name(node.get("ret", {}))
         for node in default_reads
         if isinstance(node.get("ret"), dict)
     )
@@ -108,7 +112,7 @@ for class_name, star_owner in (
         and node["recv"].get("k") == "local"
     ]
     returns = sorted(
-        node.get("ret", {}).get("name")
+        clr_name(node.get("ret", {}))
         for node in peer_reads
         if isinstance(node.get("ret"), dict)
     )
@@ -195,7 +199,7 @@ value_getters = [
     for node in objects(nested_body)
     if node.get("k") == "callInstance"
     and node.get("ownerType", {}).get("name") == "DefaultArgStarNested$star"
-    and node.get("ret", {}).get("name") == "System.Object"
+    and clr_name(node.get("ret", {})) == "System.Object"
 ]
 if len(value_getters) != 1 or value_getters[0].get("virtual") is not True:
     raise SystemExit(
@@ -246,7 +250,8 @@ if logical_parameters != [{"t": "fqn", "name": "DefaultArgStarDerived", "args": 
 typed_reads = [node for node in objects(inherited_helpers[0]["body"])
                if node.get("k") == "cast" and node.get("type") == {"t": "fqn", "name": "System.String"}
                and node.get("e", {}).get("ownerType") == nested_carrier
-               and node["e"].get("ret") == {"t": "fqn", "name": "System.Object"}]
+               and node["e"].get("ret") in ({"t": "fqn", "name": "object"},
+                                             {"t": "fqn", "name": "System.Object"})]
 if len(typed_reads) != 1:
     raise SystemExit(f"CIR: Base<B> did not retain the inherited result's String use: {typed_reads!r}")
 

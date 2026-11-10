@@ -96,8 +96,8 @@ generic_reads = [
 ]
 if len(generic_reads) != 2 or any(
     node.get("typeArgs") != [producer_carrier, producer_carrier]
-    or node.get("ret") != producer_carrier
-    or node.get("calleeRet") != {"t": "tv", "scope": "method", "i": 1}
+    or node.get("ret") != fqn("object")
+    or node.get("calleeRet") != fqn("object")
     for node in generic_reads
 ):
     raise SystemExit(f"generic projected-array reads did not close over Producer$star: {generic_reads!r}")
@@ -294,7 +294,7 @@ if not any(node.get("k") == "cast" and node.get("type") == invariant_carrier for
     raise SystemExit("projected invariant element access lost its ordinary value carrier")
 getters = [node for node in invariant_nodes if node.get("k") == "callInstance"
            and node.get("ownerType") == invariant_carrier and node.get("sig") == []]
-if len(getters) != 1 or getters[0].get("ret") != fqn("System.Object"):
+if len(getters) != 1 or getters[0].get("ret") not in (fqn("object"), fqn("System.Object")):
     raise SystemExit(f"projected invariant element lost its exact carrier getter: {getters!r}")
 if not any(node.get("k") == "cast" and node.get("type") == fqn("System.String")
            and node.get("e") is getters[0] for node in invariant_nodes):

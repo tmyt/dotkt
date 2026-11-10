@@ -55,10 +55,15 @@ if lane == "basic":
     assert sum(node.get("method") == "unitValueEffect" for node in objects(discarded)) == 1
     constrained = methods["unitConstrainedValue"]["body"]
     assert not any(unit_read(node) for node in objects(constrained)), constrained
-    calls = [node for node in objects(constrained) if node.get("k") == "constrainedCall"]
+    carrier = {"t": "fqn", "name": "UnitCallSource$star"}
+    calls = [node for node in objects(constrained)
+             if node.get("k") in ("constrainedCall", "callInstance")
+             and node.get("iface", node.get("ownerType")) == carrier]
     assert len(calls) == 1, calls
-    assert calls[0]["ret"] == calls[0]["calleeRet"] == {"t": "fqn", "name": "System.Object"}, calls
-    assert calls[0]["iface"] == {"t": "fqn", "name": "UnitCallSource$star"}, calls
+    assert calls[0]["ret"] == calls[0]["calleeRet"], calls
+    assert calls[0]["ret"] in ({"t": "fqn", "name": "object"}, {"t": "fqn", "name": "System.Object"}), calls
+    if calls[0]["k"] == "callInstance":
+        assert calls[0]["virtual"] is True and calls[0]["recv"]["type"] == carrier, calls
     projections = [node for node in objects(constrained)
                    if node.get("k") == "cast" and node.get("e") is calls[0]]
     assert len(projections) == 1 and projections[0]["type"] == {"t": "fqn", "name": "kotlin.Unit"}, projections

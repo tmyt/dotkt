@@ -118,16 +118,18 @@ static class KotlinGenericScalarSlots
             foreach (var (key, child) in operation.ToArray())
                 if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)) Calls(child);
             if (operation["k"]?.GetValue<string>() is not ("callStatic" or "callInstance" or "constrainedCall")
-                || operation[DeclarationIdentityBinding.Key]?.GetValue<string>() is not string identity
-                || !declarations.TryGetValue(identity, out var selected)) return;
-            if (projection.Parameters.TryGetValue(identity, out var indices) && operation["sig"] is JsonArray signature)
+                || operation[DeclarationIdentityBinding.Key]?.GetValue<string>() is not string identity) return;
+            declarations.TryGetValue(identity, out var selected);
+            var indices = projection.Parameters.TryGetValue(identity, out var localIndices)
+                ? localIndices : references?.GenericScalarParameters(identity) ?? System.Array.Empty<int>();
+            if (operation["sig"] is JsonArray signature)
                 foreach (var index in indices) signature[index] = TypeJson.Fqn("object");
             // The invocation retains its caller-facing value type. The selected
             // declaration supplies the erased physical return independently;
             // overwriting this hint would lose concrete arithmetic/nullable uses.
             if (projection.Returns.Contains(identity))
                 operation["ret"] ??= operation["sty"]?.DeepClone() ?? operation["dynRet"]?.DeepClone()
-                    ?? selected["ret"]?.DeepClone();
+                    ?? selected?["ret"]?.DeepClone();
         }
         foreach (var root in files) Calls(root);
         return projection;

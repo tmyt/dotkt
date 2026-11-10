@@ -1060,10 +1060,11 @@ using nglib;
 // Array<Int?> to be `object[]` — `Nullable<int>[]` is not array-compatible with it.
 class Program {
     static int Main() {
-        int viaNull = (int)ApiKt.firstOr<int>(null, 7);
-        int viaValue = (int)ApiKt.firstOr<int>(3, 7);
-        object absent = ApiKt.pick<int>(5, false);
-        object present = ApiKt.pick<int>(5, true);
+        // Source and storage witnesses remain explicit even though value transport is opaque.
+        int viaNull = (int)ApiKt.firstOr<int, int>(null, 7);
+        int viaValue = (int)ApiKt.firstOr<int, int>(3, 7);
+        object absent = ApiKt.pick<int, int>(5, false);
+        object present = ApiKt.pick<int, int>(5, true);
         int boxNull = (int)new NBox<int>(null).orElse(9);
         int boxValue = (int)new NBox<int>(4).orElse(9);
         var lists = new NgLists();
