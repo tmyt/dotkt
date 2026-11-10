@@ -581,7 +581,7 @@ static partial class UnsafeAccessorLowering
             target = SelectMethod(candidates, signature, ownerType.Args);
             if (target == null || Str(target["vis"]) is not ("private" or "protected")) return;
         }
-        else if (frontendVisibility is not ("private" or "protected"))
+        else if (frontendVisibility is not ("private" or "protected" or "internal"))
             return;
 
         var returnTypeNode = TypeJson.Read(target?["ret"]) ?? TypeJson.Read(memberReturnType);
@@ -901,7 +901,7 @@ static partial class UnsafeAccessorLowering
             target = SelectMethod(candidates, signature, ownerType.Args);
             if (target == null) return;
         }
-        else if (frontendVisibility is not ("private" or "protected"))
+        else if (frontendVisibility is not ("private" or "protected" or "internal"))
             return;
 
         var physicalOwnerTypeParams = PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs);
@@ -960,7 +960,7 @@ static partial class UnsafeAccessorLowering
             target = targetHost.LookupFields.SingleOrDefault(field => Str(field["name"]) == targetName);
             if (target == null || Str(target["vis"]) is not ("private" or "protected")) return;
         }
-        else if (frontendVisibility is not ("private" or "protected"))
+        else if (frontendVisibility is not ("private" or "protected" or "internal"))
             return;
 
         var targetStatic = kind is "staticField" or "staticFieldSet"

@@ -119,7 +119,7 @@ internal fun BirEmitter.expr(node: IrExpression): String {
 
 /**
  * A default/inline body can cross an assembly before bir2cir selects its physical CLR owner. Preserve the frontend
- * fact that a function access targets a private/protected declaration; the consuming bir2cir can then author a
+ * fact that a function access targets a private/protected/internal declaration; the consuming bir2cir can then author a
  * caller-side UnsafeAccessor without rediscovering Kotlin lexical privilege from a CLR reference.
  */
 private fun BirEmitter.memberVisibilityStamped(
@@ -147,7 +147,7 @@ internal fun BirEmitter.memberVisibilityStamped(
 		if (field || owner?.let(::isExternalNetType) == true) declaration else it
 	} ?: target
 	val visibility = visOf(member)
-	val restricted = visibility == "private" || visibility == "protected"
+	val restricted = visibility == "private" || visibility == "protected" || visibility == "internal"
 	if (!restricted && !preserveDeclaration) return s
 	// Projected CLR fields are Kotlin property accesses, not IrGetField/IrSetField.
 	// Their emitted storage edge needs the same declaration facts as a native field,
@@ -233,7 +233,7 @@ internal fun <T> BirEmitter.inMemberDeclarationFrame(
 }
 
 /**
- * Declaration-form generic facts for a private/protected member's semantic owner. These stay in Kotlin vocabulary;
+ * Declaration-form generic facts for a restricted member's semantic owner. These stay in Kotlin vocabulary;
  * bir2cir decides whether the lexical edge needs a CLR UnsafeAccessor and, if so, maps this frame to method slots.
  */
 private fun BirEmitter.memberOwnerTypeParamsJson(
@@ -250,7 +250,7 @@ internal fun BirEmitter.memberFieldVisibilityStamped(
 	s: String,
 ): String {
 	val visibility = visOf(field)
-	if (visibility != "private" && visibility != "protected") return s
+	if (visibility != "private" && visibility != "protected" && visibility != "internal") return s
 	if (!(s.startsWith("{\"k\":\"field\"") || s.startsWith("{\"k\":\"lateinitGet\"") ||
 			s.startsWith("{\"k\":\"staticField\"") || s.startsWith("{\"k\":\"setField\"") ||
 			s.startsWith("{\"k\":\"setFieldExpr\"") || s.startsWith("{\"k\":\"staticFieldSet\""))) return s
