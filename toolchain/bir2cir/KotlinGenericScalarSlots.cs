@@ -37,9 +37,6 @@ static class KotlinGenericScalarSlots
             {
                 method["retKotlinType"] ??= method["nullableGenericRet"]?.DeepClone() ?? JsonValue.Create(TypeNode.ToJson(result));
                 method["ret"] = TypeJson.Fqn("object");
-                // This scalar seam is not nullable-generic erasure. Its use-site
-                // type still owns concrete extraction, not the nullable realigner.
-                method[NullableTvErasureCallRealign.NullableErasureOwnershipKnownKey] = true;
             }
             if (method[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity)
             {
@@ -112,6 +109,8 @@ static class KotlinGenericScalarSlots
             // The invocation retains its caller-facing value type. The selected
             // declaration supplies the erased physical return independently;
             // overwriting this hint would lose concrete arithmetic/nullable uses.
+            if (projection.Returns.Contains(identity))
+                operation["ret"] ??= operation["sty"]?.DeepClone() ?? operation["dynRet"]?.DeepClone();
         }
         foreach (var root in files) Calls(root);
         return projection;

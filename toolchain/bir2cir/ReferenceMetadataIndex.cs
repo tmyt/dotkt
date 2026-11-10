@@ -4418,6 +4418,9 @@ sealed partial class ReferenceMetadataIndex
                 // Object slot as a nullable erasure would overwrite the instantiated Kotlin expression type.
                 declaredRet = propertyName != null && !includeClosedPropertyReturn && IsUncheckedGenericObjectGetter(member)
                     ? default
+                    : (includeUnchangedMethodReturn || includeClosedPropertyReturn)
+                        && member.KotlinReturnType is TypeNode.Tv && IsObjectType(member.ReturnTypeNode)
+                    ? new SlotFact(member.ReturnTypeNode, false)
                     : explicitNullableFrame
                     ? FramedSlot(member.NullableGenericRet, member.ReturnTypeNode,
                         selectedPhysicalMember == null, includeUnchangedMethodReturn)

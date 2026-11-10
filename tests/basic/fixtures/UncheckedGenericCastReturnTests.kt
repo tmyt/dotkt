@@ -1,6 +1,5 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.Type
 import kotlin.clr.ClrField as KotlinClrField
 
@@ -201,22 +200,22 @@ class UncheckedGenericCastReturnTests {
     }
 
     @TestAttribute
-    fun nestedClosureReturnDoesNotEraseEnclosingMethodReturn() {
+    fun nestedClosureCastDoesNotAlterEnclosingValue() {
         assertEquals(41, throughNestedClosure(41, null, false))
         assertEquals(42, throughNestedClosure(42, 7, true))
 
         val method = Type.GetType("UncheckedGenericCastReturnTestsKt")!!
             .GetMethod("throughNestedClosure")!!
-        assertTrue(method.ReturnType.IsGenericParameter)
+        assertEquals("System.Object", method.ReturnType.FullName)
     }
 
     @TestAttribute
-    fun nestedSamReturnDoesNotEraseEnclosingMethodReturn() {
+    fun nestedSamCastDoesNotAlterEnclosingValue() {
         assertEquals(41, throughNestedSam(41, null, false))
         assertEquals(42, throughNestedSam(42, 7, true))
 
         val method = Type.GetType("UncheckedGenericCastReturnTestsKt")!!
             .GetMethod("throughNestedSam")!!
-        assertTrue(method.ReturnType.IsGenericParameter)
+        assertEquals("System.Object", method.ReturnType.FullName)
     }
 }

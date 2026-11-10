@@ -45,6 +45,7 @@ private fun <T : ArrayElementBoundNode> erasedArrayElementUses() {
     check(conditionalArrayValue(values, true) === direct && conditionalArrayValue(values, false) === direct)
     check(blockArrayValue(values) === direct)
     check(arrayScalarForward(values) == "node" && values.joinToString() == "node")
+    check(arrayScalarSam(values) == "node")
     val first = values[0]
     val alias = first
     check(first === alias)
@@ -74,6 +75,7 @@ private fun <T> erasedNullElementUses() {
     check(conditionalArrayValue(values, true) == null && conditionalArrayValue(values, false) == null)
     check(blockArrayValue(values) == null)
     check(arrayScalarForward(values) == "null" && values.joinToString() == "null")
+    check(arrayScalarSam(values) == "null")
     check(values.joinToString { it.toString() } == "null")
     check(alias.hashCode() == 0 && alias.toString() == "null")
     for (value in values) check(value == null)
@@ -88,6 +90,8 @@ private fun <T> typedArrayElementCall(value: T): Boolean = value === value
 private fun <T> arrayScalarRender(value: T): String = value.toString()
 private fun <T> arrayScalarIdentity(value: T): T = value
 private fun <T> arrayScalarForward(values: Array<T>): String = arrayScalarRender(arrayScalarIdentity(values[0]))
+private fun interface ArrayScalarRenderer<T> { fun render(value: T): String }
+private fun <T> arrayScalarSam(values: Array<T>): String = ArrayScalarRenderer<T> { it.toString() }.render(values[0])
 @Suppress("UNCHECKED_CAST")
 private fun <T> arrayTransformNull(transform: (T) -> CharSequence): String =
     (arrayOfNulls<Any>(1) as Array<T>).joinToString(transform = transform)
@@ -205,6 +209,11 @@ class GenericArrayElementTests {
         val bounds: ClosedRange<Int> = 1..5
         check(7.coerceIn(bounds) == 5)
         check("ab".indexOfAny(listOf("b")) == 1)
+        val deque = ArrayDeque<Any?>()
+        @Suppress("UNCHECKED_CAST")
+        val view = deque as ArrayDeque<String>
+        view.add(0, "x")
+        check(deque.size == 1 && deque[0] == "x")
     }
 
     @TestAttribute

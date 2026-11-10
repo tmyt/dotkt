@@ -88,7 +88,7 @@ static class ClosureSynthesis
 
     internal static void MarkPreboundFrame(JsonObject source) => source[PreboundFrameKey] = true;
 
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, Action<JsonObject> projectSamMethod = null)
     {
         if (root is not JsonObject file) return;
         var inputs = new List<JsonNode>();
@@ -100,7 +100,7 @@ static class ClosureSynthesis
             // ToList: the walk appends closure classes to `newTypes` (added below), but a closure can also live inside
             // an already-declared type's member body — walk the pre-existing types without mutating while enumerating.
             inputs.AddRange(types.Where(node => node != null).ToList());
-        SynthesizeAndAppend(file, inputs, refs);
+        SynthesizeAndAppend(file, inputs, refs, projectSamMethod: projectSamMethod);
         RejectDirectClrDelegateImplementations(file, refs);
     }
 
@@ -108,22 +108,24 @@ static class ClosureSynthesis
     // graph is inspected; already-normalized declarations in the file are not swept again. The returned list contains
     // the physical closure/SAM types actually appended to the file, for the producer's next declared capability.
     public static IReadOnlyList<JsonNode> ApplyMaterialized(
-        JsonNode root, IEnumerable<JsonNode> materializedRoots, ReferenceMetadataIndex refs)
+        JsonNode root, IEnumerable<JsonNode> materializedRoots, ReferenceMetadataIndex refs,
+        Action<JsonObject> projectSamMethod = null)
     {
         if (root is not JsonObject file) return Array.Empty<JsonNode>();
-        return SynthesizeAndAppend(file, materializedRoots, refs, recoverEnclosingDeclaration: true);
+        return SynthesizeAndAppend(file, materializedRoots, refs, recoverEnclosingDeclaration: true,
+            projectSamMethod: projectSamMethod);
     }
 
     static IReadOnlyList<JsonNode> SynthesizeAndAppend(
         JsonObject file, IEnumerable<JsonNode> inputs, ReferenceMetadataIndex refs,
-        bool recoverEnclosingDeclaration = false)
+        bool recoverEnclosingDeclaration = false, Action<JsonObject> projectSamMethod = null)
     {
         _refs = refs;
         var newTypes = new List<JsonNode>();
         foreach (var input in inputs)
             if (input != null)
                 Walk(input, newTypes,
-                    recoverEnclosingDeclaration ? EnclosingDeclaration(input, file) : input);
+                    recoverEnclosingDeclaration ? EnclosingDeclaration(input, file) : input, projectSamMethod);
 
         var appended = new List<JsonNode>();
         if (newTypes.Count > 0)
@@ -176,7 +178,7 @@ static class ClosureSynthesis
 
     // `decl` is the nearest enclosing DECLARATION (method/field/type), carried only so a capture diagnostic can
     // name it and print its source position.
-    static void Walk(JsonNode node, List<JsonNode> newTypes, JsonNode decl)
+    static void Walk(JsonNode node, List<JsonNode> newTypes, JsonNode decl, Action<JsonObject> projectSamMethod)
     {
         switch (node)
         {
@@ -199,9 +201,9 @@ static class ClosureSynthesis
                 {
                     // Capture values are expressions too: a bound receiver may call a function with a capturing
                     // lambda. Synthesize those payloads in the constructing frame before assembling this closure.
-                    if (o["captures"] is JsonNode values) Walk(values, newTypes, decl);
+                    if (o["captures"] is JsonNode values) Walk(values, newTypes, decl, projectSamMethod);
                     // Bottom-up: also synthesize nested closures inside this closure's invoke body.
-                    if (sc["body"] is JsonNode body) Walk(body, newTypes, decl);
+                    if (sc["body"] is JsonNode body) Walk(body, newTypes, decl, projectSamMethod);
                     CheckCaptureLegality(sc, decl);
                     newTypes.Add(BuildClosureClass(PrepareSyntheticTypeVariables(sc, o["typeArgs"] as JsonArray)));
                     o.Remove("synthClass");
@@ -223,24 +225,28 @@ static class ClosureSynthesis
                     // emits them.
                     if (LowerClrDelegateSam(o, scSam))
                     {
-                        Walk(o, newTypes, decl);
+                        Walk(o, newTypes, decl, projectSamMethod);
                         return;
                     }
                     if (scSam["methods"] is JsonArray sms)
-                        foreach (var m in sms) if (m is JsonObject mo && mo["body"] is JsonNode mb) Walk(mb, newTypes, decl);
+                        foreach (var m in sms) if (m is JsonObject mo && mo["body"] is JsonNode mb)
+                            Walk(mb, newTypes, decl, projectSamMethod);
                     CheckCaptureLegality(scSam, decl);
-                    newTypes.Add(PrepareSyntheticTypeVariables(scSam, o["typeArgs"] as JsonArray));
+                    var samType = PrepareSyntheticTypeVariables(scSam, o["typeArgs"] as JsonArray);
+                    foreach (var method in (samType["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+                        projectSamMethod?.Invoke(method);
+                    newTypes.Add(samType);
                     o.Remove("synthClass");
                     return;
                 }
                 // A nested declaration (a member of a walked type) becomes the diagnostic context for its own body.
                 var inner = o["name"] != null && (o["body"] != null || o["methods"] != null || o["ctors"] != null) ? o : decl;
                 foreach (var kv in o.ToList())
-                    if (kv.Value != null) Walk(kv.Value, newTypes, inner);
+                    if (kv.Value != null) Walk(kv.Value, newTypes, inner, projectSamMethod);
                 break;
             case JsonArray a:
                 foreach (var it in a)
-                    if (it != null) Walk(it, newTypes, decl);
+                    if (it != null) Walk(it, newTypes, decl, projectSamMethod);
                 break;
         }
     }
@@ -404,9 +410,17 @@ static class ClosureSynthesis
                         o["i"] = position;
                         return;
                     }
-                    foreach (var kv in o)
+                    foreach (var kv in o.ToArray())
                     {
                         if (kv.Value == null || kv.Key is "_syntheticTypeArgs" or "synthClass") continue;
+                        if (kv.Key is "kotlinType" or "retKotlinType" or "nullableGeneric" or "nullableGenericRet"
+                            && Str(kv.Value) is string encoded)
+                        {
+                            var sourceType = TypeJson.Write(TypeNode.Parse(encoded));
+                            Walk(sourceType);
+                            o[kv.Key] = TypeNode.ToJson(TypeJson.Read(sourceType));
+                            continue;
+                        }
                         // These are facts in the ACCESSED DECLARATION'S generic frame. Only the call site's own
                         // applications/typeArgs belong to the closure's lexical frame and may be rebound to captured
                         // class slots. Rebinding a callee `!!0` here changes its formal method parameter into an

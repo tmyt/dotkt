@@ -546,7 +546,7 @@ sealed class Pipeline
             // demanded call witnesses and capture lifted-frame witnesses before ClosureSynthesis/physical type
             // lowering can erase those facts; Kotlin `reified` remains a separate round-trip declaration fact.
             ReifiedNullabilityWitnessLowering.Apply(bir.Root, nullableWitnessDemand, refs);
-            ClosureSynthesis.Apply(bir.Root, refs);
+            ClosureSynthesis.Apply(bir.Root, refs, scalarSlots.ProjectMethod);
             SharedSyntheticSynthesis.Apply(bir.Root, refs, sharedCells);
             // Heap ref-cell types only become declarations in the transition above. Preserve their pristine element
             // slots in the nullable-generic use index before the declaration erasure below. Otherwise a late
@@ -804,7 +804,7 @@ sealed class Pipeline
             // ClosureSynthesis pass ran earlier, before event binding. Give the exact materialized roots to its late
             // entry contract so only these newly-created callback classes are assembled.
             var materializedEventClosureTypes = ClosureSynthesis.ApplyMaterialized(
-                hoisted, materializedEventHandles, refs);
+                hoisted, materializedEventHandles, refs, scalarSlots.ProjectMethod);
             if (DelegateTargetSlotAlignment.ApplyMaterialized(
                     materializedEventHandles, materializedEventClosureTypes, isValueFqn))
                 foreach (var materializedType in materializedEventClosureTypes)
@@ -874,7 +874,7 @@ sealed class Pipeline
             // `(P...) -> String` delegate and exposes `(P...) -> CharSequence` (#190). Assemble those late closure
             // ingredients now; all earlier source/inline/event closures were already consumed by the main passes.
             var materializedDelegateAdapterTypes = ClosureSynthesis.ApplyMaterialized(
-                substituted, materializedDelegateAdapters, refs);
+                substituted, materializedDelegateAdapters, refs, scalarSlots.ProjectMethod);
             foreach (var materializedType in materializedDelegateAdapterTypes)
                 SharedSyntheticSynthesis.DropSyntheticTypeArgs(materializedType);
             // CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (IndexOutOfBoundsException)` @ClrTypeAlias-es to a
