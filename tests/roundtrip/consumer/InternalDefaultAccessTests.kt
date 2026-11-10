@@ -2,6 +2,7 @@ package roundtriptests.internaldefaults
 
 import NUnit.Framework.TestAttribute
 import System.Reflection.BindingFlags
+import System.Runtime.CompilerServices.UnsafeAccessorAttribute
 import roundtrip.internaldefaults.*
 
 class InternalDefaultAccessTests {
@@ -35,5 +36,21 @@ class InternalDefaultAccessTests {
         check(type.GetProperty("property", flags)!!.GetGetMethod(true)!!.IsAssembly)
         val constructors = (owner.constructed() as System.Object).GetType().GetConstructors(flags)
         check(constructors.size == 1 && constructors[0].IsAssembly)
+
+        check(leftDefault(InternalLeftValue()) == 1 && rightDefault(InternalRightValue()) == 2)
+        check(intConstructorDefault() == "ints:2" && longConstructorDefault() == "longs:2")
+        check(sameModuleInheritedDefaultAccess() == 68)
+        val published = publishedConstructorDefault()
+        check(published.method() == 43 && published.reference() == 43 && published.field() == 43)
+        val publishedType = (published as System.Object).GetType()
+        check(publishedType.GetMethod("publishedDefaultTarget", flags)!!.IsPublic)
+        val attributeType = UnsafeAccessorAttribute::class as System.Type
+        for (method in (this as System.Object).GetType().GetMethods(flags or BindingFlags.Static)) {
+            for (attribute in method.GetCustomAttributes(attributeType, false)) {
+                val accessor = attribute as UnsafeAccessorAttribute
+                check(accessor.Name != "publishedDefaultTarget" && accessor.Name != "publishedField")
+                check(method.ReturnType != publishedType)
+            }
+        }
     }
 }

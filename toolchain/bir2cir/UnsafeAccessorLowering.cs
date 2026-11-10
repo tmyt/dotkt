@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // CLR lexical-access projection. Kotlin declarations keep their source visibility; when ownership lowering places a
-// frontend-valid caller in a different CLR TypeDef and direct CLR access is no longer legal, put a private extern
+// frontend-valid caller in another CLR TypeDef or assembly and direct CLR access is no longer legal, put a private extern
 // [UnsafeAccessor] method on that physical caller and route the edge through it. No target declaration is widened.
 //
 // kotc carries the accessed declaration's owner/method generic frames in BIR. Re-declare owner parameters on a
@@ -290,6 +290,7 @@ static partial class UnsafeAccessorLowering
         var referencedTarget = ResolveReferencedMethodTarget(
             target, targetDeclarationId, ownerType, targetName, methodArity, targetStatic, signature,
             TypeJson.Read(memberReturnType), methodTypeParams, propertyAccessor != null, refs);
+        if (referencedTarget?.IsPublic == true) return;
         if (referencedTarget != null)
             targetName = referencedTarget.PhysicalMember;
 
@@ -584,7 +585,16 @@ static partial class UnsafeAccessorLowering
         else if (frontendVisibility is not ("private" or "protected" or "internal"))
             return;
 
-        var returnTypeNode = TypeJson.Read(target?["ret"]) ?? TypeJson.Read(memberReturnType);
+        var targetDeclarationId = Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]);
+        var referencedTarget = ResolveReferencedMethodTarget(target, targetDeclarationId, ownerType, targetName,
+            methodArity, false, signature, TypeJson.Read(memberReturnType), methodTypeParams, false, refs);
+        if (referencedTarget?.IsPublic == true) return;
+        if (referencedTarget != null)
+        {
+            targetName = referencedTarget.PhysicalMember;
+            signature = new JsonArray(referencedTarget.Parameters.Select(TypeJson.Write).ToArray());
+        }
+        var returnTypeNode = referencedTarget?.Return ?? TypeJson.Read(target?["ret"]) ?? TypeJson.Read(memberReturnType);
         if (returnTypeNode == null)
             returnTypeNode = TypeJson.Read(access["funcType"]) is TypeNode.Fn fn
                 ? fn.Ret : new TypeNode.Fqn("kotlin.Unit", null);
@@ -595,9 +605,9 @@ static partial class UnsafeAccessorLowering
                   string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredReturnType);
         var definition = EnsureAccessor(caller, accessors, key, targetName, 1, access["ownerType"],
             PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs),
-            PhysicalMethodTypeParams(target, methodTypeParams), declaredReturnType,
+            referencedTarget?.TypeParams ?? PhysicalMethodTypeParams(target, methodTypeParams), declaredReturnType,
             signature, includeTarget: true,
-            targetDeclarationId: Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]));
+            targetDeclarationId: targetDeclarationId);
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
 
         var replacement = new JsonObject
@@ -754,7 +764,9 @@ static partial class UnsafeAccessorLowering
             var accessor = AccessorDeclaration(accessorName, returnType, declarationParams, kind, targetName);
             accessor[DeclarationIdentityBinding.Key] = accessorIdentity;
             StampNullableErasureOwnership(accessor, nullableGenericReturn, nullableErasureOwnershipKnown);
-            if (targetDeclarationId != null) accessor["unsafeTargetDeclarationId"] = targetDeclarationId;
+            // Constructors retain their selection for signature allocation, but have no target method name to bind.
+            if (targetDeclarationId != null)
+                accessor[kind == 0 ? "unsafeSignatureTargetDeclarationId" : "unsafeTargetDeclarationId"] = targetDeclarationId;
             if (methodParams != null) accessor["typeParams"] = methodParams.DeepClone();
             caller.Methods.Add(accessor);
             var direct = new AccessorDefinition(accessorName, null,
@@ -773,7 +785,8 @@ static partial class UnsafeAccessorLowering
         var holderTypeParams = RenamedTypeParams(ownerTypeParams, "__owner");
         var externMethod = AccessorDeclaration(accessorName, returnType, declarationParams, kind, targetName);
         externMethod[DeclarationIdentityBinding.Key] = accessorIdentity;
-        if (targetDeclarationId != null) externMethod["unsafeTargetDeclarationId"] = targetDeclarationId;
+        if (targetDeclarationId != null)
+            externMethod[kind == 0 ? "unsafeSignatureTargetDeclarationId" : "unsafeTargetDeclarationId"] = targetDeclarationId;
         if (methodParams != null) externMethod["typeParams"] = methodParams.DeepClone();
         var entryName = accessorName + "$invoke";
         var wrapper = WrapperDeclaration(entryName, accessorName, holderName, holderTypeParams.Count,
@@ -884,6 +897,7 @@ static partial class UnsafeAccessorLowering
         var frontendVisibility = Str(access["memberVisibility"]);
         var ownerTypeParams = access["memberOwnerTypeParams"] as JsonArray;
         var memberSignature = access["memberSignature"] as JsonArray;
+        var targetDeclarationId = Str(access["constructorDeclarationId"]);
         access.Remove("memberVisibility");
         access.Remove("memberOwnerTypeParams");
         access.Remove("memberMethodTypeParams");
@@ -898,16 +912,28 @@ static partial class UnsafeAccessorLowering
                 .Where(ctor => Str(ctor["vis"]) is "private" or "protected"
                     && (ctor["params"] is JsonArray parameters ? parameters.Count : 0) == signature.Count)
                 .ToArray();
-            target = SelectMethod(candidates, signature, ownerType.Args);
+            target = targetDeclarationId != null
+                ? candidates.SingleOrDefault(ctor => Str(ctor[DeclarationIdentityBinding.Key]) == targetDeclarationId)
+                : SelectMethod(candidates, signature, ownerType.Args);
             if (target == null) return;
         }
         else if (frontendVisibility is not ("private" or "protected" or "internal"))
             return;
 
+        targetDeclarationId = Str(target?[DeclarationIdentityBinding.Key]) ?? targetDeclarationId;
+        if (target == null && targetDeclarationId != null)
+        {
+            var referenced = refs.UnsafeAccessorConstructor(ownerType, targetDeclarationId);
+            if (referenced.IsPublic) return;
+            signature = new JsonArray(referenced.GetParameters()
+                .Select(ReferenceMetadataIndex.DeclarationSignatureSlot).Select(TypeJson.Write).ToArray());
+        }
         var physicalOwnerTypeParams = PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs);
-        var key = $"{caller.Name}|ctor|{ownerType.Name}|" + string.Join(";", signature.Select(TypeKey));
+        var key = $"{caller.Name}|ctor|{ownerType.Name}|" + string.Join(";", signature.Select(TypeKey))
+            + "|declaration:" + targetDeclarationId;
         var definition = EnsureAccessor(caller, accessors, key, null, 0, access["type"], physicalOwnerTypeParams,
-            null, OpenOwner(access["type"], physicalOwnerTypeParams?.Count ?? 0), signature, includeTarget: false);
+            null, OpenOwner(access["type"], physicalOwnerTypeParams?.Count ?? 0), signature, includeTarget: false,
+            targetDeclarationId: targetDeclarationId);
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
         var replacement = new JsonObject
         {
@@ -966,9 +992,10 @@ static partial class UnsafeAccessorLowering
         var targetStatic = kind is "staticField" or "staticFieldSet"
             || (target != null && Bool(target["static"]));
         MemberRefNode selectedField = null;
+        var selectedFieldIsPublic = false;
         if (target == null && refs != null
             && ClrMemberResolution.ResolveFieldForUnsafeAccessor(refs, ownerType, targetName, targetStatic,
-                out var referencedOwnerParameters) is MemberRefNode referencedField)
+                out var referencedOwnerParameters, out selectedFieldIsPublic) is MemberRefNode referencedField)
         {
             selectedField = referencedField;
             ownerType = referencedField.DeclaringType as TypeNode.Fqn
@@ -985,7 +1012,7 @@ static partial class UnsafeAccessorLowering
         var fieldTypeNode = target?["type"]?.DeepClone() ?? frontendFieldType
             ?? access["ret"]?.DeepClone() ?? access["sty"]?.DeepClone();
         if (TypeJson.Read(fieldTypeNode) is not TypeNode fieldType) return;
-        if (family.Allows(caller, access["recv"], ownerType, Str(target?["vis"]) ?? frontendVisibility,
+        if (selectedFieldIsPublic || family.Allows(caller, access["recv"], ownerType, Str(target?["vis"]) ?? frontendVisibility,
                 targetStatic, scope, new[] { fieldType }))
         {
             if (selectedField != null)
