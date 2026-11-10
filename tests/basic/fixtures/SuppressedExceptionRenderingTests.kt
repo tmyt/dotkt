@@ -3,6 +3,8 @@ import NUnit.Framework.TestAttribute
 import kotlin.printStackTrace as printDetailedStackTrace
 
 private class RenderEqualException(private val label: String) : RuntimeException(label) {
+    var logicalCause: Throwable? = null
+    override val cause: Throwable? get() = logicalCause
     override fun equals(other: Any?): Boolean = other is RenderEqualException
     override fun hashCode(): Int = error("Rendering must not call user hashCode")
     override fun toString(): String = label
@@ -16,6 +18,11 @@ private class RenderOpaqueException(cause: Throwable) : RuntimeException("opaque
     override fun toString(): String = "opaque-description"
 }
 
+private class RenderCountingException : RuntimeException("counted-leaf") {
+    var calls: Int = 0
+    override fun toString(): String { calls++; return "counted-leaf-description" }
+}
+
 // Console.Error is process-wide; do not race other fixtures while capturing it.
 @NonParallelizableAttribute
 class SuppressedExceptionRenderingTests {
@@ -25,16 +32,25 @@ class SuppressedExceptionRenderingTests {
             catch (failure: Throwable) { failure }
         val nativeException = plain as System.Exception
         val native = nativeException.ToString()
-        check(plain.stackTraceToString() == native)
+        val initial = plain.stackTraceToString()
+        check(initial.contains("native-primary") && initial.contains("native-cause"))
+        check(initial.contains(nativeException.StackTrace!!))
+        check(initial.contains("Caused by"))
         plain.addSuppressed(IllegalArgumentException("suppressed-first-marker"))
         plain.addSuppressed(RuntimeException("suppressed-second-marker"))
         val text = plain.stackTraceToString()
-        check(text.startsWith(native))
         check(text.contains("native-primary") && text.contains("native-cause")) { "Native: $native\nRendered: $text" }
         val first = text.indexOf("suppressed-first-marker")
         val second = text.indexOf("suppressed-second-marker")
         check(first >= 0 && second > first)
         check(nativeException.ToString() == native)
+
+        val custom = try { throw RenderOpaqueException(RuntimeException("custom-cause-marker")) }
+            catch (failure: Throwable) { failure }
+        val customText = custom.stackTraceToString()
+        check(customText.startsWith("opaque-description"))
+        check(customText.contains((custom as System.Exception).StackTrace!!))
+        check(customText.contains("custom-cause-marker"))
     }
 
     @TestAttribute
@@ -76,6 +92,14 @@ class SuppressedExceptionRenderingTests {
         holder.addSuppressed(opaque)
         holder.addSuppressed(shared)
         check(holder.stackTraceToString().contains("required-suppressed-marker"))
+
+        val cycle = RenderEqualException("logical-cycle-root")
+        val child = RenderEqualException("logical-cycle-child")
+        cycle.logicalCause = child
+        child.logicalCause = cycle
+        val causeText = cycle.stackTraceToString()
+        check(causeText.contains("logical-cycle-child") && causeText.contains("[circular/shared reference]"))
+        check(causeText.length < 1_000)
     }
 
     @TestAttribute
@@ -93,6 +117,14 @@ class SuppressedExceptionRenderingTests {
         val text = root.stackTraceToString()
         check(text.contains("depth-${depth - 1}"))
         check(text.length < depth * 200)
+
+        val leaf = RenderCountingException()
+        var causeChain: Throwable = leaf
+        for (index in 0 until depth) causeChain = RuntimeException("cause-depth-$index", causeChain)
+        val causeText = causeChain.stackTraceToString()
+        check(causeText.contains("counted-leaf-description") && causeText.contains("cause-depth-${depth - 1}"))
+        check(leaf.calls == 1)
+        check(causeText.length < (depth + 1) * 200)
     }
 
     @TestAttribute
@@ -130,6 +162,15 @@ class SuppressedExceptionRenderingTests {
             check(memberText.contains("added-to-child-during-render-marker"))
             primary.printDetailedStackTrace()
             check(writer.ToString() == memberText + memberText)
+            writer.GetStringBuilder().Clear()
+            val custom = try { throw RenderOpaqueException(RuntimeException("printed-custom-cause-marker")) }
+                catch (failure: Throwable) { failure }
+            custom.printStackTrace()
+            val customText = writer.ToString()
+            check(customText.contains("opaque-description") && customText.contains("printed-custom-cause-marker"))
+            check(customText.contains((custom as System.Exception).StackTrace!!))
+            custom.printDetailedStackTrace()
+            check(writer.ToString() == customText + customText)
         } finally {
             System.Console.SetError(previous)
             writer.Dispose()
