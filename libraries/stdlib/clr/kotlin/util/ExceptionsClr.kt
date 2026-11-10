@@ -41,14 +41,16 @@ private class ExceptionTraceTask(val exception: Throwable, val caption: String, 
 // virtual slot (not a matching name or a Kotlin/exception classifier).
 private val nativeExceptionFormatter = (Throwable::class as System.Type)
     .GetMethod("ToString", 0, System.Type.EmptyTypes)!!
+private val nativeExceptionFormatterType = (System.Func1::class as System.Type)
+    .MakeGenericType(arrayOf(String::class as System.Type))
 
 private fun Throwable.exceptionDescription(): String {
     val native = this as System.Exception
     // Binding a closed delegate resolves the actual virtual target, including a
     // MethodImpl whose body has a different name. Hidden/new-slot methods do not
     // replace the selected Exception.ToString slot.
-    val formatter = nativeExceptionFormatter.CreateDelegate<System.Func1<String>>(native)
-    if (formatter.Method != nativeExceptionFormatter) return formatter()
+    val formatter = nativeExceptionFormatter.CreateDelegate(nativeExceptionFormatterType, native)
+    if (formatter.Method != nativeExceptionFormatter) return native.ToString()
     val runtimeType = native.GetType()
     val name = runtimeType.FullName ?: runtimeType.Name
     val message = native.Message
