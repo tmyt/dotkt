@@ -132,16 +132,18 @@ static class DeclarationSignatureIdentity
                 && sourceMethods.TryGetValue(id[..^5], out var source) && Authored(source);
         }
         var result = new Dictionary<string, JsonArray>(StringComparer.Ordinal);
+        static string PhysicalParameters(JsonArray parameters) => string.Join(";", parameters
+            .Select(parameter => DeclarationIdentityBinding.PhysicalTypeSignature(TypeJson.Read(parameter))));
         foreach (var group in methods.GroupBy(item =>
                      (item.Owner, item.Name, Signature: DeclarationIdentityBinding.PhysicalSignature(item.Method))))
         {
             var candidates = group.ToArray();
             if (candidates.Length < 2 || candidates.Any(item => !Eligible(item.Method))) continue;
             var projected = candidates.Select(item => (item.Method, Parameters: Project(item.Method))).ToArray();
-            if (projected.Select(item => item.Parameters.ToJsonString()).Distinct(StringComparer.Ordinal).Count()
+            if (projected.Select(item => PhysicalParameters(item.Parameters)).Distinct(StringComparer.Ordinal).Count()
                 != candidates.Length)
                 projected = candidates.Select(item => (item.Method, Parameters: Project(item.Method, nominal: true))).ToArray();
-            if (projected.Select(item => item.Parameters.ToJsonString()).Distinct(StringComparer.Ordinal).Count()
+            if (projected.Select(item => PhysicalParameters(item.Parameters)).Distinct(StringComparer.Ordinal).Count()
                 != candidates.Length) continue;
             foreach (var (method, parameters) in projected)
                 result.Add(Text(method[DeclarationIdentityBinding.Key]), parameters);
@@ -508,10 +510,10 @@ static class DeclarationSignatureIdentity
         RemoveCapturedFacts(sourceCarrier);
         if (sourceCarrier["methods"].AsArray().Any(method => method["params"][0][NominalKey] != null))
             throw new InvalidOperationException("Physical signature capture leaked into a source carrier");
-        foreach (var method in aliases["methods"].AsArray())
-            method["params"][0]["type"] = TypeJson.Fqn("System.Object");
+        aliases["methods"][0]["params"][0]["type"] = TypeJson.Fqn("object");
+        aliases["methods"][1]["params"][0]["type"] = TypeJson.Fqn("System.Object");
         var aliasPlan = Plan(new[] { aliases });
-        if (aliasPlan.Count != 2)
+        if (aliasPlan.Count != 2 || aliasPlan.Values.Any(parameters => TypeJson.Read(parameters[0]) is not TypeNode.Mod))
             throw new InvalidOperationException("Nominal aliases lost their independent signature identities");
         aliases["methods"].AsArray().Add(new JsonObject {
             ["name"] = "access", ["unsafeTargetDeclarationId"] = "first",
@@ -519,10 +521,11 @@ static class DeclarationSignatureIdentity
                 new JsonObject { ["type"] = TypeJson.Fqn("System.Object") }),
         });
         Apply(new[] { aliases }, aliasPlan);
-        if (aliases["methods"].AsArray().Take(2).Any(method => SignatureValueTypes.Of(
-                TypeJson.Read(method["params"][0]["type"])) is not TypeNode.Fqn { Name: "System.Object" }))
+        if (aliases["methods"].AsArray().Take(2).Select((method, index) => SignatureValueTypes.Of(
+                TypeJson.Read(method["params"][0]["type"])) != new TypeNode.Fqn(index == 0 ? "object" : "System.Object")).Any(changed => changed))
             throw new InvalidOperationException("Nominal signature identity changed a CLR value slot");
-        if (!JsonNode.DeepEquals(aliases["methods"][0]["params"][0]["type"], aliases["methods"][2]["params"][1]["type"]))
+        if (DeclarationIdentityBinding.PhysicalTypeSignature(TypeJson.Read(aliases["methods"][0]["params"][0]["type"]))
+            != DeclarationIdentityBinding.PhysicalTypeSignature(TypeJson.Read(aliases["methods"][2]["params"][1]["type"])))
             throw new InvalidOperationException("UnsafeAccessor lost its selected target's signature identity");
         var slots = sourceCarrier["methods"].DeepClone().AsArray();
         foreach (var method in slots.OfType<JsonObject>()) { method["virtual"] = true; method["abstract"] = true; }

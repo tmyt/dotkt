@@ -2,11 +2,16 @@ import GenericArrayBoundaries.Api
 import GenericArrayBoundaries.Cell
 import GenericArrayBoundaries.Transform
 import GenericArrayBoundaries.JaggedTransform
+import GenericArrayBoundaries.ScalarValue
 import NUnit.Framework.TestAttribute
 import kotlin.clr.byref
 
 private class GenericArrayEcho : Transform {
     override fun <T> Apply(values: Array<T>): Array<T> = values
+}
+
+private class GenericNativeScalar<T>(private val original: T) : ScalarValue<T> {
+    override val Value: T get() = original
 }
 
 private class GenericJaggedArrayEcho : JaggedTransform {
@@ -52,5 +57,7 @@ class GenericArrayBoundaryTests {
         checkNativeArrayBoundaries(arrayOf(1), arrayOf(2), 3)
         checkNativeJaggedArrays(arrayOf(arrayOf("first")), arrayOf(arrayOf("replacement")))
         checkNativeJaggedArrays(arrayOf(arrayOf(1)), arrayOf(arrayOf(2)))
+        val scalar = GenericNativeScalar(42)
+        check(Api.ReadScalar(scalar) == 42 && Api.ScalarSignatureMatches(scalar))
     }
 }

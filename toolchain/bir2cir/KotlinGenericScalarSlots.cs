@@ -62,7 +62,8 @@ static class KotlinGenericScalarSlots
                 foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                     Method(method);
                 foreach (var property in (owner["properties"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                    if (TypeJson.Read(property["type"]) is TypeNode.Tv variable)
+                    if (!policy.HasNativeMethodSignature(property)
+                        && TypeJson.Read(property["type"]) is TypeNode.Tv variable)
                     {
                         property["kotlinType"] ??= TypeNode.ToJson(variable);
                         property["type"] = TypeJson.Fqn("object");
