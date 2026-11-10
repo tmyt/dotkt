@@ -26,10 +26,11 @@ class NativeMutableSnapshotTests {
         var iteratorCalls = 0
         check(erasedSnapshotNext { iteratorCalls++; cursor } == "value" && iteratorCalls == 1)
         check(!cursor.hasNext())
+        var exhausted = false
         try {
             erasedSnapshotNext { iteratorCalls++; cursor }
-            error("exhausted snapshot returned a value")
-        } catch (expected: NoSuchElementException) { check(iteratorCalls == 2) }
+        } catch (expected: NoSuchElementException) { exhausted = true }
+        check(exhausted && iteratorCalls == 2)
         cursor.remove()
         check(native.Count == 0)
         illegalRemove = false
@@ -42,6 +43,9 @@ class NativeMutableSnapshotTests {
             val integer: Int = typed.next()
             error("typed Int extraction accepted a String: $integer")
         } catch (expected: ClassCastException) { }
+        check(!typed.hasNext())
+        typed.remove()
+        check(native.Count == 0)
 
         val ints = System.Collections.Generic.LinkedList<Int>()
         ints.AddLast(7)
