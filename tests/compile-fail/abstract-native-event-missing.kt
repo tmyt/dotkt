@@ -1,0 +1,4 @@
+import System.ComponentModel.INotifyPropertyChanged
+
+abstract class DeferredNativeAccessors : INotifyPropertyChanged
+class MissingDeferredNativeAccessors : DeferredNativeAccessors()

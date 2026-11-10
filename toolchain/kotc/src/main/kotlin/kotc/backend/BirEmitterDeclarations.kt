@@ -1372,9 +1372,10 @@ internal fun BirEmitter.checkUnimplementedClrEvents(klass: IrClass) {
 	val hasNetBaseClass = klass.superTypes.any { st ->
 		(st.classifierOrNull?.owner as? IrClass)?.let { it.kind == ClassKind.CLASS && isExternalNetType(it) } == true
 	}
-	if (hasNetBaseClass) return
+	// Abstract Kotlin containers may defer a native interface event to their concrete implementations.
+	if (hasNetBaseClass || klass.modality == Modality.ABSTRACT || klass.modality == Modality.SEALED) return
 	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
-		if (!isClrEventProperty(p) || !p.isFakeOverride) continue
+		if (!isClrEventProperty(p) || !p.isFakeOverride || p.getter?.modality == Modality.ABSTRACT) continue
 		// Provided by a base CLASS that DECLARES it (a Kotlin base that synthesized the event) -> inherited, OK.
 		val declaringKind = (p.getter?.resolveFakeOverride()?.parent as? IrClass)?.kind
 		if (declaringKind == ClassKind.CLASS || declaringKind == ClassKind.ENUM_CLASS) continue

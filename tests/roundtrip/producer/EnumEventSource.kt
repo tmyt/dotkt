@@ -18,6 +18,33 @@ enum class SignalMode : INotifyPropertyChanged {
 
 enum class ForwardedMode : INotifyPropertyChanged by SignalMode.A { ONLY }
 
+enum class EntryImplementedMode : INotifyPropertyChanged {
+    A {
+        override val PropertyChanged: ClrEvent<PropertyChangedEventHandler> by clrEvent()
+        override fun fire() { PropertyChanged(this, PropertyChangedEventArgs(name)) }
+    },
+    B {
+        override val PropertyChanged: ClrEvent<PropertyChangedEventHandler> by clrEvent()
+        override fun fire() { PropertyChanged(this, PropertyChangedEventArgs(name)) }
+    };
+    abstract fun fire()
+}
+
+interface EntryEventHandle { val PropertyChanged: ClrEvent<PropertyChangedEventHandler> }
+enum class EntryHandleMode : INotifyPropertyChanged, EntryEventHandle {
+    A {
+        override val PropertyChanged: ClrEvent<PropertyChangedEventHandler> by clrEvent()
+        override fun fire() { PropertyChanged(this, PropertyChangedEventArgs(name)) }
+    },
+    B {
+        override val PropertyChanged: ClrEvent<PropertyChangedEventHandler> by clrEvent()
+        override fun fire() { PropertyChanged(this, PropertyChangedEventArgs(name)) }
+    };
+    open fun fire() { error("entry implementation must be selected") }
+}
+
+abstract class DeferredNativeEvents : INotifyPropertyChanged
+
 class RecordingPolicy : ClrEventPolicy<System.Action>() {
     private val handlers = ArrayList<System.Action>()
     var adds = 0
