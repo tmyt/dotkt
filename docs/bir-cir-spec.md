@@ -8,12 +8,31 @@
 
 ## 0. Envelope & versioning
 
+### BIR scalar values
+
 BIR constants are constructed as typed semantic values before their JSON boundary.
 Float/Double payloads use `{encoding:"f32",bits:Int32}` and
 `{encoding:"f64",bits:Int64}` respectively; bits are signed IEEE bit patterns,
 including signed zero, infinity and NaN payloads. The same value model receives
 referenced CLR constants. bir2cir owns conversion into the physical CIR scalar;
 ilemit does not parse source floating-point strings or choose the source width.
+
+### CIR files
+
+`bir2cir --cir-format=json` (the default) emits `.cir.json` for inspection.
+`--cir-format=msgpack` emits `.cir.msgpack`, read directly by `ilemit` into the
+same typed declarations and executable records. Its framing is the exact ASCII
+bytes `DOTKT\0CIR\0MSGPACK\0`, followed by one MessagePack value with the schema's
+logical string keys and discriminators. The frame identifies artifact kind and
+codec, not an internal ABI compatibility version. Trailing payloads are invalid.
+The file suffix selects the reader; binary failure never retries JSON.
+SDK projects select the same format with `DotKtCirFormat` (`json` by default).
+Changing it reruns lowering and emission without recompiling unchanged Kotlin.
+
+Optional fields preserve absent, explicit null (only where allowed), and value.
+Opaque byte payloads use MessagePack binary, integral/floating-bit values retain
+their declared widths, and text uses the shared UTF-16-preserving string codec.
+Neither codec reconstructs semantics or changes the physical CIR contract.
 
 ### Kotlin alias declarations
 

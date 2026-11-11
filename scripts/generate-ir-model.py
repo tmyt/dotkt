@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from source_metadata_model import outputs as source_metadata_outputs
 from bir_literal_models import outputs as bir_literal_outputs
+from cir_messagepack import generate as cir_messagepack
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "docs/bir-cir.schema.json"
@@ -526,12 +527,15 @@ def declaration_models(definitions):
                     expression = f'node.AsObject().ContainsKey("{field_name}") ? {expression} : {literal}'
             else:
                 annotations.append("JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)")
+                if not allows_null(field, definitions):
+                    annotations.append("JsonConverter(typeof(NonNullOptionalFieldConverterFactory))")
                 declaration = f"OptionalField<{value_type}>"
                 if name == "CirField" and field_name == "constant":
                     expression = ('node.AsObject().ContainsKey("constant") ? '
                                   'OptionalField<AttributeArgument>.Of(AttributeProjection.Literal(node["constant"], TypeJson.Read(node["type"]))) : default')
                 else:
-                    expression = f'ReadOptional(node, "{field_name}", value => {read(field, "value")})'
+                    null_option = "" if allows_null(field, definitions) else ", allowNull: false"
+                    expression = f'ReadOptional(node, "{field_name}", value => {read(field, "value")}{null_option})'
             model += ["    [" + ", ".join(annotations) + "]", f"    public {declaration} {cs_name} {{ get; init; }}"]
             projection += [f"            {cs_name} = {expression},"]
         model += ["}", ""]
@@ -728,6 +732,7 @@ def outputs(schema):
     declaration_model, declaration_projection = declaration_models(definitions)
     executable_model, executable_projection = executable_models(definitions)
     return {
+        ROOT / "toolchain/cir-common/MessagePack.Generated.cs": cir_messagepack(definitions, model_type, non_null_field, allows_null),
         **type_parameter_models(definitions),
         **bir_literal_outputs(ROOT, definitions),
         ROOT / "toolchain/cir-common/Executable.Model.Generated.cs": executable_model,

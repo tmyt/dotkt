@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 
-def collect(root, phase):
+def collect(root, phase, *, literal=False):
     phases = ("bir", "cir") if phase == "both" else (phase,)
     if any(kind not in ("bir", "cir") for kind in phases):
         raise ValueError(f"unknown phase {phase!r}")
@@ -29,13 +29,13 @@ def collect(root, phase):
             raise ValueError(f"missing {kind} corpus from the NUnit cohort or reference stdlib")
         selected.update(test_files | stdlib_files)
     # The validators accept glob arguments. Escape literal recorded paths, including brackets in a workspace name.
-    return [glob.escape(str(file)) for file in sorted(selected)]
+    return [str(file) if literal else glob.escape(str(file)) for file in sorted(selected)]
 
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) != 2:
-            raise ValueError("usage: corpus.py <bir|cir|both>")
-        print("\n".join(collect(Path(__file__).resolve().parents[2], sys.argv[1])))
+        if len(sys.argv) not in (2, 3) or len(sys.argv) == 3 and sys.argv[2] != "--literal":
+            raise ValueError("usage: corpus.py <bir|cir|both> [--literal]")
+        print("\n".join(collect(Path(__file__).resolve().parents[2], sys.argv[1], literal=len(sys.argv) == 3)))
     except (OSError, ValueError) as error:
         sys.exit(f"IR corpus: {error}; run make verify-nunit first, or pass explicit corpus paths to the runner")

@@ -2,6 +2,12 @@ using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using DotKt.Bir;
 
+if (args[0] == "--cir-corpus")
+{
+    CirCorpusTests.Run(args[1]);
+    return;
+}
+
 var report = XDocument.Load(args[0]);
 const string prefix = "IR_TYPE_SAMPLE ";
 var count = 0;
@@ -21,3 +27,4 @@ Console.WriteLine($"Kotlin -> C# streaming type codec: {count} actual samples pa
 BirLiteralTests.Run(report);
 SourceMetadataTests.Run(args[1]);
 TypeParameterTests.Run(args[2]);
+if (args.Length > 3) CirCorpusTests.Run(args[3]);

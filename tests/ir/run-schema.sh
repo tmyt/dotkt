@@ -39,9 +39,14 @@ PY="${PYTHON:-python3}"
 
 if [ $# -gt 0 ]; then
   globs=("$@")
+  cir_codec_args=()
 else
   if ! corpus="$("$PY" tests/ir/corpus.py both)"; then exit 2; fi
   mapfile -t globs <<< "$corpus"
+  if ! cir_corpus="$("$PY" tests/ir/corpus.py cir --literal)"; then exit 2; fi
+  cir_codec_manifest="$ROOT/build/cir-messagepack-corpus.list"
+  printf '%s\n' "$cir_corpus" > "$cir_codec_manifest"
+  cir_codec_args=("$cir_codec_manifest")
 fi
 
 # Accepted direct-lowering fixtures are authored BIR too. Include them in the #397 boundary lane so a fixture cannot
@@ -77,7 +82,8 @@ if ! dotnet run --project tests/ir/type-codec/Probe.csproj --no-launch-profile \
     -p:DotKtBir2CirPath="$ROOT/$BIR2CIR_DLL" -p:DotKtDll2KlibDirectory="$ROOT/$DLL2KLIB_DIR" -- \
     "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeNodeTest.xml" \
     "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.SourceMetadataTest.xml" \
-    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeParameterDeclarationTest.xml"; then
+    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeParameterDeclarationTest.xml" \
+    "${cir_codec_args[@]}"; then
   echo "SCHEMA GATE: RED (cross-language type/source metadata codecs)"; exit 1
 fi
 
