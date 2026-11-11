@@ -449,8 +449,9 @@ public abstract partial record TypeNode
 }
 
 /// <summary>
-/// The carrier codec (spec §0). <c>version</c> is a <c>codec/schema-version</c> identifier;
-/// <c>"bir-json/1"</c> selects UTF8(JSON) today. A single Encode/Decode pair owns dispatch.
+/// Carrier codec entry points (spec §0). Typed binary domains supply both JSON and MessagePack
+/// callbacks through BirCarrier.MessagePack.cs; domains still migrating use the JSON-only overloads here.
+/// The declared codec selects transport explicitly, without content sniffing or fallback.
 /// </summary>
 public static partial class BirCarrier
 {
@@ -460,7 +461,7 @@ public static partial class BirCarrier
 
     public static byte[] EncodeBody<T>(string version, T body, Action<Utf8JsonWriter, T> write)
     {
-        if (version != JsonV1) throw new NotSupportedException($"unknown carrier version `{version}`");
+        if (version != JsonV1) throw new NotSupportedException($"unsupported carrier codec `{version}`");
         using var output = new MemoryStream();
         using (var writer = new Utf8JsonWriter(output, new JsonWriterOptions { MaxDepth = BirJson.MaxDepth }))
             write(writer, body);
@@ -469,7 +470,7 @@ public static partial class BirCarrier
 
     public static T DecodeBody<T>(string version, byte[] content, JsonBodyReader<T> read)
     {
-        if (version != JsonV1) throw new NotSupportedException($"unknown carrier version `{version}`");
+        if (version != JsonV1) throw new NotSupportedException($"unsupported carrier codec `{version}`");
         var reader = new Utf8JsonReader(content, new JsonReaderOptions {
             MaxDepth = BirJson.DocOptions.MaxDepth, CommentHandling = BirJson.DocOptions.CommentHandling,
             AllowTrailingCommas = BirJson.DocOptions.AllowTrailingCommas,
@@ -485,7 +486,7 @@ public static partial class BirCarrier
         return version switch
         {
             JsonV1 => Encoding.UTF8.GetBytes(body.ToJsonString(new JsonSerializerOptions { WriteIndented = false })),
-            _ => throw new NotSupportedException($"unknown carrier version `{version}`"),
+            _ => throw new NotSupportedException($"unsupported carrier codec `{version}`"),
         };
     }
 
@@ -495,7 +496,7 @@ public static partial class BirCarrier
         {
             JsonV1 => JsonNode.Parse(Encoding.UTF8.GetString(content), documentOptions: BirJson.DocOptions)
                       ?? throw new FormatException("carrier body decoded to a null JSON node"),
-            _ => throw new NotSupportedException($"unknown carrier version `{version}`"),
+            _ => throw new NotSupportedException($"unsupported carrier codec `{version}`"),
         };
     }
 }

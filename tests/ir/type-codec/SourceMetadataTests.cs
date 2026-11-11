@@ -7,6 +7,7 @@ internal static class SourceMetadataTests
 {
     public static void Run(string reportPath)
     {
+        MessagePackBoundaryTests.Run();
         var report = XDocument.Load(reportPath);
         const string prefix = "IR_SOURCE_METADATA_SAMPLE ";
         var samples = report.Descendants("system-out").SelectMany(output => output.Value.Split('\n'))
@@ -21,6 +22,7 @@ internal static class SourceMetadataTests
             SourceMetadataProjectionTests.Run(json);
             // Property order is not part of JSON, including nested union discriminators.
             Equal(expected, Write(Read(Reverse(expected).ToJsonString())));
+            Equal(expected, Write(MessagePackBoundaryTests.Read(MessagePackBoundaryTests.Encode(Reverse(expected)))));
 
             // Exercise the actual production input boundary and freezer, not a second codec copy.
             var tool = typeof(SourceTypeAlias).Assembly;
@@ -60,9 +62,10 @@ internal static class SourceMetadataTests
             {
                 var node = expected.DeepClone();
                 mutate(node);
-                try { Read(node.ToJsonString()); }
-                catch (FormatException) { return; }
-                throw new Exception("Malformed current source metadata was accepted");
+                var malformedJson = node.ToJsonString();
+                var malformedBinary = MessagePackBoundaryTests.Encode(node);
+                MessagePackBoundaryTests.Reject(() => Read(malformedJson));
+                MessagePackBoundaryTests.Reject(() => MessagePackBoundaryTests.Read(malformedBinary));
             }
             Malformed(node => node.AsObject().Remove("name"));
             Malformed(node => node["name"] = null);
@@ -70,6 +73,9 @@ internal static class SourceMetadataTests
             Malformed(node => node["underlyingType"]!["kind"] = "unknown");
             Malformed(node => node["expandedType"]!["arguments"]![3]!["type"] = node["underlyingType"]!.DeepClone());
             Malformed(node => node["underlyingType"]!["id"] = 0);
+            var duplicateBinary = MessagePackBoundaryTests.Encode(expected, duplicateName: true);
+            MessagePackBoundaryTests.Reject(() => MessagePackBoundaryTests.Read(duplicateBinary));
+            MessagePackBoundaryTests.ExcessiveDepth(expected);
             try { Read(json[..^1] + ",\"name\":\"duplicate\"}"); }
             catch (FormatException) { continue; }
             throw new Exception("Duplicate source metadata property was accepted");
@@ -84,13 +90,11 @@ internal static class SourceMetadataTests
         var deepAlias = new SourceTypeAlias("sample", [], "DeepAlias", "public", [], deep, deep, []);
         var deepBytes = BirCarrier.EncodeBody(BirCarrier.JsonV1, deepAlias, SourceMetadataJson.Write);
         var restored = BirCarrier.DecodeBody(BirCarrier.JsonV1, deepBytes, SourceMetadataJson.Read).ExpandedType;
-        var levels = 0;
-        while (restored.OuterType is { } outer) { levels++; restored = outer; }
-        if (levels != 1001) throw new Exception("Deep source metadata was truncated");
+        CheckDepth(restored);
         var deepBinary = BirCarrier.EncodeBody(BirCarrier.MessagePackV1, deepAlias,
             SourceMetadataJson.Write, SourceMetadataMessagePack.Write);
-        _ = BirCarrier.DecodeBody(BirCarrier.MessagePackV1, deepBinary,
-            SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
+        CheckDepth(BirCarrier.DecodeBody(BirCarrier.MessagePackV1, deepBinary,
+            SourceMetadataJson.Read, SourceMetadataMessagePack.Read).ExpandedType);
 
         const string binaryPrefix = "IR_SOURCE_METADATA_MSGPACK ";
         const string utf16Prefix = "IR_SOURCE_METADATA_UTF16_MSGPACK ";
@@ -120,6 +124,12 @@ internal static class SourceMetadataTests
 
     static SourceTypeAlias Read(string json) => BirCarrier.DecodeBody(BirCarrier.JsonV1,
         Encoding.UTF8.GetBytes(json), SourceMetadataJson.Read);
+    static void CheckDepth(SourceType restored)
+    {
+        var levels = 0;
+        while (restored.OuterType is { } outer) { levels++; restored = outer; }
+        if (levels != 1001) throw new Exception("Deep source metadata was truncated");
+    }
     static JsonNode Write(SourceTypeAlias source) => JsonNode.Parse(
         BirCarrier.EncodeBody(BirCarrier.JsonV1, source, SourceMetadataJson.Write))!;
     static void Equal(JsonNode expected, JsonNode actual)

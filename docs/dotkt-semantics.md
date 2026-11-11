@@ -1535,7 +1535,7 @@ runtime.
 
 | Kotlin construct | carrier |
 |---|---|
-| Kotlin `typealias`, including an actual alias | Assembly-level `[KotlinTypeAlias("bir-json/1", bytes)]` retains the actualized declaration, original visibility, alias-owned parameters, underlying and expanded Kotlin types, and annotations. An alias has no CLR TypeDef or facade; `is`, `catch`, construction and calls use the expanded type's existing runtime identity. Alias-only packages survive DLL-to-KLIB projection. The stdlib frontend KLIB remains authoritative; stdlib-marked DLLs are not projected a second time. |
+| Kotlin `typealias`, including an actual alias | Assembly-level `[KotlinTypeAlias("bir-msgpack/1", bytes)]` retains the actualized declaration, original visibility, alias-owned parameters, underlying and expanded Kotlin types, and annotations. An alias has no CLR TypeDef or facade; `is`, `catch`, construction and calls use the expanded type's existing runtime identity. Alias-only packages survive DLL-to-KLIB projection. The stdlib frontend KLIB remains authoritative; stdlib-marked DLLs are not projected a second time. |
 | `infix` / `operator` | `[KotlinFunction(Infix\|Operator)]` |
 | `suspend` (a `suspend fun`) | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
 | source function overload priority | `[KotlinFunction(LowPriority=8)]` preserves `@kotlin.internal.LowPriorityInOverloadResolution`; DLL import restores the standard Kotlin function annotation, so source and imported calls use the same frontend priority rule. |

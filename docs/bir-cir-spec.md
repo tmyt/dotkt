@@ -66,9 +66,9 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   codec identifier. `bir-json/1` represents structured UTF-8 JSON; `bir-msgpack/1` represents MessagePack maps
   with the same logical keys and values. Source alias carriers currently emit MessagePack; other carriers
   still emit JSON until their typed codecs migrate. Neither identifier is a compiler-compatibility promise.
-- A single `BirCarrier.DecodeBody(version, byte[])` / `EncodeBody(version, node)`
-  (`toolchain/bir-common/TypeNode.cs`) dispatches on `version`. An UNKNOWN version is REJECTED
-  (loud `NotSupportedException`, never a silent mis-decode).
+- `BirCarrier` entry points select the declared codec. Typed binary domains supply their JSON and MessagePack
+  callbacks through `BirCarrier.MessagePack.cs`; the remaining domains use JSON-only overloads in `TypeNode.cs`
+  until they migrate. Unsupported identifiers fail with `NotSupportedException`, never silent mis-decoding.
 - MessagePack scalar strings use UTF-8 unless the logical UTF-16 value contains a lone surrogate. Such strings
   use extension type `1`, whose payload is the complete sequence of little-endian 16-bit code units. Map keys
   retain their logical names; integer signedness/width and raw floating-point bits remain schema-owned facts.
