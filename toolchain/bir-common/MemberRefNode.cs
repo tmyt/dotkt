@@ -180,6 +180,18 @@ public sealed record MemberRefNode(
 
     // --- Read / Write (the canonical serialization; required fields first, optional last) ---------------
 
+    public static MemberRefNode Read(JsonNode e)
+    {
+        var result = new MemberRefNode(
+            e["kind"]!.GetValue<string>(), e["assembly"]!.GetValue<string>(),
+            TypeNode.Read(e["declaringType"]), e["name"]!.GetValue<string>(),
+            e["genericArity"]!.GetValue<int>(), TypeNode.Read(e["returnType"]),
+            e["callingConvention"]?.GetValue<string>(),
+            e["parameterTypes"] is JsonArray ps ? ps.Select(TypeNode.Read).ToArray() : null);
+        result.Validate();
+        return result;
+    }
+
     public static MemberRefNode Read(JsonElement e)
     {
         if (e.ValueKind != JsonValueKind.Object)

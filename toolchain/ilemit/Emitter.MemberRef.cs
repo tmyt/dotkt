@@ -546,8 +546,11 @@ sealed partial class Emitter
             || !node.TryGetProperty(carrier, out var element)
             || element.ValueKind != JsonValueKind.Object) return null;
         var reference = MemberRefNode.Read(element);
-        return Sanction(AnchorOnUseSite(ResolveMemberRef(reference), reference));
+        return PrimaryFromRef(reference);
     }
+
+    MemberInfo PrimaryFromRef(MemberRefNode reference) => reference == null ? null
+        : Sanction(AnchorOnUseSite(ResolveMemberRef(reference), reference));
 
     /// <summary>
     /// The reference names a DECLARATION, which lives on the open definition; the call is on the use site's

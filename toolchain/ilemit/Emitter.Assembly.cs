@@ -6,6 +6,7 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
 using DotKt.Toolchain;
+using DotKt.Cir;
 
 // EmitAssembly passes 1-6 (DefineType/bases/signatures/bodies/.cctor/entry/bake), bridges, and Save.
 sealed partial class Emitter
@@ -782,7 +783,7 @@ sealed partial class Emitter
             // Kotlin-semantic DECISION (which modifier -> which attribute) lives in bir2cir. A runtime-build CIR carries
             // none (the pass is skipped there), so there is nothing to strip.
             if (ti.TB != null && ti.Def.TryGetProperty("attrs", out var tattrs))
-                foreach (var a in tattrs.EnumerateArray()) { var encoded = BuildAttribute(a); if (encoded != null) ti.TB.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
+                foreach (var a in tattrs.EnumerateArray()) { var encoded = BuildAttribute(AttributeJson.Read(a)); if (encoded != null) ti.TB.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
             if (ti.Def.TryGetProperty("methods", out var ms))
                 foreach (var m in ms.EnumerateArray())
                 {
@@ -799,12 +800,12 @@ sealed partial class Emitter
                         throw new InvalidOperationException(
                             $"ilemit: attributed MethodDef {ti.TB.FullName}.{SigKey(mname, m)} is absent");
                     if (hasA)
-                        foreach (var a in mattrs.EnumerateArray()) { var encoded = BuildAttribute(a); if (encoded != null) mb.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
+                        foreach (var a in mattrs.EnumerateArray()) { var encoded = BuildAttribute(AttributeJson.Read(a)); if (encoded != null) mb.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
                     // Return-position attrs ride the return parameter (position 0), defined once.
                     if (hasR)
                     {
                         var retPb = mb.DefineParameter(0, ParameterAttributes.None, null);
-                        foreach (var a in rattrs.EnumerateArray()) { var encoded = BuildAttribute(a); if (encoded != null) retPb.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
+                        foreach (var a in rattrs.EnumerateArray()) { var encoded = BuildAttribute(AttributeJson.Read(a)); if (encoded != null) retPb.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
                     }
                 }
         }
@@ -890,7 +891,7 @@ sealed partial class Emitter
             if (file.TryGetProperty("assemblyAttrs", out var assemblyAttrs))
                 foreach (var attribute in assemblyAttrs.EnumerateArray())
                 {
-                    var encoded = BuildAttribute(attribute);
+                    var encoded = BuildAttribute(AttributeJson.Read(attribute));
                     if (encoded == null) continue;
                     if (encoded.Constructor is ConstructorBuilder) localAssemblyAttrs.Add(encoded);
                     else ab.SetCustomAttribute(encoded.Constructor, encoded.Blob);

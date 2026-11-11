@@ -168,7 +168,7 @@ MEMBER_REF_CONDITIONAL_KEYS = {
 # slot). A bare string at any OTHER key = a type node that regressed to a string.
 STR_OK = {
     "lateinitDeclarationId",                    # BIR-only exact property declaration identity for initialization queries.
-    "k", "t",                                   # node-kind / type-tag (validated vs frozen sets)
+    "k", "t", "a",                             # executable/type/physical metadata discriminators
     "name",                                     # decl/local/var/field names AND fqn.name (the type identity string)
     "scope",                                    # tv.scope enum
     "op", "cmp", "clrFlagsOperation",           # operator / compiler-carried CLR [Flags] semantic role

@@ -227,6 +227,32 @@ Notes:
   - `(Int)->String` → `{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"kotlin.String"},"params":[{"t":"fqn","name":"kotlin.Int"}]}`
   - `suspend Foo<T>.()->T?` → `{"t":"fn","suspend":true,"recv":{"t":"fqn","name":"Foo","args":[{"t":"tv","scope":"type","i":0}]},"ret":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}},"params":[]}`
 
+### Physical CIR attributes and parameter constants
+
+CIR attribute applications carry `attr`, the exact constructor `argTypes`, and `args`, with optional
+`attrExternal`, `attrAssembly`, resolved constructor `memberRef`, and `namedArgs`. Each named argument
+states `kind` (`field` or `property`), `name`, physical `type`, and `value`. Applications occur on
+assemblies, file/type declarations, methods, constructors, return positions, parameters, fields,
+properties, and enum entries; delegate declarations also carry parameter and return metadata.
+bir2cir projects these declaration-owned sites explicitly, after the complete emitted declaration set
+is known. Executable bodies and embedded source payloads are not metadata traversal edges.
+
+Values use the closed `a`-discriminated `cirAttributeArgument` union in the schema, not executable
+`k` nodes: `null`, `bool`, `char`, signed/unsigned 8/16/32/64-bit integers, `f32`/`f64` integer IEEE
+`bits`, `text`, `utf16` code `units`, opaque `bytes`, `type`, recursive `array`, and `enum` physical
+constants. The explicit `unencodable` marker retains the existing annotation encoder's null/skip
+policy without passing a Kotlin expression to ilemit. A CIR parameter's optional `default` uses the
+same physical constant vocabulary; BIR defaults remain Kotlin expressions. Inline/default carrier
+contents are opaque bytes here, not recursively lowered executable children.
+
+The schema generates `DotKt.Cir.AttributeApplication`, `NamedAttributeArgument` and the sealed
+`AttributeArgument` hierarchy. `AttributeJson` reads/writes these at the JSON boundary. Until the
+enclosing declaration containers migrate, bir2cir embeds typed values in their output DOM and ilemit
+deserializes each metadata application from its document span. These temporary container adapters
+do not serialize typed values back to text between passes and must disappear with the container
+migration. Other declarations, executable nodes and binary transport are not yet migrated by this
+metadata step. No older metadata shape is supported by the CIR consumer.
+
 ## 2. Node kinds — the `{"k":…}` expression/statement/decl vocabulary
 
 `sourcePoint` is a non-executable statement marker in BIR and CIR. Its optional

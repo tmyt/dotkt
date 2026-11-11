@@ -8,7 +8,7 @@
   "$comment": "A BIR/CIR file is a compilation unit. CARRIER (§0) is OUT OF SCOPE for this document schema: inline payloads and suspend fn-types are not document roots — they ride as CLR attributes on the EMITTED assembly ([KotlinInline(string version, byte[] content)] / [KotlinSuspendFunctionType(...)], codec version 'bir-json/1'). A decoded [KotlinInline] content is the §0 payload object {v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}; its body nodes, types, and lifted method declarations use this schema's vocabulary. [KotlinSuspendFunctionType] decodes to a $defs/type (an fn with suspend:true). The attribute ctor and inline-payload envelope live in spec §0, not here.",
   "properties": {
     "typeAliases": { "type": "array", "items": { "$ref": "kotlin-typealias.schema.json" }, "description": "BIR-only actualized Kotlin alias declarations, encoded opaquely into CIR assemblyAttrs before physical lowering" },
-    "assemblyAttrs": { "type": "array", "items": { "type": "object" }, "description": "CIR assembly attribute applications, emitted literally after local constructors receive metadata tokens" },
+    "assemblyAttrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" }, "description": "CIR assembly attribute applications, emitted literally after local constructors receive metadata tokens" },
     "types":    { "type": "array", "items": { "$ref": "#/$defs/typeDecl" } },
     "topLevel": { "type": "array", "items": { "$ref": "#/$defs/decl" }, "description": "top-level funs/props (the file-class members)" },
     "properties": { "type": "array", "items": { "$ref": "#/$defs/propDecl" }, "description": "top-level accessor-routed properties, explicitly linked to their file-class accessor methods" },
@@ -370,7 +370,7 @@
         "type":     { "$ref": "#/$defs/type" },
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "bir2cir-derived flattened NullableAttribute bytes (0=oblivious,1=not-null,2=nullable) for this param's reference-nullable positions; RoundtripMetadata folds it into the param's `attrs` as a NullableAttribute entry, which ilemit stamps. Absent when the type carries no nullable-reference position." },
         "mods":     { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline/context/extensionReceiver apply to a param; `context` and `extensionReceiver` preserve Kotlin slot roles on physically ordinary positional parameters" },
-        "default":  { "$ref": "#/$defs/node", "description": "a KotlinDefault expression; absent = required" },
+        "default": { "oneOf": [{ "$ref": "#/$defs/node" }, { "$ref": "#/$defs/cirAttributeArgument" }], "description": "BIR: Kotlin constant expression. CIR: physical metadata constant. Absent = required; source expressions are consumed before CIR serialization." },
         "defaultBir": {
           "type": "object",
           "description": "BIR-only source default for cross-module use. bir2cir freezes it into the versioned byte-array metadata carrier before ordinary lowering.",
@@ -878,6 +878,71 @@
         "expr":   { "$ref": "#/$defs/node" }
       },
       "required": ["id", "phase", "kind", "expr"]
-    }
+    },
+
+    "cirAttributeApplication": {
+      "type": "object",
+      "x-dotkt-model": { "name": "AttributeApplication" },
+      "description": "Physical CIR attribute application. Argument values are metadata, not executable children. bir2cir authors the physical constants; ilemit encodes them without reconstructing Kotlin expressions.",
+      "properties": {
+        "attr": { "$ref": "#/$defs/type" },
+        "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "args": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeArgument" } },
+        "attrExternal": { "type": "boolean" },
+        "attrAssembly": { "type": "string" },
+        "memberRef": { "$ref": "#/$defs/memberRef" },
+        "namedArgs": { "type": "array", "items": { "$ref": "#/$defs/cirNamedAttributeArgument" } }
+      },
+      "required": ["attr", "argTypes", "args"],
+      "additionalProperties": false
+    },
+    "cirNamedAttributeArgument": {
+      "type": "object",
+      "x-dotkt-model": { "name": "NamedAttributeArgument" },
+      "properties": {
+        "kind": { "enum": ["field", "property"] },
+        "name": { "type": "string" },
+        "type": { "$ref": "#/$defs/type" },
+        "value": { "$ref": "#/$defs/cirAttributeArgument" }
+      },
+      "required": ["kind", "name", "type", "value"],
+      "additionalProperties": false
+    },
+    "cirAttributeArgument": {
+      "x-dotkt-model": { "name": "AttributeArgument", "discriminator": "a" },
+      "description": "Closed physical metadata-value vocabulary. Float payloads are IEEE bits, text preserves UTF-16, and bytes are opaque. The unencodable marker preserves the existing CLR annotation-skip policy; it is authored by bir2cir, not inferred by ilemit from a Kotlin body.",
+      "oneOf": [
+        { "$ref": "#/$defs/attributeNull" }, { "$ref": "#/$defs/attributeBoolean" },
+        { "$ref": "#/$defs/attributeChar" }, { "$ref": "#/$defs/attributeInt8" },
+        { "$ref": "#/$defs/attributeUInt8" }, { "$ref": "#/$defs/attributeInt16" },
+        { "$ref": "#/$defs/attributeUInt16" }, { "$ref": "#/$defs/attributeInt32" },
+        { "$ref": "#/$defs/attributeUInt32" }, { "$ref": "#/$defs/attributeInt64" },
+        { "$ref": "#/$defs/attributeUInt64" }, { "$ref": "#/$defs/attributeFloat32" },
+        { "$ref": "#/$defs/attributeFloat64" }, { "$ref": "#/$defs/attributeText" },
+        { "$ref": "#/$defs/attributeUtf16" }, { "$ref": "#/$defs/attributeBytes" },
+        { "$ref": "#/$defs/attributeType" }, { "$ref": "#/$defs/attributeArray" },
+        { "$ref": "#/$defs/attributeEnum" }, { "$ref": "#/$defs/attributeUnencodable" }
+      ]
+    },
+    "attributeNull": { "type": "object", "x-dotkt-model": { "name": "NullValue" }, "properties": { "a": { "const": "null" } }, "required": ["a"], "additionalProperties": false },
+    "attributeBoolean": { "type": "object", "x-dotkt-model": { "name": "BooleanValue" }, "properties": { "a": { "const": "bool" }, "value": { "type": "boolean" } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeChar": { "type": "object", "x-dotkt-model": { "name": "CharValue" }, "properties": { "a": { "const": "char" }, "value": { "type": "integer", "minimum": 0, "maximum": 65535, "x-dotkt-csharp-type": "ushort" } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeInt8": { "type": "object", "x-dotkt-model": { "name": "Int8Value" }, "properties": { "a": { "const": "i8" }, "value": { "type": "integer", "minimum": -128, "maximum": 127, "x-dotkt-csharp-type": "sbyte" } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeUInt8": { "type": "object", "x-dotkt-model": { "name": "UInt8Value" }, "properties": { "a": { "const": "u8" }, "value": { "type": "integer", "minimum": 0, "maximum": 255, "x-dotkt-csharp-type": "byte" } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeInt16": { "type": "object", "x-dotkt-model": { "name": "Int16Value" }, "properties": { "a": { "const": "i16" }, "value": { "type": "integer", "minimum": -32768, "maximum": 32767, "x-dotkt-csharp-type": "short" } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeUInt16": { "type": "object", "x-dotkt-model": { "name": "UInt16Value" }, "properties": { "a": { "const": "u16" }, "value": { "type": "integer", "minimum": 0, "maximum": 65535, "x-dotkt-csharp-type": "ushort" } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeInt32": { "type": "object", "x-dotkt-model": { "name": "Int32Value" }, "properties": { "a": { "const": "i32" }, "value": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeUInt32": { "type": "object", "x-dotkt-model": { "name": "UInt32Value" }, "properties": { "a": { "const": "u32" }, "value": { "type": "integer", "minimum": 0, "maximum": 4294967295, "x-dotkt-csharp-type": "uint" } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeInt64": { "type": "object", "x-dotkt-model": { "name": "Int64Value" }, "properties": { "a": { "const": "i64" }, "value": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807, "x-dotkt-csharp-type": "long" } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeUInt64": { "type": "object", "x-dotkt-model": { "name": "UInt64Value" }, "properties": { "a": { "const": "u64" }, "value": { "type": "integer", "minimum": 0, "maximum": 18446744073709551615, "x-dotkt-csharp-type": "ulong" } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeFloat32": { "type": "object", "x-dotkt-model": { "name": "Float32Value" }, "properties": { "a": { "const": "f32" }, "bits": { "type": "integer" } }, "required": ["a", "bits"], "additionalProperties": false },
+    "attributeFloat64": { "type": "object", "x-dotkt-model": { "name": "Float64Value" }, "properties": { "a": { "const": "f64" }, "bits": { "type": "integer", "x-dotkt-csharp-type": "long" } }, "required": ["a", "bits"], "additionalProperties": false },
+    "attributeText": { "type": "object", "x-dotkt-model": { "name": "TextValue" }, "properties": { "a": { "const": "text" }, "value": { "type": "string" } }, "required": ["a", "value"], "additionalProperties": false },
+    "attributeUtf16": { "type": "object", "x-dotkt-model": { "name": "Utf16Value" }, "properties": { "a": { "const": "utf16" }, "units": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 65535, "x-dotkt-csharp-type": "ushort" } } }, "required": ["a", "units"], "additionalProperties": false },
+    "attributeBytes": { "type": "object", "x-dotkt-model": { "name": "BytesValue" }, "properties": { "a": { "const": "bytes" }, "bytes": { "type": "string", "contentEncoding": "base64", "x-dotkt-csharp-type": "byte[]" } }, "required": ["a", "bytes"], "additionalProperties": false },
+    "attributeType": { "type": "object", "x-dotkt-model": { "name": "TypeValue" }, "properties": { "a": { "const": "type" }, "type": { "$ref": "#/$defs/type" } }, "required": ["a", "type"], "additionalProperties": false },
+    "attributeArray": { "type": "object", "x-dotkt-model": { "name": "ArrayValue" }, "properties": { "a": { "const": "array" }, "elems": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeArgument" } }, "elem": { "$ref": "#/$defs/type" } }, "required": ["a", "elems"], "additionalProperties": false },
+    "attributeEnum": { "type": "object", "x-dotkt-model": { "name": "EnumValue" }, "properties": { "a": { "const": "enum" }, "underlying": { "type": "string" }, "physicalValue": { "type": "string" }, "ordinal": { "type": "integer" }, "type": { "$ref": "#/$defs/type" } }, "required": ["a"], "additionalProperties": false },
+    "attributeUnencodable": { "type": "object", "x-dotkt-model": { "name": "UnencodableValue" }, "properties": { "a": { "const": "unencodable" } }, "required": ["a"], "additionalProperties": false }
   }
 }

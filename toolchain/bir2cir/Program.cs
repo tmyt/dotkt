@@ -23,6 +23,8 @@ static class Bir2Cir
             {
                 TypeNodeSelfTest.Run();
                 MemberRefNodeSelfTest.Run();
+                DotKt.Cir.AttributeSelfTest.Run(JsonOptions.Indented);
+                AttributeProjection.SelfTest();
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
@@ -1254,6 +1256,7 @@ sealed class Pipeline
             staged.Select(s => s.Root));
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
+        var pendingOutput = new List<(JsonNode Root, string OutputName)>();
         // The fully-lowered roots, kept so the implementing-position half of the crossing refusal can be asked of the
         // WHOLE compilation at once: a Kotlin interface declared in one file may be the only path from a class in
         // another to the .NET declaration whose slot it cannot fill.
@@ -1646,7 +1649,7 @@ sealed class Pipeline
             // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
             // static type in the assembly). Assembly declaration metadata also keeps a root alive; never skip in ref.
             if (!_options.RefBuild && IsEmptyCir(lowered)) continue;
-            files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
+            pendingOutput.Add((lowered, outputName));
         }
 
         // #220: both stdlib twins define the canonical wide-delegate family. This is a physical CLR declaration,
@@ -1655,14 +1658,12 @@ sealed class Pipeline
         // captured CIR instead of letting ilemit manufacture an undeclared ABI from a build-mode switch.
         if (_options.StdlibMode != BuildStdlibMode.App)
         {
-            if (files.Any(f => f.OutputName == CanonicalDelegateSynthesis.OutputName))
+            if (pendingOutput.Any(f => f.OutputName == CanonicalDelegateSynthesis.OutputName))
                 throw new InvalidOperationException(
                     $"bir2cir: reserved synthetic CIR name '{CanonicalDelegateSynthesis.OutputName}' collides with an input file");
             var delegateDefinitions = CanonicalDelegateSynthesis.SynthDefsFile();
             if (fixedMemberTable != null) delegateDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
-            files.Insert(0, new CirFile(
-                CanonicalDelegateSynthesis.OutputName,
-                delegateDefinitions.ToJsonString(JsonOptions.Indented)));
+            pendingOutput.Insert(0, (delegateDefinitions, CanonicalDelegateSynthesis.OutputName));
         }
 
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
@@ -1675,14 +1676,17 @@ sealed class Pipeline
             const string synthName = "000-dotkt-roundtrip-attrs.cir.json";
             // A real source file must never map to the reserved synthetic name — the two CirFiles would clobber on disk
             // and every Kotlin stamp would then silently vanish (its attr class absent -> BuildCab skips).
-            if (files.Any(f => f.OutputName == synthName))
+            if (pendingOutput.Any(f => f.OutputName == synthName))
                 throw new InvalidOperationException($"bir2cir: reserved synthetic CIR name '{synthName}' collides with an input file");
             var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs, runtimeOnly: _options.SubstituteStdlibBuild);
             ClrMemberResolution.ResolveAttributeCtors(attributeDefinitions, refs);
             if (fixedMemberTable != null) attributeDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
-            files.Insert(0, new CirFile(synthName, attributeDefinitions.ToJsonString(JsonOptions.Indented)));
+            pendingOutput.Insert(0, (attributeDefinitions, synthName));
         }
 
+        AttributeProjection.ApplyAll(pendingOutput.Select(file => file.Root).ToList());
+        foreach (var file in pendingOutput)
+            files.Add(new CirFile(file.OutputName, file.Root.ToJsonString(JsonOptions.Indented)));
         return files;
     }
 
@@ -1856,7 +1860,10 @@ sealed record CirFile(string OutputName, string Json);
 static class JsonOptions
 {
     // MaxDepth raised off the STJ default (64) so a deeply-nested-lambda CIR document serializes (#147).
-    public static readonly JsonSerializerOptions Indented = new() { WriteIndented = true, MaxDepth = DotKt.Bir.BirJson.MaxDepth };
+    public static readonly JsonSerializerOptions Indented = new() {
+        WriteIndented = true, MaxDepth = DotKt.Bir.BirJson.MaxDepth,
+        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
+    };
 }
 
 sealed class UsageException : Exception
