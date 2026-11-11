@@ -32,8 +32,9 @@ PY="${PYTHON:-python3}"
 "$PY" tests/ir/test-typealias-schema.py || exit 1
 "$PY" tests/ir/test-generic-receiver-schema.py || exit 1
 "$PY" tests/ir/test-valueblock-schema.py || exit 1
-./gradlew -q :kotc:test --tests kotc.bir.TypeNodeTest || exit 1
+./gradlew -q :kotc:test --tests kotc.bir.TypeNodeTest --tests kotc.bir.SourceMetadataTest || exit 1
 "$PY" tests/ir/check-type-model-coverage.py || exit 1
+"$PY" tests/ir/check-source-metadata-coverage.py || exit 1
 
 if [ $# -gt 0 ]; then
   globs=("$@")

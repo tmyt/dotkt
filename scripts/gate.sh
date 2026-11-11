@@ -107,7 +107,7 @@ classify() { # <path>
 		global.json|packaging/*)
 			NEED_FULL=1; want packagedsdk; reason "$p -> FULL + verify-packaged-sdk (release/package input)" ;;
 		# ---- docs / changelog -------------------------------------------------------------------
-		docs/bir-cir-spec.md|docs/bir-cir.schema.json|docs/architecture.md)
+		docs/bir-cir-spec.md|docs/bir-cir.schema.json|docs/kotlin-typealias.schema.json|docs/architecture.md)
 			want schema; want dll2klib; reason "$p -> schema consumers (corpus and fresh DLL-to-KLIB E2E)" ;;
 		*.md|docs/*|CHANGELOG*)
 			reason "$p -> (no gate: docs)" ;;

@@ -2,6 +2,14 @@
 
 package kotc.backend
 
+import kotc.bir.SourceAnnotation
+import kotc.bir.SourceAnnotationArgument
+import kotc.bir.SourceAnnotationValue
+import kotc.bir.SourceClassifier
+import kotc.bir.SourceType
+import kotc.bir.SourceTypeAlias
+import kotc.bir.SourceTypeArgument
+import kotc.bir.SourceTypeParameter
 import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifact
 import org.jetbrains.kotlin.fir.pipeline.Fir2IrActualizedResult
 import org.jetbrains.kotlin.fir.pipeline.Fir2KlibMetadataSerializer
@@ -17,9 +25,10 @@ import java.io.File
 
 /** Source-owned alias declarations, not executable types or CLR generic frames. The actualization-aware
  * frontend serializer is the authority for underlying/expanded types, annotations, and parameter identities.
- * Its resolved declaration objects are projected to structured JSON; no protobuf or KLIB is transported. */
+ * Its resolved declarations become typed source metadata; JSON is written only at the file boundary.
+ * No protobuf or KLIB is transported. */
 internal object TypeAliasDeclarations {
-    fun collect(frontend: MetadataFrontendPipelineArtifact, result: Fir2IrActualizedResult): Map<String, List<String>> {
+    fun collect(frontend: MetadataFrontendPipelineArtifact, result: Fir2IrActualizedResult): Map<String, List<SourceTypeAlias>> {
         fun hasAliases(declarations: List<FirDeclaration>): Boolean = declarations.any {
             it is FirTypeAlias || it is FirRegularClass && hasAliases(it.declarations)
         }
@@ -30,19 +39,19 @@ internal object TypeAliasDeclarations {
         val serializer = Fir2KlibMetadataSerializer(
             frontend.configuration, frontend.frontendOutput.outputs, result, produceHeaderKlib = false,
         )
-        val declarations = linkedMapOf<String, List<String>>()
+        val declarations = linkedMapOf<String, List<SourceTypeAlias>>()
         serializer.forEachFile { _, source, firFile, _, packageName ->
             val path = source.canonicalPath
             if (path in sources && hasAliases(firFile.declarations)) {
                 val fragment = serializer.serializeSingleFileMetadata(firFile)
                 val projection = Projection(NameResolverImpl(fragment.strings, fragment.qualifiedNames))
-                val aliases = mutableListOf<String>()
+                val aliases = mutableListOf<SourceTypeAlias>()
                 val packageTypes = TypeTable(fragment.`package`.typeTable)
                 for (alias in fragment.`package`.typeAliasList)
                     aliases += projection.declaration(packageName.asString(), emptyList<String>(), alias, packageTypes)
                 for (owner in fragment.class_List) {
                     val identity = projection.classifier(owner.fqName)
-                    val ownerPath = (identity.getValue("ownerPath") as List<*>) + identity.getValue("name")
+                    val ownerPath = identity.ownerPath + identity.name
                     val types = TypeTable(owner.typeTable)
                     for (alias in owner.typeAliasList)
                         aliases += projection.declaration(packageName.asString(), ownerPath, alias, types)
@@ -53,9 +62,9 @@ internal object TypeAliasDeclarations {
         return declarations
     }
 
-    private class Projection(private val names: NameResolverImpl) {
+    internal class Projection(private val names: NameResolverImpl) {
         private var parameterIds: Map<String, Int> = emptyMap()
-        fun classifier(index: Int): Map<String, Any> {
+        fun classifier(index: Int): SourceClassifier {
             check(!names.isLocalClassName(index)) { "local classifier in typealias declaration metadata" }
             val packages = mutableListOf<String>()
             val path = mutableListOf<String>()
@@ -71,132 +80,103 @@ internal object TypeAliasDeclarations {
                 current = entry.parentQualifiedName
             }
             path.reverse()
-            return linkedMapOf("packageName" to packages.asReversed().joinToString("."),
-                "ownerPath" to path.dropLast(1), "name" to path.last())
+            return SourceClassifier(packages.asReversed().joinToString("."), path.dropLast(1), path.last())
         }
 
-        fun declaration(packageName: String, ownerPath: List<*>, alias: ProtoBuf.TypeAlias, types: TypeTable): String {
+        fun declaration(packageName: String, ownerPath: List<String>, alias: ProtoBuf.TypeAlias, types: TypeTable): SourceTypeAlias {
             // Upstream metadata names alias-owned parameters in some underlying type slots. Resolve that explicit
             // frontend reference in this declaration's parameter table, never in a CLR owner/method frame.
             parameterIds = alias.typeParameterList.associate { names.getString(it.name) to it.id }
-            return json(
-            linkedMapOf(
-                "packageName" to packageName,
-                "ownerPath" to ownerPath,
-                "name" to names.getString(alias.name),
-                "visibility" to Flags.VISIBILITY.get(alias.flags).name.lowercase(),
-                "typeParameters" to alias.typeParameterList.map { parameter ->
-                    linkedMapOf(
-                        "id" to parameter.id,
-                        "name" to names.getString(parameter.name),
-                        "variance" to parameter.variance.name.lowercase(),
-                        "bounds" to (parameter.upperBoundList + parameter.upperBoundIdList.map { types[it] })
+            return SourceTypeAlias(
+                packageName = packageName,
+                ownerPath = ownerPath,
+                name = names.getString(alias.name),
+                visibility = Flags.VISIBILITY.get(alias.flags).name.lowercase(),
+                typeParameters = alias.typeParameterList.map { parameter ->
+                    SourceTypeParameter(
+                        id = parameter.id,
+                        name = names.getString(parameter.name),
+                        variance = parameter.variance.name.lowercase(),
+                        bounds = (parameter.upperBoundList + parameter.upperBoundIdList.map { types[it] })
                             .map { type(it, types) },
-                        "annotations" to (0 until parameter.getExtensionCount(KlibMetadataProtoBuf.typeParameterAnnotation))
+                        annotations = (0 until parameter.getExtensionCount(KlibMetadataProtoBuf.typeParameterAnnotation))
                             .map { annotation(parameter.getExtension(KlibMetadataProtoBuf.typeParameterAnnotation, it)) },
                     )
                 },
-                "underlyingType" to type(if (alias.hasUnderlyingType()) alias.underlyingType else types[alias.underlyingTypeId], types),
-                "expandedType" to type(if (alias.hasExpandedType()) alias.expandedType else types[alias.expandedTypeId], types),
-                "annotations" to alias.annotationList.map(::annotation),
-            ),
+                underlyingType = type(if (alias.hasUnderlyingType()) alias.underlyingType else types[alias.underlyingTypeId], types),
+                expandedType = type(if (alias.hasExpandedType()) alias.expandedType else types[alias.expandedTypeId], types),
+                annotations = alias.annotationList.map(::annotation),
             )
         }
 
-        private fun type(source: ProtoBuf.Type, types: TypeTable): Map<String, Any> {
-            val node = linkedMapOf<String, Any>()
-            when {
-                source.hasClassName() -> {
-                    node["kind"] = "class"
-                    node["classifier"] = classifier(source.className)
+        private fun type(source: ProtoBuf.Type, types: TypeTable): SourceType {
+            val nullable = source.nullable
+            val suspend = Flags.SUSPEND_TYPE.get(source.flags)
+            val definitelyNotNull = Flags.DEFINITELY_NOT_NULL_TYPE.get(source.flags)
+            val arguments = source.argumentList.map { argument ->
+                if (argument.projection == ProtoBuf.Type.Argument.Projection.STAR) SourceTypeArgument.StarArgument
+                else {
+                    val value = type(if (argument.hasType()) argument.type else types[argument.typeId], types)
+                    when (argument.projection) {
+                        ProtoBuf.Type.Argument.Projection.INV -> SourceTypeArgument.InvArgument(value)
+                        ProtoBuf.Type.Argument.Projection.IN -> SourceTypeArgument.InArgument(value)
+                        ProtoBuf.Type.Argument.Projection.OUT -> SourceTypeArgument.OutArgument(value)
+                        else -> error("unrecognized Kotlin type projection")
+                    }
                 }
-                source.hasTypeAliasName() -> {
-                    node["kind"] = "alias"
-                    node["classifier"] = classifier(source.typeAliasName)
-                }
-                source.hasTypeParameter() -> {
-                    node["kind"] = "parameter"
-                    node["id"] = source.typeParameter
-                }
-                source.hasTypeParameterName() -> {
-                    node["kind"] = "parameter"
-                    node["id"] = parameterIds.getValue(names.getString(source.typeParameterName))
-                }
+            }
+            val annotations = (0 until source.getExtensionCount(KlibMetadataProtoBuf.typeAnnotation))
+                .map { annotation(source.getExtension(KlibMetadataProtoBuf.typeAnnotation, it)) }
+            val outerType = if (source.hasOuterType() || source.hasOuterTypeId())
+                type(if (source.hasOuterType()) source.outerType else types[source.outerTypeId], types) else null
+            val abbreviatedType = if (source.hasAbbreviatedType() || source.hasAbbreviatedTypeId())
+                type(if (source.hasAbbreviatedType()) source.abbreviatedType else types[source.abbreviatedTypeId], types) else null
+            val flexibleUpperBound = if (source.hasFlexibleUpperBound() || source.hasFlexibleUpperBoundId())
+                type(if (source.hasFlexibleUpperBound()) source.flexibleUpperBound else types[source.flexibleUpperBoundId], types) else null
+            val flexibleCapabilities = if (flexibleUpperBound != null)
+                names.getString(source.flexibleTypeCapabilitiesId) else null
+            return when {
+                source.hasClassName() -> SourceType.ClassType(classifier(source.className),
+                    nullable, suspend, definitelyNotNull, arguments, annotations,
+                    outerType, abbreviatedType, flexibleUpperBound, flexibleCapabilities)
+                source.hasTypeAliasName() -> SourceType.AliasType(classifier(source.typeAliasName),
+                    nullable, suspend, definitelyNotNull, arguments, annotations,
+                    outerType, abbreviatedType, flexibleUpperBound, flexibleCapabilities)
+                source.hasTypeParameter() || source.hasTypeParameterName() -> SourceType.ParameterType(
+                    if (source.hasTypeParameter()) source.typeParameter
+                    else parameterIds.getValue(names.getString(source.typeParameterName)),
+                    nullable, suspend, definitelyNotNull, arguments, annotations,
+                    outerType, abbreviatedType, flexibleUpperBound, flexibleCapabilities)
                 else -> error("typealias metadata type has no resolved classifier or parameter identity")
             }
-            node["nullable"] = source.nullable
-            node["suspend"] = Flags.SUSPEND_TYPE.get(source.flags)
-            node["definitelyNotNull"] = Flags.DEFINITELY_NOT_NULL_TYPE.get(source.flags)
-            node["arguments"] = source.argumentList.map { argument ->
-                linkedMapOf<String, Any>("variance" to argument.projection.name.lowercase()).also {
-                    if (argument.projection != ProtoBuf.Type.Argument.Projection.STAR)
-                        it["type"] = type(if (argument.hasType()) argument.type else types[argument.typeId], types)
-                }
-            }
-            node["annotations"] = (0 until source.getExtensionCount(KlibMetadataProtoBuf.typeAnnotation))
-                .map { annotation(source.getExtension(KlibMetadataProtoBuf.typeAnnotation, it)) }
-            if (source.hasOuterType() || source.hasOuterTypeId())
-                node["outerType"] = type(if (source.hasOuterType()) source.outerType else types[source.outerTypeId], types)
-            if (source.hasAbbreviatedType() || source.hasAbbreviatedTypeId())
-                node["abbreviatedType"] = type(if (source.hasAbbreviatedType()) source.abbreviatedType else types[source.abbreviatedTypeId], types)
-            if (source.hasFlexibleUpperBound() || source.hasFlexibleUpperBoundId()) {
-                node["flexibleUpperBound"] = type(if (source.hasFlexibleUpperBound()) source.flexibleUpperBound else types[source.flexibleUpperBoundId], types)
-                node["flexibleCapabilities"] = names.getString(source.flexibleTypeCapabilitiesId)
-            }
-            return node
         }
 
-        private fun annotation(source: ProtoBuf.Annotation): Map<String, Any> = linkedMapOf(
-            "classifier" to classifier(source.id),
-            "arguments" to source.argumentList.map {
-                linkedMapOf("name" to names.getString(it.nameId), "value" to value(it.value))
+        private fun annotation(source: ProtoBuf.Annotation): SourceAnnotation = SourceAnnotation(
+            classifier(source.id), source.argumentList.map {
+                SourceAnnotationArgument(names.getString(it.nameId), value(it.value))
             },
         )
 
-        private fun value(source: ProtoBuf.Annotation.Argument.Value): Map<String, Any> {
-            val node = linkedMapOf<String, Any>("kind" to source.type.name.lowercase())
-            when (source.type) {
-                ProtoBuf.Annotation.Argument.Value.Type.BYTE,
-                ProtoBuf.Annotation.Argument.Value.Type.CHAR,
-                ProtoBuf.Annotation.Argument.Value.Type.SHORT,
-                ProtoBuf.Annotation.Argument.Value.Type.INT,
-                ProtoBuf.Annotation.Argument.Value.Type.LONG,
-                ProtoBuf.Annotation.Argument.Value.Type.BOOLEAN -> node["value"] = source.intValue
-                ProtoBuf.Annotation.Argument.Value.Type.FLOAT -> node["bits"] = source.floatValue.toRawBits()
-                ProtoBuf.Annotation.Argument.Value.Type.DOUBLE -> node["bits"] = source.doubleValue.toRawBits()
-                ProtoBuf.Annotation.Argument.Value.Type.STRING -> node["value"] = names.getString(source.stringValue)
-                ProtoBuf.Annotation.Argument.Value.Type.CLASS -> {
-                    node["classifier"] = classifier(source.classId)
-                    node["arrayDimensions"] = source.arrayDimensionCount
-                }
-                ProtoBuf.Annotation.Argument.Value.Type.ENUM -> {
-                    node["classifier"] = classifier(source.classId)
-                    node["name"] = names.getString(source.enumValueId)
-                }
-                ProtoBuf.Annotation.Argument.Value.Type.ANNOTATION -> node["value"] = annotation(source.annotation)
-                ProtoBuf.Annotation.Argument.Value.Type.ARRAY -> node["value"] = source.arrayElementList.map(::value)
+        private fun value(source: ProtoBuf.Annotation.Argument.Value): SourceAnnotationValue {
+            val unsigned = Flags.IS_UNSIGNED.get(source.flags)
+            return when (source.type) {
+                ProtoBuf.Annotation.Argument.Value.Type.BYTE -> SourceAnnotationValue.ByteValue(unsigned, source.intValue)
+                ProtoBuf.Annotation.Argument.Value.Type.CHAR -> SourceAnnotationValue.CharValue(unsigned, source.intValue)
+                ProtoBuf.Annotation.Argument.Value.Type.SHORT -> SourceAnnotationValue.ShortValue(unsigned, source.intValue)
+                ProtoBuf.Annotation.Argument.Value.Type.INT -> SourceAnnotationValue.IntValue(unsigned, source.intValue)
+                ProtoBuf.Annotation.Argument.Value.Type.LONG -> SourceAnnotationValue.LongValue(unsigned, source.intValue)
+                ProtoBuf.Annotation.Argument.Value.Type.BOOLEAN -> SourceAnnotationValue.BooleanValue(unsigned, source.intValue)
+                ProtoBuf.Annotation.Argument.Value.Type.FLOAT -> SourceAnnotationValue.FloatValue(unsigned, source.floatValue.toRawBits().toLong())
+                ProtoBuf.Annotation.Argument.Value.Type.DOUBLE -> SourceAnnotationValue.DoubleValue(unsigned, source.doubleValue.toRawBits())
+                ProtoBuf.Annotation.Argument.Value.Type.STRING -> SourceAnnotationValue.StringValue(unsigned, names.getString(source.stringValue))
+                ProtoBuf.Annotation.Argument.Value.Type.CLASS -> SourceAnnotationValue.ClassValue(unsigned,
+                    classifier(source.classId), source.arrayDimensionCount)
+                ProtoBuf.Annotation.Argument.Value.Type.ENUM -> SourceAnnotationValue.EnumValue(unsigned,
+                    classifier(source.classId), names.getString(source.enumValueId))
+                ProtoBuf.Annotation.Argument.Value.Type.ANNOTATION -> SourceAnnotationValue.AnnotationValue(unsigned, annotation(source.annotation))
+                ProtoBuf.Annotation.Argument.Value.Type.ARRAY -> SourceAnnotationValue.ArrayValue(unsigned, source.arrayElementList.map(::value))
                 else -> error("unrecognized Kotlin annotation constant kind")
             }
-            node["unsigned"] = Flags.IS_UNSIGNED.get(source.flags)
-            return node
         }
-    }
-
-    private fun json(value: Any?): String = when (value) {
-        null -> "null"
-        is String -> buildString {
-            append('"')
-            for (character in value) when (character) {
-                '"' -> append("\\\"")
-                '\\' -> append("\\\\")
-                in '\u0000'..'\u001f' -> append("\\u").append(character.code.toString(16).padStart(4, '0'))
-                else -> append(character)
-            }
-            append('"')
-        }
-        is Map<*, *> -> value.entries.joinToString(",", "{", "}") { json(it.key) + ":" + json(it.value) }
-        is List<*> -> value.joinToString(",", "[", "]", transform = ::json)
-        is Number, is Boolean -> value.toString()
-        else -> error("unsupported typealias JSON value ${value.javaClass.name}")
     }
 }
