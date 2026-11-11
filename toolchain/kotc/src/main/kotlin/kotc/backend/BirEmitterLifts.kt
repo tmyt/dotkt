@@ -794,7 +794,8 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val companionOwner = ownerClass.parent as? IrClass
 				?: return unsupported(node, "this companion function reference",
 					"its companion owner is not a class")
-			val adapterReceiver = """{"k":"companionValue","ownerType":${fqnJson(typeName(companionOwner))},"companionType":${fqnJson(typeName(ownerClass))},"name":${str(ownerClass.name.asString())}}"""
+			val adapterReceiver = kotc.bir.BirCompanionValue(TypeNode.Fqn(typeName(companionOwner)),
+				TypeNode.Fqn(typeName(ownerClass)), ownerClass.name.asString()).toJson()
 			val lname = freshLiftedMethodName("fnref")
 			val freeTps = freeTypeParams(listOf(node.type))
 			val adapterTypeArgs = liftedTypeArgsJson(freeTps)

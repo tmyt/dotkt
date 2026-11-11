@@ -2,6 +2,8 @@
 
 package kotc.backend
 
+import kotc.bir.TypeNode
+import kotc.bir.BirBindingReference
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
@@ -72,15 +74,15 @@ internal class CallPlan(private val e: BirEmitter) {
 	 *  below means); `kind` is `value` or `address`; `role` is the source-level phrase a storage diagnostic uses
 	 *  instead of the minted id. Append order IS Kotlin evaluation order — the caller is responsible for calling
 	 *  this in that order, which is why [filledArgs] renders every supplied value before any filled default. */
-	fun bind(phase: String, kind: String, stable: Boolean, type: String, role: String, expr: String): String {
+	fun bind(phase: String, kind: String, stable: Boolean, type: TypeNode, role: String, expr: String): String {
 		// `dotkt$b…` NAMESPACE, minted from `scopeCounter` — the counter the emitter's other call-site synthesis uses,
 		// distinct from `localSlotCounter` (which renames ordinary locals to `dotkt$localN`) and from `inlCounter`
 		// (the `__…` frame names). The three prefixes are disjoint by construction, so no counter has to know the
 		// others exist, and `$` is not writable in a plain Kotlin identifier, so a user name cannot alias any of them.
 		// This id is the plan's own key, not a local name: bir2cir mints the local a binding lowers to (spec §2.7).
 		val id = "dotkt\$b${e.scopeCounter++}"
-		bindings.add("""{"id":${e.str(id)},"phase":${e.str(phase)},"kind":${e.str(kind)},"stable":$stable,"type":$type,"role":${e.str(role)},"expr":$expr}""")
-		return """{"k":"bindRef","id":${e.str(id)},"sty":$type}"""
+		bindings.add("""{"id":${e.str(id)},"phase":${e.str(phase)},"kind":${e.str(kind)},"stable":$stable,"type":${type.toJson()},"role":${e.str(role)},"expr":$expr}""")
+		return BirBindingReference(id, type).toJson()
 	}
 
 	/** Bind an IR value of this call and register the binding as THE rendering of that IR node, so every other reader
@@ -88,7 +90,7 @@ internal class CallPlan(private val e: BirEmitter) {
 	 *  reaches it through the ordinary `expr()` and renders the same read. Re-binding the same node is a no-op. */
 	fun bindValue(node: IrExpression, phase: String, role: String): String {
 		e.planReads[node]?.let { return it }
-		val type = e.birType(node.type).toJson()
+		val type = e.birType(node.type)
 		// `expr(node)` FIRST: it may itself install a nested plan, whose bindings belong to that inner call.
 		val rendered = e.expr(node)
 		val ref = bind(phase, "value", e.isStableValue(node), type, role, rendered)

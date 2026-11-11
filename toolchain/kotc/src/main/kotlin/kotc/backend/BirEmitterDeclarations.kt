@@ -2689,18 +2689,18 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 	}
 	if (emitKotlinDefault) {
 		valueParams.forEachIndexed { valueIdx, vp ->
-			installCarrierSubst(vp, """{"k":"defaultArgParam","idx":${valueIdx + extOffset}}""")
+			installCarrierSubst(vp, kotc.bir.BirDefaultParameter(valueIdx + extOffset).toJson())
 		}
 		ownerFn.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }?.let {
-			installCarrierSubst(it, """{"k":"defaultArgReceiver","kind":"dispatch"}""")
+			installCarrierSubst(it, kotc.bir.BirDefaultReceiver("dispatch").toJson())
 		}
 		extensionReceiverParam(ownerFn)?.let {
-			installCarrierSubst(it, """{"k":"defaultArgReceiver","kind":"extension"}""")
+			installCarrierSubst(it, kotc.bir.BirDefaultReceiver("extension").toJson())
 		}
 		val ownerClass = ownerFn.parent as? IrClass
 		if (ownerFn is IrConstructor && ownerClass?.isInner == true) {
 			for ((declaration, receiver) in innerEnclosingBindings(
-				ownerClass, """{"k":"defaultArgReceiver","kind":"enclosing"}""",
+				ownerClass, kotc.bir.BirDefaultReceiver("enclosing").toJson(),
 			)) {
 				installCarrierSubst(declaration, receiver)
 			}
@@ -2711,11 +2711,11 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 				val prior = captureSubst[recv]
 				when {
 					p === ownerClass && prior == null ->
-						installCarrierSubst(recv, """{"k":"defaultArgReceiver","kind":"dispatch"}""")
+						installCarrierSubst(recv, kotc.bir.BirDefaultReceiver("dispatch").toJson())
 					prior != null && prior.contains(kotc.bir.BirThis().toJson()) ->
 						installCarrierSubst(recv, prior.replace(
 							kotc.bir.BirThis().toJson(),
-							"""{"k":"defaultArgReceiver","kind":"dispatch"}"""))
+							kotc.bir.BirDefaultReceiver("dispatch").toJson()))
 				}
 			}
 			p = p.parent as? IrClass

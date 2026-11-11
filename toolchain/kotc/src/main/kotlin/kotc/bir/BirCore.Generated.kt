@@ -120,6 +120,133 @@ data class BirNullableValue(
     }
 }
 
+data class BirEnumValue(
+    val type: TypeNode,
+    val entry: String,
+    val ordinal: Int
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"enumValue\"")
+        output.append(",\"type\":")
+        type.writeJson(output)
+        output.append(",\"entry\":")
+        TypeNodeJson.writeString(entry, output)
+        output.append(",\"ordinal\":")
+        output.append(ordinal)
+        output.append('}')
+    }
+}
+
+data class BirEnumValues(
+    val type: TypeNode
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"enumValues\"")
+        output.append(",\"type\":")
+        type.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirCompanionValue(
+    val ownerType: TypeNode,
+    val companionType: TypeNode,
+    val name: String
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"companionValue\"")
+        output.append(",\"ownerType\":")
+        ownerType.writeJson(output)
+        output.append(",\"companionType\":")
+        companionType.writeJson(output)
+        output.append(",\"name\":")
+        TypeNodeJson.writeString(name, output)
+        output.append('}')
+    }
+}
+
+data class BirClassReference(
+    val type: TypeNode
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"classRef\"")
+        output.append(",\"type\":")
+        type.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirNullableNull(
+    val elem: TypeNode
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"nullableNull\"")
+        output.append(",\"elem\":")
+        elem.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirDefaultParameter(
+    val idx: Int
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"defaultArgParam\"")
+        output.append(",\"idx\":")
+        output.append(idx)
+        output.append('}')
+    }
+}
+
+data class BirDefaultReceiver(
+    val kind: String
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"defaultArgReceiver\"")
+        output.append(",\"kind\":")
+        TypeNodeJson.writeString(kind, output)
+        output.append('}')
+    }
+}
+
+data class BirBindingReference(
+    val id: String,
+    val sty: TypeNode
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"bindRef\"")
+        output.append(",\"id\":")
+        TypeNodeJson.writeString(id, output)
+        output.append(",\"sty\":")
+        sty.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirLocalFunctionReference(
+    val id: String,
+    val funcType: TypeNode,
+    val typeArgs: List<TypeNode>? = null
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"localFunRef\"")
+        output.append(",\"id\":")
+        TypeNodeJson.writeString(id, output)
+        output.append(",\"funcType\":")
+        funcType.writeJson(output)
+        typeArgs?.let { value ->
+            output.append(",\"typeArgs\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        output.append('}')
+    }
+}
+
 data class BirValueBlock(
     val stmts: List<BirStatement>,
     val result: BirExpression,

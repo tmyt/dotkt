@@ -382,7 +382,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// Use the same declaration-type transport as every other value/signature. In particular, a projected
 			// classifier carries dll2klib's exact external identity; rebuilding it from its Kotlin display name
 			// would lose nested/renamed owners. bir2cir alone resolves the entry's physical constant.
-			"""{"k":"enumValue","type":${birType(node.type).toJson()},"entry":${str(entry.name.asString())},"ordinal":$ord}"""
+			kotc.bir.BirEnumValue(birType(node.type), entry.name.asString(), ord).toJson()
 		}
 	}
 	// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (Projected .NET objects
@@ -395,7 +395,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrGetObjectValue -> if (node.symbol.owner.isCompanion) {
 		val companion = node.symbol.owner
 		val owner = companion.parent as IrClass
-		"""{"k":"companionValue","ownerType":${fqnJson(typeName(owner))},"companionType":${fqnJson(typeName(companion))},"name":${str(companion.name.asString())}}"""
+		kotc.bir.BirCompanionValue(TypeNode.Fqn(typeName(owner)), TypeNode.Fqn(typeName(companion)), companion.name.asString()).toJson()
 	} else
 		"""{"k":"staticField","ownerType":${fqnJson(clrExternalOwner(node.symbol.owner) ?: typeName(node.symbol.owner))},"name":"INSTANCE"}"""
 	is IrBlock -> blockExpr(node)
@@ -565,7 +565,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrTry -> tryExpr(node)
 	// `T::class` / `Foo::class` -> a System.Type token. For a generic param `T` this is `ldtoken !!0` in the
 	// generic method (CLR reified generics); `Foo::class` is a concrete `ldtoken Foo`.
-	is IrClassReference -> """{"k":"classRef","type":${birType(node.classType).toJson()}}"""
+	is IrClassReference -> kotc.bir.BirClassReference(birType(node.classType)).toJson()
 	// `x::class` (runtime class of an instance) -> `x.GetType()` (a System.Type); `.simpleName`/`.qualifiedName`
 	// on the result route to Type.Name/FullName, same as the `T::class` literal path.
 	is IrGetClass -> """{"k":"getType","e":${expr(node.argument)}}"""

@@ -26,7 +26,11 @@
         { "$ref": "#/$defs/birNew" }, { "$ref": "#/$defs/birThrowExpression" },
         { "$ref": "#/$defs/birUnaryOperation" }, { "$ref": "#/$defs/birConditional" },
         { "$ref": "#/$defs/birNullableHasValue" }, { "$ref": "#/$defs/birNullableValue" },
-        { "$ref": "#/$defs/birValueBlock" }
+        { "$ref": "#/$defs/birValueBlock" }, { "$ref": "#/$defs/birEnumValue" },
+        { "$ref": "#/$defs/birEnumValues" }, { "$ref": "#/$defs/birCompanionValue" },
+        { "$ref": "#/$defs/birClassReference" }, { "$ref": "#/$defs/birNullableNull" },
+        { "$ref": "#/$defs/birDefaultParameter" }, { "$ref": "#/$defs/birDefaultReceiver" },
+        { "$ref": "#/$defs/birBindingReference" }, { "$ref": "#/$defs/birLocalFunctionReference" }
       ]
     },
     "birStatementNode": {
@@ -87,6 +91,51 @@
       "type": "object", "x-dotkt-model": { "name": "BirNullableValue", "domain": "birCore", "role": "expression" },
       "properties": { "k": { "const": "nullableValue" }, "elem": { "$ref": "#/$defs/type" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "elem", "e"], "additionalProperties": false
+    },
+    "birEnumValue": {
+      "type": "object", "x-dotkt-model": { "name": "BirEnumValue", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "enumValue" }, "type": { "$ref": "#/$defs/type" }, "entry": { "type": "string" }, "ordinal": { "type": "integer" } },
+      "required": ["k", "type", "entry", "ordinal"], "additionalProperties": false
+    },
+    "birEnumValues": {
+      "type": "object", "x-dotkt-model": { "name": "BirEnumValues", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "enumValues" }, "type": { "$ref": "#/$defs/type" } },
+      "required": ["k", "type"], "additionalProperties": false
+    },
+    "birCompanionValue": {
+      "type": "object", "x-dotkt-model": { "name": "BirCompanionValue", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "companionValue" }, "ownerType": { "$ref": "#/$defs/type" }, "companionType": { "$ref": "#/$defs/type" }, "name": { "type": "string" } },
+      "required": ["k", "ownerType", "companionType", "name"], "additionalProperties": false
+    },
+    "birClassReference": {
+      "type": "object", "x-dotkt-model": { "name": "BirClassReference", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "classRef" }, "type": { "$ref": "#/$defs/type" } },
+      "required": ["k", "type"], "additionalProperties": false
+    },
+    "birNullableNull": {
+      "type": "object", "x-dotkt-model": { "name": "BirNullableNull", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "nullableNull" }, "elem": { "$ref": "#/$defs/type" } },
+      "required": ["k", "elem"], "additionalProperties": false
+    },
+    "birDefaultParameter": {
+      "type": "object", "x-dotkt-model": { "name": "BirDefaultParameter", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "defaultArgParam" }, "idx": { "type": "integer", "minimum": 0 } },
+      "required": ["k", "idx"], "additionalProperties": false
+    },
+    "birDefaultReceiver": {
+      "type": "object", "x-dotkt-model": { "name": "BirDefaultReceiver", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "defaultArgReceiver" }, "kind": { "enum": ["dispatch", "extension", "enclosing"] } },
+      "required": ["k", "kind"], "additionalProperties": false
+    },
+    "birBindingReference": {
+      "type": "object", "x-dotkt-model": { "name": "BirBindingReference", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "bindRef" }, "id": { "type": "string" }, "sty": { "$ref": "#/$defs/type" } },
+      "required": ["k", "id", "sty"], "additionalProperties": false
+    },
+    "birLocalFunctionReference": {
+      "type": "object", "x-dotkt-model": { "name": "BirLocalFunctionReference", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "localFunRef" }, "id": { "type": "string" }, "funcType": { "$ref": "#/$defs/type" }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } } },
+      "required": ["k", "id", "funcType"], "additionalProperties": false
     },
     "birValueBlock": {
       "type": "object", "x-dotkt-model": { "name": "BirValueBlock", "domain": "birCore", "role": "expression" },
