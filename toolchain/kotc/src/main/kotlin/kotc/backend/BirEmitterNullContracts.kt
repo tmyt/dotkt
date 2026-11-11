@@ -150,7 +150,7 @@ internal fun BirEmitter.preconditionChecks(fn: IrFunction): List<String> {
 }
 
 /**
- * The NPE message JSON for `fn`'s NON-NULL REFERENCE return POSTCONDITION, or null when `fn` is out of scope. A
+ * The plain NPE message text for `fn`'s NON-NULL REFERENCE return POSTCONDITION, or null when `fn` is out of scope. A
  * postcondition is a deliberate DotKt addition beyond JVM Kotlin — it guards a null leaking OUT of a public member via
  * a platform type / an unsound generic. Registered on `fn`'s return-target symbol around body emission (see
  * `withReturnPostcondition`); `stmt(IrReturn)` then wraps a genuine return value in a bind-check-throw valueBlock.

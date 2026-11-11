@@ -374,7 +374,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// null-for-unit, end label id); stmt(IrReturn) rewrites to `res = v; goto end`. See spliceBodyWithReturns.
 	internal val inlineReturnSubst = HashMap<org.jetbrains.kotlin.ir.symbols.IrReturnTargetSymbol, Pair<String?, Int>>()
 	// #6 non-null RETURN POSTCONDITIONS: while emitting a public/protected fn whose non-null reference return is
-	// contract-checked, its return-target symbol -> the NPE message JSON. stmt(IrReturn) wraps a genuine (non-spliced)
+	// contract-checked, its return-target symbol -> the plain NPE message text. stmt(IrReturn) wraps a genuine (non-spliced)
 	// return VALUE targeting a registered symbol in a bind-check-throw valueBlock. A nested lambda's return targets its
 	// OWN (unregistered) symbol; a non-local return targeting a registered caller is (correctly) checked. See
 	// BirEmitterNullContracts.kt (returnCheckMessage) and BirEmitterStatements.kt (the IrReturn case).

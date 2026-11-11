@@ -2,7 +2,8 @@ package kotc.backend
 
 import kotc.bir.*
 
-/** Source join-null facts belong to the node, not to JSON property order. */
+/** Source join-null facts belong to the node, not to JSON property order.
+ * Keep the root-only rule aligned with [emittedYieldsNull] at the remaining string frontier. */
 internal fun BirExpression.yieldsNullAtJoin(): Boolean = when (this) {
     is BirConstant -> value == BirLiteral.NullLiteral
     is BirConditional -> joinNullBranch == true

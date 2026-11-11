@@ -255,8 +255,8 @@ internal fun BirEmitter.tryExpr(node: IrTry): String {
 /** Mint a `valueBlock`, stamping `joinNullBranch` on its ROOT exactly when its VALUE may leave an enclosing join null.
  *
  *  A `valueBlock` is the emitter's one PASS-THROUGH wrapper: its statements are side effects and its `result` IS the
- *  node's value, so it yields null exactly when that result does. Every site that mints one goes through here, which
- *  is what lets [emittedYieldsNull] stay a ROOT test instead of re-reading the emitted JSON. The `yieldsNull`
+ *  node's value, so it yields null exactly when that result does. String-based construction uses this helper;
+ *  typed construction uses [sourceValueBlock] with the same root-only rule in [yieldsNullAtJoin]. The `yieldsNull`
  *  override exists for the one producer whose verdict is not readable from `result` — [tryExpr], whose result is a
  *  read of the temp its branches assigned into. */
 internal fun BirEmitter.valueBlockJson(
@@ -541,9 +541,10 @@ internal fun BirEmitter.ternary(node: IrWhen): String {
  *  A bare `null` const is the leaf case. The other case is a node that already decided it is one and says so on its
  *  ROOT: a NESTED JOIN (`if (a) (if (b) v else null) else w` shows the outer join a `cond` for its `then`, never a
  *  null const, and if only the inner widened, the inner's `Nullable<V>` would flow into a bare `V` join), or a
- *  `valueBlock` — the emitter's one PASS-THROUGH wrapper, which yields whatever its `result` yields and which every
- *  minting site stamps accordingly ([valueBlockJson]). Both stamp the fact as the FIRST key after `k` precisely so
- *  this test can be a ROOT test rather than a search — a `joinNullBranch` buried anywhere deeper belongs to a join
+ *  `valueBlock` — the emitter's one PASS-THROUGH wrapper, which yields whatever its `result` yields. The string
+ *  frontier [valueBlockJson] keeps this fact FIRST after `k` so this remains a ROOT test rather than a search.
+ *  Keep this rule aligned with the typed [yieldsNullAtJoin] until the string frontier is removed. A fact buried
+ *  anywhere deeper belongs to a join
  *  that is not this branch's value and must not arm anything here.
  *
  *  THE RULE FOR WHAT ELSE IS TRANSPARENT, and it is short: nothing. The widening this arms only ever matters at a
