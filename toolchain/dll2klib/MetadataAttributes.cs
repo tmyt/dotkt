@@ -165,9 +165,9 @@ internal sealed class MetadataAttributes
     }
 
     // Assembly alias metadata intentionally permits multiple applications: one exact carrier per declaration.
-    public IReadOnlyList<System.Text.Json.Nodes.JsonNode> CarrierBodies(EntityHandle owner, string name)
+    public IReadOnlyList<(string Codec, byte[] Content)> CarrierPayloads(EntityHandle owner, string name)
     {
-        var result = new List<System.Text.Json.Nodes.JsonNode>();
+        var result = new List<(string, byte[])>();
         foreach (var handle in _md.GetCustomAttributes(owner))
         {
             var attribute = _md.GetCustomAttribute(handle);
@@ -175,7 +175,7 @@ internal sealed class MetadataAttributes
             var decoded = Decode(name, attribute.Value);
             if (decoded.StringValue is not { } version || decoded.BytesValue is not { } bytes)
                 throw new InvalidDataException($"[{name}] requires (version, byte[]) arguments");
-            result.Add(BirCarrier.DecodeBody(version, bytes));
+            result.Add((version, bytes));
         }
         return result;
     }

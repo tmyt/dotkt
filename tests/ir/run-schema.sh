@@ -69,7 +69,8 @@ if ! dotnet "$BIR2CIR_DLL" --selftest; then
 fi
 if ! dotnet run --project tests/ir/type-codec/Probe.csproj --no-launch-profile \
     -p:DotKtBir2CirPath="$ROOT/$BIR2CIR_DLL" -- \
-    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeNodeTest.xml"; then
+    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeNodeTest.xml" \
+    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.SourceMetadataTest.xml"; then
   echo "SCHEMA GATE: RED (cross-language type codec)"; exit 1
 fi
 

@@ -5,11 +5,18 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <DotKtBir2CirPath Condition="'$(DotKtBir2CirPath)' == ''">$(MSBuildThisFileDirectory)../../../build/bir2cir-bin/bir2cir.dll</DotKtBir2CirPath>
+    <DotKtDll2KlibDirectory Condition="'$(DotKtDll2KlibDirectory)' == ''">$(MSBuildThisFileDirectory)../../../build/dll2klib-bin</DotKtDll2KlibDirectory>
   </PropertyGroup>
   <ItemGroup>
     <!-- Exercise the production codec, not another compiled or reimplemented test copy. -->
     <Reference Include="bir2cir">
       <HintPath>$(DotKtBir2CirPath)</HintPath>
+    </Reference>
+    <Reference Include="dll2klib" Aliases="projection">
+      <HintPath>$(DotKtDll2KlibDirectory)/dll2klib.dll</HintPath>
+    </Reference>
+    <Reference Include="Google.Protobuf">
+      <HintPath>$(DotKtDll2KlibDirectory)/Google.Protobuf.dll</HintPath>
     </Reference>
   </ItemGroup>
 </Project>

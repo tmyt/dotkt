@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using DotKt.Bir;
 
-var report = XDocument.Load(args.Single());
+var report = XDocument.Load(args[0]);
 const string prefix = "IR_TYPE_SAMPLE ";
 var count = 0;
 foreach (var line in report.Descendants("system-out").SelectMany(output => output.Value.Split('\n')))
@@ -18,3 +18,4 @@ foreach (var line in report.Descendants("system-out").SelectMany(output => outpu
 }
 if (count == 0) throw new Exception("No actual Kotlin type samples were exercised");
 Console.WriteLine($"Kotlin -> C# streaming type codec: {count} actual samples passed");
+SourceMetadataTests.Run(args[1]);

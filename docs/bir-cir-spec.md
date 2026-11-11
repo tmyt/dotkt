@@ -1113,10 +1113,14 @@ rank/SZ-array view while Kotlin does not acquire CLR physical signature fields. 
 checks generation and the Kotlin model's JSON output alongside the existing shared C# self-tests.
 
 Source alias declarations use the referenced `kotlin-typealias.schema.json`. Its model annotations
-generate Kotlin source records and a boundary writer too: `discriminator` and `variantSuffix` place
-closed cases in sealed unions, and `x-dotkt-kotlin-type` retains the source metadata integer widths.
+generate Kotlin and C# source records and boundary codecs too: `discriminator` and `variantSuffix` place
+closed cases in sealed unions, and language-specific integer annotations retain source metadata widths.
 The producer carries typed declarations, annotations and source type references until file output;
-these are not executable CLR types. Schema-dependent semantic relations remain in the owning
+bir2cir reads this domain directly into the C# model before creating the remaining BIR DOM, then
+freezes typed declarations to carrier bytes. dll2klib decodes those bytes directly into the same
+source model and projects its facts to KLIB; neither path constructs an alias JSON DOM or reparses
+JSON text. The schema gate checks actual Kotlin output through both compiled C# codecs and the
+KLIB type/annotation projection. These are not executable CLR types. Semantic relations remain in the owning
 producer and validator rather than becoming CLR representation choices in the generator.
 
 Semantic equality, classifier identity, delegate-argument order and CLR representation decisions
