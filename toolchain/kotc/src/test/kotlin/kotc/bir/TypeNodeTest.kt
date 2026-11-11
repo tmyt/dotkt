@@ -9,6 +9,7 @@ class TypeNodeTest {
         val t = TypeNode.Fqn("T")
         val samples = listOf(
             t to """{"t":"fqn","name":"T"}""",
+            TypeNode.Fqn("G", listOf(t)) to """{"t":"fqn","name":"G","args":[{"t":"fqn","name":"T"}]}""",
             TypeNode.Tv("method", 3) to """{"t":"tv","scope":"method","i":3}""",
             TypeNode.Star to """{"t":"star"}""",
             TypeNode.Projection("out", t) to """{"t":"projection","variance":"out","of":{"t":"fqn","name":"T"}}""",
@@ -18,7 +19,10 @@ class TypeNodeTest {
             TypeNode.Array(t) to """{"t":"array","elem":{"t":"fqn","name":"T"}}""",
             TypeNode.ByRef(t) to """{"t":"byRef","of":{"t":"fqn","name":"T"}}""",
         )
-        samples.forEach { (type, expected) -> assertEquals(expected, type.toJson()) }
+        samples.forEach { (type, expected) ->
+            assertEquals(expected, type.toJson())
+            println("IR_TYPE_SAMPLE " + type.toJson())
+        }
     }
 
     @Test
@@ -30,5 +34,6 @@ class TypeNodeTest {
             """{"t":"fn","suspend":true,"ret":{"t":"tv","scope":"type","i":1},"params":[],"recv":{"t":"fqn","name":"demo.Outer.Inner","classifier":{"packageName":"demo","ownerPath":["Outer"],"name":"Inner"}}}""",
             type.toJson(),
         )
+        println("IR_TYPE_SAMPLE " + type.toJson())
     }
 }

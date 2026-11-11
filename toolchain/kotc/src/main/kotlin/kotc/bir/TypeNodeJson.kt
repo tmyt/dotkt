@@ -1,6 +1,7 @@
 package kotc.bir
 
-/** JSON boundary encoding for the schema-generated Kotlin type model. No CLR representation is chosen here. */
+/** JSON boundary encoding, in deterministic required-then-optional field order. It shares C#'s logical type
+ * contract; textual escaping need not be identical. No CLR representation is chosen here. */
 internal object TypeNodeJson {
     fun encode(type: TypeNode): String = StringBuilder().also { write(type, it) }.toString()
 

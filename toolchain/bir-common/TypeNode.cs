@@ -39,8 +39,8 @@ public abstract partial record TypeNode
     /// (subsumes func:/sfunc:). <c>Clr</c> is a CIR-only physical delegate-family decision authored by bir2cir;
     /// kotc's BIR projection always omits it.
     /// <c>Ctx</c> is reference-metadata-only: dll2klib consumes it while serializing the
-    /// corresponding context-function shape into KLIB metadata.
-    /// how many of the function type's LEADING arguments are Kotlin CONTEXT parameters. `context(A) B.(D) -&gt; E`
+    /// corresponding context-function shape into KLIB metadata. It states the function's leading Kotlin
+    /// context-parameter types: `context(A) B.(D) -&gt; E`
     /// restores as <c>Ctx=[A]</c>, <c>Recv=B</c>, <c>Params=[D]</c>. kotc's BIR carries the same fact as the
     /// declaration-slot key `ctxFnType` instead, because a type node is rebuilt by many lowering passes.
     /// </summary>
@@ -408,7 +408,7 @@ public abstract partial record TypeNode
         return arr;
     }
 
-    /// <summary>Compact canonical JSON string of a type. A BIR node (Fn.Clr absent) matches kotc byte-for-byte.</summary>
+    /// <summary>Compact canonical JSON string of a type, sharing kotc's logical type contract.</summary>
     public static string ToJson(TypeNode t) =>
         Write(t).ToJsonString(new JsonSerializerOptions { WriteIndented = false });
 
@@ -450,15 +450,15 @@ public static class BirCarrier
 
 /// <summary>
 /// Round-trip self-test of the shared TypeNode contract. Proves Read(Write(node)) == node for every
-/// variant and that both directions agree with the shared cross-language fixture (spec §1). Called by
+/// variant and that both directions agree with the C# fixtures and schema property coverage. Called by
 /// a throwaway harness during verification; NOT a Main (the shared file must not own an entry point).
 /// </summary>
 public static class TypeNodeSelfTest
 {
     public static void Run()
     {
-        // The shared cross-language fixture (spec §1 examples; canonical field order = required first,
-        // optional last). kotc.bir.TypeNode's self-test validates the SAME strings.
+        // Canonical C# fixtures (required fields first, optional fields last). Kotlin tests independently
+        // cover its semantic vocabulary; both encoders must cover their schema-owned properties.
         var cases = new (TypeNode node, string json)[]
         {
             (new TypeNode.Fqn("kotlin.Int"),
@@ -539,6 +539,7 @@ public static class TypeNodeSelfTest
             CheckReaders(JsonNode.Parse(json), node);
             n++;
         }
+        CheckSchemaProperties(all.Select(sample => TypeNode.Write(sample.node)));
 
         // A vector and a rank-1 general array are DIFFERENT types, and the document distinguishes them by
         // whether a rank is stated at all — so neither may be read as the other.
@@ -571,6 +572,30 @@ public static class TypeNodeSelfTest
             throw new Exception("[C# TypeNode] carrier round-trip mismatch");
 
         Console.WriteLine($"[C# TypeNode] self-test OK ({n} fixture cases incl. {cirOnly.Length} CIR-only + carrier)");
+    }
+
+    private static void CheckSchemaProperties(IEnumerable<JsonNode> samples)
+    {
+        var seen = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        void Remember(string tag, JsonObject obj)
+        {
+            if (!seen.TryGetValue(tag, out var names)) seen[tag] = names = new(StringComparer.Ordinal);
+            names.UnionWith(obj.Select(pair => pair.Key));
+        }
+        void Walk(JsonNode? node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (obj["t"] is JsonValue tag) Remember(tag.GetValue<string>(), obj);
+                if (obj["classifier"] is JsonObject classifier) Remember("SourceClassifier", classifier);
+                foreach (var pair in obj) Walk(pair.Value);
+            }
+            else if (node is JsonArray array) foreach (var child in array) Walk(child);
+        }
+        foreach (var sample in samples) Walk(sample);
+        foreach (var (tag, expected) in TypeNodeWireContract.Properties)
+            if (!seen.TryGetValue(tag, out var actual) || !actual.SetEquals(expected))
+                throw new Exception($"[C# TypeNode] encoded schema properties are not covered for {tag}");
     }
 
     private static void CheckReaders(JsonNode? node, TypeNode? expected = null)

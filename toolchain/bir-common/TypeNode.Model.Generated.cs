@@ -34,3 +34,24 @@ public abstract partial record TypeNode
 
     public sealed partial record SourceClassifier(string PackageName, string[] OwnerPath, string Name);
 }
+
+// Test contract metadata, not an IR object/property bag.
+internal static class TypeNodeWireContract
+{
+    internal static readonly (string Tag, string[] Fields)[] Properties =
+    [
+        ("fqn", ["t", "name", "args", "classifier"]),
+        ("tv", ["t", "scope", "i"]),
+        ("star", ["t"]),
+        ("projection", ["t", "variance", "of"]),
+        ("fn", ["t", "suspend", "ret", "params", "recv", "ctx", "clr"]),
+        ("nullable", ["t", "of"]),
+        ("oblivious", ["t", "of"]),
+        ("array", ["t", "elem", "rank"]),
+        ("byRef", ["t", "of"]),
+        ("ptr", ["t", "of"]),
+        ("fnPtr", ["t", "cc", "genericArity", "requiredParams", "ret", "params"]),
+        ("mod", ["t", "req", "m", "of"]),
+        ("SourceClassifier", ["packageName", "ownerPath", "name"]),
+    ];
+}

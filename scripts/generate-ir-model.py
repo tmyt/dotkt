@@ -36,12 +36,6 @@ def parameter(name, field, definition, definitions, language):
     if language == "csharp":
         display = field.get("x-dotkt-csharp-name", name[0].upper() + name[1:])
         return f"{value_type}{'' if required else '?'} {display}" + ("" if required else " = null")
-    has_default = "x-dotkt-kotlin-default" in field
-    if has_default:
-        default = field["x-dotkt-kotlin-default"]
-        if default != []:
-            raise ValueError(f"unhandled model default: {name}")
-        return f"val {name}: {value_type} = emptyList()"
     return f"val {name}: {value_type}{'' if required else '?'}" + ("" if required else " = null")
 
 
@@ -97,7 +91,18 @@ def outputs(schema):
     for definition in variants:
         csharp += [csharp_declaration(definition, definitions, derived=True), ""]
     csharp += [csharp_declaration(definition, definitions, derived=False) for definition in values]
-    csharp += ["}", ""]
+    csharp += ["}", "", "// Test contract metadata, not an IR object/property bag.",
+               "internal static class TypeNodeWireContract", "{",
+               "    internal static readonly (string Tag, string[] Fields)[] Properties =", "    ["]
+    for definition in variants:
+        tag = definition["properties"]["t"]["const"]
+        keys = ", ".join(json.dumps(key) for key in definition["properties"])
+        csharp.append(f'        ("{tag}", [{keys}]),')
+    for definition in values:
+        name = definition["x-dotkt-model"]["name"]
+        keys = ", ".join(json.dumps(key) for key in definition["properties"])
+        csharp.append(f'        ("{name}", [{keys}]),')
+    csharp += ["    ];", "}", ""]
     kotlin = ["// Generated from docs/bir-cir.schema.json by scripts/generate-ir-model.py.",
               "// Semantic helpers and JSON boundary encoding are maintained separately.",
               "package kotc.bir", "", "sealed class TypeNode {"]

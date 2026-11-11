@@ -61,7 +61,7 @@
         "t":    { "const": "fqn" },
         "name": { "type": "string", "description": "e.g. kotlin.Int, kotlin.collections.List, System.Exception, dotkt$CharSequence (a compiler-generated synthetic — `$` is Kotlin-unspeakable; the def carries generated:true)" },
         "args": { "type": "array", "items": { "$ref": "#/$defs/type" }, "description": "generic type arguments; absent = non-generic" },
-        "classifier": { "$ref": "#/$defs/sourceClassifier", "description": "Frontend-authored Kotlin classifier identity, independent of its physical CLR representation" }
+        "classifier": { "$ref": "#/$defs/sourceClassifier", "properties": { "ownerPath": { "minItems": 1 } }, "description": "Frontend-authored nested Kotlin classifier identity. It does not occur in a physical member signature; contextual signature checks remain in the validator." }
       },
       "required": ["t", "name"],
       "additionalProperties": false
@@ -71,8 +71,8 @@
       "x-dotkt-model": { "name": "SourceClassifier" },
       "properties": {
         "packageName": { "type": "string" },
-        "ownerPath": { "type": "array", "items": { "type": "string" } },
-        "name": { "type": "string" }
+        "ownerPath": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "name": { "type": "string", "minLength": 1 }
       },
       "required": ["packageName", "ownerPath", "name"],
       "additionalProperties": false
@@ -123,7 +123,7 @@
         "recv":    { "$ref": "#/$defs/type", "description": "extension receiver; absent = none" },
         "ctx":     {
           "type": "array", "items": { "$ref": "#/$defs/type" },
-          "x-dotkt-kotlin-default": [],
+          "x-dotkt-kotlin": false,
           "description": "Reference-metadata-only: the CONTEXT parameters of a Kotlin context function type, restored from [KotlinContextFunctionType(N)] while constructing the reference KLIB. `context(A) B.(D) -> E` reads back as ctx=[A], recv=B, params=[D]. kotc BIR MUST omit it — there the fact rides the declaration-slot key `ctxFnType`, because a type node is rebuilt by many lowering passes and would lose it."
         },
         "clr":     {
@@ -187,7 +187,7 @@
     "tPtr": {
       "type": "object",
       "x-dotkt-model": { "name": "Ptr", "kotlin": false },
-      "description": "CIR-only: a CLR unmanaged pointer `T*`. Kotlin source cannot spell one, but an external member can DECLARE one, and without this variant such a parameter degrades to the FQN string \"System.Int32*\" — an identity that names no type. kotc MUST omit it.",
+      "description": "CIR-only: a CLR unmanaged pointer `T*`. BIR carries the semantic kotlin.clr.ClrPointer<T> vocabulary; bir2cir selects this physical form for values and exact native signatures. kotc MUST omit it.",
       "properties": {
         "t":  { "const": "ptr" },
         "of": { "$ref": "#/$defs/type" }

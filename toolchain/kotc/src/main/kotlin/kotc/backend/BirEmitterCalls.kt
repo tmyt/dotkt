@@ -868,7 +868,7 @@ internal fun TypeNode.containsStarProjection(): Boolean = when (this) {
 	is TypeNode.Projection -> true
 	is TypeNode.Fqn -> args?.any { it.containsStarProjection() } == true
 	is TypeNode.Fn -> ret.containsStarProjection() || params.any { it.containsStarProjection() } ||
-		recv?.containsStarProjection() == true || ctx.any { it.containsStarProjection() }
+		recv?.containsStarProjection() == true
 	is TypeNode.Nullable -> of.containsStarProjection()
 	is TypeNode.Oblivious -> of.containsStarProjection()
 	is TypeNode.Array -> elem.containsStarProjection()
