@@ -240,8 +240,10 @@ is known. Executable bodies and embedded source payloads are not metadata traver
 Values use the closed `a`-discriminated `cirAttributeArgument` union in the schema, not executable
 `k` nodes: `null`, `bool`, `char`, signed/unsigned 8/16/32/64-bit integers, `f32`/`f64` integer IEEE
 `bits`, `text`, `utf16` code `units`, opaque `bytes`, `type`, recursive `array`, and `enum` physical
-constants. The explicit `unencodable` marker retains the existing annotation encoder's null/skip
-policy without passing a Kotlin expression to ilemit. A CIR parameter's optional `default` uses the
+constants. The explicit `unencodable` marker becomes null in the existing encoder: primitive values
+encode as zero/false, reference-compatible values encode null, and applications are skipped only
+where the parameter type rejects that value. It does not pass a Kotlin expression to ilemit or
+change the existing encoder policy. A CIR parameter's optional `default` uses the
 same physical constant vocabulary; BIR defaults remain Kotlin expressions. Inline/default carrier
 contents are opaque bytes here, not recursively lowered executable children.
 

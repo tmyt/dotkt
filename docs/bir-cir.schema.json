@@ -910,7 +910,7 @@
     },
     "cirAttributeArgument": {
       "x-dotkt-model": { "name": "AttributeArgument", "discriminator": "a" },
-      "description": "Closed physical metadata-value vocabulary. Float payloads are IEEE bits, text preserves UTF-16, and bytes are opaque. The unencodable marker preserves the existing CLR annotation-skip policy; it is authored by bir2cir, not inferred by ilemit from a Kotlin body.",
+      "description": "Closed physical metadata-value vocabulary. Float payloads are IEEE bits, text preserves UTF-16, and bytes are opaque. The bir2cir-authored unencodable marker is encoded as null by the existing encoder (zero/false for primitives); an application is skipped only where its parameter type rejects that value. No Kotlin body is passed to ilemit.",
       "oneOf": [
         { "$ref": "#/$defs/attributeNull" }, { "$ref": "#/$defs/attributeBoolean" },
         { "$ref": "#/$defs/attributeChar" }, { "$ref": "#/$defs/attributeInt8" },

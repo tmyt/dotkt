@@ -65,10 +65,10 @@ if (args.Length == 3 && args[0] == "--projected-collection-returns")
     return;
 }
 
-if (args.Length == 5 && args[0] == "--imported-enum-literals")
+if (args.Length == 6 && args[0] == "--imported-enum-literals")
 {
-    ImportedEnumLiteralInspector.Verify(args[1], args[2], args[3], args[4]);
-    Console.WriteLine("native enum literal PE / KLIB / Kotlin BIR / physical CIR: OK");
+    ImportedEnumLiteralInspector.Verify(args[1], args[2], args[3], args[4], args[5]);
+    Console.WriteLine("native enum literal PE / KLIB / Kotlin BIR / physical CIR / consumer Param constants: OK");
     return;
 }
 
@@ -302,7 +302,7 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --klib-class-declared-override-nullable-method-bound <file.klib> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-flags-enum <file.klib> <class> <file.bir.json> <file.cir.json>\n" +
-        "  CompanionMetadataInspector --imported-enum-literals <producer.dll> <file.klib> <file.bir.json> <file.cir.json>\n" +
+        "  CompanionMetadataInspector --imported-enum-literals <producer.dll> <file.klib> <file.bir.json> <file.cir.json> <consumer.dll>\n" +
         "  CompanionMetadataInspector --klib-no-flags-enum <file.klib> <class>\n" +
         "  CompanionMetadataInspector --reified-witness-contract <producer.dll> <producer.klib> <package>\n" +
         "  CompanionMetadataInspector --default-witness-contract <producer.dll> <consumer.dll>\n" +

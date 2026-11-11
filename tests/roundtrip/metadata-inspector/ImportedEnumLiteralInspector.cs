@@ -10,7 +10,7 @@ using DotKt.Klib.Metadata;
 // to equal its ordinal must not hide a dropped external identity or physical representation on another entry.
 internal static class ImportedEnumLiteralInspector
 {
-    public static void Verify(string producer, string klib, string bir, string cir)
+    public static void Verify(string producer, string klib, string bir, string cir, string consumer)
     {
         using var stream = File.OpenRead(producer);
         using var pe = new PEReader(stream);
@@ -46,14 +46,7 @@ internal static class ImportedEnumLiteralInspector
                 var field = fields[ordinal];
                 var constant = md.GetConstant(field.GetDefaultValue());
                 var value = md.GetBlobReader(constant.Value).ReadConstant(constant.TypeCode);
-                var underlying = constant.TypeCode switch
-                {
-                    ConstantTypeCode.SByte => "System.SByte", ConstantTypeCode.Byte => "System.Byte",
-                    ConstantTypeCode.Int16 => "System.Int16", ConstantTypeCode.UInt16 => "System.UInt16",
-                    ConstantTypeCode.Int32 => "System.Int32", ConstantTypeCode.UInt32 => "System.UInt32",
-                    ConstantTypeCode.Int64 => "System.Int64", ConstantTypeCode.UInt64 => "System.UInt64",
-                    _ => throw new InvalidDataException($"invalid native enum constant type {constant.TypeCode}"),
-                };
+                var underlying = ConstantType(constant.TypeCode);
                 entries.Add(owner + ":" + md.GetString(field.Name),
                     (underlying, Convert.ToString(value, CultureInfo.InvariantCulture)!, ordinal));
             }
@@ -80,7 +73,36 @@ internal static class ImportedEnumLiteralInspector
             }
             Require(seen.SetEquals(entries.Keys), $"{path} does not exercise every native enum literal and alias");
         }
+        var expectedDefault = entries["EnumLiteralInterop.Entries+Code:Negative"];
+        VerifyParameterDefault(consumer, expectedDefault.Underlying, expectedDefault.Value);
     }
+
+    internal static void VerifyParameterDefault(string consumer, string underlying, string expected)
+    {
+        using var stream = File.OpenRead(consumer);
+        using var pe = new PEReader(stream);
+        var md = pe.GetMetadataReader();
+        var method = md.MethodDefinitions.Select(md.GetMethodDefinition)
+            .Single(method => md.GetString(method.Name) == "importedLiteralDefault");
+        var parameter = method.GetParameters().Select(md.GetParameter).Single(parameter => parameter.SequenceNumber == 1);
+        Require((parameter.Attributes & (ParameterAttributes.Optional | ParameterAttributes.HasDefault)) ==
+            (ParameterAttributes.Optional | ParameterAttributes.HasDefault), "enum parameter lost its metadata default");
+        Require(!parameter.GetDefaultValue().IsNil, "enum parameter has no Constant row");
+        var constant = md.GetConstant(parameter.GetDefaultValue());
+        var value = md.GetBlobReader(constant.Value).ReadConstant(constant.TypeCode);
+        Require(ConstantType(constant.TypeCode) == underlying &&
+            Convert.ToString(value, CultureInfo.InvariantCulture) == expected,
+            "enum parameter default lost its native underlying type or physical value");
+    }
+
+    static string ConstantType(ConstantTypeCode code) => code switch
+    {
+        ConstantTypeCode.SByte => "System.SByte", ConstantTypeCode.Byte => "System.Byte",
+        ConstantTypeCode.Int16 => "System.Int16", ConstantTypeCode.UInt16 => "System.UInt16",
+        ConstantTypeCode.Int32 => "System.Int32", ConstantTypeCode.UInt32 => "System.UInt32",
+        ConstantTypeCode.Int64 => "System.Int64", ConstantTypeCode.UInt64 => "System.UInt64",
+        _ => throw new InvalidDataException($"invalid native enum constant type {code}"),
+    };
 
     static string TypeName(MetadataReader md, TypeDefinitionHandle handle)
     {
