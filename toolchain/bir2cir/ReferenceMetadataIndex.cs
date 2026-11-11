@@ -646,14 +646,14 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
     readonly Dictionary<string, List<(string Owner, string RecvKey, TypeKey ParamKey)>> _topLevelStatics = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"
-    readonly Dictionary<DefaultKey, Dictionary<int, string>> _kotlinDefaults = new();
-    readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
+    readonly Dictionary<DefaultKey, Dictionary<int, JsonNode>> _kotlinDefaults = new();
+    readonly Dictionary<string, Dictionary<int, JsonNode>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     readonly HashSet<string> _conflictingDefaultDeclarationIds = new(StringComparer.Ordinal);
     // #146: OWNERLESS default-arg index "name|paramCount" -> defaults. DefaultArgSplice now runs at PHASE 1 (before
     // MemberCallSubstitution attributes the owner), so the omitted call is still `owner:null method:col2 sig:[…]`.
     // Built from _kotlinDefaults: a key with a SINGLE owner, or several owners whose defaults AGREE, maps to those
     // defaults; owners that DISAGREE mark it AMBIGUOUS (the splice loud-refuses rather than guess).
-    readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsOwnerless = new(StringComparer.Ordinal);
+    readonly Dictionary<string, Dictionary<int, JsonNode>> _kotlinDefaultsOwnerless = new(StringComparer.Ordinal);
     readonly HashSet<string> _kotlinDefaultsAmbiguous = new(StringComparer.Ordinal);
     // OWNERFUL keys two same-arity declarations carry with different defaults (see ReferenceAssemblyMetadata).
     readonly HashSet<DefaultKey> _kotlinDefaultsConflicted = new();
@@ -1107,11 +1107,11 @@ sealed partial class ReferenceMetadataIndex
     /// is unspeakable in Kotlin, so it can never collide with a real method a `new`'s owner declares.
     internal const string CtorKeyName = ".ctor";
 
-    // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> default-expression BIR-json). #146:
+    // The @KotlinDefault BIR splice map for a call's callee — (argPosition -> decoded default-expression BIR). #146:
     // dll2klib-projected calls already carry their exact file-facade `ownerType` in BIR, so use that structural identity
     // first. Truly ownerless Kotlin calls retain the conservative name+arity index; conflicting owners remain ambiguous
     // and are refused. Running this at phase 1 does not imply throwing away an owner kotc has already projected.
-    public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount,
+    public Dictionary<int, JsonNode> KotlinDefaultsFor(string owner, string method, int paramCount,
         SignatureKey sigKey = null, SignatureKey relaxedSigKey = null)
     {
         if (method == null) return null;
@@ -1137,7 +1137,7 @@ sealed partial class ReferenceMetadataIndex
         return _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var ownerless) ? ownerless : null;
     }
 
-    public Dictionary<int, string> KotlinDefaultsForDeclarationIdentity(string id)
+    public Dictionary<int, JsonNode> KotlinDefaultsForDeclarationIdentity(string id)
     {
         if (id != null && _conflictingDefaultDeclarationIds.Contains(id))
             throw new InvalidOperationException($"conflicting defaults for Kotlin declaration identity '{id}'");
@@ -1151,7 +1151,7 @@ sealed partial class ReferenceMetadataIndex
     // when it has no representable defaults, so callers must not fall through to a different declaration search.
     public bool TryKotlinDefaultsForSelectedMethod(
         TypeNode.Fqn owner, string method, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
-        out Dictionary<int, string> defaults, out string[] parameterNames, string propertyKind = null)
+        out Dictionary<int, JsonNode> defaults, out string[] parameterNames, string propertyKind = null)
     {
         defaults = null;
         parameterNames = null;
@@ -1175,7 +1175,7 @@ sealed partial class ReferenceMetadataIndex
     // are consulted only when the class exposes no applicable public/protected member. Multiple applicable interface
     // declarations must agree on their defaults; the BIR owner alone cannot distinguish disagreeing slots, so guessing
     // one would attach source semantics from an arbitrary reflection order.
-    public Dictionary<int, string> KotlinDefaultsForImplementedInterface(
+    public Dictionary<int, JsonNode> KotlinDefaultsForImplementedInterface(
         string owner, int ownerArity, string method, int paramCount, SignatureKey sigKey, SignatureKey relaxedSigKey)
     {
         if (owner == null || method == null || sigKey == null) return null;
@@ -1216,7 +1216,7 @@ sealed partial class ReferenceMetadataIndex
         catch { return null; }
         if (interfaces.Length == 0) return null;
 
-        Dictionary<int, string> selected = null;
+        Dictionary<int, JsonNode> selected = null;
         foreach (var candidate in interfaces)
         {
             var defaults = CallableDefaultsOf(candidate, _netMlc);
@@ -1246,10 +1246,10 @@ sealed partial class ReferenceMetadataIndex
             ? _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount)
             : _kotlinDefaultsConflicted.Contains(new DefaultKey(owner, method, paramCount)));
 
-    static bool SameDefaults(Dictionary<int, string> a, Dictionary<int, string> b)
+    static bool SameDefaults(Dictionary<int, JsonNode> a, Dictionary<int, JsonNode> b)
     {
         if (a.Count != b.Count) return false;
-        foreach (var kv in a) if (!b.TryGetValue(kv.Key, out var v) || v != kv.Value) return false;
+        foreach (var kv in a) if (!b.TryGetValue(kv.Key, out var v) || !JsonNode.DeepEquals(v, kv.Value)) return false;
         return true;
     }
 
@@ -5646,7 +5646,7 @@ sealed partial class ReferenceMetadataIndex
                         // contributes its raw Kotlin-expression BIR; an ordinary ECMA-335 constant contributes a plain
                         // const expression. The reference KLIB carries only DECLARES_DEFAULT_VALUE for frontend
                         // resolution, never either payload.
-                        if (CallableDefaultsOf(method, mlc) is Dictionary<int, string> defaults)
+                        if (CallableDefaultsOf(method, mlc) is Dictionary<int, JsonNode> defaults)
                         {
                             AddKotlinDefaults(metadata, indexedOwnerFqn, method.Name, method.GetParameters(), defaults);
                             if (exactPhysicalOwner != indexedOwnerFqn)
@@ -5841,7 +5841,7 @@ sealed partial class ReferenceMetadataIndex
                                 metadata.CollectionFactories[method.Name] = cf;
                         }
                     }
-                    // @KotlinDefault(index, bir) on a CONSTRUCTOR's params -> the splice source for a `new` that omits a
+                    // KotlinDefaultAttribute(index, codec, content) on a CONSTRUCTOR's params -> the splice source for a `new` that omits a
                     // non-constant default (#235). A ctor has no name of its own, so the key is `<owner>|.ctor|<declared
                     // param count>`: the args array a `new` carries is POSITIONALLY complete (kotc emits a placeholder for
                     // every omitted slot), so its length is that same declared count and each stamped index indexes it.
@@ -5863,7 +5863,7 @@ sealed partial class ReferenceMetadataIndex
                             metadata.KotlinConstructorOwnerFrames[DottedFqn(ownerFqn)] = constructorFrame;
                             metadata.KotlinConstructorOwnerFrames[exactPhysicalOwner] = constructorFrame;
                         }
-                        if (CallableDefaultsOf(ctor, mlc) is Dictionary<int, string> cdefaults)
+                        if (CallableDefaultsOf(ctor, mlc) is Dictionary<int, JsonNode> cdefaults)
                         {
                             AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
                             if (exactPhysicalOwner != ownerFqn)
@@ -7427,18 +7427,18 @@ sealed partial class ReferenceMetadataIndex
         return result;
     }
 
-    // @KotlinDefault(index, bir) on the method's parameters -> (argPosition -> default-expression BIR-json). Returns null
-    // when no parameter carries it. `index` is the parameter's position in the emitted call (extension receiver first);
-    // `bir` is the default expression as a raw BIR-json string (opaque here — spliced pre-lowering by DefaultArgSplice).
-    static Dictionary<int, string> KotlinDefaultsOf(MethodBase method)
+    // Parameter metadata owns the argument position, codec and bytes. Decode once at this boundary; consumers clone
+    // the raw source expression before splicing rather than serializing it between compiler passes.
+    static Dictionary<int, JsonNode> KotlinDefaultsOf(MethodBase method)
     {
-        Dictionary<int, string> map = null;
+        Dictionary<int, JsonNode> map = null;
         foreach (var p in method.GetParameters())
         {
-            var a = p.GetCustomAttributesData().FirstOrDefault(x => x.AttributeType.FullName == "kotlin.clr.KotlinDefault");
-            if (a == null || a.ConstructorArguments.Count < 2) continue;
-            if (a.ConstructorArguments[0].Value is null || a.ConstructorArguments[1].Value is not string bir) continue;
-            (map ??= new Dictionary<int, string>())[Convert.ToInt32(a.ConstructorArguments[0].Value)] = bir;
+            var a = p.GetCustomAttributesData().FirstOrDefault(x => x.AttributeType.FullName == DefaultBirCarrier.AttributeName);
+            if (a == null) continue;
+            var bir = BirCarrier.DecodeBody((string)a.ConstructorArguments[1].Value,
+                ReadByteArrayArg(a.ConstructorArguments[2]));
+            (map ??= new Dictionary<int, JsonNode>())[Convert.ToInt32(a.ConstructorArguments[0].Value)] = bir;
         }
         return map;
     }
@@ -7446,19 +7446,19 @@ sealed partial class ReferenceMetadataIndex
     // The complete default-value map for an already selected declaration. KotlinDefault wins because it carries the
     // Kotlin expression (including reads of earlier parameters/receivers); otherwise use the ECMA-335 constant directly.
     // This is deliberately a reference-DLL scan. Neither dll2klib nor kotc materializes a default value.
-    static Dictionary<int, string> CallableDefaultsOf(MethodBase method, MetadataLoadContext mlc)
+    static Dictionary<int, JsonNode> CallableDefaultsOf(MethodBase method, MetadataLoadContext mlc)
     {
         var map = KotlinDefaultsOf(method);
         foreach (var p in method.GetParameters())
         {
             if (map?.ContainsKey(p.Position) == true || !p.HasDefaultValue) continue;
-            if (ConstantDefaultBir(p, mlc) is not string bir) continue;
-            (map ??= new Dictionary<int, string>())[p.Position] = bir;
+            if (ConstantDefaultBir(p, mlc) is not JsonNode bir) continue;
+            (map ??= new Dictionary<int, JsonNode>())[p.Position] = bir;
         }
         return map;
     }
 
-    static string ConstantDefaultBir(ParameterInfo parameter, MetadataLoadContext mlc)
+    static JsonNode ConstantDefaultBir(ParameterInfo parameter, MetadataLoadContext mlc)
     {
         object value;
         try { value = parameter.RawDefaultValue; }
@@ -7491,7 +7491,7 @@ sealed partial class ReferenceMetadataIndex
                 {
                     ["k"] = "default",
                     ["type"] = TypeJson.Write(declaredType),
-                }.ToJsonString();
+                };
         }
 
         // A non-null Constant row on Nullable<V> describes a V value, not a literal whose stack type is the
@@ -7515,10 +7515,10 @@ sealed partial class ReferenceMetadataIndex
                 ["k"] = "nullableWrap",
                 ["elem"] = TypeJson.Write(elementType),
                 ["e"] = elementValue,
-            }.ToJsonString();
+            };
         }
 
-        return MetadataConstantNode(type, declaredType, value, mlc)?.ToJsonString();
+        return MetadataConstantNode(type, declaredType, value, mlc);
     }
 
     static JsonObject MetadataConstantNode(Type type, TypeNode declaredType, object value, MetadataLoadContext mlc)
@@ -7773,7 +7773,7 @@ sealed partial class ReferenceMetadataIndex
     /// declaration of the same name+arity whose defaults differ marks it CONFLICTED, so the fallback refuses instead of
     /// serving whichever declaration the metadata scan happened to reach last.
     static void AddKotlinDefaults(ReferenceDotKtMetadata metadata, string ownerFqn, string name, ParameterInfo[] ps,
-        Dictionary<int, string> defaults)
+        Dictionary<int, JsonNode> defaults)
     {
         var arityKey = new DefaultKey(ownerFqn, name, ps.Length);
         var sig = SigKeyOf(ps);
@@ -7789,7 +7789,7 @@ sealed partial class ReferenceMetadataIndex
         }
         metadata.KotlinDefaults[arityKey] = defaults;
 
-        void Put(DefaultKey key, Dictionary<int, string> d)
+        void Put(DefaultKey key, Dictionary<int, JsonNode> d)
         {
             // Two declarations landing on the SAME signature key can only be told apart by a finer key, so this one
             // refuses too rather than serving the last writer.
@@ -7950,7 +7950,7 @@ sealed partial class ReferenceMetadataIndex
         {
             // Building an index must not reject an unused collision or discard other metadata.
             var index = new ReferenceMetadataIndex(order, catalog);
-            if (index.KotlinDefaultsForDeclarationIdentity("unique-default")?[0] != "retained"
+            if (index.KotlinDefaultsForDeclarationIdentity("unique-default")?[0]?.GetValue<string>() != "retained"
                 || index.InlineByDeclarationIdentity("unique-inline")?["body"]?.AsArray().Count != 0)
                 throw new InvalidOperationException("Unused collisions discarded unrelated inline/default metadata");
             foreach (var owner in new[] { "UniqueInternalRich", "IdenticalRich" })
@@ -8760,11 +8760,11 @@ sealed class ReferenceDotKtMetadata
     // Selected factory identity and parameter packing live in MemberBinding.
     public readonly Dictionary<string, string> CollectionFactories = new(StringComparer.Ordinal);
     // A defaulted parameter's default-value expression as BIR (from @KotlinDefault), for CROSS-MODULE splice of an
-    // omitted argument. Keyed "ownerFqn|methodName|paramCount" -> (argPosition -> BIR-json string). The DefaultArgSplice
+    // omitted argument. Keyed "ownerFqn|methodName|paramCount" -> (argPosition -> decoded BIR). The DefaultArgSplice
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
     // is coerced exactly like an explicit arg). Rides the ref.dll only (param attrs stripped in the rt build).
-    public readonly Dictionary<ReferenceMetadataIndex.DefaultKey, Dictionary<int, string>> KotlinDefaults = new();
-    public readonly Dictionary<string, Dictionary<int, string>> KotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
+    public readonly Dictionary<ReferenceMetadataIndex.DefaultKey, Dictionary<int, JsonNode>> KotlinDefaults = new();
+    public readonly Dictionary<string, Dictionary<int, JsonNode>> KotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     // Keys of [KotlinDefaults] that TWO declarations of the same owner+name+arity carry with DIFFERENT defaults — the key
     // cannot tell them apart, so the splice must refuse instead of filling whichever was enumerated last. Populated for
     // both METHODS and CONSTRUCTORS (same-arity overloads are common; #235).

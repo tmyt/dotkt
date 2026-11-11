@@ -2661,11 +2661,9 @@ internal fun BirEmitter.defaultCarrierBir(
 
 internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>,
 		ownerFn: org.jetbrains.kotlin.ir.declarations.IrFunction? = null): List<String> {
-	// A `@KotlinDefault(index, bir)` on each defaulted param of a qualifying function: `index` = the param's position
-	// in the emitted call (extension receiver first, if any), `bir` = the default expression as a BIR-json STRING (so
-	// bir2cir splices it PRE-lowering; it is opaque to this build's type lowering). Stamped on ALL defaulted params of
-	// a Tier-2-carrying function (uniform splice source). kotc emits ONE BIR for every build: the attr rides every
-	// build; the rt build strips it downstream (ilemit param-attr strip under `--build-stdlib=runtime`).
+	// State the source expression and its argument position (extension receiver first, if any). bir2cir freezes this
+	// fact before representation lowering and selects the physical versioned metadata carrier. All qualifying defaults
+	// use the same splice source; kotc emits the same source facts for reference, runtime and application builds.
 	val emitKotlinDefault = ownerFn != null && carriesKotlinDefault(ownerFn)
 	// The stamped `index` is the param's position in the EMITTED call's arg array, so whatever rides ahead of the
 	// value args counts first: an extension receiver (`__self`), or — for an INNER-class ctor — the enclosing
@@ -2747,15 +2745,14 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			// which bir2cir reads from the ref.dll to pass the arg by reference). attrsJson is stripped in the runtime
 			// build (`--build-stdlib=runtime`), so param attrs ride only the ref.dll — exactly bir2cir's read surface.
 			val srcAttrs = attrsJson(it.annotations)
-			val kotlinDefault = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
+			val defaultBir = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
 				// BIR of the default (real IR — the callee's own build), CLOSED for cross-module splice.
 				val bir = defaultCarrierBir(def, ownerFn is IrSimpleFunction && isDataClassCopy(ownerFn))
-				"""{"attr":${fqnJson("kotlin.clr.KotlinDefault")},"argTypes":[${fqnJson("kotlin.Int")},${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.Int")},"value":${valueIdx + extOffset}},{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(bir)}}]}"""
+				""","defaultBir":{"index":${valueIdx + extOffset},"body":$bir}"""
 			} else null
-			val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")
-			val pattrs = if (allAttrs.isNotEmpty()) ""","attrs":[$allAttrs]""" else ""
+			val pattrs = if (srcAttrs.isNotEmpty()) ""","attrs":[$srcAttrs]""" else ""
 			val ctxFn = ctxFnTypeField(ctxFnCountFor(it))
-			"""{"name":${str(it.name.asString())},"type":${birValueParameterType(it).toJson()}$vararg$default$ctxFn$pattrs}"""
+			"""{"name":${str(it.name.asString())},"type":${birValueParameterType(it).toJson()}$vararg$default${defaultBir ?: ""}$ctxFn$pattrs}"""
 		}
 	} finally {
 		savedCarrierSubst.forEach { (d, prev) ->

@@ -1329,7 +1329,9 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
         if (node is JsonObject obj)
         {
             yield return obj;
-            foreach (var child in obj.Select(pair => pair.Value))
+            // A source default is frozen into metadata, not emitted as part of this executable graph.
+            // Its lexical declarations are independent copies that a consuming default splice will materialize.
+            foreach (var child in obj.Where(pair => pair.Key != "defaultBir").Select(pair => pair.Value))
                 foreach (var nested in Objects(child)) yield return nested;
         }
         else if (node is JsonArray array)

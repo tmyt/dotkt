@@ -38,6 +38,7 @@ static class Bir2Cir
                 LexicalDeclarationIds.SelfTest();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
+                DefaultBirCarrier.SelfTest();
                 MaterializedExecutable.SelfTest();
                 NullableWitnessDemand.SelfTest();
                 NullableRepresentationDemand.SelfTest();
@@ -159,6 +160,7 @@ sealed class Pipeline
             var json = File.ReadAllText(path);
             var root = JsonNode.Parse(json, documentOptions: BirJson.DocOptions) ?? throw new UsageException($"bir2cir: invalid JSON root: {path}");
             RoundtripMetadata.FreezeTypeAliases(root);
+            DefaultBirCarrier.FreezeSourceDefaults(root);
             files.Add(new BirFile(
                 path,
                 json,
@@ -1527,11 +1529,8 @@ sealed class Pipeline
             // sees a suspend surface). CIR describes the physical graph, so the flag stops here — ilemit has no
             // coroutine semantics to apply to it, and IrSanity refuses one that survives.
             SuspendResidueLowering.DropModifier(lowered);
-            // #48/#146: mint the ilemit-facing `attrExternal` bool from an applied-attribute's `{t:fqn}` type node —
-            // consume kotc's `attrClr` origin flag for an imported .NET attr (all builds), and mark the cross-module
-            // @KotlinDefault external in APP/user-library builds (it only REFERENCES the stdlib-defined type; the ref/rt
-            // self-build defines it locally in `_types` and stays a bare-FQN local stamp).
-            AttrExternalNormalize.Apply(lowered, _options.StdlibMode == BuildStdlibMode.App);
+            // Consume the frontend origin fact for an imported CLR attribute into its physical external-link flag.
+            AttrExternalNormalize.Apply(lowered);
             // W1-S2 (#46): resolve every clrStatic/clrInstance/newClr against the ref.dll MLC. Internal
             // `resolvedMemberParams` carries matching inputs between bir2cir passes; Apply consumes it into the scalar
             // memberRef (+ `dispatch` on clrInstance). ilemit is a pure linker. Runs LAST — on

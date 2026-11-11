@@ -330,6 +330,12 @@
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "bir2cir-derived flattened NullableAttribute bytes (0=oblivious,1=not-null,2=nullable) for this param's reference-nullable positions; RoundtripMetadata folds it into the param's `attrs` as a NullableAttribute entry, which ilemit stamps. Absent when the type carries no nullable-reference position." },
         "mods":     { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline/context/extensionReceiver apply to a param; `context` and `extensionReceiver` preserve Kotlin slot roles on physically ordinary positional parameters" },
         "default":  { "$ref": "#/$defs/node", "description": "a KotlinDefault expression; absent = required" },
+        "defaultBir": {
+          "type": "object",
+          "description": "BIR-only source default for cross-module use. bir2cir freezes it into the versioned byte-array metadata carrier before ordinary lowering.",
+          "properties": { "index": { "type": "integer", "minimum": 0 }, "body": { "$ref": "#/$defs/node" } },
+          "required": ["index", "body"], "additionalProperties": false
+        },
         "ctxFnType": { "type": "integer", "minimum": 1, "description": "How many of the slot function type's LEADING physical arguments (recv first, then params) are Kotlin CONTEXT parameters: `context(A) B.(D) -> E` is `@ExtensionFunctionType Function3<A,B,D,E>`, so 1 — contexts precede the receiver. Absent = an ordinary function type. fir2ir ERASES the fact (it makes `context(A) B.(D) -> E` the SAME IrType as `B.(A,D) -> E`), so kotc recovers it from FIR and carries it here; bir2cir turns it into [KotlinContextFunctionType(N)]. Without it a consuming module restores the context AS the extension receiver and a lambda's `this` silently binds to the wrong value." }
       },
       "required": ["name", "type"],
@@ -738,6 +744,7 @@
         "newList", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
         "newClrStaticDelegate", "companionValue",
         "enumValue", "enumBits", "enumName", "enumOrdinal", "enumValues", "enumParse", "default", "defaultArg", "callEval", "bindRef",
+        "defaultCarrier", "defaultArgReceiver", "defaultArgParam",
         "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
         "localFun", "block", "valueBlock", "sourcePoint", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
         "if", "cond2", "label", "goto", "brIf", "break", "continue",
@@ -806,7 +813,10 @@
         { "properties": { "k": { "const": "forArray" }, "var": { "type": "string" }, "array": { "$ref": "#/$defs/node" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["var", "array", "body"] },
         { "properties": { "k": { "const": "forEachInline" }, "elem": { "$ref": "#/$defs/type" }, "src": { "$ref": "#/$defs/node" }, "var": { "type": "string" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["elem", "src", "var", "body"] },
         { "properties": { "k": { "const": "try" }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "catches": { "type": "array" }, "finally": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["body"] },
-        { "properties": { "k": { "const": "defaultArg" } }, "$comment": "§2.7: the RESERVATION for a cross-module omitted default. Emitted by kotc ONLY as the `expr` of a default-phase plan binding; bir2cir's DefaultArgSplice materialises the callee's [kotlin.clr.KotlinDefault] carrier into that binding, and refuses one found anywhere else. Never in CIR." },
+        { "properties": { "k": { "const": "defaultArg" } }, "$comment": "§2.7: the RESERVATION for a cross-module omitted default. Emitted by kotc ONLY as the `expr` of a default-phase plan binding; bir2cir's DefaultArgSplice materialises the callee's KotlinDefaultAttribute carrier into that binding, and refuses one found anywhere else. Never in CIR." },
+        { "properties": { "k": { "const": "defaultCarrier" }, "expr": { "$ref": "#/$defs/node" }, "lifted": { "type": "array", "items": { "$ref": "#/$defs/decl" } } }, "required": ["expr", "lifted"], "$comment": "Only inside a BIR parameter's defaultBir.body: a closed default expression plus its lifted declarations. Frozen before ordinary lowering." },
+        { "properties": { "k": { "const": "defaultArgReceiver" }, "kind": { "enum": ["dispatch", "extension", "enclosing"] } }, "required": ["kind"], "$comment": "Only inside defaultBir.body: a source receiver token bound by the default splice." },
+        { "properties": { "k": { "const": "defaultArgParam" }, "idx": { "type": "integer", "minimum": 0 } }, "required": ["idx"], "$comment": "Only inside defaultBir.body: an earlier-argument token bound by the default splice." },
         { "properties": { "k": { "const": "callEval" }, "type": { "$ref": "#/$defs/type" }, "bindings": { "type": "array", "items": { "$ref": "#/$defs/binding" } }, "expr": { "$ref": "#/$defs/node" } }, "required": ["bindings", "expr"], "$comment": "§2.7 CALL-EVALUATION PLAN, BIR-only. `bindings` is the call's supplied values in KOTLIN EVALUATION ORDER (dispatch receiver, extension receiver, positional arguments, then the filled defaults in declaration order); `expr` is the call, whose every read of one of them is a `bindRef`. bir2cir's CallEvalLowering lowers it to a `valueBlock` of `var`s (or, for a constructor delegation carried as the declaration's `delegationBindings`, to `preStmts`)." },
         { "properties": { "k": { "const": "bindRef" }, "id": { "type": "string" }, "sty": { "$ref": "#/$defs/type" } }, "required": ["id"], "$comment": "§2.7: a pure READ of the plan binding `id`. Free to clone — cloning a read is not cloning an evaluation. BIR-only." },
         { "$comment": "…remaining kinds in the nodeKind enum follow the same {k, canonical-fields} pattern; enumerated in full by the m6 validator." }

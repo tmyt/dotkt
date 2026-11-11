@@ -693,19 +693,8 @@ static class InlineSplice
         boundArgs[i] = read.DeepClone();
     }
 
-    // #34: the TIER-2 default-value BIR string a param carries in its `@KotlinDefault(index, bir)` attr (kotc stamps it on
-    // every non-const defaulted param of a qualifying fn — the SAME carrier DefaultArgSplice reads cross-module), or null.
-    internal static string KotlinDefaultCarrier(JsonObject p)
-    {
-        if (p["attrs"] is not JsonArray attrs) return null;
-        foreach (var a in attrs)
-            if (a is JsonObject ao && TypeJson.OwnerName(ao["attr"]) == "kotlin.clr.KotlinDefault"
-                && ao["args"] is JsonArray args && args.Count >= 2
-                && args[1] is JsonObject bv && Str(bv["k"]) == "const"
-                && (bv["value"] as JsonValue)?.TryGetValue<string>(out var bir) == true)
-                return bir;
-        return null;
-    }
+    // The same decoded default payload used by the cross-module splice, or null for a required parameter.
+    internal static JsonNode KotlinDefaultCarrier(JsonObject p) => DefaultBirCarrier.OfParameter(p);
 
     // §4.2 (#75 S4b) — RESOLVE the callee's raw-BIR payload by the overload key owner|name|pc|ga, disambiguating same-name
     // inline OVERLOADS by a STRUCTURAL match of each candidate's declared param types against the call's `paramSig`

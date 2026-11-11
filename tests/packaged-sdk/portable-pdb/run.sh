@@ -35,7 +35,8 @@ build() {
     logged "$stage" dotnet build "$project" -c Debug --nologo \
         -p:CscToolExe=dotkt-csc-must-not-run -p:UseSharedCompilation=false "$@"
 }
-logged inspect dotnet build "$ws/inspect/Inspect.csproj" --nologo -o "$ws/inspector"
+logged inspect dotnet build "$ws/inspect/Inspect.csproj" --nologo -o "$ws/inspector" \
+    -p:DotKtSharedIrDirectory="$fixture/../../../toolchain/bir-common"
 inspect() { dotnet "$ws/inspector/Inspect.dll" "$@"; }
 obj="$app/obj/Debug/net10.0"; bin="$app/bin/Debug/net10.0"
 impl="$bin/Probe.dll"; pdb="$bin/Probe.pdb"

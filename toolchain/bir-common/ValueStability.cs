@@ -51,7 +51,7 @@
 // Q1's home is kotc: it judges `stable` ONCE per binding it emits, from the Kotlin expression, and records the
 // answer on the binding — bir2cir consumes that answer and never re-derives it. `IsReReadable` covers the cases
 // bir2cir owns, where kotc had nothing to judge because bir2cir supplied the expression itself or synthesized the
-// read: a cross-module default materialized from a `[kotlin.clr.KotlinDefault]` carrier (DefaultArgSplice — kotc
+// read: a cross-module default materialized from a `KotlinDefaultAttribute` carrier (DefaultArgSplice — kotc
 // reserved the binding with a placeholder and could not know what would fill it), and the operands a lowering
 // re-renders into more than one slot of the shape it builds (RangeMembershipLowering's bounds and membership
 // subject, StringCharSequenceBridge's nullable adapter wrap). Deliberately conservative — answering "no" costs

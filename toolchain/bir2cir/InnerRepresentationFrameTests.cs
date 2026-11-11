@@ -189,11 +189,8 @@ static class InnerRepresentationFrameTests
         };
         root["inlineBir"] = Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, executable));
         root["suspendResult"] = executable.ToJsonString();
-        var defaultArgument = new JsonObject { ["value"] = executable.ToJsonString() };
-        root["attrs"] = new JsonArray(new JsonObject {
-            ["attr"] = TypeJson.Fqn("kotlin.clr.KotlinDefault"),
-            ["args"] = new JsonArray(new JsonObject { ["value"] = BirCarrier.JsonV1 }, defaultArgument),
-        });
+        var defaultAttribute = DefaultBirCarrier.Create(0, executable);
+        root["attrs"] = new JsonArray(defaultAttribute);
         OpaqueCarrierTypeBinding.ApplyAll(new[] { root }, ReferenceMetadataIndex.Build(Array.Empty<string>()),
             new Dictionary<string, JsonObject> { ["declaration"] = signature });
         var expected = new TypeNode.Fqn("Sample.Outer`1+Inner`2", source.Args);
@@ -205,7 +202,7 @@ static class InnerRepresentationFrameTests
         var inline = BirCarrier.DecodeBody(BirCarrier.JsonV1,
             Convert.FromBase64String(root["inlineBir"]!.GetValue<string>()));
         foreach (var payload in new[] { inline, JsonNode.Parse(root["suspendResult"]!.GetValue<string>()),
-            JsonNode.Parse(defaultArgument["value"]!.GetValue<string>()) })
+            DefaultBirCarrier.Decode(defaultAttribute) })
             if (TypeJson.Read(payload!["body"]![0]) != expected || TypeJson.Read(payload["body"]![1]) != outer)
                 throw new InvalidOperationException("Executable carriers must bind nested identities without retargeting their top-level owners");
         if (TypeJson.Read(inline["params"]![0]) != source)
