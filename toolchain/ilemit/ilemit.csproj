@@ -27,6 +27,9 @@
     <Compile Include="../cir-common/Executable.cs" Link="Executable.cs" />
     <Compile Include="../cir-common/Declaration.cs" Link="Declaration.cs" />
     <Compile Include="../cir-common/DeclarationJson.cs" Link="DeclarationJson.cs" />
+    <Compile Include="../cir-common/MessagePack.Generated.cs" Link="CirMessagePack.Generated.cs" />
+    <Compile Include="../cir-common/CirFileCodec.cs" Link="CirFileCodec.cs" />
+    <Compile Include="../bir-common/IrMessagePack.cs" Link="IrMessagePack.cs" />
     <Compile Include="../cir-common/OptionalField.cs" Link="OptionalField.cs" />
     <Compile Include="../cir-common/IrSanity.Cir.cs" Link="IrSanity.Cir.cs" />
     <Compile Include="../bir-common/NativeSignatureReader.cs" Link="NativeSignatureReader.cs" />
@@ -45,6 +48,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" />
+    <PackageReference Include="MessagePack" Version="[3.1.12]" />
     <!-- Delegate native resource directory layout/RVA serialization to a PE library. -->
     <PackageReference Include="AsmResolver.PE" Version="6.0.1" />
   </ItemGroup>

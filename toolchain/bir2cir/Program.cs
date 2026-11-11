@@ -27,6 +27,7 @@ static class Bir2Cir
                 AttributeProjection.SelfTest();
                 DotKt.Cir.DeclarationSelfTest.Run();
                 DotKt.Cir.ExecutableSelfTest.Run();
+                DotKt.Cir.MessagePackSelfTest.Run();
                 CirDeclarationProjection.SelfTest();
                 CirDeclarationProjection.SelfTestExecutable();
                 AliasConstructorDelegationExpansion.SelfTest();
@@ -103,7 +104,7 @@ static class Bir2Cir
         catch (UsageException ex)
         {
             Console.Error.WriteLine(ex.Message);
-            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] [--build-stdlib=metadata|runtime] [--reflection-restricted] <file.bir.json>...");
+            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] [--build-stdlib=metadata|runtime] [--reflection-restricted] [--cir-format=json|msgpack] <file.bir.json>...");
             return 1;
         }
         catch (Exception ex)
@@ -1769,7 +1770,11 @@ sealed class Pipeline
     void WriteCirFiles(IReadOnlyList<CirFile> files)
     {
         foreach (var file in files)
-            File.WriteAllText(Path.Combine(_options.OutDir, file.OutputName), DotKt.Cir.DeclarationJson.Write(file.Model, indented: true));
+        {
+            var name = _options.CirFormat == DotKt.Cir.CirFileFormat.MessagePack
+                ? file.OutputName[..^".json".Length] + ".msgpack" : file.OutputName;
+            DotKt.Cir.CirFileCodec.Write(Path.Combine(_options.OutDir, name), file.Model, _options.CirFormat);
+        }
     }
 
     static string OutputNameFor(string inputPath)
@@ -1790,7 +1795,7 @@ sealed class Pipeline
 enum BuildStdlibMode { App, Metadata, Runtime }
 
 sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferences, IReadOnlyList<string> Inputs,
-    BuildStdlibMode StdlibMode, bool ReflectionRestricted)
+    BuildStdlibMode StdlibMode, bool ReflectionRestricted, DotKt.Cir.CirFileFormat CirFormat = DotKt.Cir.CirFileFormat.Json)
 {
     // The pure-Kotlin REFERENCE stdlib surface (`--build-stdlib=metadata` -> DotKt.Private.Stdlib.dll) keeps kotlin.*
     // type tokens verbatim and squashes bodies to a throw; EVERY other invocation — the runtime stdlib build and all
@@ -1814,6 +1819,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
         var inputs = new List<string>();
         var mode = BuildStdlibMode.App;
         var reflectionRestricted = false;
+        var cirFormat = DotKt.Cir.CirFileFormat.Json;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -1835,6 +1841,12 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
                 case "--reflection-restricted":
                     reflectionRestricted = true;
                     break;
+                case "--cir-format=json":
+                    cirFormat = DotKt.Cir.CirFileFormat.Json;
+                    break;
+                case "--cir-format=msgpack":
+                    cirFormat = DotKt.Cir.CirFileFormat.MessagePack;
+                    break;
                 default:
                     if (args[i].StartsWith("--build-stdlib", StringComparison.Ordinal))
                         throw new UsageException($"bir2cir: --build-stdlib requires 'metadata' or 'runtime' (got '{args[i]}')");
@@ -1847,7 +1859,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 
         if (inputs.Count == 0)
             throw new UsageException("bir2cir: no BIR input files");
-        return new DriverOptions(outDir, refs, inputs, mode, reflectionRestricted);
+        return new DriverOptions(outDir, refs, inputs, mode, reflectionRestricted, cirFormat);
     }
 }
 

@@ -451,9 +451,9 @@
       "type": "object", "x-dotkt-model": { "name": "CirProperty", "domain": "cirDeclarations" },
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
-        "get": { "type": "string" }, "getSig": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "get": { "oneOf": [{ "type": "string" }, { "type": "null" }] }, "getSig": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "getRet": { "$ref": "#/$defs/type" }, "getMethodArity": { "type": "integer" },
-        "set": { "type": "string" }, "setSig": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "set": { "oneOf": [{ "type": "string" }, { "type": "null" }] }, "setSig": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "setRet": { "$ref": "#/$defs/type" }, "setMethodArity": { "type": "integer" },
         "attrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
         "nullableFlags": { "type": "array", "items": { "type": "integer" } }, "suspendFnType": { "$ref": "#/$defs/type" },

@@ -256,7 +256,7 @@ public abstract partial record TypeNode
         }
     }
 
-    private static FnPtr ReadFunctionPointer(int convention, int arity, int required, TypeNode result, TypeNode[] parameters)
+    internal static FnPtr ReadFunctionPointer(int convention, int arity, int required, TypeNode result, TypeNode[] parameters)
     {
         if (convention is < 0 or > 255 || arity < 0 || required < 0 || required > parameters.Length)
             throw new FormatException("Function-pointer header, arity or required parameter count is malformed");
@@ -264,16 +264,16 @@ public abstract partial record TypeNode
     }
 
     // These are model/wire projections and cross-field invariants, not type lowering.
-    private static Array ArrayFromWire(TypeNode elem, int? rank)
+    internal static Array ArrayFromWire(TypeNode elem, int? rank)
         => rank is int r ? Array.General(elem, r) : new Array(elem);
 
-    private static void ValidateArrayWire(Array node)
+    internal static void ValidateArrayWire(Array node)
     {
         if (node.Rank < 1 || node.Rank > MaxArrayRank || node.SzArray && node.Rank != 1)
             throw new ArgumentException("Malformed array shape");
     }
 
-    private static void ValidateFunctionPointerWire(FnPtr node)
+    internal static void ValidateFunctionPointerWire(FnPtr node)
     {
         if (node.CallingConvention is < 0 or > 255 || node.GenericArity < 0
             || node.RequiredParams < 0 || node.RequiredParams > node.Params.Length)

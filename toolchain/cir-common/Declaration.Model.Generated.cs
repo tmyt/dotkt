@@ -37,57 +37,57 @@ public sealed partial record CirPInvoke
 
 public sealed partial record CirModifiers
 {
-    [JsonPropertyName("inline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("inline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Inline { get; init; }
-    [JsonPropertyName("infix"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("infix"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Infix { get; init; }
-    [JsonPropertyName("operator"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("operator"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Operator { get; init; }
-    [JsonPropertyName("tailrec"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("tailrec"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Tailrec { get; init; }
-    [JsonPropertyName("external"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("external"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> External { get; init; }
-    [JsonPropertyName("ext"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ext"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Ext { get; init; }
-    [JsonPropertyName("extensionReceiver"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("extensionReceiver"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> ExtensionReceiver { get; init; }
-    [JsonPropertyName("override"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("override"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Override { get; init; }
-    [JsonPropertyName("abstract"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("abstract"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Abstract { get; init; }
-    [JsonPropertyName("open"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("open"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Open { get; init; }
-    [JsonPropertyName("suspend"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("suspend"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Suspend { get; init; }
-    [JsonPropertyName("data"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("data"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Data { get; init; }
-    [JsonPropertyName("sealed"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sealed"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Sealed { get; init; }
-    [JsonPropertyName("inner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("inner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Inner { get; init; }
-    [JsonPropertyName("enum"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("enum"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Enum { get; init; }
-    [JsonPropertyName("fun"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("fun"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Fun { get; init; }
-    [JsonPropertyName("annotation"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("annotation"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Annotation { get; init; }
-    [JsonPropertyName("value"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("value"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Value { get; init; }
-    [JsonPropertyName("object"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("object"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Object { get; init; }
-    [JsonPropertyName("const"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("const"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Const { get; init; }
-    [JsonPropertyName("lateinit"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("lateinit"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Lateinit { get; init; }
-    [JsonPropertyName("vararg"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("vararg"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Vararg { get; init; }
-    [JsonPropertyName("noinline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("noinline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Noinline { get; init; }
-    [JsonPropertyName("crossinline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("crossinline"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Crossinline { get; init; }
-    [JsonPropertyName("inlineOnly"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("inlineOnly"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> InlineOnly { get; init; }
-    [JsonPropertyName("context"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("context"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Context { get; init; }
 }
 
@@ -103,15 +103,15 @@ public sealed partial record CirFileDeclaration : ICirContainer
     public required CirField[] Fields { get; init; }
     [JsonPropertyName("types"), JsonRequired]
     public required CirTypeDeclaration[] Types { get; init; }
-    [JsonPropertyName("properties"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("properties"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirProperty[]> Properties { get; init; }
-    [JsonPropertyName("assemblyAttrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("assemblyAttrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> AssemblyAttrs { get; init; }
-    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> Attrs { get; init; }
-    [JsonPropertyName("wellKnownRefs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("wellKnownRefs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<System.Collections.Generic.Dictionary<string, MemberRefNode>> WellKnownRefs { get; init; }
-    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirSourcePosition> Pos { get; init; }
 }
 
@@ -132,55 +132,55 @@ public sealed partial record CirTypeDeclaration : ICirContainer
     public required string Name { get; init; }
     [JsonPropertyName("kind"), JsonRequired]
     public required CirTypeKind Kind { get; init; }
-    [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Vis { get; init; }
-    [JsonPropertyName("generated"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("generated"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Generated { get; init; }
-    [JsonPropertyName("abstract"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("abstract"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Abstract { get; init; }
-    [JsonPropertyName("final"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("final"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Final { get; init; }
-    [JsonPropertyName("specialName"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("specialName"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> SpecialName { get; init; }
-    [JsonPropertyName("beforeFieldInit"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("beforeFieldInit"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> BeforeFieldInit { get; init; }
-    [JsonPropertyName("nestedIn"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("nestedIn"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> NestedIn { get; init; }
     [JsonPropertyName("base"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<TypeNode> Base { get; init; }
-    [JsonPropertyName("interfaces"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("interfaces"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Interfaces { get; init; }
-    [JsonPropertyName("typeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirTypeParameter[]> TypeParams { get; init; }
-    [JsonPropertyName("capturedTypeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("capturedTypeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirTypeParameter[]> CapturedTypeParams { get; init; }
-    [JsonPropertyName("fields"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("fields"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirField[]> Fields { get; init; }
-    [JsonPropertyName("ctors"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ctors"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirConstructor[]> Ctors { get; init; }
-    [JsonPropertyName("methods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("methods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirMethod[]> Methods { get; init; }
-    [JsonPropertyName("properties"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("properties"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirProperty[]> Properties { get; init; }
-    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> Attrs { get; init; }
-    [JsonPropertyName("mods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("mods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirModifiers> Mods { get; init; }
-    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirSourcePosition> Pos { get; init; }
-    [JsonPropertyName("interfaceSlotRefs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("interfaceSlotRefs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirInterfaceSlotSet[]> InterfaceSlotRefs { get; init; }
-    [JsonPropertyName("clrEvents"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("clrEvents"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirEvent[]> ClrEvents { get; init; }
-    [JsonPropertyName("underlying"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("underlying"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Underlying { get; init; }
-    [JsonPropertyName("entries"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("entries"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirEnumEntry[]> Entries { get; init; }
-    [JsonPropertyName("params"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("params"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirParameter[]> Params { get; init; }
-    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Ret { get; init; }
-    [JsonPropertyName("retAttrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("retAttrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> RetAttrs { get; init; }
 }
 
@@ -188,31 +188,31 @@ public sealed partial record CirTypeParameter
 {
     [JsonPropertyName("name"), JsonRequired]
     public required string Name { get; init; }
-    [JsonPropertyName("variance"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("variance"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Variance { get; init; }
-    [JsonPropertyName("constraints"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("constraints"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Constraints { get; init; }
-    [JsonPropertyName("specialConstraints"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("specialConstraints"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string[]> SpecialConstraints { get; init; }
 }
 
 public sealed partial record CirParameter
 {
-    [JsonPropertyName("name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Name { get; init; }
     [JsonPropertyName("type"), JsonRequired]
     public required TypeNode Type { get; init; }
-    [JsonPropertyName("mods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("mods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirModifiers> Mods { get; init; }
-    [JsonPropertyName("default"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("default"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeArgument> Default { get; init; }
-    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> Attrs { get; init; }
-    [JsonPropertyName("nullableFlags"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("nullableFlags"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int[]> NullableFlags { get; init; }
-    [JsonPropertyName("suspendFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("suspendFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> SuspendFnType { get; init; }
-    [JsonPropertyName("ctxFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ctxFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> CtxFnType { get; init; }
 }
 
@@ -226,73 +226,73 @@ public sealed partial record CirMethod : ICirCallable
     public required bool Override { get; init; }
     [JsonPropertyName("virtual"), JsonRequired]
     public required bool Virtual { get; init; }
-    [JsonPropertyName("abstract"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("abstract"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Abstract { get; init; }
-    [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Vis { get; init; }
     [JsonPropertyName("params"), JsonRequired]
     public required CirParameter[] Params { get; init; }
     [JsonPropertyName("ret"), JsonRequired]
     public required TypeNode Ret { get; init; }
-    [JsonPropertyName("body"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("body"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirStatement[]> Body { get; init; }
-    [JsonPropertyName("typeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirTypeParameter[]> TypeParams { get; init; }
-    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> Attrs { get; init; }
-    [JsonPropertyName("retAttrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("retAttrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> RetAttrs { get; init; }
-    [JsonPropertyName("mods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("mods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirModifiers> Mods { get; init; }
-    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirSourcePosition> Pos { get; init; }
-    [JsonPropertyName("generated"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("generated"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Generated { get; init; }
-    [JsonPropertyName("objectOverride"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("objectOverride"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> ObjectOverride { get; init; }
-    [JsonPropertyName("clrFinal"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("clrFinal"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> ClrFinal { get; init; }
-    [JsonPropertyName("specialName"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("specialName"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> SpecialName { get; init; }
-    [JsonPropertyName("suspendBridge"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("suspendBridge"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> SuspendBridge { get; init; }
-    [JsonPropertyName("clrInterfaceSlotBridge"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("clrInterfaceSlotBridge"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> ClrInterfaceSlotBridge { get; init; }
-    [JsonPropertyName("requiresClrOverride"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("requiresClrOverride"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> RequiresClrOverride { get; init; }
-    [JsonPropertyName("clrOverrideRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("clrOverrideRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> ClrOverrideRef { get; init; }
-    [JsonPropertyName("clrInterfaceImpls"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("clrInterfaceImpls"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirMethodImpl[]> ClrInterfaceImpls { get; init; }
-    [JsonPropertyName("clrBaseImpls"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("clrBaseImpls"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirMethodImpl[]> ClrBaseImpls { get; init; }
-    [JsonPropertyName("extern"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("extern"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Extern { get; init; }
-    [JsonPropertyName("pinvoke"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("pinvoke"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirPInvoke> Pinvoke { get; init; }
-    [JsonPropertyName("bodyTerminates"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("bodyTerminates"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> BodyTerminates { get; init; }
-    [JsonPropertyName("independentAliasSlot"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("independentAliasSlot"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> IndependentAliasSlot { get; init; }
-    [JsonPropertyName("physicalSlotBridge"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("physicalSlotBridge"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> PhysicalSlotBridge { get; init; }
-    [JsonPropertyName("inlineBir"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("inlineBir"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<byte[]> InlineBir { get; init; }
-    [JsonPropertyName("retNothing"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("retNothing"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> RetNothing { get; init; }
-    [JsonPropertyName("retNullableFlags"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("retNullableFlags"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int[]> RetNullableFlags { get; init; }
-    [JsonPropertyName("retSuspendFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("retSuspendFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> RetSuspendFnType { get; init; }
-    [JsonPropertyName("suspendRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("suspendRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> SuspendRet { get; init; }
-    [JsonPropertyName("retCtxFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("retCtxFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> RetCtxFnType { get; init; }
 }
 
 public sealed partial record CirConstructor : ICirCallable
 {
-    [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Vis { get; init; }
     [JsonPropertyName("params"), JsonRequired]
     public required CirParameter[] Params { get; init; }
@@ -300,19 +300,19 @@ public sealed partial record CirConstructor : ICirCallable
     public OptionalField<ICirExpression[]> BaseArgs { get; init; }
     [JsonPropertyName("thisArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<ICirExpression[]> ThisArgs { get; init; }
-    [JsonPropertyName("delegationSig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("delegationSig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> DelegationSig { get; init; }
     [JsonPropertyName("body"), JsonRequired]
     public required ICirStatement[] Body { get; init; }
-    [JsonPropertyName("baseCtorRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("baseCtorRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> BaseCtorRef { get; init; }
-    [JsonPropertyName("localCtorIndex"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localCtorIndex"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> LocalCtorIndex { get; init; }
-    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> Attrs { get; init; }
-    [JsonPropertyName("preStmts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("preStmts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirStatement[]> PreStmts { get; init; }
-    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirSourcePosition> Pos { get; init; }
 }
 
@@ -322,31 +322,31 @@ public sealed partial record CirField
     public required string Name { get; init; }
     [JsonPropertyName("type"), JsonRequired]
     public required TypeNode Type { get; init; }
-    [JsonPropertyName("static"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("static"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Static { get; init; }
-    [JsonPropertyName("readOnly"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("readOnly"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> ReadOnly { get; init; }
-    [JsonPropertyName("initOnly"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("initOnly"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> InitOnly { get; init; }
-    [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Vis { get; init; }
     [JsonPropertyName("init"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<ICirExpression> Init { get; init; }
-    [JsonPropertyName("constant"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("constant"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeArgument> Constant { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
-    [JsonPropertyName("const"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("const"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Const { get; init; }
-    [JsonPropertyName("lateinit"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("lateinit"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Lateinit { get; init; }
-    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> Attrs { get; init; }
-    [JsonPropertyName("nullableFlags"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("nullableFlags"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int[]> NullableFlags { get; init; }
-    [JsonPropertyName("suspendFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("suspendFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> SuspendFnType { get; init; }
-    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirSourcePosition> Pos { get; init; }
 }
 
@@ -358,33 +358,33 @@ public sealed partial record CirProperty
     public required TypeNode Type { get; init; }
     [JsonPropertyName("get"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<string> Get { get; init; }
-    [JsonPropertyName("getSig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("getSig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> GetSig { get; init; }
-    [JsonPropertyName("getRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("getRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> GetRet { get; init; }
-    [JsonPropertyName("getMethodArity"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("getMethodArity"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> GetMethodArity { get; init; }
     [JsonPropertyName("set"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<string> Set { get; init; }
-    [JsonPropertyName("setSig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("setSig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> SetSig { get; init; }
-    [JsonPropertyName("setRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("setRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> SetRet { get; init; }
-    [JsonPropertyName("setMethodArity"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("setMethodArity"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> SetMethodArity { get; init; }
-    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> Attrs { get; init; }
-    [JsonPropertyName("nullableFlags"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("nullableFlags"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int[]> NullableFlags { get; init; }
-    [JsonPropertyName("suspendFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("suspendFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> SuspendFnType { get; init; }
-    [JsonPropertyName("mods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("mods"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirModifiers> Mods { get; init; }
-    [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Vis { get; init; }
-    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Recv { get; init; }
-    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirSourcePosition> Pos { get; init; }
 }
 
@@ -392,13 +392,13 @@ public sealed partial record CirEnumEntry
 {
     [JsonPropertyName("name"), JsonRequired]
     public required string Name { get; init; }
-    [JsonPropertyName("ordinal"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ordinal"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> Ordinal { get; init; }
-    [JsonPropertyName("underlying"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("underlying"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Underlying { get; init; }
-    [JsonPropertyName("physicalValue"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("physicalValue"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> PhysicalValue { get; init; }
-    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> Attrs { get; init; }
 }
 
@@ -414,9 +414,9 @@ public sealed partial record CirMethodImpl
     public required TypeNode[] Params { get; init; }
     [JsonPropertyName("ret"), JsonRequired]
     public required TypeNode Ret { get; init; }
-    [JsonPropertyName("typeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirTypeParameter[]> TypeParams { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
 }
 
@@ -444,9 +444,9 @@ public sealed partial record CirSourcePosition
 {
     [JsonPropertyName("f"), JsonRequired]
     public required string F { get; init; }
-    [JsonPropertyName("l"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("l"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> L { get; init; }
-    [JsonPropertyName("c"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("c"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> C { get; init; }
 }
 
@@ -482,7 +482,7 @@ internal static class DeclarationWireContract
         ("CirMethod", []),
         ("CirConstructor", ["baseArgs", "thisArgs"]),
         ("CirField", ["init"]),
-        ("CirProperty", []),
+        ("CirProperty", ["get", "set"]),
         ("CirEnumEntry", []),
         ("CirMethodImpl", []),
         ("CirInterfaceSlotSet", []),

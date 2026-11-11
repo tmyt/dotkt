@@ -28,7 +28,7 @@ grep -qF 'the compile reference set is empty' <<<"$cli_out" \
     || die "empty --compile-refs did not fail at target-universe validation"
 
 dotnet build "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
-    -c Release -v:minimal --nologo \
+    -c Release -v:minimal --nologo -p:Deterministic=true \
     -p:BaseIntermediateOutputPath="$OUT/obj/" \
     -p:BaseOutputPath="$OUT/bin/" >/dev/null
 
@@ -38,6 +38,38 @@ cp "$probe_dir/TargetUniverseProbe.dll" "$raw"
 
 actual="$(dotnet "$probe_dir/TargetUniverseProbe.dll")"
 [[ "$actual" == "target-universe" ]] || die "raw emitted probe returned '$actual'"
+
+# Reuse this real Kotlin compilation: only lower once more for the alternate codec.
+# Both emitters receive the same physical graph, assembly identity and target universe.
+dotnet "$BIR2CIR_DLL" "$OUT/msgpack-cir" --cir-format=msgpack \
+    --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$STDLIB_RT_DLL")" \
+    "$OUT"/obj/Release/net10.0/bir/*.bir.json
+for format in json msgpack; do
+    if [[ "$format" == json ]]; then inputs=("$OUT"/obj/Release/net10.0/cir/*.cir.json)
+    else inputs=("$OUT"/msgpack-cir/*.cir.msgpack); fi
+    dotnet "$ILEMIT_DLL" "$OUT/codec-$format" CodecProbe \
+        --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL")" \
+        --runtime-refs "$STDLIB_RT_DLL" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" \
+        --assembly-options "$OUT/obj/Release/net10.0/dotkt-resolved-emit-options.json" \
+        "${inputs[@]}"
+    cp "$STDLIB_RT_DLL" "$OUT/codec-$format/"
+    write_runtimeconfig "$OUT/codec-$format" CodecProbe
+    [[ "$(dotnet "$OUT/codec-$format/CodecProbe.dll")" == target-universe ]] || die "CIR $format runtime differs"
+done
+cmp "$OUT/codec-json/CodecProbe.dll" "$OUT/codec-msgpack/CodecProbe.dll" \
+    || die "CIR codecs changed deterministic CIL/metadata"
+echo "CIR JSON/MessagePack: identical deterministic assembly and runtime result"
+
+# Changing transport invalidates only lowering/emission, including when switching back.
+bir_stamp="$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")"
+for format in MsgPack json; do
+    dotnet build "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
+        -c Release --no-restore -v:q --nologo -p:Deterministic=true -p:DotKtCirFormat="$format" \
+        -p:BaseIntermediateOutputPath="$OUT/obj/" -p:BaseOutputPath="$OUT/bin/" >/dev/null
+    [[ -f "$OUT/obj/Release/net10.0/cir/.stamp.${format,,}" ]] || die "CIR format stamp was not refreshed"
+    [[ "$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")" == "$bir_stamp" ]] || die "CIR codec change recompiled Kotlin"
+    [[ "$(dotnet "$probe_dir/TargetUniverseProbe.dll")" == target-universe ]] || die "SDK CIR $format runtime differs"
+done
 
 dotnet run --project "$ROOT/tests/target-universe/MetadataProbe.csproj" -c Release -- \
     "$raw" "$ILEMIT_DLL"
