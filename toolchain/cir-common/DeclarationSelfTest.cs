@@ -45,7 +45,7 @@ public static class DeclarationSelfTest
             PseudoFields = ["EntryPoint"], AttributeCtorRef = constructor };
         var method = new CirMethod { Name = "M", Static = false, Override = true, Virtual = true,
             Abstract = false, Vis = "protected", Params = [parameter], Ret = integer,
-            Body = TemporaryCirStatements.FromNode(JsonNode.Parse("""[{"k":"return","value":{"k":"local","name":"value"}}]""")),
+            Body = TemporaryCirStatements.FromNode(JsonNode.Parse("""[{"k":"return","value":{"k":"local","name":"value"}}]""")!),
             TypeParams = new[] { generic }, Attrs = attributes, RetAttrs = attributes, Mods = modifiers,
             Pos = position, Generated = true, ObjectOverride = true, ClrFinal = false, SpecialName = false,
             ClrInterfaceSlotBridge = true, RequiresClrOverride = true, ClrOverrideRef = reference, SuspendBridge = false,
@@ -100,6 +100,7 @@ public static class DeclarationSelfTest
             using var encoded = JsonDocument.Parse(JsonSerializer.Serialize(record, record.GetType(), AttributeJson.Options));
             if (!encoded.RootElement.EnumerateObject().Select(pair => pair.Name).ToHashSet().SetEquals(fields))
                 throw new Exception("CIR declaration schema field coverage mismatch: " + name);
+            CheckNullFields(record);
         }
         Presence(file, field);
         // Descriptor consumption keys must survive an independent parse, including arrays and constraints.
@@ -118,5 +119,16 @@ public static class DeclarationSelfTest
         using var read = DeclarationJson.Read(Encoding.UTF8.GetBytes(DeclarationJson.Write(sample)));
         if (read.Fields[0].Init.IsPresent || !read.Fields[1].Init.IsNull || !read.Fields[2].Init.HasValue)
             throw new Exception("CIR absent/null/value distinction changed");
+        CheckNullFields(sample.Fields[1]);
+        CheckNullFields(file.Types[0] with { Base = OptionalField<TypeNode>.Null });
+    }
+
+    static void CheckNullFields(object record)
+    {
+        var allowed = DeclarationWireContract.NullableProperties.Single(item => item.Name == record.GetType().Name).Fields;
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(record, record.GetType(), AttributeJson.Options));
+        foreach (var field in document.RootElement.EnumerateObject())
+            if (field.Value.ValueKind == JsonValueKind.Null && !allowed.Contains(field.Name))
+                throw new Exception($"CIR serialized null contradicts its schema: {record.GetType().Name}.{field.Name}");
     }
 }

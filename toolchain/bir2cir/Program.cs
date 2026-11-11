@@ -26,6 +26,7 @@ static class Bir2Cir
                 DotKt.Cir.AttributeSelfTest.Run(JsonOptions.Indented);
                 AttributeProjection.SelfTest();
                 DotKt.Cir.DeclarationSelfTest.Run();
+                CirDeclarationProjection.SelfTest();
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
                 DeclarationIdentityBinding.SelfTest();

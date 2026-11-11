@@ -32,7 +32,7 @@ public sealed class TemporaryCirStatements : TemporaryCirExecutable
 {
     TemporaryCirStatements(JsonNode? node) : base(node) { }
     internal TemporaryCirStatements(JsonDocument document) : base(document) { }
-    public static TemporaryCirStatements FromNode(JsonNode? node) => new(node);
+    public static TemporaryCirStatements FromNode(JsonNode node) => new(node ?? throw new JsonException());
 }
 
 [JsonConverter(typeof(TemporaryCirExpressionsConverter))]
@@ -53,9 +53,8 @@ public sealed class TemporaryCirExpression : TemporaryCirExecutable
 
 public sealed class TemporaryCirStatementsConverter : JsonConverter<TemporaryCirStatements>
 {
-    public override bool HandleNull => true;
     public override TemporaryCirStatements Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
-        => new(JsonDocument.ParseValue(ref reader));
+        => reader.TokenType == JsonTokenType.StartArray ? new(JsonDocument.ParseValue(ref reader)) : throw new JsonException();
     public override void Write(Utf8JsonWriter writer, TemporaryCirStatements value, JsonSerializerOptions options)
         => value.Write(writer, options);
 }

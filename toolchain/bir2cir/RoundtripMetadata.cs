@@ -493,7 +493,11 @@ static class RoundtripMetadata
         // whose Root-V collapse to `IList`/`ICollection` erased the read-only-vs-mutable identity. Carries the
         // PRE-collapse Kotlin TypeNode (recorded as the opaque `collIdentityRet` string) so dll2klib restores
         // `List` vs `MutableList` at every nested position. Rides the retAttrs channel like [Nullable]/[Nothing].
-        if ((mo["collIdentityRet"] as JsonValue)?.GetValue<string>() is string cir) ret.Add(CollIdentityAttr(cir));
+        if ((mo["collIdentityRet"] as JsonValue)?.GetValue<string>() is string cir)
+        {
+            ret.Add(CollIdentityAttr(cir));
+            mo.Remove("collIdentityRet");
+        }
         if (ret.Count > 0) mo["retAttrs"] = ret;
 
         StampParams(mo["params"]);
@@ -574,7 +578,11 @@ static class RoundtripMetadata
                 }
             }
             // [KotlinCollectionIdentity] (#29) — a param nesting a collapsed read-only collection.
-            if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(po, CollIdentityAttr(ci));
+            if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci)
+            {
+                Append(po, CollIdentityAttr(ci));
+                po.Remove("collIdentity");
+            }
         }
     }
 
@@ -606,7 +614,11 @@ static class RoundtripMetadata
             if (fo["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(fo, na);
             if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));
             if (TakeInt(fo, "ctxFnType") is int fctx) Append(fo, Marker(AKCtxFnType, IntArg(fctx)));   // a `val handler: P.() -> R` field (#145)
-            if ((fo["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(fo, CollIdentityAttr(ci));  // #29
+            if ((fo["collIdentity"] as JsonValue)?.GetValue<string>() is string ci)
+            {
+                Append(fo, CollIdentityAttr(ci));
+                fo.Remove("collIdentity");
+            }
             // The staged field twin of the method carrier above. Ordinary and generic properties have already
             // consumed these facts into the C# 14 extension-property graph; context cases retain this carrier until
             // their physical lowering lands in the next increment.
@@ -655,7 +667,11 @@ static class RoundtripMetadata
             if (po["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(po, na);
             if (HasRecvFn(po["type"])) Append(po, Marker(AKExtFn));   // a `val p: P.() -> R` property (#145)
             if (TakeInt(po, "ctxFnType") is int pctx2) Append(po, Marker(AKCtxFnType, IntArg(pctx2)));
-            if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(po, CollIdentityAttr(ci));  // #29
+            if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci)
+            {
+                Append(po, CollIdentityAttr(ci));
+                po.Remove("collIdentity");
+            }
         }
     }
 
@@ -702,6 +718,9 @@ static class RoundtripMetadata
         o.Remove("retKotlinType");
         o.Remove(KotlinSupertypesRecord.PreKey);
         o.Remove("kotlinCompanion");
+        // Runtime twins retain the physical carriers, not the reference-only companion/static associations.
+        o.Remove("companionCarrier");
+        o.Remove("staticCarrier");
         var runtimeRichEnum = o["richEnum"]?.DeepClone();
         o.Remove("richEnum");
         o.Remove("enumRich");
@@ -755,6 +774,9 @@ static class RoundtripMetadata
             po.Remove("kotlinType");
             po.Remove("retKotlinType");
             po.Remove("suspendResult");
+            po.Remove(FBoundStarProjectionErasure.InnerConstructorFactoryKey);
+            po.Remove(ReifiedNullabilityWitnessLowering.SemanticIndicesKey);
+            po.Remove(ReifiedNullabilityWitnessLowering.WitnessIndicesKey);
             // A method-generic Kotlin property has no representable CLR Property signature. Metadata-bearing builds
             // consume this exact association into [KotlinPropertyAccessor]; runtime linkage does not carry
             // property projection metadata, so discard the hand-off before CIR reaches ilemit.

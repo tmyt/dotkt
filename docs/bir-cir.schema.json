@@ -363,7 +363,7 @@
         "name": { "type": "string" }, "kind": { "$ref": "#/$defs/cirTypeKind" }, "vis": { "type": "string" },
         "generated": { "type": "boolean" }, "abstract": { "type": "boolean" }, "final": { "type": "boolean" },
         "specialName": { "type": "boolean" }, "beforeFieldInit": { "type": "boolean" },
-        "nestedIn": { "type": "string" }, "base": { "$ref": "#/$defs/type" },
+        "nestedIn": { "type": "string" }, "base": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
         "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/cirTypeParameter" } },
         "capturedTypeParams": { "type": "array", "items": { "$ref": "#/$defs/cirTypeParameter" } },
@@ -487,7 +487,7 @@
     },
     "cirStatementList": { "type": "array", "items": { "$ref": "#/$defs/node" }, "x-dotkt-csharp-type": "TemporaryCirStatements", "$comment": "Explicit body-only JSON adapter; removed when CIR statements migrate, never a declaration/root field bag." },
     "cirExpressionList": { "type": ["array", "null"], "items": { "$ref": "#/$defs/node" }, "x-dotkt-csharp-type": "TemporaryCirExpressions", "$comment": "Constructor delegation operands; explicit null remains distinct from an absent field." },
-    "cirExpression": { "$ref": "#/$defs/node", "x-dotkt-csharp-type": "TemporaryCirExpression", "$comment": "Field initializer adapter only; removed with executable node migration." },
+    "cirExpression": { "oneOf": [{ "$ref": "#/$defs/node" }, { "type": "null" }], "x-dotkt-csharp-type": "TemporaryCirExpression", "$comment": "Field initializer adapter only; explicit null states no initializer. Removed with executable node migration." },
 
     "//== DECLARATIONS ==//": null,
     "typeParam": {

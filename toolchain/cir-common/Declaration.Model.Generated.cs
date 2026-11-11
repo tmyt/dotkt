@@ -469,4 +469,22 @@ internal static class DeclarationWireContract
         ("CirEvent", ["name", "delegateType"]),
         ("CirSourcePosition", ["f", "l", "c"]),
     ];
+    internal static readonly (string Name, string[] Fields)[] NullableProperties =
+    [
+        ("CirPInvoke", []),
+        ("CirModifiers", []),
+        ("CirFileDeclaration", []),
+        ("CirTypeDeclaration", ["base"]),
+        ("CirTypeParameter", []),
+        ("CirParameter", []),
+        ("CirMethod", []),
+        ("CirConstructor", ["baseArgs", "thisArgs"]),
+        ("CirField", ["init"]),
+        ("CirProperty", []),
+        ("CirEnumEntry", []),
+        ("CirMethodImpl", []),
+        ("CirInterfaceSlotSet", []),
+        ("CirEvent", []),
+        ("CirSourcePosition", []),
+    ];
 }

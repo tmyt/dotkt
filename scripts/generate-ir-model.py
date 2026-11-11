@@ -13,9 +13,29 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "docs/bir-cir.schema.json"
 
 
+def non_null_field(field):
+    alternatives = field.get("oneOf", field.get("anyOf", []))
+    if len(alternatives) == 2 and {"type": "null"} in alternatives:
+        return next(item for item in alternatives if item != {"type": "null"})
+    return field
+
+
+def allows_null(field, definitions):
+    if "$ref" in field:
+        return allows_null(definitions[field["$ref"].removeprefix("#/$defs/")], definitions)
+    if "type" in field:
+        return field["type"] == "null" or isinstance(field["type"], list) and "null" in field["type"]
+    if "anyOf" in field:
+        return any(allows_null(item, definitions) for item in field["anyOf"])
+    if "oneOf" in field:
+        return sum(allows_null(item, definitions) for item in field["oneOf"]) == 1
+    return field.get("const", False) is None or None in field.get("enum", [])
+
+
 def model_type(field, definitions, language):
     if language == "csharp" and "x-dotkt-csharp-type" in field:
         return field["x-dotkt-csharp-type"]
+    field = non_null_field(field)
     if "$ref" in field:
         name = field["$ref"].removeprefix("#/$defs/")
         if language == "csharp" and "x-dotkt-csharp-type" in definitions[name]:
@@ -359,6 +379,7 @@ def declaration_models(definitions):
                   "static partial class CirDeclarationProjection", "{"]
 
     def read(field, value):
+        field = non_null_field(field)
         if "$ref" in field:
             key = field["$ref"].removeprefix("#/$defs/")
             if key == "type":
@@ -432,6 +453,13 @@ def declaration_models(definitions):
         if "properties" not in definition:
             continue
         keys = ", ".join(json.dumps(key) for key in definition["properties"])
+        model += [f'        ("{definition["x-dotkt-model"]["name"]}", [{keys}]),']
+    model += ["    ];", "    internal static readonly (string Name, string[] Fields)[] NullableProperties =", "    ["]
+    for definition in selected.values():
+        if "properties" not in definition:
+            continue
+        keys = ", ".join(json.dumps(key) for key, field in definition["properties"].items()
+                         if allows_null(field, definitions))
         model += [f'        ("{definition["x-dotkt-model"]["name"]}", [{keys}]),']
     return "\n".join([*model, "    ];", "}", ""]), "\n".join([*projection, "}", ""])
 

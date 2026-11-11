@@ -1,6 +1,6 @@
 # Scalar T? storage and ordinary Kotlin function slots erase to object. Array values
-# use System.Array; their element conversions, invariant generic arguments and the
-# function signature modifier retain the explicit N(T) companion.
+# use System.Array; their element conversions and function signature modifier retain
+# the explicit N(T) companion. The ordinary Kotlin generic class uses its $star carrier.
 -{"t":"nullable","of":{"t":"tv"
 +"name":"pick"
 +"typeParams":[{"name":"T","constraints":[{"t":"tv","scope":"method","i":1}]},{"name":"$nullable0"}]
