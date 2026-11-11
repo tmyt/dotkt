@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using DotKt.Bir;
 using DotKt.Klib.Metadata;
 
 // Boundary assertions complement execution: mutually compatible producer/consumer mistakes must not hide a
@@ -29,10 +30,13 @@ internal static class TypeAliasMetadataInspector
                 VerifyCarrierDefinition(md, owner);
                 Require(md.GetString(ctor.Name) == ".ctor", "carrier constructor is not a .ctor");
                 var blob = md.GetBlobReader(attribute.Value);
-                Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == "bir-json/1", "wrong carrier envelope");
+                Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == BirCarrier.MessagePackV1, "wrong carrier envelope");
                 var length = blob.ReadInt32();
                 Require(length >= 0 && length <= blob.RemainingBytes - 2, "invalid carrier byte[] length");
-                declarations.Add(JsonDocument.Parse(blob.ReadBytes(length)));
+                var source = BirCarrier.DecodeBody(BirCarrier.MessagePackV1, blob.ReadBytes(length),
+                    SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
+                // Test-only inspection: compare semantic facts with saved KLIB metadata.
+                declarations.Add(JsonDocument.Parse(BirCarrier.EncodeBody(BirCarrier.JsonV1, source, SourceMetadataJson.Write)));
                 Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "unexpected carrier named arguments");
             }
 

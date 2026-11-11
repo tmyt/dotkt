@@ -32,9 +32,29 @@ internal static class SourceMetadataTests
                 throw new Exception("Source declarations leaked into physical DOM traversal");
             tool.GetType("RoundtripMetadata", true)!.GetMethod("FreezeTypeAliases")!.Invoke(null, [root, aliases]);
             var arguments = root["assemblyAttrs"]![0]!["args"]!;
+            if (arguments[0]!["value"]!.GetValue<string>() != BirCarrier.MessagePackV1)
+                throw new Exception("Source alias carrier is not actually binary");
             var decoded = BirCarrier.DecodeBody(arguments[0]!["value"]!.GetValue<string>(),
-                Convert.FromBase64String(arguments[1]!["bytes"]!.GetValue<string>()), SourceMetadataJson.Read);
+                Convert.FromBase64String(arguments[1]!["bytes"]!.GetValue<string>()),
+                SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
             Equal(expected, Write(decoded));
+            var binary = BirCarrier.EncodeBody(BirCarrier.MessagePackV1, source,
+                SourceMetadataJson.Write, SourceMetadataMessagePack.Write);
+            Equal(expected, Write(BirCarrier.DecodeBody(BirCarrier.MessagePackV1, binary,
+                SourceMetadataJson.Read, SourceMetadataMessagePack.Read)));
+            try
+            {
+                BirCarrier.DecodeBody(BirCarrier.MessagePackV1, [.. binary, 0xc0],
+                    SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
+                throw new Exception("Trailing binary payload was accepted");
+            }
+            catch (FormatException) { }
+            try
+            {
+                BirCarrier.DecodeBody("unknown/1", binary, SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
+                throw new Exception("Unknown codec was accepted");
+            }
+            catch (NotSupportedException) { }
 
             void Malformed(Action<JsonNode> mutate)
             {
@@ -67,6 +87,35 @@ internal static class SourceMetadataTests
         var levels = 0;
         while (restored.OuterType is { } outer) { levels++; restored = outer; }
         if (levels != 1001) throw new Exception("Deep source metadata was truncated");
+        var deepBinary = BirCarrier.EncodeBody(BirCarrier.MessagePackV1, deepAlias,
+            SourceMetadataJson.Write, SourceMetadataMessagePack.Write);
+        _ = BirCarrier.DecodeBody(BirCarrier.MessagePackV1, deepBinary,
+            SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
+
+        const string binaryPrefix = "IR_SOURCE_METADATA_MSGPACK ";
+        const string utf16Prefix = "IR_SOURCE_METADATA_UTF16_MSGPACK ";
+        var binaryCount = 0;
+        foreach (var line in report.Descendants("system-out").SelectMany(output => output.Value.Split('\n')))
+        {
+            var utf16 = line.StartsWith(utf16Prefix, StringComparison.Ordinal);
+            if (!utf16 && !line.StartsWith(binaryPrefix, StringComparison.Ordinal)) continue;
+            var encoded = Convert.FromBase64String(line[(utf16 ? utf16Prefix.Length : binaryPrefix.Length)..].TrimEnd('\r'));
+            var source = BirCarrier.DecodeBody(BirCarrier.MessagePackV1, encoded,
+                SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
+            var reencoded = BirCarrier.EncodeBody(BirCarrier.MessagePackV1, source,
+                SourceMetadataJson.Write, SourceMetadataMessagePack.Write);
+            source = BirCarrier.DecodeBody(BirCarrier.MessagePackV1, reencoded,
+                SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
+            if (utf16)
+            {
+                if (((SourceAnnotationValue.StringValue)source.Annotations.Single().Arguments.Single().Value).Value
+                    != "prefix\ud800middle\udc00suffix😀\0") throw new Exception("Kotlin/C# UTF-16 units changed");
+            }
+            else Equal(JsonNode.Parse(samples.Single())!, Write(source));
+            binaryCount++;
+        }
+        if (binaryCount != 2) throw new Exception("Missing cross-language MessagePack samples");
+        Console.WriteLine("Kotlin -> C# MessagePack metadata, raw bits and lone UTF-16 surrogate units: passed");
     }
 
     static SourceTypeAlias Read(string json) => BirCarrier.DecodeBody(BirCarrier.JsonV1,

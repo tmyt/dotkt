@@ -18,5 +18,8 @@
     <Reference Include="Google.Protobuf">
       <HintPath>$(DotKtDll2KlibDirectory)/Google.Protobuf.dll</HintPath>
     </Reference>
+    <Reference Include="MessagePack">
+      <HintPath>$(DotKtDll2KlibDirectory)/MessagePack.dll</HintPath>
+    </Reference>
   </ItemGroup>
 </Project>

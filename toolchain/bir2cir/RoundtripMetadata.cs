@@ -99,8 +99,9 @@ static class RoundtripMetadata
         file["assemblyAttrs"] = attrs;
         foreach (var alias in aliases)
         {
-            var content = BirCarrier.EncodeBody(BirCarrier.JsonV1, alias, SourceMetadataJson.Write);
-            attrs.Add(Marker(AKTypeAlias, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content))));
+            var content = BirCarrier.EncodeBody(BirCarrier.MessagePackV1, alias,
+                SourceMetadataJson.Write, SourceMetadataMessagePack.Write);
+            attrs.Add(Marker(AKTypeAlias, StringArg(BirCarrier.MessagePackV1), BytesArg(Convert.ToBase64String(content))));
         }
     }
 

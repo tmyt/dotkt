@@ -452,7 +452,7 @@ public abstract partial record TypeNode
 /// The carrier codec (spec §0). <c>version</c> is a <c>codec/schema-version</c> identifier;
 /// <c>"bir-json/1"</c> selects UTF8(JSON) today. A single Encode/Decode pair owns dispatch.
 /// </summary>
-public static class BirCarrier
+public static partial class BirCarrier
 {
     public const string JsonV1 = "bir-json/1";
 

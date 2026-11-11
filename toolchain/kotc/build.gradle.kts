@@ -11,6 +11,7 @@ dependencies {
 	// The whole point: reuse the official frontend (Configuration / FIR / Fir2Ir).
 	// We only own the backend (Kotlin IR -> C#) on top of this.
 	implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.21")
+	implementation("org.msgpack:msgpack-core:0.9.12")
 
 	testImplementation(kotlin("test"))
 }
