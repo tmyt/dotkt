@@ -141,7 +141,7 @@ for proj in "${PROJECTS[@]}"; do
 	if ! nunit_build_project "$ROOT" "$CONFIGURATION" "$proj"; then
 		echo "  BUILD FAIL — see build/nunit-$name.build.log"
 		# MSBuild's warning summary can push the actual compiler failure out of the tail.
-		rg 'bir2cir:|ilemit:' "$ROOT/build/nunit-$name.build.log" | tail -20 || true
+		grep -E 'bir2cir:|ilemit:' "$ROOT/build/nunit-$name.build.log" | tail -20 || true
 		tail -25 "$ROOT/build/nunit-$name.build.log"
 		rc=1
 		continue
