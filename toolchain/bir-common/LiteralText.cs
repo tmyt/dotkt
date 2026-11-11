@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -11,6 +12,56 @@ namespace DotKt.Bir;
 /// escaping an unpaired surrogate inside a JSON string does not survive System.Text.Json.</summary>
 public static class LiteralText
 {
+    public static void WriteJson(Utf8JsonWriter writer, string text)
+    {
+        if (!RequiresCodeUnits(text)) { writer.WriteStringValue(text); return; }
+        writer.WriteStartObject();
+        writer.WriteString("encoding", "utf16");
+        writer.WritePropertyName("units");
+        writer.WriteStartArray();
+        foreach (var unit in text) writer.WriteNumberValue((ushort)unit);
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    public static string ReadJson(ref Utf8JsonReader reader)
+    {
+        if (reader.TokenType == JsonTokenType.String) return reader.GetString()!;
+        if (reader.TokenType != JsonTokenType.StartObject) throw new FormatException();
+        var seen = 0;
+        string? text = null;
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName) throw new FormatException();
+            var key = reader.GetString();
+            if (!reader.Read()) throw new FormatException();
+            switch (key)
+            {
+                case "encoding":
+                    if ((seen & 1) != 0 || reader.TokenType != JsonTokenType.String || reader.GetString() != "utf16")
+                        throw new FormatException();
+                    seen |= 1;
+                    break;
+                case "units":
+                    if ((seen & 2) != 0 || reader.TokenType != JsonTokenType.StartArray) throw new FormatException();
+                    seen |= 2;
+                    var value = new StringBuilder();
+                    while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+                    {
+                        if (reader.TokenType != JsonTokenType.Number || !reader.TryGetInt32(out var unit) || (uint)unit > ushort.MaxValue)
+                            throw new FormatException();
+                        value.Append((char)unit);
+                    }
+                    if (reader.TokenType != JsonTokenType.EndArray) throw new FormatException();
+                    text = value.ToString();
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        if (reader.TokenType != JsonTokenType.EndObject || seen != 3) throw new FormatException();
+        return text!;
+    }
+
     public static JsonNode Encode(string text)
         => RequiresCodeUnits(text) ? new JsonObject
         {

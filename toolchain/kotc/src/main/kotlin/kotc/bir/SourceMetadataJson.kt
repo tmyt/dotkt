@@ -345,7 +345,7 @@ internal object SourceMetadataJson {
                 sb.append(",\"kind\":")
                 sb.append("\"string\"")
                 sb.append(",\"value\":")
-                TypeNodeJson.writeString(value.value, sb)
+                LiteralText.writeJson(value.value, sb)
                 sb.append('}')
             }
             is SourceAnnotationValue.FloatValue -> {

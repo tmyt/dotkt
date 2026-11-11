@@ -41,7 +41,7 @@ internal static class MessagePackBoundaryTests
         try { decode(); }
         catch (Exception error) when (error is FormatException or MessagePackSerializationException
             or EndOfStreamException or DecoderFallbackException) { return; }
-        throw new Exception("Malformed current MessagePack data was accepted");
+        throw new Exception("Malformed current codec data was accepted");
     }
 
     internal static SourceTypeAlias Read(byte[] data) => BirCarrier.DecodeBody(BirCarrier.MessagePackV1, data,

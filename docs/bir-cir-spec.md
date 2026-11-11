@@ -35,13 +35,18 @@ Arguments have `variance` (`inv`, `in`, `out`, `star`), plus `type` except for `
 suspend flag and extension/context type annotations; they are not converted to CLR delegates.
 
 Annotations contain a structured `classifier` and named `arguments`. Each value carries `kind` and
-`unsigned`: integral/boolean/char constants use an integer `value`, strings use a string `value`, floating
+`unsigned`: integral/boolean/char constants use an integer `value`, strings use a lossless text `value`, floating
 constants use signed integer IEEE `bits` (including NaN/infinity), class literals use `classifier` and
 `arrayDimensions`, enum constants use `classifier` and `name`, nested annotations use an annotation
 `value`, and arrays use a list of constant `value` nodes. dll2klib authors ordinary standard KLIB
 TypeAlias rows from these facts, including packages with no visible TypeDefs. Non-public visibility is
 not promoted; aliases below source-invisible owners are absent from that owner's public projection.
 Imported aliases are not re-exported, and no corresponding actualized expect class is resurrected.
+
+Source string constants reuse the executable literal text contract: JSON uses a string for scalar-valid
+text and the schema's `utf16Literal` code-unit payload when lone surrogates occur. Both source models
+still hold an ordinary String. Streaming JSON decoding restores every unit; MessagePack uses the same
+surrogate classification and its defined text extension. This is a codec choice, not a CLR ABI decision.
 
 There is no runtime alias TypeDef, dummy class, or type-forwarding/legacy recovery path. The stdlib marker
 continues to exclude its DLLs from projection because its dedicated frontend KLIB owns `kotlin.*`.
@@ -1120,6 +1125,8 @@ checks generation and the Kotlin model's JSON output alongside the existing shar
 Source alias declarations use the referenced `kotlin-typealias.schema.json`. Its model annotations
 generate Kotlin and C# source records and boundary codecs too: `discriminator` and `variantSuffix` place
 closed cases in sealed unions, and language-specific integer annotations retain source metadata widths.
+The `literalText` codec annotation reuses the schema's shared UTF-16 literal contract without introducing
+a second model or generic extension-data bag.
 The producer carries typed declarations, annotations and source type references until file output;
 bir2cir reads this domain directly into the C# model before creating the remaining BIR DOM, then
 freezes typed declarations to carrier bytes. dll2klib decodes those bytes directly into the same

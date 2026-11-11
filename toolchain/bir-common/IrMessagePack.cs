@@ -17,14 +17,7 @@ public static class IrMessagePack
 
     public static void WriteString(ref MessagePackWriter writer, string value)
     {
-        var hasLoneSurrogate = false;
-        for (var i = 0; i < value.Length; i++)
-        {
-            if (!char.IsSurrogate(value[i])) continue;
-            if (char.IsHighSurrogate(value[i]) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1])) i++;
-            else { hasLoneSurrogate = true; break; }
-        }
-        if (!hasLoneSurrogate) { writer.Write(value); return; }
+        if (!LiteralText.RequiresCodeUnits(value)) { writer.Write(value); return; }
         var bytes = new byte[checked(value.Length * 2)];
         for (var i = 0; i < value.Length; i++) BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(i * 2), value[i]);
         writer.WriteExtensionFormat(new ExtensionResult(Utf16Extension, bytes));

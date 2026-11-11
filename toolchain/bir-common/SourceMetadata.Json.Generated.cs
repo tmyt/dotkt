@@ -1199,7 +1199,7 @@ public static class SourceMetadataJson
                     break;
                 case "value":
                     Seen(ref seen, 4UL);
-                    value = ReadString(ref reader);
+                    value = LiteralText.ReadJson(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -1217,7 +1217,7 @@ public static class SourceMetadataJson
         writer.WritePropertyName("kind");
         writer.WriteStringValue("string");
         writer.WritePropertyName("value");
-        writer.WriteStringValue(value.Value);
+        LiteralText.WriteJson(writer, value.Value);
         writer.WriteEndObject();
     }
 

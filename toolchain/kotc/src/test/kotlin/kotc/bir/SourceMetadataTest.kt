@@ -1,6 +1,8 @@
 package kotc.bir
 
 import kotc.backend.TypeAliasDeclarations
+import kotc.backend.BirEmitter
+import kotc.backend.stringLiteral
 import org.jetbrains.kotlin.metadata.ProtoBuf
 import org.jetbrains.kotlin.metadata.deserialization.Flags
 import org.jetbrains.kotlin.metadata.deserialization.NameResolverImpl
@@ -11,6 +13,20 @@ import kotlin.test.assertEquals
 class SourceMetadataTest {
     private val text = "quote\"\\\n\u0001κ😀"
     private val floatBits = 0xffc00017L.toInt()
+
+    @Test
+    fun literalTextCodecsKeepEveryCodeUnit() {
+        val cases = listOf("", "plain", "quote\"\\\b\u000c", "\ud800", "\udc00", "\ud800\ud800", "\udc00\ud800",
+            "\ud800x\udc00", "😀", "\u0000", "\uffff")
+        val emitter = BirEmitter()
+        cases.forEachIndexed { index, value ->
+            val encoded = buildString { LiteralText.writeJson(value, this) }
+            assertEquals(encoded, emitter.stringLiteral(value))
+            // JUnit XML cannot carry U+FFFF literally; transport the actual JSON bytes without XML normalization.
+            val wire = java.util.Base64.getEncoder().encodeToString(encoded.toByteArray(Charsets.UTF_8))
+            println("IR_LITERAL_TEXT_SAMPLE $index\t${value.map { it.code }.joinToString(",")}\t$wire")
+        }
+    }
 
     @Test
     fun typedSourceDeclarationsKeepEveryTypeProjectionAndAnnotationConstant() {
@@ -52,6 +68,7 @@ class SourceMetadataTest {
         val utf16 = declaration.copy(annotations = listOf(SourceAnnotation(classifier, listOf(
             SourceAnnotationArgument("text", SourceAnnotationValue.StringValue(false, "prefix\ud800middle\udc00suffix😀\u0000"))))))
         println("IR_SOURCE_METADATA_UTF16_MSGPACK ${java.util.Base64.getEncoder().encodeToString(SourceMetadataMessagePack.encode(utf16))}")
+        println("IR_SOURCE_METADATA_UTF16_JSON ${SourceMetadataJson.encode(utf16)}")
     }
 
     private fun projectedAnnotation(): SourceAnnotation {

@@ -120,6 +120,50 @@ internal static class SourceMetadataTests
         }
         if (binaryCount != 2) throw new Exception("Missing cross-language MessagePack samples");
         Console.WriteLine("Kotlin -> C# MessagePack metadata, raw bits and lone UTF-16 surrogate units: passed");
+
+        const string jsonPrefix = "IR_SOURCE_METADATA_UTF16_JSON ";
+        var jsonText = report.Descendants("system-out").SelectMany(output => output.Value.Split('\n'))
+            .Single(line => line.StartsWith(jsonPrefix, StringComparison.Ordinal))[jsonPrefix.Length..].TrimEnd('\r');
+        var jsonSource = Read(jsonText);
+        Equal(JsonNode.Parse(jsonText)!, Write(jsonSource));
+        var textBinary = BirCarrier.EncodeBody(BirCarrier.MessagePackV1, jsonSource,
+            SourceMetadataJson.Write, SourceMetadataMessagePack.Write);
+        var fromBinary = MessagePackBoundaryTests.Read(textBinary);
+        const string expectedText = "prefix\ud800middle\udc00suffix😀\0";
+        if (((SourceAnnotationValue.StringValue)fromBinary.Annotations.Single().Arguments.Single().Value).Value != expectedText)
+            throw new Exception("JSON -> typed metadata -> MessagePack changed UTF-16 units");
+        SourceMetadataProjectionTests.CheckUtf16(jsonText, expectedText);
+        Console.WriteLine("Kotlin JSON -> C# metadata -> MessagePack preserves all UTF-16 code units: passed");
+
+        const string literalPrefix = "IR_LITERAL_TEXT_SAMPLE ";
+        var literalCount = 0;
+        foreach (var line in report.Descendants("system-out").SelectMany(output => output.Value.Split('\n')))
+        {
+            if (!line.StartsWith(literalPrefix, StringComparison.Ordinal)) continue;
+            var fields = line[literalPrefix.Length..].TrimEnd('\r').Split('\t');
+            var units = fields[1].Length == 0 ? [] : fields[1].Split(',').Select(int.Parse).Select(unit => (char)unit).ToArray();
+            var expected = new string(units);
+            var actual = BirCarrier.DecodeBody(BirCarrier.JsonV1, Convert.FromBase64String(fields[2]),
+                LiteralText.ReadJson, IrMessagePack.ReadString);
+            foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1 })
+            {
+                var encoded = BirCarrier.EncodeBody(codec, actual, LiteralText.WriteJson, IrMessagePack.WriteString);
+                if (BirCarrier.DecodeBody(codec, encoded, LiteralText.ReadJson, IrMessagePack.ReadString) != expected)
+                    throw new Exception("Literal text codec changed a UTF-16 code unit");
+            }
+            literalCount++;
+        }
+        if (literalCount != 11) throw new Exception("Missing actual Kotlin literal text samples");
+        Console.WriteLine($"Shared JSON/MessagePack text codecs: {literalCount} Kotlin UTF-16 samples passed");
+        foreach (var malformed in new[] {
+            """{"encoding":"utf16"}""",
+            """{"encoding":"utf16","units":[65536]}""",
+            """{"encoding":"utf16","units":[true]}""",
+            """{"encoding":"utf16","units":[],"extra":1}""",
+            """{"encoding":"utf16","encoding":"utf16","units":[]}""",
+            """{"encoding":"utf16","units":null}""",
+        }) MessagePackBoundaryTests.Reject(() => BirCarrier.DecodeBody(BirCarrier.JsonV1,
+            Encoding.UTF8.GetBytes(malformed), LiteralText.ReadJson, IrMessagePack.ReadString));
     }
 
     static SourceTypeAlias Read(string json) => BirCarrier.DecodeBody(BirCarrier.JsonV1,

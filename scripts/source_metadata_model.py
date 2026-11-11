@@ -69,6 +69,8 @@ def outputs(root, schema):
             model.append(f"{indent}data object {name}{suffix}")
 
     def write_value(shape, expression, indent):
+        if shape.get("x-dotkt-codec") == "literalText":
+            return [f"{indent}LiteralText.writeJson({expression}, sb)"]
         if "$ref" in shape:
             target = definitions[shape["$ref"].removeprefix("#/$defs/")]
             if "x-dotkt-model" in target:
@@ -148,6 +150,8 @@ def outputs(root, schema):
         "    public static void Write(Utf8JsonWriter writer, SourceTypeAlias value) => WriteSourceTypeAlias(writer, value);", ""]
 
     def cs_read(shape):
+        if shape.get("x-dotkt-codec") == "literalText":
+            return "LiteralText.ReadJson(ref reader)"
         if "$ref" in shape:
             target = definitions[shape["$ref"].removeprefix("#/$defs/")]
             return f'Read{target["x-dotkt-model"]["name"]}(ref reader)' if "x-dotkt-model" in target else cs_read(target)
@@ -162,6 +166,8 @@ def outputs(root, schema):
         return {"string": "ReadString", "int": "ReadInt32", "long": "ReadInt64", "bool": "ReadBoolean"}[cs_type(shape)] + "(ref reader)"
 
     def cs_write(shape, expression, indent):
+        if shape.get("x-dotkt-codec") == "literalText":
+            return [f"{indent}LiteralText.WriteJson(writer, {expression});"]
         if "$ref" in shape:
             target = definitions[shape["$ref"].removeprefix("#/$defs/")]
             if "x-dotkt-model" in target:

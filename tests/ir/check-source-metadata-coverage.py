@@ -16,10 +16,19 @@ if int(report.attrib["tests"]) == 0 or any(int(report.attrib[key]) for key in ("
 samples = [json.loads(line.removeprefix("IR_SOURCE_METADATA_SAMPLE "))
            for output in report.iter("system-out") for line in (output.text or "").splitlines()
            if line.startswith("IR_SOURCE_METADATA_SAMPLE ")]
+utf16_samples = [json.loads(line.removeprefix("IR_SOURCE_METADATA_UTF16_JSON "))
+                 for output in report.iter("system-out") for line in (output.text or "").splitlines()
+                 if line.startswith("IR_SOURCE_METADATA_UTF16_JSON ")]
+assert len(utf16_samples) == 1
 errors = []
 validate_aliases(samples, "/typeAliases", lambda path, message: errors.append((path, message)))
+validate_aliases(utf16_samples, "/typeAliases", lambda path, message: errors.append((path, message)))
 if errors:
     raise SystemExit(f"Actual typed source metadata violates the schema: {errors}")
+utf16_value = utf16_samples[0]["annotations"][0]["arguments"][0]["value"]["value"]
+assert utf16_value["encoding"] == "utf16"
+assert utf16_value["units"] == [112, 114, 101, 102, 105, 120, 0xd800, 109, 105, 100, 100, 108,
+                                101, 0xdc00, 115, 117, 102, 102, 105, 120, 0xd83d, 0xde00, 0]
 
 def objects(value):
     if isinstance(value, dict):

@@ -590,12 +590,7 @@ internal fun BirEmitter.str(t: TypeNode): String = t.toJson()
 
 /** JSON strings encode Unicode scalar values, while Kotlin strings retain arbitrary UTF-16 code units. */
 internal fun BirEmitter.stringLiteral(s: String): String {
-	val unpaired = s.indices.any { i ->
-		(s[i].isHighSurrogate() && (i + 1 == s.length || !s[i + 1].isLowSurrogate())) ||
-			(s[i].isLowSurrogate() && (i == 0 || !s[i - 1].isHighSurrogate()))
-	}
-	return if (unpaired) s.map { it.code }.joinToString(",", """{"encoding":"utf16","units":[""", "]}")
-	else str(s)
+	return buildString { kotc.bir.LiteralText.writeJson(s, this) }
 }
 
 internal fun BirEmitter.str(s: String): String {
