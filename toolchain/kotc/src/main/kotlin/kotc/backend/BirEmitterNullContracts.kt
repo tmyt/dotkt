@@ -1,5 +1,15 @@
 package kotc.backend
 
+import kotc.bir.TypeNode
+import kotc.bir.BirConstant
+import kotc.bir.BirConditionalBranch
+import kotc.bir.BirIf
+import kotc.bir.BirLiteral
+import kotc.bir.BirLocal
+import kotc.bir.BirNew
+import kotc.bir.BirObjectEquals
+import kotc.bir.BirThrow
+
 import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
 import org.jetbrains.kotlin.ir.declarations.IrFunction
@@ -80,11 +90,22 @@ private fun BirEmitter.ownerIsNamed(fn: IrFunction): Boolean {
 }
 
 internal fun BirEmitter.nullConstJson(): String =
-	"""{"k":"const","type":{"t":"nullable","of":${fqnJson("kotlin.Nothing")}},"value":null}"""
+	BirConstant(TypeNode.Nullable(TypeNode.Fqn("kotlin.Nothing")), BirLiteral.NullLiteral).toJson()
 
 /** `if (<ref> == null) throw NullPointerException(<msg>)` as a single `if`-branch BIR statement (no stack merge). */
-private fun BirEmitter.nullCheckStmt(refJson: String, msgJson: String): String =
-	"""{"k":"if","branches":[{"cond":{"k":"objEq","lhs":$refJson,"rhs":${nullConstJson()}},"body":[{"k":"throw","value":${newExc("kotlin.NullPointerException", msgJson)}}]}]}"""
+internal fun parameterNullCheck(parameterName: String, message: String): BirIf {
+	val sourceString = TypeNode.Fqn("kotlin.String")
+	val exception = BirNew(
+		type = TypeNode.Fqn("kotlin.NullPointerException"),
+		argTypes = listOf(TypeNode.Nullable(sourceString)),
+		args = listOf(BirConstant(sourceString, BirLiteral.TextLiteral(message))),
+	)
+	return BirIf(listOf(BirConditionalBranch(
+		cond = BirObjectEquals(BirLocal(parameterName),
+			BirConstant(TypeNode.Nullable(TypeNode.Fqn("kotlin.Nothing")), BirLiteral.NullLiteral)),
+		body = listOf(BirThrow(exception)),
+	)))
+}
 
 /**
  * Entry PRECONDITION statements for `fn`'s NON-NULL REFERENCE **value** parameters (a setter's `value` rides as a
@@ -108,8 +129,8 @@ internal fun BirEmitter.preconditionChecks(fn: IrFunction): List<String> {
 	for (p in fn.parameters) {
 		if (p.kind != IrParameterKind.Regular) continue             // receivers/context params -> skip (see kdoc)
 		if (!needsNonNullCheck(p.type)) continue
-		val msg = str("Parameter specified as non-null is null: $ownerMethod, parameter ${p.name.asString()}")
-		out.add(nullCheckStmt("""{"k":"local","name":${str(p.name.asString())}}""", msg))
+		val msg = "Parameter specified as non-null is null: $ownerMethod, parameter ${p.name.asString()}"
+		out.add(parameterNullCheck(p.name.asString(), msg).toJson())
 	}
 	return out
 }
@@ -144,7 +165,7 @@ internal fun <T> BirEmitter.withReturnPostcondition(fn: IrSimpleFunction, emit: 
  */
 internal fun BirEmitter.wrapNonNullValue(valueJson: String, valueType: IrType, msgJson: String): String {
 	val nv = "dotkt\$nonNullValue${scopeCounter++}"
-	val nvLoc = """{"k":"local","name":${str(nv)}}"""
+	val nvLoc = kotc.bir.BirLocal(nv).toJson()
 	val throwNpe = throwExpr(newExc("kotlin.NullPointerException", msgJson))
 	return valueBlockJson(
 		type = null,

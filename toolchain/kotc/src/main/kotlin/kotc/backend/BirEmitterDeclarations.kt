@@ -445,7 +445,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		// failed CLR type loading. This is still pure Kotlin vocabulary/fact preservation: no CLR owner/name is inferred.
 		val extRecv = extensionReceiverParam(fn)
 		val extRecvName = extRecv?.let { extensionReceiverSlotName(fn) }
-		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":${str(extRecvName!!)}}"""
+		if (extRecv != null) selfSubst[extRecv] = kotc.bir.BirLocal(extRecvName!!).toJson()
 		// #6 non-null parameter PRECONDITIONS + return POSTCONDITION for a default interface method body (an abstract slot
 		// has no body to guard).
 		val body = if (hasDefault) {
@@ -833,8 +833,8 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			.joinToString(",")
 		val (plan, delegatedArgs) = withCallPlan(delegating) { delegatedCtorArgs(delegating) }
 		val thisArgs = (listOf(
-			"""{"k":"local","name":${str(nameParam)}}""",
-			"""{"k":"local","name":${str(ordinalParam)}}""") + delegatedArgs).joinToString(",")
+			kotc.bir.BirLocal(nameParam).toJson(),
+			kotc.bir.BirLocal(ordinalParam).toJson()) + delegatedArgs).joinToString(",")
 		val targetTypes = delegating.symbol.owner.parameters.filter(::isValueParameter)
 			.map { birType(it.type).toJson() }
 		val delegationSig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) + targetTypes)
@@ -1568,7 +1568,7 @@ private fun BirEmitter.accessorBodyStmts(acc: IrSimpleFunction): String {
 internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 	val extRecv = extensionReceiverParam(acc)
 	val extRecvName = extRecv?.let { extensionReceiverSlotName(acc) }
-	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":${str(extRecvName!!)}}"""
+	if (extRecv != null) selfSubst[extRecv] = kotc.bir.BirLocal(extRecvName!!).toJson()
 	val savedDelegatedAccessor = activeDelegatedAccessor
 	activeDelegatedAccessor = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }
 	// #6 non-null parameter PRECONDITIONS + getter return POSTCONDITION, gated on the accessor's real IR visibility.
@@ -1596,7 +1596,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	// resolve via selfSubst (by identity, so it isn't confused with the dispatch `<this>`).
 	val extRecv = extensionReceiverParam(acc)
 	val extRecvName = extRecv?.let { extensionReceiverSlotName(acc) }
-	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":${str(extRecvName!!)}}"""
+	if (extRecv != null) selfSubst[extRecv] = kotc.bir.BirLocal(extRecvName!!).toJson()
 	val selfParam = extRecv?.let { """{"name":${str(extRecvName!!)},"type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 	val savedDelegatedAccessor = activeDelegatedAccessor
 	activeDelegatedAccessor = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }
@@ -2201,7 +2201,7 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	// body references to the receiver resolve to `__self` (via valSubst).
 	val extRecv = extensionReceiverParam(fn)
 	val extRecvName = extRecv?.let { extensionReceiverSlotName(fn) }
-	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":${str(extRecvName!!)}}"""
+	if (extRecv != null) selfSubst[extRecv] = kotc.bir.BirLocal(extRecvName!!).toJson()
 	// (No fun-interface SAM param-erasure here: kotc reads NEITHER @ClrTypeAlias NOR @ClrIntrinsic — foundational
 	// invariant.) A fun interface aliased to a NON-generic BCL interface would be derived in bir2cir off the ref.dll;
 	// but the stdlib no longer aliases any `fun interface` to a BCL interface — Comparator is a plain Kotlin fun
@@ -2712,9 +2712,9 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 				when {
 					p === ownerClass && prior == null ->
 						installCarrierSubst(recv, """{"k":"defaultArgReceiver","kind":"dispatch"}""")
-					prior != null && prior.contains("""{"k":"this"}""") ->
+					prior != null && prior.contains(kotc.bir.BirThis().toJson()) ->
 						installCarrierSubst(recv, prior.replace(
-							"""{"k":"this"}""",
+							kotc.bir.BirThis().toJson(),
 							"""{"k":"defaultArgReceiver","kind":"dispatch"}"""))
 				}
 			}

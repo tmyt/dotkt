@@ -2,7 +2,7 @@
 // Structural model; the boundary codec is generated in TypeNodeJson.kt.
 package kotc.bir
 
-sealed class TypeNode {
+sealed class TypeNode : BirValue {
     data class Fqn(val name: String, val args: List<TypeNode>? = null, val classifier: SourceClassifier? = null) : TypeNode()
 
     data class Tv(val scope: String, val i: Int) : TypeNode()
@@ -23,5 +23,6 @@ sealed class TypeNode {
 
     data class SourceClassifier(val packageName: String, val ownerPath: List<String>, val name: String)
 
+    override fun writeJson(output: StringBuilder) = TypeNodeJson.write(this, output)
     fun toJson(): String = TypeNodeJson.encode(this)
 }

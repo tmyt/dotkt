@@ -290,7 +290,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 			// bir2cir to reconstruct which receiver frame the bare `this` originally denoted (#558).
 			"""{"k":"this","sty":${birType(d.type).toJson()}}"""
 		else
-			"""{"k":"local","name":${str(name)}}"""
+			kotc.bir.BirLocal(name).toJson()
 		if (isOuterReceiver) captureLocalName.remove(d) else captureLocalName[d] = name
 	}
 	// A suspend extension lambda has two distinct `this` candidates: its own extension receiver and a captured
@@ -300,7 +300,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	val hadExtensionReceiver = extensionReceiver != null && selfSubst.containsKey(extensionReceiver)
 	val savedExtensionReceiver = extensionReceiver?.let { selfSubst[it] }
 	if (extensionReceiver != null)
-		selfSubst[extensionReceiver] = """{"k":"local","name":${str(extensionReceiver.name.asString())}}"""
+		selfSubst[extensionReceiver] = kotc.bir.BirLocal(extensionReceiver.name.asString()).toJson()
 	val body = withFreshLambdaLocalFunctionIds(fn) {
 		(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
 	}
@@ -528,7 +528,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				}
 				val ctorArgs = (capPairs.map { (_, fname) ->
 					"""{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
-				} + ps.map { """{"k":"local","name":${str(it.name.asString())}}""" }).joinToString(",")
+				} + ps.map { kotc.bir.BirLocal(it.name.asString()).toJson() }).joinToString(",")
 				val ctorArgTypes = (capPairs.map { (decl, _) -> str(captureFieldType(decl)) } +
 					ps.map { birType(it.type).toJson() }).joinToString(",")
 				val retT = birType(ctor.returnType)
@@ -546,7 +546,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val typeArgs = liftedTypeArgsJson(freeTps)
 			val declaration = withLiftedMethodFrame(freeTps) {
 				val psJson = ps.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
-				val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+				val argsJson = ps.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 				val argTypesJson = ps.joinToString(",") { birType(it.type).toJson() }
 				val liftedRet = birType(ctor.returnType)
 				val newE = """{"k":"new","type":${ownerSpec(klass, ctor.returnType).toJson()},"argTypes":[$argTypesJson],"args":[$argsJson]}"""
@@ -565,7 +565,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val typeArgs = liftedTypeArgsJson(freeTps)
 			val declaration = withLiftedMethodFrame(freeTps) {
 				val psJson = ps.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
-				val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+				val argsJson = ps.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 				val liftedRet = birType(ctor.returnType)
 				val newE = """{"k":"new","type":${fqnJson(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { birType(it.type).toJson() }}],"args":[$argsJson]}"""
 				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedRet.toJson()},"body":[{"k":"return","value":$newE}]}"""
@@ -658,7 +658,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val psJson = regs.zip(liftedFuncType.params).joinToString(",") { (p, t) ->
 				"""{"name":${str(p.name.asString())},"type":${t.toJson()}}"""
 			}
-			val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+			val argsJson = regs.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 			val argTypes = regs.joinToString(",") { birType(it.type).toJson() }
 			val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 				?: error("validated static function reference lost its type arguments in its lifted method frame")
@@ -700,7 +700,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val paramsJson = valueParams.zip(liftedFuncType.params).joinToString(",") { (p, t) ->
 					"""{"name":${str(p.name.asString())},"type":${t.toJson()}}"""
 				}
-				val argsJson = valueParams.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+				val argsJson = valueParams.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 				val liftedRefTa = functionReferenceTypeArgs(node, fn)
 					?: error("validated top-level function reference lost its type arguments in its lifted method frame")
 				val call = """{"k":"callStatic","owner":null,"method":${str(targetName)}${overloadSigField(fn)}$liftedRefTa,"args":[$argsJson],"ret":${liftedFuncType.ret.toJson()}${calleeOwnerTag(fn)}$companionExtensionTag$declarationIdentityTag}"""
@@ -765,7 +765,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val psJson = (listOf("""{"name":"__self","type":${selfT.toJson()}}""") +
 				regTypes.mapIndexed { i, t -> """{"name":${str("__a${i + 1}")},"type":${t.toJson()}}""" }).joinToString(",")
 			val callArgs = (listOf("""{"k":"local","name":"__self"}""") +
-				regTypes.indices.map { """{"k":"local","name":${str("__a${it + 1}")}}""" }).joinToString(",")
+				regTypes.indices.map { kotc.bir.BirLocal("__a${it + 1}").toJson() }).joinToString(",")
 			val retT = liftedFnType.ret
 			val retVoid = retT == TypeNode.Fqn("kotlin.Unit") // the SUBSTITUTED return (fn's own T may resolve to Unit)
 			val callE = extensionReferenceCall(node, fn, retT, callArgs)
@@ -803,7 +803,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val paramsJson = regs.zip(liftedFuncType.params).joinToString(",") { (parameter, type) ->
 					"""{"name":${str(parameter.name.asString())},"type":${type.toJson()}}"""
 				}
-				val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+				val argsJson = regs.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 				val liftedOwner = ownerSpec(ownerClass, boundRecv.type).toJson()
 				val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 					?: error("validated companion function reference lost its type arguments in its lifted method frame")
@@ -838,13 +838,13 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val captureValue = valueBlockJson(
 			type = selfT.toJson(),
 			stmts = """{"k":"var","name":${str(captureName)},"type":${selfT.toJson()},"init":${expr(boundRecv)}}""",
-			result = """{"k":"local","name":${str(captureName)}}""",
+			result = kotc.bir.BirLocal(captureName).toJson(),
 		)
 		val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
 		val invokeParams = regs.zip(resolvedFuncType.params).joinToString(",") { (parameter, type) ->
 			"""{"name":${str(parameter.name.asString())},"type":${type.toJson()}}"""
 		}
-		val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+		val argsJson = regs.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 		val recv = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
 		val declaration = selectedDeclaration ?: if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
 		val declarationOwner = declaration.parent as? IrClass
@@ -899,7 +899,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				ps.zip(liftedFnType.params.drop(1)).map { (p, type) ->
 					"""{"name":${str(p.name.asString())},"type":${type.toJson()}}"""
 				}).joinToString(",")
-			val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+			val argsJson = ps.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 			val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 			val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 				?: error("validated function reference lost its type arguments while entering its lifted method frame")
@@ -954,7 +954,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val psJson = regs.zip(liftedFuncType.params).joinToString(",") { (parameter, type) ->
 					"""{"name":${str(parameter.name.asString())},"type":${type.toJson()}}"""
 				}
-				val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+				val argsJson = regs.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 				val liftedArgTypes = regs.joinToString(",") { birType(it.type).toJson() }
 				val callE = """{"k":"callStatic","ownerType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$liftedArgTypes],"ret":${liftedFuncType.ret.toJson()},"args":[$argsJson]$anySlotTag}"""
 				val identityCallE = if (memberDeclarationIdentityTag.isEmpty()) callE
@@ -999,7 +999,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 					regs.zip(liftedFuncType.params.drop(1)).map { (parameter, type) ->
 						"""{"name":${str(parameter.name.asString())},"type":${type.toJson()}}"""
 					}).joinToString(",")
-				val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+				val argsJson = regs.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 				val liftedArgTypes = regs.joinToString(",") { birType(it.type).toJson() }
 				val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 					?: error("validated .NET method reference lost its type arguments in its lifted method frame")
@@ -1088,7 +1088,7 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	val paramsJson = physicalParamTypes.mapIndexed { i, t ->
 		"""{"name":${str(paramNames[i])},"type":${t.toJson()}}"""
 	}.joinToString(",")
-	fun localArg(name: String) = """{"k":"local","name":${str(name)}}"""
+	fun localArg(name: String) = kotc.bir.BirLocal(name).toJson()
 	// Build (captures, capValues, bodyCall) by reference kind. The inner call MIRRORS the direct-call shape for this
 	// callee so bir2cir attributes it identically; `suspendCall:true` is the fact SuspendColdLowering's FunGen segments on.
 	val captures: String; val capValues: String?; val bodyCall: String
@@ -1269,7 +1269,7 @@ internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFun
 	val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
 	val invokeParams = regTypes.mapIndexed { i, t -> """{"name":${str("__a${i + 1}")},"type":${t.toJson()}}""" }.joinToString(",")
 	val recvArg = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
-	val callArgs = (listOf(recvArg) + regTypes.indices.map { """{"k":"local","name":${str("__a${it + 1}")}}""" }).joinToString(",")
+	val callArgs = (listOf(recvArg) + regTypes.indices.map { kotc.bir.BirLocal("__a${it + 1}").toJson() }).joinToString(",")
 	val callE = extensionReferenceCall(node, fn, retT, callArgs)
 	val forwardBody = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
 	// The closure must be GENERIC over any enclosing type params referenced by the captured receiver or the invoke
@@ -1518,7 +1518,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	fun recvExprIn(): String = when {
 		bound -> """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
 		unbound -> """{"k":"local","name":"receiver"}"""
-		else -> """{"k":"this"}"""
+		else -> kotc.bir.BirThis().toJson()
 	}
 	val memberOwner: TypeNode = when {
 		staticProperty -> kotc.frontend.ClrStaticOwners.at(sourcePathOf(node), node.endOffset, name, "get")
@@ -1981,7 +1981,7 @@ internal fun BirEmitter.capValueExpr(d: IrValueDeclaration): String =
 	// param was `__recvN` -> ilemit "load unknown var $this$buildString"), then `valSubst`, then the `<this>`/local
 	// fallback. selfSubst/captureSubst are IDENTITY-keyed (the receiver by symbol, not name).
 	captureSubst[d] ?: selfSubst[d] ?: valSubst[d]
-		?: if (d.name.asString() == "<this>") """{"k":"this"}""" else """{"k":"local","name":${str(localSlotName(d))}}"""
+		?: if (d.name.asString() == "<this>") kotc.bir.BirThis().toJson() else kotc.bir.BirLocal(localSlotName(d)).toJson()
 
 /**
  * The lambda's value parameters in DELEGATE (physical `FunctionN` type-argument) order — everything but the
@@ -2067,7 +2067,7 @@ internal inline fun <T> BirEmitter.withLambdaSelf(fn: IrSimpleFunction, recvName
 	if (ext == null || recvName == null) return block()
 	val had = selfSubst.containsKey(ext)
 	val saved = selfSubst[ext]
-	selfSubst[ext] = """{"k":"local","name":${str(recvName)}}"""
+	selfSubst[ext] = kotc.bir.BirLocal(recvName).toJson()
 	try { return block() } finally { if (had) selfSubst[ext] = saved!! else selfSubst.remove(ext) }
 }
 
@@ -2130,7 +2130,7 @@ internal fun BirEmitter.localFunctionDecl(fn: IrSimpleFunction): String {
 	val savedTypeSubst = freeTps.associateWith { typeArgSubst[it] }
 	freeTps.forEachIndexed { index, parameter -> typeArgSubst[parameter] = TypeNode.Tv("method", index) }
 	capPairs.forEach { (decl, fname) ->
-		captureSubst[decl] = """{"k":"local","name":${str(fname)}}"""
+		captureSubst[decl] = kotc.bir.BirLocal(fname).toJson()
 		captureLocalName[decl] = fname
 	}
 	val capParams: List<String>

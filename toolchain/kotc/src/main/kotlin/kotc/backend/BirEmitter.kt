@@ -1,6 +1,8 @@
 package kotc.backend
 
 import kotc.bir.TypeNode
+import kotc.bir.BirSourcePoint
+import kotc.bir.BirSourceSpan
 import org.jetbrains.kotlin.backend.common.collectTailRecursionCalls
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
@@ -323,7 +325,8 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		val b = source.getLineAndColumnNumbers(end)
 		if (a.line < 0 || a.column < 0 || b.line < a.line || b.column < 0 ||
 			(b.line == a.line && b.column <= a.column)) return null
-		return """{"k":"sourcePoint","span":{"f":${str(source.name)},"l":${a.line + 1},"c":${a.column + 1},"el":${b.line + 1},"ec":${b.column + 1}}}"""
+		return BirSourcePoint(BirSourceSpan(source.name, a.line + 1, a.column + 1,
+			b.line + 1, b.column + 1)).toJson()
 	}
 
 	/**
@@ -929,7 +932,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
-	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: """{"k":"local","name":${str(localSlotName(d))}}"""
+	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: kotc.bir.BirLocal(localSlotName(d)).toJson()
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) refType(d) else birType(d.type)
 

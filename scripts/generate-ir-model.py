@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from source_metadata_model import outputs as source_metadata_outputs
 from bir_literal_models import outputs as bir_literal_outputs
+from bir_core_models import outputs as bir_core_outputs
 from cir_messagepack import generate as cir_messagepack
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,28 +115,29 @@ def type_parameter_models(definitions):
     dom += ["        return result;", "    }", "}", ""]
     kt = [header, "package kotc.bir", "", f"data class {name}(",
           ",\n".join("    " + parameter(key, shape, definition, definitions, "kotlin") for key, shape in kt_fields),
-          ") {", "    fun toJson(): String = buildString {",
-          "        append('{')"]
+          ") : BirValue {", "    fun toJson(): String = buildString { writeJson(this) }",
+          "    override fun writeJson(output: StringBuilder) {", "        with(output) {",
+          "            append('{')"]
     for index, (key, shape) in enumerate(kt_fields):
         optional = key not in definition["required"]
         prefix = ("," if index else "") + json.dumps(key) + ":"
-        indent = "            " if optional else "        "
+        indent = "                " if optional else "            "
         value = "child" if optional else key
         if optional:
-            kt += [f"        {key}?.let {{ child ->"]
+            kt += [f"            {key}?.let {{ child ->"]
         kt += [f"{indent}append({json.dumps(prefix)})"]
         if shape.get("type") == "array":
             kt += [f"{indent}append('[')", f"{indent}{value}.forEachIndexed {{ index, item ->",
                    f"{indent}    if (index > 0) append(',')"]
-            item = "append(item.toJson())" if "$ref" in shape["items"] else "TypeNodeJson.writeString(item, this)"
+            item = "item.writeJson(this)" if "$ref" in shape["items"] else "TypeNodeJson.writeString(item, this)"
             kt += [f"{indent}    {item}", f"{indent}}}", f"{indent}append(']')"]
         elif model_type(shape, definitions, "kotlin") == "String":
             kt += [f"{indent}TypeNodeJson.writeString({value}, this)"]
         else:
             kt += [f"{indent}append({value})"]
         if optional:
-            kt += ["        }"]
-    kt += ["        append('}')", "    }", "}", ""]
+            kt += ["            }"]
+    kt += ["            append('}')", "        }", "    }", "}", ""]
     return {
         ROOT / "toolchain/bir-common/TypeParameterDeclaration.Model.Generated.cs": "\n".join(cs),
         ROOT / "toolchain/bir-common/TypeParameterDeclaration.Dom.Generated.cs": "\n".join(dom),
@@ -378,7 +380,7 @@ def kotlin_json(variants, values, definitions):
     lines = ["// Generated from docs/bir-cir.schema.json by scripts/generate-ir-model.py.",
              "package kotc.bir", "", "internal object TypeNodeJson {",
              "    fun encode(type: TypeNode): String = buildString { write(type, this) }", "",
-             "    private fun write(value: TypeNode, sb: StringBuilder) {", "        when (value) {"]
+             "    fun write(value: TypeNode, sb: StringBuilder) {", "        when (value) {"]
     for definition in variants:
         model = definition["x-dotkt-model"]
         if not model.get("kotlin", True):
@@ -723,18 +725,20 @@ def outputs(schema):
     csharp += ["    ];", "}", ""]
     kotlin = ["// Generated from docs/bir-cir.schema.json by scripts/generate-ir-model.py.",
               "// Structural model; the boundary codec is generated in TypeNodeJson.kt.",
-              "package kotc.bir", "", "sealed class TypeNode {"]
+              "package kotc.bir", "", "sealed class TypeNode : BirValue {"]
     for definition in variants:
         if definition["x-dotkt-model"].get("kotlin", True):
             kotlin += [kotlin_declaration(definition, definitions, derived=True), ""]
     kotlin += [kotlin_declaration(definition, definitions, derived=False) for definition in values]
-    kotlin += ["", "    fun toJson(): String = TypeNodeJson.encode(this)", "}", ""]
+    kotlin += ["", "    override fun writeJson(output: StringBuilder) = TypeNodeJson.write(this, output)",
+               "    fun toJson(): String = TypeNodeJson.encode(this)", "}", ""]
     declaration_model, declaration_projection = declaration_models(definitions)
     executable_model, executable_projection = executable_models(definitions)
     return {
         ROOT / "toolchain/cir-common/MessagePack.Generated.cs": cir_messagepack(definitions, model_type, non_null_field, allows_null),
         **type_parameter_models(definitions),
         **bir_literal_outputs(ROOT, definitions),
+        **bir_core_outputs(ROOT, definitions),
         ROOT / "toolchain/cir-common/Executable.Model.Generated.cs": executable_model,
         ROOT / "toolchain/bir2cir/CirExecutableProjection.Generated.cs": executable_projection,
         ROOT / "toolchain/cir-common/Declaration.Model.Generated.cs": declaration_model,

@@ -1142,7 +1142,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	localDelegates[callee]?.let { ldp ->
 		val dvar = ldp.delegate!!
 		val dname = localSlotName(dvar)
-		val dlocal = """{"k":"local","name":${str(dname)}}"""
+		val dlocal = kotc.bir.BirLocal(dname).toJson()
 		val elem = birType(ldp.getter.returnType)
 		// A `ClrRef<T>` delegate (byref local): getValue/setValue inline to ldobj/stobj through the managed pointer.
 		if (birType(dvar.type) is TypeNode.ByRef)
@@ -1435,7 +1435,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val arg = call.arguments.filterNotNull().first()
 		val velem = nullableElem(arg.type)
 		val nv = "__nn${scopeCounter++}"
-		val nvLoc = """{"k":"local","name":${str(nv)}}"""
+		val nvLoc = kotc.bir.BirLocal(nv).toJson()
 		val throwNpe = throwExpr(newExc("kotlin.NullPointerException", null))
 		if (velem != null) {
 			return valueBlockJson(
@@ -1960,7 +1960,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// just with the real FQN instead of the retired `dotkt$KProperty` synthetic.
 	if (property != null && declaringClass != null) {
 		val recvExpr = dispatchReceiver(call)
-		val recv = recvExpr?.let { expr(it) } ?: """{"k":"this"}"""
+		val recv = recvExpr?.let { expr(it) } ?: kotc.bir.BirThis().toJson()
 		val ownerStr = ownerSpec(declaringClass, recvExpr?.type)
 		val owner = str(ownerStr)
 		// A property with a custom accessor — OR one overriding an interface property (e.g. CharSequence.length) —
@@ -2457,7 +2457,7 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	if (isExternalNetType(cls)) return null
 	val backing = prop.backingField ?: return null
 	if (prop.isDelegated || isLateinitProperty(prop) || isClrField(prop)) return null
-	val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
+	val recv = dispatchReceiver(call)?.let { expr(it) } ?: kotc.bir.BirThis().toJson()
 	val owner = ownerSpec(cls, dispatchReceiver(call)?.type).toJson()
 	val rendered = """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(prop.name.asString())}}"""
 	return memberFieldVisibilityStamped(backing, rendered)

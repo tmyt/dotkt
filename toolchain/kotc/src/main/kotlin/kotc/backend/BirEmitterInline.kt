@@ -498,14 +498,14 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 	for ((d, name, value) in carrierCaptures) {
 		if (value == null) continue
 		savedCaptureSubst[d] = captureSubst[d]
-		captureSubst[d] = """{"k":"local","name":${str(name)}}"""
+		captureSubst[d] = kotc.bir.BirLocal(name).toJson()
 	}
 	// Allocated against the lambda's own frame, like every other minted frame name — the carrier's params sit in the
 	// same flat by-name namespace as the lambda's own, so an unchecked `__recvN` could alias one of them.
 	val freshRecv = extParam?.let { freshFrameName("__recv", fn) }
 	val hadSelf = extParam != null && selfSubst.containsKey(extParam)
 	val savedSelf = extParam?.let { selfSubst[it] }
-	if (extParam != null) selfSubst[extParam] = """{"k":"local","name":${str(freshRecv!!)}}"""
+	if (extParam != null) selfSubst[extParam] = kotc.bir.BirLocal(freshRecv!!).toJson()
 	// The carrier's params are bound POSITIONALLY to the invoke's args, so they must be in the PHYSICAL delegate
 	// order [orderedLambdaParams] defines — contexts, the extension receiver, then the regulars. A lambda for a
 	// CONTEXT function type (`inline fun h(f: context(C) (Int) -> R)`) owns a context parameter of its own, and
@@ -703,10 +703,10 @@ internal fun BirEmitter.spliceBodyWithReturns(target: IrSimpleFunction, unit: Bo
 	if (saved != null) inlineReturnSubst[target.symbol] = saved else inlineReturnSubst.remove(target.symbol)
 	return if (res != null) {
 		tail?.let { pre.add("""{"k":"setLocal","name":${str(res)},"value":$it}""") }
-		pre.add("""{"k":"label","id":$end}""")
-		"""{"k":"local","name":${str(res)}}"""
+		pre.add(kotc.bir.BirLabel(end).toJson())
+		kotc.bir.BirLocal(res).toJson()
 	} else {
-		pre.add("""{"k":"label","id":$end}""")
+		pre.add(kotc.bir.BirLabel(end).toJson())
 		"""{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
 	}
 }
@@ -761,8 +761,8 @@ internal fun BirEmitter.emitStackBuffer(call: IrCall): String {
 
 /** A `StackBuffer<T>` member access (`buf[i]` / `buf[i]=v` / `buf.size`) inside the spliced block -> a stack op. */
 internal fun BirEmitter.emitStackBufferOp(call: IrCall, callee: IrSimpleFunction, info: BirEmitter.StackBufInfo): String {
-	val ptr = """{"k":"local","name":${str(info.ptrName)}}"""
-	val len = """{"k":"local","name":${str(info.lenName)}}"""
+	val ptr = kotc.bir.BirLocal(info.ptrName).toJson()
+	val len = kotc.bir.BirLocal(info.lenName).toJson()
 	return when {
 		callee.correspondingPropertySymbol?.owner?.name?.asString() == "size" -> len
 		callee.name.asString() == "get" ->

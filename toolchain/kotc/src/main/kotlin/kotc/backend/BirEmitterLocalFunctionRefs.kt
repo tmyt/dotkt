@@ -79,7 +79,7 @@ internal fun BirEmitter.localFunctionRef(
 	}
 	val callArgs = capPairs.map { (_, name) -> field(name) } + ownParams.map { parameter ->
 		boundFields[parameter]?.let(::field)
-			?: """{"k":"local","name":${str(arguments.getValue(parameter))}}"""
+			?: kotc.bir.BirLocal(arguments.getValue(parameter)).toJson()
 	}
 	val sig = capPairs.map { (decl, _) -> captureFieldType(decl).toJson() } +
 		ownParams.map { birType(it.type).toJson() }
