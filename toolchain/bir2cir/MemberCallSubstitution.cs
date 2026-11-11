@@ -923,7 +923,6 @@ static class MemberCallSubstitution
                     ["type"] = NetInteropBinding.CloseStaticOwner(injected.Owner, injected.Type),
                     ["name"] = fn,
                     ["static"] = true,
-                    ["recv"] = null,
                 };
                 if (injectedPropKind == "get") shaped["ret"] = node["ret"]?.DeepClone();
                 else shaped["value"] = injectedPropArgs.Count > 0 ? injectedPropArgs[0]?.DeepClone() : null;
@@ -2907,6 +2906,7 @@ static class MemberCallSubstitution
         var staticAxis = forceStatic || Str(node["k"]) == "callStatic";
         var extRecv = staticAxis && propMarker is ("get" or "set") && args.Count > (write ? 1 : 0)
             ? args[0] : null;
+        var isStatic = staticAxis && propMarker != null && extRecv == null;
         var pg = new JsonObject
         {
             ["k"] = write ? "clrPropSet" : "clrPropGet",
@@ -2914,9 +2914,9 @@ static class MemberCallSubstitution
             ["name"] = prop,
             // A marker-bound static computed property (no __self) is a genuine STATIC accessor; an extension binds
             // on __self (instance); the instance axis (no marker) stays instance.
-            ["static"] = staticAxis && propMarker != null && extRecv == null,
-            ["recv"] = (extRecv ?? node["recv"])?.DeepClone(),
+            ["static"] = isStatic,
         };
+        if (!isStatic) pg["recv"] = (extRecv ?? node["recv"])?.DeepClone();
         if (KotlinPropertyAccessors.TryCallIdentity(node, out var sourceProperty, out var sourceAccessor))
             KotlinPropertyAccessors.PreserveCallIdentity(pg, sourceProperty, sourceAccessor);
         if (node[DeclarationIdentityBinding.Key] is JsonNode selectedDeclaration)

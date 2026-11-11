@@ -29,7 +29,7 @@ static partial class CirDeclarationProjection
             ["k"] = "callInstance", ["method"] = "Read", ["ownerType"] = TypeJson.Fqn("Consumer"),
             ["recv"] = sourceLocal, ["args"] = new JsonArray(Local("temporary")),
             ["clrOwnerResolved"] = true, ["virtual"] = false,
-            ["super"] = true, ["static"] = false, ["sty"] = TypeJson.Fqn("System.UInt64"),
+            ["super"] = true, ["static"] = false, ["sty"] = TypeJson.Fqn("System.UInt64"), ["prop"] = "index-get",
             [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = true,
             ["calleeParams"] = new JsonArray(TypeJson.Fqn("System.UInt64")),
             ["calleeRet"] = TypeJson.Fqn("System.UInt64"),
@@ -46,6 +46,7 @@ static partial class CirDeclarationProjection
             || document.RootElement.TryGetProperty("static", out _)
             || document.RootElement.TryGetProperty(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey, out _)
             || document.RootElement.TryGetProperty("sty", out _)
+            || document.RootElement.TryGetProperty("prop", out _)
             || document.RootElement.TryGetProperty("super", out _)
             || document.RootElement.GetProperty("recv").TryGetProperty("sty", out _)
             || sourceLocal["sty"] is null)
@@ -69,6 +70,38 @@ static partial class CirDeclarationProjection
             || ReadCirNode(castSource) is not CirCast { Type: TypeNode.Fqn { Name: "System.Object" } }
             || ReadCirNode(objectSource) is not CirObjectMethod { Method: "ToString" })
             throw new InvalidOperationException("Consuming source typing facts changed an established physical operation");
+        var constrainedSource = new JsonObject {
+            ["k"] = "constrainedCall", ["method"] = "Read", ["iface"] = TypeJson.Fqn("ISlot"),
+            ["recvType"] = TypeJson.Write(new TypeNode.Tv("method", 0)), ["recv"] = Local("receiver"),
+            ["args"] = new JsonArray(), ["argTypes"] = new JsonArray(), ["calleeParams"] = new JsonArray(),
+        };
+        if (ReadCirNode(constrainedSource) is not CirConstrainedCall { Method: "Read", CalleeParams.Value.Length: 0 })
+            throw new InvalidOperationException("Consuming argument source types changed a constrained call's physical signature");
+        var closureSource = JsonNode.Parse("""
+            {"k":"newClosure","closureType":{"t":"fqn","name":"Closure"},"method":"invoke","captures":[],
+             "funcType":{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"void"},"params":[],"clr":"System.Action"},
+             "calleeParams":[],"delegateCtorRef":{"kind":"ctor","assembly":"System.Runtime",
+              "declaringType":{"t":"fqn","name":"System.Action"},"name":".ctor","genericArity":0,
+              "returnType":{"t":"fqn","name":"void"},"callingConvention":"instance",
+              "parameterTypes":[{"t":"fqn","name":"System.Object"},{"t":"fqn","name":"System.IntPtr"}]}}
+            """)!;
+        if (ReadCirNode(closureSource) is not CirClosure { Method: "invoke", Captures.Length: 0,
+            ClosureType: TypeNode.Fqn { Name: "Closure" }, DelegateCtorRef.Name: ".ctor" })
+            throw new InvalidOperationException("Consuming a closure binding signature changed its physical construction");
+        foreach (var method in new[] { "ToString", "GetHashCode", "Equals" })
+        {
+            var enumCall = new JsonObject {
+                ["k"] = "callInstance", ["ownerType"] = TypeJson.Fqn("SampleEnum"), ["method"] = method,
+                ["recv"] = Local("receiver"),
+                ["args"] = method == "Equals" ? new JsonArray(Local("other")) : new JsonArray(),
+                ["argTypes"] = method == "Equals" ? new JsonArray(TypeJson.Fqn("System.Object")) : new JsonArray(),
+            };
+            EnumMemberBinding.Apply(enumCall, new HashSet<string> { "SampleEnum" });
+            var enumSlot = (CirObjectMethod)ReadCirNode(enumCall);
+            if (enumSlot.Method != method || enumSlot.Recv is not CirLocal { Name: "receiver" }
+                || (method == "Equals" && enumSlot.Arg.Value is not CirLocal { Name: "other" }))
+                throw new InvalidOperationException("Enum object-slot binding changed an operand or retained call-only facts");
+        }
         var metadataOnly = new JsonObject {
             ["fields"] = new JsonArray(new JsonObject {
                 ["init"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Double"), ["value"] = 1.0 }

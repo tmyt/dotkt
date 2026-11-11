@@ -715,7 +715,7 @@ static partial class CirDeclarationProjection
 
     static CirCallInstance ReadCirCallInstance(JsonNode node)
     {
-        CheckFields(node, ["k", "method", "ownerType", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "dynRet", "virtual", "recv", "args", "clrOwnerResolved", "super", "static", "sty", "_physicalDeclarationSignature"]);
+        CheckFields(node, ["k", "method", "ownerType", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "dynRet", "virtual", "recv", "args", "clrOwnerResolved", "super", "static", "sty", "_physicalDeclarationSignature", "prop"]);
         CheckSourceStamp(node);
         return new CirCallInstance
         {
@@ -736,7 +736,7 @@ static partial class CirDeclarationProjection
 
     static CirConstrainedCall ReadCirConstrainedCall(JsonNode node)
     {
-        CheckFields(node, ["k", "method", "iface", "recvType", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "recv", "args", "virtual"]);
+        CheckFields(node, ["k", "method", "iface", "recvType", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "recv", "args", "virtual", "argTypes"]);
         return new CirConstrainedCall
         {
             Method = node["method"]!.GetValue<string>(),
@@ -1205,7 +1205,7 @@ static partial class CirDeclarationProjection
 
     static CirClosure ReadCirClosure(JsonNode node)
     {
-        CheckFields(node, ["k", "funcType", "closureType", "method", "typeArgs", "captures", "delegateCtorRef"]);
+        CheckFields(node, ["k", "funcType", "closureType", "method", "typeArgs", "captures", "delegateCtorRef", "calleeParams"]);
         return new CirClosure
         {
             FuncType = TypeJson.Read(node["funcType"]!),
