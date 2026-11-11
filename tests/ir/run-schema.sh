@@ -66,6 +66,11 @@ fi
 if ! dotnet "$BIR2CIR_DLL" --selftest; then
   echo "SCHEMA GATE: RED (shared codec self-test)"; exit 1
 fi
+if ! dotnet run --project tests/ir/type-codec/Probe.csproj --no-launch-profile \
+    -p:DotKtBir2CirPath="$ROOT/$BIR2CIR_DLL" -- \
+    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeNodeTest.xml"; then
+  echo "SCHEMA GATE: RED (cross-language type codec)"; exit 1
+fi
 
 # SELF-TEST next: the validator checks whatever is on disk, so one that silently stopped checking would look
 # exactly like a clean corpus. Each `reject-*` is a shape the compiler must never emit and the validator must
