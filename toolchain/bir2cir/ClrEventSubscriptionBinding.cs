@@ -138,9 +138,10 @@ static class ClrEventSubscriptionBinding
                 {
                     ["k"] = add ? "clrEventAdd" : "clrEventRemove",
                     ["type"] = closureOwnerType.DeepClone(), ["event"] = eventGet["name"]?.DeepClone(),
-                    ["static"] = isStatic, ["recv"] = receiver,
+                    ["static"] = isStatic,
                     ["handler"] = Local("handler", closureHandlerType), ["handlerExact"] = true,
                 };
+                if (!isStatic) operation["recv"] = receiver;
                 if (eventGet["memberVisibility"] is JsonNode visibility)
                     operation["memberVisibility"] = visibility.DeepClone();
                 var synthClass = new JsonObject

@@ -697,7 +697,7 @@ static partial class CirDeclarationProjection
 
     static CirCallStatic ReadCirCallStatic(JsonNode node)
     {
-        CheckFields(node, ["k", "method", "owner", "calleeOwner", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "args", "declarationId", "ownerType", "argTypes"]);
+        CheckFields(node, ["k", "method", "owner", "calleeOwner", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "args", "declarationId", "ownerType", "argTypes", "dynRet", "virtual"]);
         return new CirCallStatic
         {
             Method = node["method"]!.GetValue<string>(),
@@ -715,7 +715,8 @@ static partial class CirDeclarationProjection
 
     static CirCallInstance ReadCirCallInstance(JsonNode node)
     {
-        CheckFields(node, ["k", "method", "ownerType", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "dynRet", "virtual", "recv", "args", "clrOwnerResolved", "super", "static"]);
+        CheckFields(node, ["k", "method", "ownerType", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "dynRet", "virtual", "recv", "args", "clrOwnerResolved", "super", "static", "sty", "_physicalDeclarationSignature"]);
+        CheckSourceStamp(node);
         return new CirCallInstance
         {
             Method = node["method"]!.GetValue<string>(),
@@ -735,7 +736,7 @@ static partial class CirDeclarationProjection
 
     static CirConstrainedCall ReadCirConstrainedCall(JsonNode node)
     {
-        CheckFields(node, ["k", "method", "iface", "recvType", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "recv", "args"]);
+        CheckFields(node, ["k", "method", "iface", "recvType", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "recv", "args", "virtual"]);
         return new CirConstrainedCall
         {
             Method = node["method"]!.GetValue<string>(),
@@ -767,7 +768,7 @@ static partial class CirDeclarationProjection
 
     static CirGenericInstance ReadCirGenericInstance(JsonNode node)
     {
-        CheckFields(node, ["k", "type", "method", "typeArgs", "recv", "args", "memberRef", "receiverMode", "dispatch", "ret"]);
+        CheckFields(node, ["k", "type", "method", "typeArgs", "recv", "args", "memberRef", "receiverMode", "dispatch", "ret", "super"]);
         return new CirGenericInstance
         {
             Type = TypeJson.Read(node["type"]!),
@@ -989,7 +990,7 @@ static partial class CirDeclarationProjection
 
     static CirNativeInstance ReadCirNativeInstance(JsonNode node)
     {
-        CheckFields(node, ["k", "type", "method", "recv", "args", "dispatch", "memberRef", "ret", "typeArgs", "localAccessor", "accessorOwner", "sig", "calleeParams", "clrOwnerResolved", "argTypes", "sty"]);
+        CheckFields(node, ["k", "type", "method", "recv", "args", "dispatch", "memberRef", "ret", "typeArgs", "localAccessor", "accessorOwner", "sig", "calleeParams", "clrOwnerResolved", "argTypes", "sty", "super"]);
         CheckSourceStamp(node);
         return new CirNativeInstance
         {
@@ -1029,7 +1030,7 @@ static partial class CirDeclarationProjection
 
     static CirPropertyGet ReadCirPropertyGet(JsonNode node)
     {
-        CheckFields(node, ["k", "type", "static", "member", "accessor", "dispatch", "recv", "memberRef", "volatile", "localAccessor", "accessorOwner", "sig", "calleeParams", "clrOwnerResolved", "name", "ret"]);
+        CheckFields(node, ["k", "type", "static", "member", "accessor", "dispatch", "recv", "memberRef", "volatile", "localAccessor", "accessorOwner", "sig", "calleeParams", "clrOwnerResolved", "name", "ret", "super"]);
         return new CirPropertyGet
         {
             Type = TypeJson.Read(node["type"]!),
@@ -1049,7 +1050,7 @@ static partial class CirDeclarationProjection
 
     static CirPropertySet ReadCirPropertySet(JsonNode node)
     {
-        CheckFields(node, ["k", "type", "static", "member", "accessor", "dispatch", "recv", "value", "memberRef", "volatile", "localAccessor", "accessorOwner", "sig", "calleeParams", "clrOwnerResolved", "name"]);
+        CheckFields(node, ["k", "type", "static", "member", "accessor", "dispatch", "recv", "value", "memberRef", "volatile", "localAccessor", "accessorOwner", "sig", "calleeParams", "clrOwnerResolved", "name", "super"]);
         return new CirPropertySet
         {
             Type = TypeJson.Read(node["type"]!),

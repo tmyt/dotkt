@@ -574,12 +574,16 @@ static class ClrEventImplBinding
             .Select((_, index) => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
         var owner = new TypeNode.Fqn(Str(type["name"]), ownerArguments.Length == 0 ? null : ownerArguments);
         var isStatic = add["static"]?.GetValue<bool>() == true;
-        JsonObject Receiver() => new()
+        JsonObject Receiver()
         {
-            ["k"] = isStatic ? "staticField" : "field", ["ownerType"] = TypeJson.Write(owner), ["name"] = fieldName,
-            ["recv"] = isStatic ? null : new JsonObject { ["k"] = "this", ["sty"] = TypeJson.Write(owner) },
-            ["sty"] = policyType.DeepClone(),
-        };
+            var receiver = new JsonObject
+            {
+                ["k"] = isStatic ? "staticField" : "field", ["ownerType"] = TypeJson.Write(owner), ["name"] = fieldName,
+                ["sty"] = policyType.DeepClone(),
+            };
+            if (!isStatic) receiver["recv"] = new JsonObject { ["k"] = "this", ["sty"] = TypeJson.Write(owner) };
+            return receiver;
+        }
         JsonObject Call(string name, TypeNode parameter, JsonNode argument)
         {
             var declaration = refs.AuthoredKotlinHelper("kotlin.clr.ClrEventPolicy", name, 0,

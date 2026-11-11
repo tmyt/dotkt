@@ -29,7 +29,8 @@ static partial class CirDeclarationProjection
             ["k"] = "callInstance", ["method"] = "Read", ["ownerType"] = TypeJson.Fqn("Consumer"),
             ["recv"] = sourceLocal, ["args"] = new JsonArray(Local("temporary")),
             ["clrOwnerResolved"] = true, ["virtual"] = false,
-            ["super"] = true, ["static"] = false,
+            ["super"] = true, ["static"] = false, ["sty"] = TypeJson.Fqn("System.UInt64"),
+            [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = true,
             ["calleeParams"] = new JsonArray(TypeJson.Fqn("System.UInt64")),
             ["calleeRet"] = TypeJson.Fqn("System.UInt64"),
         };
@@ -43,6 +44,8 @@ static partial class CirDeclarationProjection
         using var document = JsonDocument.Parse(JsonSerializer.Serialize<ICirExpression>(projected, AttributeJson.Options));
         if (document.RootElement.TryGetProperty("clrOwnerResolved", out _)
             || document.RootElement.TryGetProperty("static", out _)
+            || document.RootElement.TryGetProperty(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey, out _)
+            || document.RootElement.TryGetProperty("sty", out _)
             || document.RootElement.TryGetProperty("super", out _)
             || document.RootElement.GetProperty("recv").TryGetProperty("sty", out _)
             || sourceLocal["sty"] is null)
@@ -51,6 +54,7 @@ static partial class CirDeclarationProjection
             ["k"] = "callStatic", ["method"] = "Read", ["owner"] = TypeJson.Fqn("Consumer"),
             ["sig"] = new JsonArray(TypeJson.Fqn("System.UInt64")),
             ["argTypes"] = new JsonArray(TypeJson.Fqn("System.UInt64")),
+            ["dynRet"] = TypeJson.Fqn("System.UInt64"), ["virtual"] = false,
             ["args"] = new JsonArray(Local("temporary")),
         };
         var staticCall = (CirCallStatic)ReadCirNode(staticSource);

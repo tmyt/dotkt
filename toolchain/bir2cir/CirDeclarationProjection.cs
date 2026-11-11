@@ -26,6 +26,6 @@ static partial class CirDeclarationProjection
     {
         foreach (var pair in node.AsObject())
             if (Array.IndexOf(fields, pair.Key) < 0)
-                throw new InvalidOperationException($"Unprojected CIR field '{pair.Key}' at {node.GetPath()}");
+                throw new InvalidOperationException($"Unprojected CIR field '{pair.Key}' on {node["k"]?.ToString() ?? "declaration"} at {node.GetPath()}");
     }
 }
