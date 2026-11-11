@@ -191,7 +191,7 @@ def generate(definitions, model_type, non_null_field, allows_null):
             lines.extend(["            default: throw new FormatException();", "        }", "    }", ""])
             continue
         if shape.get("x-dotkt-model", {}).get("name") == "CirTypeKind":
-            pairs = [(item, item.capitalize()) for item in shape["enum"]]
+            pairs = [(item, item[0].upper() + item[1:]) for item in shape["enum"]]
             expression = "IrMessagePack.ReadString(ref reader) switch { " + ", ".join(
                 f"{json.dumps(wire)} => CirTypeKind.{member}" for wire, member in pairs) + ", _ => throw new FormatException() }"
             body = ["writer.Write(node switch { " + ", ".join(f"CirTypeKind.{member} => {json.dumps(wire)}" for wire, member in pairs) +

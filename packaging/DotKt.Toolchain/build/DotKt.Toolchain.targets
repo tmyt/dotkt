@@ -249,7 +249,10 @@
   </Target>
 
   <Target Name="DotKtComputeBir2CirModeStamp" DependsOnTargets="DotKtInitializeIntermediatePaths">
-    <Error Condition="'$(DotKtCirFormat)' != 'json' and '$(DotKtCirFormat)' != 'msgpack'"
+    <PropertyGroup>
+      <_DotKtCirFormat>$(DotKtCirFormat.ToLowerInvariant())</_DotKtCirFormat>
+    </PropertyGroup>
+    <Error Condition="'$(_DotKtCirFormat)' != 'json' and '$(_DotKtCirFormat)' != 'msgpack'"
            Text="DotKtCirFormat must be json or msgpack." />
     <PropertyGroup>
       <!-- A normal build followed by PublishAot/PublishTrimmed must not reuse a lowering that never requested the
@@ -258,7 +261,7 @@
       <_DotKtReflectionRestrictedArg Condition="'$(PublishAot)' == 'true' or '$(PublishTrimmed)' == 'true'">--reflection-restricted</_DotKtReflectionRestrictedArg>
       <_DotKtBir2CirModeStamp>$(DotKtIntermediateCirPath)/.stamp</_DotKtBir2CirModeStamp>
       <_DotKtBir2CirModeStamp Condition="'$(_DotKtReflectionRestrictedArg)' != ''">$(DotKtIntermediateCirPath)/.stamp.reflection-restricted</_DotKtBir2CirModeStamp>
-      <_DotKtBir2CirModeStamp>$(_DotKtBir2CirModeStamp).$(DotKtCirFormat)</_DotKtBir2CirModeStamp>
+      <_DotKtBir2CirModeStamp>$(_DotKtBir2CirModeStamp).$(_DotKtCirFormat)</_DotKtBir2CirModeStamp>
     </PropertyGroup>
   </Target>
 
@@ -288,7 +291,7 @@
       <_DotKtEscapedBir Remove="@(_DotKtEscapedBir)" />
       <_DotKtEscapedBir Include="@(_DotKtBir->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
       <_DotKtBir2CirResponseArgument Include="_output"><Value>&quot;$(_DotKtEscapedCirOutputPath)&quot;</Value></_DotKtBir2CirResponseArgument>
-      <_DotKtBir2CirResponseArgument Include="_format"><Value>--cir-format=$(DotKtCirFormat)</Value></_DotKtBir2CirResponseArgument>
+      <_DotKtBir2CirResponseArgument Include="_format"><Value>--cir-format=$(_DotKtCirFormat)</Value></_DotKtBir2CirResponseArgument>
       <_DotKtBir2CirResponseArgument Include="_compile_refs_option"><Value>--compile-refs</Value></_DotKtBir2CirResponseArgument>
       <_DotKtBir2CirResponseArgument Include="_compile_refs"><Value>&quot;$(_DotKtEscapedCompileReferences)&quot;</Value></_DotKtBir2CirResponseArgument>
       <_DotKtBir2CirResponseArgument Include="_reflection_restricted" Condition="'$(_DotKtReflectionRestrictedArg)' != ''"><Value>$(_DotKtReflectionRestrictedArg)</Value></_DotKtBir2CirResponseArgument>
@@ -349,7 +352,7 @@
     <Error Condition="'$(_DebugSymbolsProduced)' == 'true' and '@(_DotKtPortablePdb->Count())' != '1'"
            Text="DotKt: Portable PDB emission requires one SDK intermediate symbol path." />
     <ItemGroup>
-      <_DotKtCir Include="$(DotKtIntermediateCirPath)/*.cir.$(DotKtCirFormat)" />
+      <_DotKtCir Include="$(DotKtIntermediateCirPath)/*.cir.$(_DotKtCirFormat)" />
       <!-- ilemit's runtime refs are the implementation assemblies from the copy-local set: the runtime stdlib
            (DotKt.Stdlib, real kotlin.* bodies — resolves kotlin.io.ConsoleKt.println etc.), plus every user
            PackageReference / ProjectReference / explicit <Reference> runtime dll a call may cross into. The

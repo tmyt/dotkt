@@ -44,6 +44,7 @@ class CorpusTests(unittest.TestCase):
         self.record(list(self.current) * 2)
         self.assertEqual(self.selected("both"), self.current | self.stdlib)
         self.assertEqual(len(collect(self.root, "both")), 4)
+        self.assertEqual(set(collect(self.root, "both", literal=True)), set(map(str, self.current | self.stdlib)))
         self.assertEqual(self.selected("cir"), {file for file in self.current | self.stdlib
                                                 if file.name.endswith(".cir.json")})
         self.assertTrue(all(file.read_text() == "not JSON" for file in unrelated))

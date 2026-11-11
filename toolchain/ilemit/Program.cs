@@ -1,8 +1,8 @@
-// ilemit — emit a runnable .NET assembly directly as CIL from Backend IR (BIR) JSON. No C#, no csc.
+// ilemit — emit a runnable .NET assembly directly from typed CIR. No C#, no csc.
 //
-//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] [--reference-assembly <dll>] [--portable-pdb <pdb>] <file1.cir.json>...
+//   ilemit <output-dir> <assemblyName> --compile-refs a.dll;b.dll;... [--runtime-refs a.dll;b.dll;...] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] [--reference-assembly <dll>] [--portable-pdb <pdb>] <file.cir.json|file.cir.msgpack>...
 //
-// All BIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
+// All CIR files compile into ONE assembly (so multi-file Kotlin cross-references resolve).
 // D1.2 = M0 subset; D1.4 = user classes (fields, ctors, methods, inheritance, virtual/override).
 using System.Reflection;
 using System.Reflection.Emit;
@@ -24,7 +24,7 @@ static class IlEmit
             Console.Error.WriteLine($"ilemit: {ex.Message}");
             return 1;
         }
-        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] [--reference-assembly <dll>] [--portable-pdb <pdb>] <file.cir.json>..."); return 1; }
+        if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--jit-debugging <true|false>] [--target-framework-moniker <framework>] [--target-platform <platform>] [--supported-os-platform <platform>] [--target-rid <rid>] [--rid-graph-path <json>] [--assembly-options <json>] [--reference-assembly <dll>] [--portable-pdb <pdb>] <file.cir.json|file.cir.msgpack>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];
         Directory.CreateDirectory(outDir);

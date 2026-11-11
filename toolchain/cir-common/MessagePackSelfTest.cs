@@ -30,6 +30,10 @@ public static class MessagePackSelfTest
         var copy = CirFileCodec.Decode(bytes);
         if (copy.FileClass != file.FileClass || !copy.Fields.Select(field => field.Type).SequenceEqual(types))
             throw new Exception("CIR binary changed a type frame, classifier, array shape, signature or UTF-16 unit");
+        var classifier = ((TypeNode.Fqn)copy.Fields[0].Type).Classifier;
+        if (classifier is null || classifier.PackageName != "Namespace" || classifier.Name != "Generic"
+            || !classifier.OwnerPath.SequenceEqual(new[] { "Outer" }))
+            throw new Exception("CIR binary lost the explicit source classifier identity");
         Reject(() => CirFileCodec.Decode(bytes[..^1]));
         Reject(() => CirFileCodec.Decode((byte[])[..bytes, 0]));
         var wrongKind = (byte[])bytes.Clone();

@@ -526,12 +526,15 @@ def declaration_models(definitions):
                     expression = f'node.AsObject().ContainsKey("{field_name}") ? {expression} : {literal}'
             else:
                 annotations.append("JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)")
+                if not allows_null(field, definitions):
+                    annotations.append("JsonConverter(typeof(NonNullOptionalFieldConverterFactory))")
                 declaration = f"OptionalField<{value_type}>"
                 if name == "CirField" and field_name == "constant":
                     expression = ('node.AsObject().ContainsKey("constant") ? '
                                   'OptionalField<AttributeArgument>.Of(AttributeProjection.Literal(node["constant"], TypeJson.Read(node["type"]))) : default')
                 else:
-                    expression = f'ReadOptional(node, "{field_name}", value => {read(field, "value")})'
+                    null_option = "" if allows_null(field, definitions) else ", allowNull: false"
+                    expression = f'ReadOptional(node, "{field_name}", value => {read(field, "value")}{null_option})'
             model += ["    [" + ", ".join(annotations) + "]", f"    public {declaration} {cs_name} {{ get; init; }}"]
             projection += [f"            {cs_name} = {expression},"]
         model += ["}", ""]

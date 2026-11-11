@@ -107,6 +107,14 @@ public static class DeclarationSelfTest
             CheckNullFields(record);
         }
         Presence(file, field);
+        var malformed = file with { Fields = [field with { Static = OptionalField<bool>.Null }] };
+        try { DeclarationJson.Write(malformed); throw new Exception("Schema-forbidden declaration null was written"); }
+        catch (JsonException) { }
+        var brokenJson = JsonNode.Parse(json)!;
+        brokenJson["fields"]![0]!["static"] = null;
+        try { DeclarationJson.Read(Encoding.UTF8.GetBytes(brokenJson.ToJsonString()));
+            throw new Exception("Schema-forbidden declaration null was read"); }
+        catch (JsonException) { }
         // Descriptor consumption keys must survive an independent parse, including arrays and constraints.
         var independent = read.Methods[0].ClrInterfaceImpls.Value[0];
         if (!descriptor.Equals(independent) || descriptor.GetHashCode() != independent.GetHashCode()

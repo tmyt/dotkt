@@ -62,11 +62,11 @@ echo "CIR JSON/MessagePack: identical deterministic assembly and runtime result"
 
 # Changing transport invalidates only lowering/emission, including when switching back.
 bir_stamp="$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")"
-for format in msgpack json; do
+for format in MsgPack json; do
     dotnet build "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
         -c Release --no-restore -v:q --nologo -p:Deterministic=true -p:DotKtCirFormat="$format" \
         -p:BaseIntermediateOutputPath="$OUT/obj/" -p:BaseOutputPath="$OUT/bin/" >/dev/null
-    [[ -f "$OUT/obj/Release/net10.0/cir/.stamp.$format" ]] || die "CIR format stamp was not refreshed"
+    [[ -f "$OUT/obj/Release/net10.0/cir/.stamp.${format,,}" ]] || die "CIR format stamp was not refreshed"
     [[ "$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")" == "$bir_stamp" ]] || die "CIR codec change recompiled Kotlin"
     [[ "$(dotnet "$probe_dir/TargetUniverseProbe.dll")" == target-universe ]] || die "SDK CIR $format runtime differs"
 done
