@@ -3,7 +3,8 @@
 //
 // NORMATIVE: docs/bir-cir-spec.md §1 (the Type schema) + §4 (the shared helper API).
 // A Type is ALWAYS a JSON object with a `t` discriminator — there is NO bare-string type. Readers
-// dispatch(t); they NEVER split/scan a string. This file is the ONE place a Type is parsed/built.
+// dispatch(t); they NEVER split/scan a string. Structural data is generated from the schema; semantic helpers
+// and the JSON boundary live here.
 //
 // It agrees with kotc.bir.TypeNode for BIR. The phase extensions are all bir2cir-authored CIR facts kotc
 // omits: Fn.Clr (the physical delegate family) and the three ECMA signature carriers Ptr, Array.Rank and
@@ -21,43 +22,17 @@ namespace DotKt.Bir;
 /// Kotlin projection carrier in BIR/metadata; bir2cir must lower it before CIR emission.
 /// `T` in the spec denotes a nested <see cref="TypeNode"/>.
 /// </summary>
-public abstract record TypeNode
+public abstract partial record TypeNode
 {
-    // --- Variants (spec §1 table) --------------------------------------------------------------
-    // Custom Equals/GetHashCode are provided per array-bearing variant so that structural `==`
-    // (which records give for scalars but NOT for array members) holds — the round-trip self-test
-    // relies on `Read(Write(node)) == node`.
+    // Structural declarations are schema-generated in TypeNode.Model.Generated.cs. Equality and the delegate
+    // argument view remain semantic operations here; source classifier metadata is not part of a physical key.
 
     /// <summary>`fqn`: a named type — a PURE Kotlin/CLR FQN identity; <c>Args</c> = generic application.</summary>
-    public sealed record Fqn(string Name, TypeNode[]? Args = null) : TypeNode
+    public sealed partial record Fqn
     {
-        // A Kotlin metadata fact, not part of the backend's representation key.
-        public SourceClassifier? Classifier { get; init; }
         public bool Equals(Fqn? o) => o is not null && Name == o.Name && SeqEq(Args, o.Args);
         public override int GetHashCode() => System.HashCode.Combine(Name, Args?.Length ?? -1);
     }
-
-    public sealed record SourceClassifier(string PackageName, string[] OwnerPath, string Name);
-
-    /// <summary>
-    /// `tv`: a type variable. <c>Scope</c> ∈ {"type","method"} selects the CLR generic-parameter space
-    /// (type → <c>!i</c> GenericTypeParameter, method → <c>!!i</c> GenericMethodParameter). <c>I</c> is
-    /// owner-local: for "method" the index in the method's own generic params; for "type" the FLATTENED
-    /// index over the enclosing-type nesting chain. The scope disambiguates the two distinct spaces.
-    /// </summary>
-    public sealed record Tv(string Scope, int I) : TypeNode;
-
-    /// <summary>
-    /// `star`: a Kotlin <c>*</c> type projection. kotc preserves it in BIR; bir2cir lowers it to an existential
-    /// non-generic view (or an explicit object fallback when no local/reference view exists).
-    /// </summary>
-    public sealed record Star : TypeNode;
-
-    /// <summary>
-    /// `projection`: a Kotlin use-site <c>in T</c>/<c>out T</c> projection. BIR and compiler-owned Kotlin
-    /// metadata preserve it; bir2cir must consume it when choosing a reifiable CLR representation.
-    /// </summary>
-    public sealed record Projection(string Variance, TypeNode Of) : TypeNode;
 
     /// <summary>
     /// `fn`: a function type; <c>Suspend</c> is a flag, <c>Recv</c> is the extension receiver
@@ -69,8 +44,7 @@ public abstract record TypeNode
     /// restores as <c>Ctx=[A]</c>, <c>Recv=B</c>, <c>Params=[D]</c>. kotc's BIR carries the same fact as the
     /// declaration-slot key `ctxFnType` instead, because a type node is rebuilt by many lowering passes.
     /// </summary>
-    public sealed record Fn(bool Suspend, TypeNode Ret, TypeNode[] Params, TypeNode? Recv = null, string? Clr = null,
-        TypeNode[]? Ctx = null) : TypeNode
+    public sealed partial record Fn
     {
         public bool Equals(Fn? o) =>
             o is not null && Suspend == o.Suspend && Ret == o.Ret && SeqEq(Params, o.Params)
@@ -97,18 +71,6 @@ public abstract record TypeNode
         }
     }
 
-    /// <summary>`nullable`: <c>T?</c> (NullableAttribute=2).</summary>
-    public sealed record Nullable(TypeNode Of) : TypeNode;
-
-    /// <summary>
-    /// `oblivious`: <c>T!</c> — an NRT-oblivious reference type (NullableAttribute=0), the flexible/platform
-    /// <c>(T..T?)</c> (spec §1 tri-state nullability). A sibling of <see cref="Nullable"/> with the same
-    /// <c>{of:T}</c> shape. dll2klib META emits it for a .NET member with no NullableAttribute; the kotc
-    /// frontend maps it to a <c>ConeFlexibleType</c>. It is frontend-only — resolved to not-null/nullable
-    /// before the backend — so bir2cir/ilemit never emit it (they only Read it transparently).
-    /// </summary>
-    public sealed record Oblivious(TypeNode Of) : TypeNode;
-
     /// <summary>
     /// `array`: <c>Array&lt;T&gt;</c>. An ABSENT <c>Rank</c> is the ECMA SZARRAY <c>T[]</c> — the vector, and
     /// the only array shape Kotlin source can spell. A PRESENT rank is the CIR-only general ARRAY: rank 2 or
@@ -117,7 +79,7 @@ public abstract record TypeNode
     /// external member may declare both. Every one of these distinctions exists for the same reason: without
     /// it two overloads produce one signature, and a reference that cannot tell them apart selects by luck.
     /// </summary>
-    public sealed record Array(TypeNode Elem, int Rank = 1, bool SzArray = true) : TypeNode
+    public sealed partial record Array
     {
         /// <summary>The general (non-vector) array of the given rank — <c>T[*]</c> at rank 1.</summary>
         public static Array General(TypeNode elem, int rank) => new(elem, rank, SzArray: false);
@@ -126,24 +88,13 @@ public abstract record TypeNode
     /// <summary>The CLR's own limit on array rank; a document beyond it describes no representable type.</summary>
     public const int MaxArrayRank = 32;
 
-    /// <summary>`byRef`: a CLR by-ref <c>ref T</c>.</summary>
-    public sealed record ByRef(TypeNode Of) : TypeNode;
-
-    /// <summary>
-    /// `ptr`: a CLR unmanaged pointer <c>T*</c>. CIR-only: BIR carries the semantic
-    /// <c>kotlin.clr.ClrPointer&lt;T&gt;</c> vocabulary instead. The physical node may occur in ordinary CIR slots as
-    /// well as member references; without it such a signature degrades to an FQN string that names no type.
-    /// </summary>
-    public sealed record Ptr(TypeNode Of) : TypeNode;
-
     /// <summary>
     /// `fnPtr`: an exact ECMA function-pointer signature, not a Kotlin function or CLR delegate.
     /// The raw signature header, generic arity and required parameter count retain calling-convention
     /// and sentinel facts independently of the recursively modifier-bearing return and parameter types.
     /// CIR-only: bir2cir resolves the corresponding Kotlin interop vocabulary into this physical type.
     /// </summary>
-    public sealed record FnPtr(int CallingConvention, int GenericArity, int RequiredParams,
-        TypeNode Ret, TypeNode[] Params) : TypeNode
+    public sealed partial record FnPtr
     {
         public bool Equals(FnPtr? other) => other is not null
             && CallingConvention == other.CallingConvention && GenericArity == other.GenericArity
@@ -151,16 +102,6 @@ public abstract record TypeNode
         public override int GetHashCode() => System.HashCode.Combine(
             CallingConvention, GenericArity, RequiredParams, Ret, Params.Length);
     }
-
-    /// <summary>
-    /// `mod`: an ECMA custom modifier applied AT ITS SIGNATURE POSITION (II.7.1.1). <c>Req</c> selects
-    /// modreq (true) from modopt (false), <c>M</c> is the modifier type and <c>Of</c> the modified type.
-    /// CIR-only, and part of member identity: <c>void V(in DateTime)</c> and <c>void V(DateTime)</c> differ
-    /// only by <c>modreq(InAttribute)</c> on a by-ref parameter, so a member reference that drops the
-    /// modifier cannot select between them. Nesting (rather than a sidecar list) is what keeps the modifier
-    /// attached to the exact position it modifies.
-    /// </summary>
-    public sealed record Mod(bool Req, TypeNode M, TypeNode Of) : TypeNode;
 
     private static bool SeqEq(TypeNode[]? a, TypeNode[]? b)
     {
