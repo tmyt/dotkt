@@ -105,6 +105,29 @@ class TypeNodeTest {
             BirContinue("outer") to """{"k":"continue","label":"outer"}""",
             BirGoto(91) to """{"k":"goto","id":91}""",
             BirLabel(91) to """{"k":"label","id":91}""",
+            BirEnumValue(TypeNode.Fqn("demo.Mode"), "Selected", 17) to
+                """{"k":"enumValue","type":{"t":"fqn","name":"demo.Mode"},"entry":"Selected","ordinal":17}""",
+            BirEnumValues(TypeNode.Tv("method", 1)) to
+                """{"k":"enumValues","type":{"t":"tv","scope":"method","i":1}}""",
+            BirCompanionValue(TypeNode.Fqn("demo.Owner"), TypeNode.Fqn("demo.Owner.Companion"), "Companion") to
+                """{"k":"companionValue","ownerType":{"t":"fqn","name":"demo.Owner"},"companionType":{"t":"fqn","name":"demo.Owner.Companion"},"name":"Companion"}""",
+            BirClassReference(TypeNode.Array(TypeNode.Tv("type", 0))) to
+                """{"k":"classRef","type":{"t":"array","elem":{"t":"tv","scope":"type","i":0}}}""",
+            BirNullableNull(TypeNode.Tv("method", 2)) to
+                """{"k":"nullableNull","elem":{"t":"tv","scope":"method","i":2}}""",
+            BirDefaultParameter(0) to """{"k":"defaultArgParam","idx":0}""",
+            BirDefaultReceiver("dispatch") to """{"k":"defaultArgReceiver","kind":"dispatch"}""",
+            BirDefaultReceiver("extension") to """{"k":"defaultArgReceiver","kind":"extension"}""",
+            BirDefaultReceiver("enclosing") to """{"k":"defaultArgReceiver","kind":"enclosing"}""",
+            BirBindingReference("bound\"value", TypeNode.ByRef(TypeNode.Tv("method", 3))) to
+                """{"k":"bindRef","id":"bound\"value","sty":{"t":"byRef","of":{"t":"tv","scope":"method","i":3}}}""",
+            BirLocalFunctionReference("selected", TypeNode.Fn(true, TypeNode.Tv("method", 1), emptyList()),
+                listOf(TypeNode.Tv("type", 0))) to
+                """{"k":"localFunRef","id":"selected","funcType":{"t":"fn","suspend":true,"ret":{"t":"tv","scope":"method","i":1},"params":[]},"typeArgs":[{"t":"tv","scope":"type","i":0}]}""",
+            BirLocalFunctionReference("plain", TypeNode.Fn(false, TypeNode.Fqn("kotlin.Unit"), emptyList())) to
+                """{"k":"localFunRef","id":"plain","funcType":{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"kotlin.Unit"},"params":[]}}""",
+            BirLocalFunctionReference("empty", TypeNode.Fn(false, TypeNode.Fqn("kotlin.Unit"), emptyList()), emptyList()) to
+                """{"k":"localFunRef","id":"empty","funcType":{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"kotlin.Unit"},"params":[]},"typeArgs":[]}""",
             BirNew(
                 type = TypeNode.Fqn("demo.Owner", listOf(TypeNode.Tv("method", 1))),
                 args = emptyList(), argTypes = emptyList(),
@@ -115,7 +138,10 @@ class TypeNodeTest {
                 memberSignature = listOf(TypeNode.Tv("type", 0)),
             ) to """{"k":"new","type":{"t":"fqn","name":"demo.Owner","args":[{"t":"tv","scope":"method","i":1}]},"argTypes":[],"args":[],"constructorDeclarationId":"selected-declaration","localCtorIndex":0,"memberVisibility":"protected","memberOwnerTypeParams":[{"name":"T","reified":false,"variance":"out","constraints":[{"t":"fqn","name":"kotlin.Any"}]}],"memberSignature":[{"t":"tv","scope":"type","i":0}]}""",
         )
-        samples.forEach { (node, expected) -> assertEquals(expected, node.toJson()) }
+        samples.forEach { (node, expected) ->
+            assertEquals(expected, node.toJson())
+            if (node is BirExpression) assertEquals(false, node.yieldsNullAtJoin())
+        }
         val output = StringBuilder("prefix:")
         BirConstant(TypeNode.Fqn("kotlin.Float"), Float32Literal(Int.MIN_VALUE)).writeJson(output)
         assertEquals("""prefix:{"k":"const","type":{"t":"fqn","name":"kotlin.Float"},"value":{"encoding":"f32","bits":-2147483648}}""", output.toString())

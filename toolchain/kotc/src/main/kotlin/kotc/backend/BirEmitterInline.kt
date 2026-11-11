@@ -180,7 +180,7 @@ private fun BirEmitter.inlineArgJson(
 			if (address != null)
 				callPlan(call).bind(
 					"arg", "address", isStableLocation(arg),
-					withDefaultTypeScope(call, callee) { birType(param.type).toJson() },
+					withDefaultTypeScope(call, callee) { birType(param.type) },
 					role, address,
 				)
 			else callPlan(call).bindValue(arg, "arg", role)

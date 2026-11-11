@@ -250,7 +250,7 @@ internal fun BirEmitter.filledArgs(
 			if (address != null)
 				plan?.bind("arg", "address", isStableLocation(arg),
 					// The SLOT's type, so the callee's frame — closed here like every other callee type.
-					withDefaultTypeScope(call, callee) { birType(p.type).toJson() },
+					withDefaultTypeScope(call, callee) { birType(p.type) },
 					"argument '${p.name.asString()}' of '$label'", address) ?: address
 			else {
 				plan?.bindValue(arg, "arg", "argument '${p.name.asString()}' of '$label'")
@@ -415,7 +415,7 @@ private fun BirEmitter.fillOmitted(
 		// A filled default is a call-site VALUE like any other: under a plan it becomes a default-phase binding, so a
 		// LATER default that reads this parameter reads the ONE binding instead of a second rendering of the expression
 		// (`a = bump(), b = a * 10` would otherwise run `bump()` twice).
-		return plan?.bind("default", "value", stableFill, birType(p.type).toJson(),
+		return plan?.bind("default", "value", stableFill, birType(p.type),
 			"default of parameter '${p.name.asString()}'", emitted) ?: emitted
 }
 
@@ -683,7 +683,7 @@ internal fun BirEmitter.filledExternalArgs(
 		slots[valIdx] =
 			if (address != null)
 				plan?.bind("arg", "address", isStableLocation(arg),
-					withDefaultTypeScope(call, callee) { birType(p.type).toJson() },
+					withDefaultTypeScope(call, callee) { birType(p.type) },
 					"argument '${p.name.asString()}' of '$label'", address) ?: address
 			else plan?.bindValue(arg, "arg", "argument '${p.name.asString()}' of '$label'") ?: expr(arg)
 	}
@@ -706,7 +706,7 @@ internal fun BirEmitter.filledExternalArgs(
 			// The BINDING TYPE is rendered here too, INSIDE the scope. `p.type` is the callee's, so reading it after
 			// the restore leaves an external generic callee's own `!!0` open in the consumer's frame — and a binding a
 			// later default reads becomes a local, which would then be declared with it.
-			plan?.bind("default", "value", stableFill, birType(defaultP.type).toJson(),
+			plan?.bind("default", "value", stableFill, birType(defaultP.type),
 				"default of parameter '${p.name.asString()}'", rendered) ?: rendered
 		}
 		if (bound != null) slots[valIdx] = bound
@@ -747,7 +747,7 @@ internal fun BirEmitter.omittedVararg(
 	val element = p.varargElementType ?: return null
 	return withDefaultTypeScope(call, callee) {
 		val rendered = """{"k":"newArray","elem":${birType(element).toJson()},"elems":[]}"""
-		plan?.bind("arg", "value", false, birValueParameterType(p).toJson(),
+		plan?.bind("arg", "value", false, birValueParameterType(p),
 			"omitted vararg '${p.name.asString()}' of '${calleeLabel(callee)}'", rendered) ?: rendered
 	}
 }
@@ -1484,7 +1484,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		}
 	}
 	enumApiOwner?.let { ec ->
-		val enumType = birType(ec.defaultType).toJson()
+		val enumTypeNode = birType(ec.defaultType)
+		val enumType = enumTypeNode.toJson()
 		// Rich enum -> the synthesized static values()/valueOf() methods on the class.
 		if (ec.origin.toString() == "DEFINED" && isRichEnum(ec)) {
 			if (name == "values")
@@ -1495,7 +1496,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// structured Type, never the banned `@Name` type-token). bir2cir/ilemit resolve it to the local enum type,
 		// exactly as the reified `enumValues<T>()` path does (EnumIntrinsicLowering re-emits the same node shape).
 		if (name == "values")
-			return """{"k":"enumValues","type":$enumType}"""
+			return kotc.bir.BirEnumValues(enumTypeNode).toJson()
 		if (name == "valueOf") return """{"k":"enumParse","type":$enumType,"arg":${expr(regularArgs(call).first())}}"""
 	}
 	// The top-level reified enum intrinsics `enumValues<T>()` / `enumValueOf<T>(name)` / `enumEntries<T>()`

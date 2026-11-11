@@ -9,7 +9,10 @@ internal fun BirExpression.yieldsNullAtJoin(): Boolean = when (this) {
     is BirConditional -> joinNullBranch == true
     is BirValueBlock -> joinNullBranch == true
     is BirObjectEquals, is BirLocal, is BirThis, is BirNew, is BirThrowExpression,
-    is BirUnaryOperation, is BirNullableHasValue, is BirNullableValue -> false
+    is BirUnaryOperation, is BirNullableHasValue, is BirNullableValue,
+    is BirEnumValue, is BirEnumValues, is BirCompanionValue, is BirClassReference,
+    is BirNullableNull, is BirDefaultParameter, is BirDefaultReceiver,
+    is BirBindingReference, is BirLocalFunctionReference -> false
 }
 
 /** The result is the only pass-through value; statements contribute only effects. */

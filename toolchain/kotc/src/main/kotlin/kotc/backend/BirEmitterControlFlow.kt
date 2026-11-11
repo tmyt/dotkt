@@ -452,12 +452,12 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 				valSubst[key] = """{"k":"nullableValue","elem":${str(recvElem)},"e":$subj}"""
 				valSubstUnwrapped.add(key)   // receiver already reads .Value -> the value-nullable unwrap helpers must not re-wrap
 				val member = expr(whenExpr.branches.last().result)
-				core = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(recvElem)},"e":$subj},"then":${present(member)},"else":{"k":"nullableNull","elem":${str(elem)}}}"""
+				core = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(recvElem)},"e":$subj},"then":${present(member)},"else":${kotc.bir.BirNullableNull(elem).toJson()}}"""
 			} else {
 				valSubst[key] = subj
 				val nullCheck = expr(whenExpr.branches.first().condition)
 				val member = expr(whenExpr.branches.last().result)
-				core = """{"k":"cond","cond":$nullCheck,"then":{"k":"nullableNull","elem":${str(elem)}},"else":${present(member)}}"""
+				core = """{"k":"cond","cond":$nullCheck,"then":${kotc.bir.BirNullableNull(elem).toJson()},"else":${present(member)}}"""
 			}
 			restore()
 			return if (subjVar == null) core
