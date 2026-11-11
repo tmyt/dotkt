@@ -36,11 +36,22 @@ class TypeNodeTest {
             assertEquals(Float64Literal(bits), constant.value)
             println("IR_BIR_LITERAL_SAMPLE ${constant.toJson()}")
         }
-        val samples = listOf(null, true, false, '\ud800', Byte.MIN_VALUE, Short.MIN_VALUE,
-            Int.MIN_VALUE, Long.MIN_VALUE, "a\ud800\u0000\udfff")
-        for (sample in samples) {
-            val literal = BirLiteral.fromValue(sample)
-            println("IR_BIR_LITERAL_SAMPLE ${BirConstant(TypeNode.Fqn("kotlin.Any"), literal).toJson()}")
+        val samples = listOf(
+            TypeNode.Nullable(TypeNode.Fqn("kotlin.Any")) to IrConstImpl.constNull(0, 1, type),
+            TypeNode.Fqn("kotlin.Boolean") to IrConstImpl.boolean(0, 1, type, true),
+            TypeNode.Fqn("kotlin.Boolean") to IrConstImpl.boolean(0, 1, type, false),
+            TypeNode.Fqn("kotlin.Char") to IrConstImpl.char(0, 1, type, '\ud800'),
+            TypeNode.Fqn("kotlin.Byte") to IrConstImpl.byte(0, 1, type, Byte.MIN_VALUE),
+            TypeNode.Fqn("kotlin.Short") to IrConstImpl.short(0, 1, type, Short.MIN_VALUE),
+            TypeNode.Fqn("kotlin.Int") to IrConstImpl.int(0, 1, type, Int.MIN_VALUE),
+            TypeNode.Fqn("kotlin.Long") to IrConstImpl.long(0, 1, type, Long.MIN_VALUE),
+            TypeNode.Fqn("kotlin.String") to IrConstImpl.string(0, 1, type, "a\ud800\u0000\udfff"),
+        )
+        for ((sourceType, sample) in samples) {
+            emitter.typeArgSubst[parameter] = sourceType
+            val constant = emitter.constant(sample)
+            assertEquals(sourceType, constant.type)
+            println("IR_BIR_LITERAL_SAMPLE ${constant.toJson()}")
         }
     }
 

@@ -2,3 +2,5 @@
 # ilemit must not inspect a referenced field and rediscover the literal by reflection.
 ?any(.[] | .. | objects; ir_matches({"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.String"},"value":{"a":"text","value":"ok"}}}))
 -"k":"staticField"
+?any(.[] | .methods[]? | select(.name=="readNegativeZero") | .. | objects; ir_matches({"k":"const","value":{"a":"f32","bits":-2147483648}}))
+?any(.[] | .methods[]? | select(.name=="readSmallestDouble") | .. | objects; ir_matches({"k":"const","value":{"a":"f64","bits":1}}))

@@ -132,6 +132,8 @@ static class AttributeProjection
         var bits = literal switch {
             BirLiteral.IntegerLiteral value => unchecked((ulong)value.Value),
             BirLiteral.UnsignedIntegerLiteral value => value.Value,
+            BirLiteral.RealLiteral value when double.IsInteger(value.Value) => value.Value >= 0
+                ? checked((ulong)value.Value) : unchecked((ulong)checked((long)value.Value)),
             _ => throw new FormatException(),
         };
         return hint?.Name switch {
@@ -164,6 +166,17 @@ static class AttributeProjection
 
     public static void SelfTest()
     {
+        foreach (var spelling in new[] { "-0", "-0.0", "-0e0", "0", "0.0", "0e0" })
+        {
+            var numeric = JsonNode.Parse(spelling);
+            var negative = spelling.StartsWith('-');
+            if (Literal(numeric, new TypeNode.Fqn("System.Single")) is not A.Float32Value { Bits: var single }
+                || single != (negative ? int.MinValue : 0)
+                || Literal(numeric, new TypeNode.Fqn("System.Double")) is not A.Float64Value { Bits: var dbl }
+                || dbl != (negative ? long.MinValue : 0)
+                || Literal(numeric, new TypeNode.Fqn("System.Int32")) is not A.Int32Value { Value: 0 })
+                throw new Exception("Current native numeric zero lost its value or floating sign");
+        }
         foreach (var malformed in new[] {
             """{"encoding":"f32","bits":null}""", """{"encoding":"f64"}""",
             """{"encoding":"f32","bits":2147483648}""", """{"encoding":"unknown","bits":0}"""

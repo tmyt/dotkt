@@ -18,9 +18,10 @@ def outputs(root, definitions):
             raise ValueError("Unsupported logical floating literal width")
         cs.extend([f"public sealed record {name}({width} Bits) : BirLiteral", "{",
                    f"    public override JsonNode ToDom() => new JsonObject {{ [\"encoding\"] = {tag}, [\"bits\"] = Bits }};", "}", ""])
+        prefix = json.dumps('{"encoding":' + tag + ',"bits":')
         kt.extend([f"data class {name}(val bits: {'Int' if width == 'int' else 'Long'}) : BirLiteral() {{",
                    "    override fun writeJson(output: StringBuilder) {",
-                   f'        output.append({json.dumps("{\"encoding\":" + tag + ",\"bits\":")}).append(bits).append(\'}}\')', "    }", "}", ""])
+                   f"        output.append({prefix}).append(bits).append('}}')", "    }", "}", ""])
     cs.extend(["public abstract partial record BirLiteral", "{",
                "    private static BirLiteral ReadFloating(JsonObject value)", "    {",
                "        if (value.Count != 2 || value[\"bits\"] is not JsonValue bits) throw new FormatException();",

@@ -142,6 +142,8 @@ class CompanionStaticRoundtripTests {
         assertEquals("generic-box", code.get())
         val nan = Box::NAN
         assertTrue(nan.get().isNaN())
+        assertEquals(Int.MIN_VALUE, (Box::NEGATIVE_ZERO).get().toRawBits())
+        assertEquals(1L, (Box::SMALLEST_DOUBLE).get().toRawBits())
         val big = Box::BIG
         assertEquals(4_000_000_000u, big.get())
         val later = Box::later
