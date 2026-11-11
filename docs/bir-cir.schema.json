@@ -21,8 +21,20 @@
     "literalValue": {
       "oneOf": [
         { "type": ["string", "number", "boolean", "null"] },
-        { "$ref": "#/$defs/utf16Literal" }
+        { "$ref": "#/$defs/utf16Literal" },
+        { "$ref": "#/$defs/float32Literal" },
+        { "$ref": "#/$defs/float64Literal" }
       ]
+    },
+    "float32Literal": {
+      "type": "object", "x-dotkt-model": { "name": "Float32Literal", "domain": "birFloatingLiteral" },
+      "properties": { "encoding": { "const": "f32" }, "bits": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647, "x-dotkt-csharp-type": "int" } },
+      "required": ["encoding", "bits"], "additionalProperties": false
+    },
+    "float64Literal": {
+      "type": "object", "x-dotkt-model": { "name": "Float64Literal", "domain": "birFloatingLiteral" },
+      "properties": { "encoding": { "const": "f64" }, "bits": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807, "x-dotkt-csharp-type": "long" } },
+      "required": ["encoding", "bits"], "additionalProperties": false
     },
     "utf16Literal": {
       "type": "object",

@@ -8,6 +8,13 @@
 
 ## 0. Envelope & versioning
 
+BIR constants are constructed as typed semantic values before their JSON boundary.
+Float/Double payloads use `{encoding:"f32",bits:Int32}` and
+`{encoding:"f64",bits:Int64}` respectively; bits are signed IEEE bit patterns,
+including signed zero, infinity and NaN payloads. The same value model receives
+referenced CLR constants. bir2cir owns conversion into the physical CIR scalar;
+ilemit does not parse source floating-point strings or choose the source width.
+
 ### Kotlin alias declarations
 
 BIR roots carry `typeAliases`, a list of this module's actualized Kotlin alias declarations. An alias-only

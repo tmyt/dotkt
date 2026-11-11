@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -109,20 +108,32 @@ static class AttributeProjection
     }
 
     public static A Literal(JsonNode literal, TypeNode type)
+        => Literal(BirLiteral.Read(literal), type);
+
+    static A Literal(BirLiteral literal, TypeNode type)
     {
-        if (literal is null) return new A.NullValue();
         while (type is TypeNode.Mod modifier) type = modifier.Of;
         var hint = type as TypeNode.Fqn;
-        if (literal is JsonObject || hint?.Name is "System.String" or "string")
-            return Text(LiteralText.Read(literal));
-        if (literal.GetValueKind() == JsonValueKind.True || literal.GetValueKind() == JsonValueKind.False)
-            return new A.BooleanValue(literal.GetValue<bool>());
+        if (literal is BirLiteral.NullLiteral) return new A.NullValue();
+        if (literal is BirLiteral.TextLiteral text) return Text(text.Value);
+        if (literal is BirLiteral.BooleanLiteral boolean) return new A.BooleanValue(boolean.Value);
+        if (literal is Float32Literal f32)
+            return hint?.Name is "System.Double" or "double"
+                ? new A.Float64Value(BitConverter.DoubleToInt64Bits(BitConverter.Int32BitsToSingle(f32.Bits)))
+                : new A.Float32Value(f32.Bits);
+        if (literal is Float64Literal f64)
+            return hint?.Name is "System.Single" or "float"
+                ? new A.Float32Value(BitConverter.SingleToInt32Bits((float)BitConverter.Int64BitsToDouble(f64.Bits)))
+                : new A.Float64Value(f64.Bits);
         if (hint?.Name is "System.Single" or "float")
             return new A.Float32Value(BitConverter.SingleToInt32Bits((float)Real(literal)));
         if (hint?.Name is "System.Double" or "double")
             return new A.Float64Value(BitConverter.DoubleToInt64Bits(Real(literal)));
-        if (literal.GetValueKind() == JsonValueKind.String) return Text(literal.GetValue<string>());
-        var bits = Integral(literal);
+        var bits = literal switch {
+            BirLiteral.IntegerLiteral value => unchecked((ulong)value.Value),
+            BirLiteral.UnsignedIntegerLiteral value => value.Value,
+            _ => throw new FormatException(),
+        };
         return hint?.Name switch {
             "System.Char" or "char" => new A.CharValue(unchecked((ushort)bits)),
             "System.SByte" or "sbyte" => new A.Int8Value(unchecked((sbyte)bits)),
@@ -142,36 +153,54 @@ static class AttributeProjection
     static A Text(string value) => LiteralText.RequiresCodeUnits(value)
         ? new A.Utf16Value(value.Select(c => (ushort)c).ToArray()) : new A.TextValue(value);
 
-    static ulong Integral(JsonNode node)
-    {
-        var value = (JsonValue)node;
-        if (value.TryGetValue<JsonElement>(out var element))
-            return element.TryGetInt64(out var signed) ? unchecked((ulong)signed) : element.GetUInt64();
-        if (value.TryGetValue<int>(out var i)) return unchecked((ulong)i);
-        if (value.TryGetValue<long>(out var l)) return unchecked((ulong)l);
-        if (value.TryGetValue<uint>(out var u)) return u;
-        if (value.TryGetValue<ulong>(out var ul)) return ul;
-        if (value.TryGetValue<byte>(out var b)) return b;
-        if (value.TryGetValue<sbyte>(out var sb)) return unchecked((ulong)sb);
-        if (value.TryGetValue<short>(out var s)) return unchecked((ulong)s);
-        if (value.TryGetValue<ushort>(out var us)) return us;
-        throw new InvalidOperationException("Malformed integral annotation constant");
-    }
-
-    static double Real(JsonNode node)
-    {
-        var value = (JsonValue)node;
-        if (value.TryGetValue<string>(out var text)) return double.Parse(text, CultureInfo.InvariantCulture);
-        if (value.TryGetValue<JsonElement>(out var element)) return element.GetDouble();
-        if (value.TryGetValue<double>(out var d)) return d;
-        if (value.TryGetValue<float>(out var f)) return f;
-        return unchecked((long)Integral(node));
-    }
+    static double Real(BirLiteral value) => value switch {
+        BirLiteral.RealLiteral real => real.Value,
+        BirLiteral.IntegerLiteral integer => integer.Value,
+        BirLiteral.UnsignedIntegerLiteral integer => integer.Value,
+        _ => throw new FormatException(),
+    };
 
     static string Str(JsonNode node) => node?.GetValue<string>();
 
     public static void SelfTest()
     {
+        foreach (var malformed in new[] {
+            """{"encoding":"f32","bits":null}""", """{"encoding":"f64"}""",
+            """{"encoding":"f32","bits":2147483648}""", """{"encoding":"unknown","bits":0}"""
+        })
+        {
+            try { BirLiteral.Read(JsonNode.Parse(malformed)); }
+            catch (Exception error) when (error is FormatException or InvalidOperationException or OverflowException)
+            { continue; }
+            throw new Exception("Malformed current floating literal was accepted");
+        }
+        foreach (var integral in new JsonNode[] { JsonValue.Create(ulong.MaxValue), JsonValue.Create(-1L) })
+            if (Literal(integral, new TypeNode.Fqn("System.UInt64")) is not A.UInt64Value { Value: ulong.MaxValue })
+                throw new Exception("Semantic integral literal lost its full unsigned bit domain");
+        foreach (var bits in new[] { 0, int.MinValue, 0x7f800000, unchecked((int)0xff800000),
+                     0x7fa12345, unchecked((int)0xffc12345), 1 })
+        {
+            var literalSource = new Float32Literal(bits);
+            var decoded = BirLiteral.Read(JsonNode.Parse(literalSource.ToDom().ToJsonString()));
+            if (decoded is not Float32Literal { Bits: var actual } || actual != bits
+                || Literal(decoded, new TypeNode.Fqn("System.Single")) is not A.Float32Value { Bits: var physical }
+                || physical != bits
+                || Literal(ReferenceMetadataIndex.LiteralValueNode(BitConverter.Int32BitsToSingle(bits)),
+                    new TypeNode.Fqn("System.Single")) is not A.Float32Value { Bits: var referenced } || referenced != bits)
+                throw new Exception("Typed source/reference Float literal lost its bit pattern");
+        }
+        foreach (var bits in new[] { 0L, long.MinValue, 0x7ff0000000000000L, unchecked((long)0xfff0000000000000),
+                     0x7ff0123456789abcL, unchecked((long)0xfff8123456789abc), 1L })
+        {
+            var literalSource = new Float64Literal(bits);
+            var decoded = BirLiteral.Read(JsonNode.Parse(literalSource.ToDom().ToJsonString()));
+            if (decoded is not Float64Literal { Bits: var actual } || actual != bits
+                || Literal(decoded, new TypeNode.Fqn("System.Double")) is not A.Float64Value { Bits: var physical }
+                || physical != bits
+                || Literal(ReferenceMetadataIndex.LiteralValueNode(BitConverter.Int64BitsToDouble(bits)),
+                    new TypeNode.Fqn("System.Double")) is not A.Float64Value { Bits: var referenced } || referenced != bits)
+                throw new Exception("Typed source/reference Double literal lost its bit pattern");
+        }
         JsonObject Applied() => new() {
             ["attr"] = TypeJson.Fqn("Probe.Attribute"),
             ["argTypes"] = new JsonArray(TypeJson.Fqn("System.String")),

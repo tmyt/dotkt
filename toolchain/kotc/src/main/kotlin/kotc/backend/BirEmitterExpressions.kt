@@ -327,7 +327,7 @@ private fun BirEmitter.castExpression(node: IrTypeOperatorCall, requireNonNullIn
 }
 
 internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
-	is IrConst -> """{"k":"const","type":${birType(node.type).toJson()},"value":${constJson(node)}}"""
+	is IrConst -> constant(node).toJson()
 	is IrGetValue -> {
 		val owner = node.symbol.owner
 		val name = owner.name.asString()

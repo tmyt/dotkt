@@ -29,6 +29,9 @@ with (Path(__file__).resolve().parents[1] / "docs/bir-cir.schema.json").open() a
 _scalar_shapes = [_definitions[entry["$ref"].rsplit("/", 1)[1]]
                   for entry in _definitions["cirScalarValue"]["oneOf"]]
 CIR_SCALAR_SHAPES = {shape["properties"]["a"]["const"]: shape for shape in _scalar_shapes}
+FLOAT_LITERAL_SHAPES = {shape["properties"]["encoding"]["const"]: shape
+                        for shape in _definitions.values() if isinstance(shape, dict)
+                        and shape.get("x-dotkt-model", {}).get("domain") == "birFloatingLiteral"}
 
 TYPE_TAGS = {"fqn", "tv", "star", "projection", "fn", "nullable", "oblivious", "array", "byRef", "ptr", "fnPtr", "mod"}
 
@@ -842,6 +845,12 @@ class V:
             if f.endswith(".cir.json") and o.get("k") == "const":
                 self.physical_scalar(f, path + "/value", o.get("value"))
             if "encoding" in o and f.endswith(".bir.json"):
+                if o["encoding"] in FLOAT_LITERAL_SHAPES:
+                    bits = FLOAT_LITERAL_SHAPES[o["encoding"]]["properties"]["bits"]
+                    if (not path.endswith(("/value", "/constant")) or set(o) != {"encoding", "bits"}
+                            or type(o.get("bits")) is not int or not bits["minimum"] <= o["bits"] <= bits["maximum"]):
+                        self.err(f, path, "malformed floating-point literal")
+                    return
                 if (not path.endswith(("/value", "/constant")) or set(o) != {"encoding", "units"}
                         or o["encoding"] != "utf16" or not isinstance(o.get("units"), list)):
                     self.err(f, path, "malformed UTF-16 literal payload")
