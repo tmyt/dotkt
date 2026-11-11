@@ -18,6 +18,37 @@
 
   "$defs": {
 
+    "birLocal": {
+      "type": "object", "x-dotkt-model": { "name": "BirLocal", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "local" }, "name": { "type": "string" }, "outer": { "type": "boolean" }, "sty": { "$ref": "#/$defs/type" } },
+      "required": ["k", "name"], "additionalProperties": false
+    },
+    "birThis": {
+      "type": "object", "x-dotkt-model": { "name": "BirThis", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "this" }, "sty": { "$ref": "#/$defs/type" } },
+      "required": ["k"], "additionalProperties": false
+    },
+    "birSourcePoint": {
+      "type": "object", "x-dotkt-model": { "name": "BirSourcePoint", "domain": "birCore", "role": "statement" },
+      "properties": { "k": { "const": "sourcePoint" }, "span": { "$ref": "#/$defs/sourceSpan" } },
+      "required": ["k"], "additionalProperties": false
+    },
+    "birBreak": {
+      "type": "object", "x-dotkt-model": { "name": "BirBreak", "domain": "birCore", "role": "statement" },
+      "properties": { "k": { "const": "break" }, "label": { "type": ["string", "null"] } },
+      "required": ["k", "label"], "additionalProperties": false
+    },
+    "birContinue": {
+      "type": "object", "x-dotkt-model": { "name": "BirContinue", "domain": "birCore", "role": "statement" },
+      "properties": { "k": { "const": "continue" }, "label": { "type": ["string", "null"] } },
+      "required": ["k", "label"], "additionalProperties": false
+    },
+    "birGoto": {
+      "type": "object", "x-dotkt-model": { "name": "BirGoto", "domain": "birCore", "role": "statement" },
+      "properties": { "k": { "const": "goto" }, "id": { "type": "integer" } },
+      "required": ["k", "id"], "additionalProperties": false
+    },
+
     "literalValue": {
       "oneOf": [
         { "type": ["string", "number", "boolean", "null"] },
@@ -1406,6 +1437,7 @@
     },
     "sourceSpan": {
       "type": "object",
+      "x-dotkt-model": { "name": "BirSourceSpan", "domain": "birCoreValues" },
       "description": "An authored Kotlin source document and a one-based, end-exclusive source range.",
       "properties": {
         "f": { "type": "string", "minLength": 1 },

@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from source_metadata_model import outputs as source_metadata_outputs
 from bir_literal_models import outputs as bir_literal_outputs
+from bir_core_models import outputs as bir_core_outputs
 from cir_messagepack import generate as cir_messagepack
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -378,7 +379,7 @@ def kotlin_json(variants, values, definitions):
     lines = ["// Generated from docs/bir-cir.schema.json by scripts/generate-ir-model.py.",
              "package kotc.bir", "", "internal object TypeNodeJson {",
              "    fun encode(type: TypeNode): String = buildString { write(type, this) }", "",
-             "    private fun write(value: TypeNode, sb: StringBuilder) {", "        when (value) {"]
+             "    fun write(value: TypeNode, sb: StringBuilder) {", "        when (value) {"]
     for definition in variants:
         model = definition["x-dotkt-model"]
         if not model.get("kotlin", True):
@@ -735,6 +736,7 @@ def outputs(schema):
         ROOT / "toolchain/cir-common/MessagePack.Generated.cs": cir_messagepack(definitions, model_type, non_null_field, allows_null),
         **type_parameter_models(definitions),
         **bir_literal_outputs(ROOT, definitions),
+        **bir_core_outputs(ROOT, definitions),
         ROOT / "toolchain/cir-common/Executable.Model.Generated.cs": executable_model,
         ROOT / "toolchain/bir2cir/CirExecutableProjection.Generated.cs": executable_projection,
         ROOT / "toolchain/cir-common/Declaration.Model.Generated.cs": declaration_model,

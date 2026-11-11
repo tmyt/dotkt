@@ -4,7 +4,7 @@ package kotc.bir
 internal object TypeNodeJson {
     fun encode(type: TypeNode): String = buildString { write(type, this) }
 
-    private fun write(value: TypeNode, sb: StringBuilder) {
+    fun write(value: TypeNode, sb: StringBuilder) {
         when (value) {
             is TypeNode.Fqn -> with(value) {
                 sb.append("{\"t\":\"fqn\"")

@@ -34,12 +34,12 @@ sealed class BirLiteral {
     }
 }
 
-data class BirConstant(val type: TypeNode, val value: BirLiteral) {
-    fun toJson(): String = buildString {
-        append("{\"k\":\"const\",\"type\":")
-        append(type.toJson())
-        append(",\"value\":")
-        value.writeJson(this)
-        append('}')
+data class BirConstant(val type: TypeNode, val value: BirLiteral) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"const\",\"type\":")
+        TypeNodeJson.write(type, output)
+        output.append(",\"value\":")
+        value.writeJson(output)
+        output.append('}')
     }
 }

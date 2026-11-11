@@ -14,6 +14,26 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.types.Variance
 
 class TypeNodeTest {
+    @Test
+    fun sourceCoreNodesKeepSemanticFieldsUntilTheBoundary() {
+        val samples: List<Pair<BirNode, String>> = listOf(
+            BirLocal("scope value", outer = false, sty = TypeNode.Tv("method", 1)) to
+                """{"k":"local","name":"scope value","outer":false,"sty":{"t":"tv","scope":"method","i":1}}""",
+            BirThis(TypeNode.Fqn("demo.Owner")) to
+                """{"k":"this","sty":{"t":"fqn","name":"demo.Owner"}}""",
+            BirSourcePoint() to """{"k":"sourcePoint"}""",
+            BirSourcePoint(BirSourceSpan("src/κ.kt", 3, 4, 3, 7)) to
+                """{"k":"sourcePoint","span":{"f":"src/κ.kt","l":3,"c":4,"el":3,"ec":7}}""",
+            BirBreak(null) to """{"k":"break","label":null}""",
+            BirContinue("outer") to """{"k":"continue","label":"outer"}""",
+            BirGoto(91) to """{"k":"goto","id":91}""",
+        )
+        samples.forEach { (node, expected) -> assertEquals(expected, node.toJson()) }
+        val output = StringBuilder("prefix:")
+        BirConstant(TypeNode.Fqn("kotlin.Float"), Float32Literal(Int.MIN_VALUE)).writeJson(output)
+        assertEquals("""prefix:{"k":"const","type":{"t":"fqn","name":"kotlin.Float"},"value":{"encoding":"f32","bits":-2147483648}}""", output.toString())
+    }
+
     @OptIn(UnsafeDuringIrConstructionAPI::class)
     @Test
     fun actualIrConstantsConstructTypedSemanticValuesBeforeSerialization() {

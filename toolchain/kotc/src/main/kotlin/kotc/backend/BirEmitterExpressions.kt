@@ -1,6 +1,11 @@
 package kotc.backend
 
 import kotc.bir.TypeNode
+import kotc.bir.BirLocal
+import kotc.bir.BirThis
+import kotc.bir.BirBreak
+import kotc.bir.BirContinue
+import kotc.bir.BirGoto
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
@@ -346,11 +351,10 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			captureSubst.containsKey(owner) -> captureSubst[owner]!!
 			selfSubst.containsKey(owner) -> selfSubst[owner]!!   // extension `__self` (by identity, before name-based `<this>`)
 			valSubst.containsKey(owner) -> valSubst[owner]!!
-			name == "<this>" -> """{"k":"this"}"""
+			name == "<this>" -> BirThis().toJson()
 			else -> {
 				val slot = localSlotName(owner)
-				val outerFact = if (isExactOuterValue(node)) ""","outer":true""" else ""
-				val local = """{"k":"local","name":${str(slot)}$outerFact}"""
+				val local = BirLocal(slot, outer = if (isExactOuterValue(node)) true else null).toJson()
 				// Smart-cast narrowing carried directly on the IrGetValue (no IMPLICIT_CAST node — e.g. the `&&`
 				// RHS / a compound condition: `x is Int && x > 10`): the use-site type is narrower than the
 				// declared type, so emit a cast (ilemit unboxes Any->Int / castclass for refs). Without it the
@@ -629,9 +633,9 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	// (so the merge keeps only the live branch's type, exactly like a throwExpr/returnExpr branch). Reuses existing
 	// ilemit nodes only (goto/break/throwExpr) — no new backend vocabulary.
 	is IrBreak -> breakContinueExpr(cfgLoopStack.lastOrNull { it.first === node.loop }
-		?.let { """{"k":"goto","id":${it.third}}""" } ?: """{"k":"break","label":${labelJson(node.label)}}""")
+		?.let { BirGoto(it.third).toJson() } ?: BirBreak(node.label).toJson())
 	is IrContinue -> breakContinueExpr(cfgLoopStack.lastOrNull { it.first === node.loop }
-		?.let { """{"k":"goto","id":${it.second}}""" } ?: """{"k":"continue","label":${labelJson(node.label)}}""")
+		?.let { BirGoto(it.second).toJson() } ?: BirContinue(node.label).toJson())
 	is IrCall -> call(node)
 	// A callable reference to a property (`::x`/`obj::p`/`Type::p`) -> a lifted class implementing the real
 	// stdlib KProperty0/KMutableProperty0/KProperty1/KMutableProperty1 interface (#70); see `propertyRef`. The

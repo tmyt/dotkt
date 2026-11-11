@@ -1,6 +1,10 @@
 package kotc.backend
 
 import kotc.bir.TypeNode
+import kotc.bir.BirSourcePoint
+import kotc.bir.BirBreak
+import kotc.bir.BirContinue
+import kotc.bir.BirGoto
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
@@ -79,7 +83,7 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
-internal const val hiddenSourcePoint = """{"k":"sourcePoint"}"""
+internal val hiddenSourcePoint = BirSourcePoint().toJson()
 
 // BIR statement rendering: an IR statement element -> BIR JSON (extension on BirEmitter).
 internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String {
@@ -231,10 +235,10 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String
 	is IrDoWhileLoop -> cfgDoWhile(node)
 	// A break/continue targeting a CFG loop (on the stack) -> `goto` its label; otherwise (a structured
 	// for-loop target) the structured node, which ilemit's loop stack resolves.
-	is IrBreak -> cfgLoopStack.lastOrNull { it.first === node.loop }?.let { """{"k":"goto","id":${it.third}}""" }
-		?: """{"k":"break","label":${labelJson(node.label)}}"""
-	is IrContinue -> cfgLoopStack.lastOrNull { it.first === node.loop }?.let { """{"k":"goto","id":${it.second}}""" }
-		?: """{"k":"continue","label":${labelJson(node.label)}}"""
+	is IrBreak -> cfgLoopStack.lastOrNull { it.first === node.loop }?.let { BirGoto(it.third).toJson() }
+		?: BirBreak(node.label).toJson()
+	is IrContinue -> cfgLoopStack.lastOrNull { it.first === node.loop }?.let { BirGoto(it.second).toJson() }
+		?: BirContinue(node.label).toJson()
 	is IrWhen -> cfgWhen(node)
 	is IrTry -> tryStmt(node)
 	is IrThrow -> """{"k":"throw","value":${expr(node.value)}}"""
