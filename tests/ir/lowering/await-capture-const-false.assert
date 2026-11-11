@@ -5,6 +5,6 @@
 # pin for the configured arm's shape on a constant: the value reaches ConfigureAwait as an argument like any other,
 # which is what makes the dynamic case a generalization of this one rather than a second path beside it.
 +"method":"ConfigureAwait"
-+"args":[{"k":"const","type":{"t":"fqn","name":"System.Boolean"},"value":false}]
++"args":[{"k":"const","type":{"t":"fqn","name":"System.Boolean"},"value":{"a":"bool","value":false}}]
 +"method":"GetAwaiter"
 +ConfiguredTaskAwaitable

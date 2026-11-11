@@ -1,7 +1,7 @@
 {
   "fileClass": "LiteralTextKt",
-  "fields": [{"name":"text","type":{"t":"fqn","name":"System.String"},"constant":{"encoding":"utf16","units":[55296,65,57343]}}],
+  "fields": [{"name":"text","type":{"t":"fqn","name":"System.String"},"constant":{"a": "utf16", "units": [55296, 65, 57343]}}],
   "methods": [{"name":"text","params":[],"ret":{"t":"fqn","name":"System.String"},"body":[
-    {"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.String"},"value":{"encoding":"utf16","units":[55296,65,57343]}}}
+    {"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.String"},"value":{"a": "utf16", "units": [55296, 65, 57343]}}}
   ]}]
 }

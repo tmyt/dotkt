@@ -3404,13 +3404,12 @@ static partial class SuspendColdLowering
                 {
                     ["k"] = "callStatic",
                     ["owner"] = callNode["owner"]?.DeepClone(),
-                    // #199 Design B: carry the callee-file-class DISPATCH hint on the rewritten owner-null cold call, so
-                    // ilemit dispatches `<method>$dotkt_suspend` to the correct same-simple-name package's file class.
-                    ["calleeOwner"] = callNode["calleeOwner"]?.DeepClone(),
                     ["method"] = method,
                     ["args"] = args,
                     ["ret"] = Tw(AnyTn),
                 };
+                // An owner-null source call carries its selected file class; a fixed-owner call needs no hint.
+                if (callNode["calleeOwner"] is JsonNode calleeOwner) call["calleeOwner"] = calleeOwner.DeepClone();
             }
             if (callNode["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
             if (coldDeclarationId != null) call[DeclarationIdentityBinding.Key] = coldDeclarationId;

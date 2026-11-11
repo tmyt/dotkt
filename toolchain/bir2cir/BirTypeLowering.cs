@@ -965,6 +965,7 @@ static partial class BirTypeLowering
             // carries the SHAPE STRING (not a bare flag): the erased CLR type is `object`, from which the arg/return
             // types are otherwise unrecoverable. MethodImpl descriptors identify physical slots, not declarations:
             // their types still lower, but declaration-only positional metadata must not be added to them.
+            // Executable nodes likewise carry physical values, not re-consumable declaration signatures.
             // The PRE-erasure shape wins where one was stashed: a `suspend (…) -> T?` has had its `Nullable(Tv)`
             // object-erased by now (#86), and recording the erased shape would make this carrier faithfully restore
             // `suspend () -> object` — a consumer then cannot bind the slot at all. See NullableGenericErasure's
@@ -972,8 +973,9 @@ static partial class BirTypeLowering
             // carrier. The stash is consumed here and dropped: it is a bir2cir hand-off and never reaches CIR.
             var h2t = StashedSuspendFn(obj, NullableGenericErasure.SuspendFnPre) ?? SuspendFnSlot(obj["type"]);
             var h2r = StashedSuspendFn(obj, NullableGenericErasure.RetSuspendFnPre) ?? SuspendFnSlot(obj["ret"]);
-            if (!methodImpl && h2t != null) copy["suspendFnType"] = h2t;
-            if (!methodImpl && h2r != null) copy["retSuspendFnType"] = h2r;
+            var declarationMetadata = !methodImpl && nodeK == null;
+            if (declarationMetadata && h2t != null) copy["suspendFnType"] = h2t;
+            if (declarationMetadata && h2r != null) copy["retSuspendFnType"] = h2r;
             copy.Remove(NullableGenericErasure.SuspendFnPre);
             copy.Remove(NullableGenericErasure.RetSuspendFnPre);
             // #133 case3 — KOTLIN `Nothing` RETURN metadata. LowerType erases a `kotlin.Nothing` return to `object`
@@ -983,7 +985,7 @@ static partial class BirTypeLowering
             // so RoundtripMetadata stamps a bare [KotlinNothing] on the return and dll2klib restores Nothing. A
             // `Nothing?` return already stripped its reference-`?` (ReferenceNullableStrip) to a bare `kotlin.Nothing`
             // here, its nullability carried by the [Nullable] byte — so the bare-Fqn check covers both.
-            if (!methodImpl && IsNothingRet(obj["ret"])) copy["retNothing"] = true;
+            if (declarationMetadata && IsNothingRet(obj["ret"])) copy["retNothing"] = true;
             // ANNOTATION-BASE DERIVATION (annotation-base-lowering-to-bir2cir, USER 2026-07-02): kotc emits a user
             // `annotation class` as a plain class carrying `"annotation":true` (base:null) — the Kotlin fact. bir2cir
             // is the Kotlin<->CLR layer that DERIVES the CLR base: an annotation class extends System.Attribute. Set

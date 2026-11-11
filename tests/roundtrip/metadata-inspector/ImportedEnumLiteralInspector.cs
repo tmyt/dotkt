@@ -16,6 +16,7 @@ internal static class ImportedEnumLiteralInspector
         using var pe = new PEReader(stream);
         var md = pe.GetMetadataReader();
         var entries = new Dictionary<string, (string Underlying, string Value, int Ordinal)>();
+        var entriesByOrdinal = new Dictionary<(string Owner, int Ordinal), string>();
         using var archive = ZipFile.OpenRead(klib);
         var fragments = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
             .Select(entry => { using var input = entry.Open(); return PackageFragment.Parser.ParseFrom(input); }).ToArray();
@@ -47,8 +48,10 @@ internal static class ImportedEnumLiteralInspector
                 var constant = md.GetConstant(field.GetDefaultValue());
                 var value = md.GetBlobReader(constant.Value).ReadConstant(constant.TypeCode);
                 var underlying = ConstantType(constant.TypeCode);
-                entries.Add(owner + ":" + md.GetString(field.Name),
+                var key = owner + ":" + md.GetString(field.Name);
+                entries.Add(key,
                     (underlying, Convert.ToString(value, CultureInfo.InvariantCulture)!, ordinal));
+                entriesByOrdinal.Add((owner, ordinal), key);
             }
         }
         Require(entries.Count > 0, "native enum fixture contains no constants");
@@ -60,10 +63,11 @@ internal static class ImportedEnumLiteralInspector
                 if (node["k"]?.GetValue<string>() != "enumValue" ||
                     node["type"]?["name"]?.GetValue<string>() is not string owner ||
                     !owner.StartsWith("EnumLiteralInterop.", StringComparison.Ordinal)) continue;
-                var key = owner + ":" + node["entry"]!.GetValue<string>();
+                var ordinal = node["ordinal"]!.GetValue<int>();
+                var key = physical ? entriesByOrdinal[(owner, ordinal)] : owner + ":" + node["entry"]!.GetValue<string>();
                 Require(entries.TryGetValue(key, out var expected), $"{path} dropped exact enum declaration identity: {key}");
                 seen.Add(key);
-                Require(node["ordinal"]!.GetValue<int>() == expected.Ordinal, $"{path} changed Kotlin entry ordinal: {key}");
+                Require(ordinal == expected.Ordinal, $"{path} changed Kotlin entry ordinal: {key}");
                 if (physical)
                     Require(node["underlying"]?.GetValue<string>() == expected.Underlying &&
                         node["physicalValue"]?.GetValue<string>() == expected.Value, $"CIR lost native literal bits: {key}");

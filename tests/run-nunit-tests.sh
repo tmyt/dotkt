@@ -58,7 +58,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=1061
+	["tests/basic"]=1062
 	["tests/coroutines"]=272
 	["tests/roundtrip/consumer"]=778
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=2
@@ -139,7 +139,12 @@ for proj in "${PROJECTS[@]}"; do
 
 	# Build against the already restored local SDK. A build failure is a red gate.
 	if ! nunit_build_project "$ROOT" "$CONFIGURATION" "$proj"; then
-		echo "  BUILD FAIL — see build/nunit-$name.build.log"; tail -25 "$ROOT/build/nunit-$name.build.log"; rc=1; continue
+		echo "  BUILD FAIL — see build/nunit-$name.build.log"
+		# MSBuild's warning summary can push the actual compiler failure out of the tail.
+		grep -E 'bir2cir:|ilemit:' "$ROOT/build/nunit-$name.build.log" | tail -20 || true
+		tail -25 "$ROOT/build/nunit-$name.build.log"
+		rc=1
+		continue
 	fi
 	case "$proj" in
 		"tests/basic") inherited_lane=basic ;;

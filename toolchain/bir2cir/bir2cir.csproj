@@ -20,11 +20,13 @@
     <Compile Include="../cir-common/AttributeJson.cs" Link="AttributeJson.cs" />
     <Compile Include="../cir-common/AttributeSelfTest.cs" Link="AttributeSelfTest.cs" />
     <Compile Include="../cir-common/Declaration.Model.Generated.cs" Link="Declaration.Model.Generated.cs" />
+    <Compile Include="../cir-common/Executable.Model.Generated.cs" Link="Executable.Model.Generated.cs" />
+    <Compile Include="../cir-common/Executable.cs" Link="Executable.cs" />
+    <Compile Include="../cir-common/ExecutableSelfTest.cs" Link="ExecutableSelfTest.cs" />
     <Compile Include="../cir-common/Declaration.cs" Link="Declaration.cs" />
     <Compile Include="../cir-common/DeclarationJson.cs" Link="DeclarationJson.cs" />
     <Compile Include="../cir-common/DeclarationSelfTest.cs" Link="DeclarationSelfTest.cs" />
     <Compile Include="../cir-common/OptionalField.cs" Link="OptionalField.cs" />
-    <Compile Include="../cir-common/TemporaryExecutableJson.cs" Link="TemporaryExecutableJson.cs" />
     <Compile Include="../cir-common/IrSanity.Cir.cs" Link="IrSanity.Cir.cs" />
     <Compile Include="../bir-common/FunctionPointerVocabulary.cs" Link="FunctionPointerVocabulary.cs" />
     <Compile Include="../bir-common/NativeSignatureReader.cs" Link="NativeSignatureReader.cs" />

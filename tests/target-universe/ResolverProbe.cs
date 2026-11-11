@@ -183,11 +183,11 @@ static class ResolverProbe
              "types":[{"name":"{{{name}}}","kind":"class"}],
              "assemblyAttrs":[{"attr":{"t":"fqn","name":"A"},"argTypes":[],"args":[]}]}
             """);
-        using var first = (IDisposable)Root("Shared", "first");
-        using var other = (IDisposable)Root("Other", "other");
-        using var synthetic = (IDisposable)Root("", "Synthetic");
-        using var empty = (IDisposable)Root("", "Empty");
-        using var continuation = (IDisposable)Root("Shared", "second", true);
+        var first = Root("Shared", "first");
+        var other = Root("Other", "other");
+        var synthetic = Root("", "Synthetic");
+        var empty = Root("", "Empty");
+        var continuation = Root("Shared", "second", true);
         System.Collections.IList Merge(params object[] documents)
         {
             var list = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(declaration))!;

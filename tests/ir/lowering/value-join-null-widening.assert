@@ -25,7 +25,7 @@
 
 # The SAME fact on the `if`/`when` join, which the same pass answers — the two halves of one decision, where the cond
 # half used to live in kotc and ask a hardcoded primitive list instead of the struct-ness oracle.
-+"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
+?any(.[] | .. | objects; ir_matches({"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}}))
 
 # NESTED JOINS, and why the fact has to be COMPOSITIONAL in the producer. `if (a) (if (b) v else null) else w` shows
 # the outer join a `cond` for its `then` and never a null constant, so a leaf-only test arms the inner alone — and an
@@ -36,7 +36,7 @@
 # ONE assertion spans BOTH, deliberately: an assertion naming only the inner `cond` is satisfied by the broken pair it
 # is meant to exclude. This one runs from the OUTER join's own `type` (`cond` on `a`) through the inner join's
 # (`cond` on `b`), so widening only the innermost — the exact regression — cannot match it.
-+"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"a"},"then":{"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"b"}
+?any(.[] | .. | objects; ir_matches({"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"a"},"then":{"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"b"}}}))
 
 # AND THE CHAIN SURVIVES A WRAPPER, which is the shape the nested assertion above does NOT cover. kotc rarely hands an
 # enclosing join the inner `cond` bare: a `when (subject)` whose subject needs a temp, or any block in value position,
@@ -47,13 +47,13 @@
 # `Nullable<int32>` <- `int32` <- `Nullable<int32>`, a chain no store can go through. One assertion runs the whole
 # chain — outer `cond` (on `a`), the `valueBlock`, the inner `cond` (on `subj`) — for the same reason the nested one
 # does, and the negative pins that no `valueBlock` is left holding the bare value type.
-+"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"a"},"then":{"k":"valueBlock","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"stmts":[{"k":"var","name":"subj","type":{"t":"fqn","name":"System.Boolean"},"init":{"k":"local","name":"b"}}],"result":{"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"subj"}
--"k":"valueBlock","type":{"t":"fqn","name":"System.Int32"}
+?any(.[] | .. | objects; ir_matches({"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"a"},"then":{"k":"valueBlock","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"stmts":[{"k":"var","name":"subj","type":{"t":"fqn","name":"System.Boolean"},"init":{"k":"local","name":"b"}}],"result":{"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}},"cond":{"k":"local","name":"subj"}}}}))
+?(any(.[] | .. | objects; ir_matches({"k":"valueBlock","type":{"t":"fqn","name":"System.Int32"}})) | not)
 
 # A non-primitive VALUE type takes the same path: the oracle is asked about the FQN, so a BCL struct join widens for
 # the same reason `Int` does, where the hardcoded primitive list this replaced covered neither it nor `value class`.
 +"name":"System.DateTime"}}
--"type":{"t":"fqn","name":"System.DateTime"},"cond"
+?(any(.[] | .. | objects; ir_matches({"k":"cond","type":{"t":"fqn","name":"System.DateTime"}})) | not)
 
 # AND THE ORACLE IS ASKED ABOUT THE FQN *WHATEVER ITS ARGUMENTS*. `System.DateTime` above is unconstructed, so it is
 # also what the superseded `Args: null` oracle answered — it pins the struct axis but not the argument-independence.
@@ -62,8 +62,8 @@
 # — the same defect this family already had at the array-element oracle site (#86 D2). Both halves are asserted: the
 # join carries the widened CONSTRUCTED type, its bare struct branch is explicitly wrapped to inhabit that physical
 # Nullable<V> slot, and no `cond` is left holding the bare one.
-+"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]}},"cond":{"k":"local","name":"a"},"then":{"k":"nullableWrap","elem":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]},"e":{"k":"local","name":"s"}
--"k":"cond","type":{"t":"fqn","name":"System.ArraySegment"
+?any(.[] | .. | objects; ir_matches({"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]}},"cond":{"k":"local","name":"a"},"then":{"k":"nullableWrap","elem":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]},"e":{"k":"local","name":"s"}}}))
+?(any(.[] | .. | objects; ir_matches({"k":"cond","type":{"t":"fqn","name":"System.ArraySegment"}})) | not)
 
 # A top-level oblivious wrapper is a platform annotation that BirTypeLowering erases, not a physical container.
 # Crossing between that V! surface and a fixed Nullable<V>/V! return slot therefore performs the same explicit

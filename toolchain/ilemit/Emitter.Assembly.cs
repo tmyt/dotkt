@@ -632,7 +632,7 @@ sealed partial class Emitter
                 var fname = f.Name;
                 _ctxMethod = ".cctor(" + fname + ")";
                 var fb = ti.Fields[fname];
-                GuardBody(() => { PrescanCfgLabels(f.Init.Value.Element); EmitStoreCoerced(f.Init.Value.Element, fb.FieldType); MaybeVolatile(fb); EmitField(_il, OpCodes.Stsfld, fb); });
+                GuardBody(() => { PrescanCfgLabels([f.Init.Value]); EmitStoreCoerced(f.Init.Value, fb.FieldType); MaybeVolatile(fb); EmitField(_il, OpCodes.Stsfld, fb); });
             }
             _il.Emit(OpCodes.Ret);
         }

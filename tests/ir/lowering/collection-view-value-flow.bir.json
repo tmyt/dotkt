@@ -485,9 +485,7 @@
                 "t": "fqn",
                 "name": "System.Collections.Generic.IReadOnlyList",
                 "args": [{ "t": "fqn", "name": "System.Int32" }]
-              },
-              "callingConvention": "static",
-              "parameterTypes": []
+              }
             },
             "value": { "k": "local", "name": "mutable" }
           }
@@ -522,9 +520,7 @@
                 "t": "fqn",
                 "name": "System.Collections.Generic.IReadOnlyList",
                 "args": [{ "t": "fqn", "name": "System.Int32" }]
-              },
-              "callingConvention": "static",
-              "parameterTypes": []
+              }
             }
           }
         },

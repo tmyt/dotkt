@@ -20,6 +20,47 @@ using DotKt.Bir;
 // Property accessors are already represented as methods, so they are covered by the method pass.
 static class RefBodySquash
 {
+    // Metadata-only primitive facades are reference classes, not native literal stack types. Historically
+    // ilemit's constant switch implicitly emitted null for these slots. State that physical placeholder here,
+    // after type lowering, instead of making a typed scalar codec turn a facade into a native primitive.
+    // Source semantics remain in the previously captured Kotlin metadata; this image is never executed.
+    public static void LowerLiteralPlaceholders(JsonNode root)
+    {
+        void Executable(JsonNode node)
+        {
+            if (node is JsonObject expression)
+            {
+                if (expression["k"]?.GetValue<string>() == "const")
+                {
+                    var type = TypeJson.Read(expression["type"]);
+                    var native = BirTypeLowering.LowerType(type, refBuild: true, force: true, typeArg: false);
+                    if (type is TypeNode.Fqn facade && native is TypeNode.Fqn physical && facade.Name != physical.Name)
+                    {
+                        expression["type"] = TypeJson.Fqn("System.Object");
+                        expression["value"] = null;
+                    }
+                    return;
+                }
+                foreach (var child in expression.Select(pair => pair.Value)) Executable(child);
+            }
+            else if (node is JsonArray sequence)
+                foreach (var child in sequence) Executable(child);
+        }
+        void Container(JsonNode node)
+        {
+            if (node is not JsonObject container) return;
+            foreach (var key in new[] { "methods", "ctors" })
+                if (container[key] is JsonArray members)
+                    foreach (var member in members.OfType<JsonObject>())
+                        foreach (var body in new[] { "body", "preStmts", "baseArgs", "thisArgs" }) Executable(member[body]);
+            if (container["fields"] is JsonArray fields)
+                foreach (var field in fields.OfType<JsonObject>()) Executable(field["init"]);
+            if (container["types"] is JsonArray types)
+                foreach (var type in types) Container(type);
+        }
+        Container(root);
+    }
+
     public static void Squash(JsonNode root)
     {
         if (root is not JsonObject file) return;

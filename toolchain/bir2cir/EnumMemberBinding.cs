@@ -128,7 +128,7 @@ static class EnumMemberBinding
         };
         if (arg != null) newNode["arg"] = arg.DeepClone();
         foreach (var key in new[] { "ownerType", "virtual", "method", "prop", "propertyName", "propertyAccessor",
-                     "args", "arg", "sig", "dynRet", "ret", "overrides", "recv",
+                     "args", "arg", "argTypes", "sig", "dynRet", "ret", "overrides", "recv",
                      DeclarationIdentityBinding.Key })
             obj.Remove(key);
         foreach (var kv in newNode) obj[kv.Key] = kv.Value.DeepClone();

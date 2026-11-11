@@ -26,7 +26,9 @@ static class Bir2Cir
                 DotKt.Cir.AttributeSelfTest.Run(JsonOptions.Indented);
                 AttributeProjection.SelfTest();
                 DotKt.Cir.DeclarationSelfTest.Run();
+                DotKt.Cir.ExecutableSelfTest.Run();
                 CirDeclarationProjection.SelfTest();
+                CirDeclarationProjection.SelfTestExecutable();
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
@@ -1688,8 +1690,10 @@ sealed class Pipeline
 
         AttributeProjection.ApplyAll(pendingOutput.Select(file => file.Root).ToList());
         foreach (var file in pendingOutput)
-            files.Add(new CirFile(file.OutputName, DotKt.Cir.DeclarationJson.Write(
-                CirDeclarationProjection.ReadCirFileDeclaration(file.Root), indented: true)));
+        {
+            if (_options.RefBuild) RefBodySquash.LowerLiteralPlaceholders(file.Root);
+            files.Add(new CirFile(file.OutputName, CirDeclarationProjection.ReadCirFileDeclaration(file.Root)));
+        }
         return files;
     }
 
@@ -1743,7 +1747,7 @@ sealed class Pipeline
     // #305: the spec §2.7 `sty` chokepoint, run on the FULLY-PASSED BIR of one file. `sty` is bir2cir-internal and
     // BirTypeLowering strips it, so the CIR gate below can never see one — the stamp has to be checked here, while it
     // still exists, or the invariant has no mechanical witness at all. Same bir-common checker, restricted to the one
-    // check that is meaningful pre-lowering (IrSanityChecks.StyStampsOnly); the JsonDocument round-trip is what gives
+    // check that is meaningful pre-lowering; the JsonDocument round-trip is what gives
     // the shared JsonElement-based checker a view of the JsonNode tree the passes work on.
     static void CheckStySanity(string outputName, JsonNode root)
     {
@@ -1752,30 +1756,21 @@ sealed class Pipeline
         // deeply-nested inlined lambdas nests a method body past that — so a plain `ToJsonString()` here would crash
         // the sanity CHECKPOINT on exactly the input a checkpoint exists to survive.
         using var doc = JsonDocument.Parse(root.ToJsonString(BirJson.Writer), BirJson.DocOptions);
-        try { IrSanity.Check(new[] { doc.RootElement }, IrSanityChecks.StyStampsOnly); }
+        try { IrSanity.CheckSourceStamps(new[] { doc.RootElement }); }
         catch (IrSanityException ex) { throw new InvalidOperationException($"{outputName}: {ex.Decl}: sanity: {ex.Message}"); }
     }
 
-    // #112 Phase 4: run the shared bir-common IrSanity over the produced CIR. Parse each CirFile once, hold the
-    // JsonDocuments alive across the check (JsonElement borrows from its document), and surface an IrSanityException
-    // as a plain message that Main's top-level catch renders `bir2cir: <File.kt:line: Decl>: sanity: <invariant>`.
+    // Validate the actual typed output graph, before its one boundary serialization.
     static void CheckCirSanity(IReadOnlyList<CirFile> files)
     {
-        var docs = new List<JsonDocument>();
-        try
-        {
-            var roots = new List<JsonElement>();
-            foreach (var f in files) { var d = JsonDocument.Parse(f.Json, BirJson.DocOptions); docs.Add(d); roots.Add(d.RootElement); }
-            try { IrSanity.Check(roots); }
-            catch (IrSanityException ex) { throw new InvalidOperationException($"{ex.Decl}: sanity: {ex.Message}"); }
-        }
-        finally { foreach (var d in docs) d.Dispose(); }
+        try { IrSanity.Check(files.Select(file => file.Model)); }
+        catch (IrSanityException ex) { throw new InvalidOperationException($"{ex.Decl}: sanity: {ex.Message}"); }
     }
 
     void WriteCirFiles(IReadOnlyList<CirFile> files)
     {
         foreach (var file in files)
-            File.WriteAllText(Path.Combine(_options.OutDir, file.OutputName), file.Json);
+            File.WriteAllText(Path.Combine(_options.OutDir, file.OutputName), DotKt.Cir.DeclarationJson.Write(file.Model, indented: true));
     }
 
     static string OutputNameFor(string inputPath)
@@ -1858,7 +1853,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 }
 
 sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend);
-sealed record CirFile(string OutputName, string Json);
+sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions
 {

@@ -53,6 +53,9 @@ static class NetInteropBinding
         {
             foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value);   // children first (bottom-up)
             Reshape(obj);
+            // This pass owns companion classification. A Kotlin instance carrier
+            // can keep its ordinary call shape, but the classification hint is consumed.
+            obj.Remove("companionCall");
         }
         else if (node is JsonArray arr)
         {
@@ -375,7 +378,7 @@ static class NetInteropBinding
                     node["name"] = method;
                     node["ret"] = Take("ret");
                     node["static"] = isStatic;
-                    node["recv"] = isStatic ? null : Take("recv");
+                    if (!isStatic) node["recv"] = Take("recv");
                     if (!isStatic) CarrySuper();
                     return;
                 }
@@ -383,7 +386,7 @@ static class NetInteropBinding
                 node["type"] = owner;
                 node["name"] = method;
                 node["static"] = isStatic;
-                node["recv"] = isStatic ? null : Take("recv");
+                if (!isStatic) node["recv"] = Take("recv");
                 JsonNode setVal = null;
                 if (args.Count > 0) { setVal = args[0]; args.RemoveAt(0); }
                 node["value"] = setVal;

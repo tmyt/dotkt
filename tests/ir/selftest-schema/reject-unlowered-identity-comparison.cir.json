@@ -7,8 +7,8 @@
       "k": "return",
       "value": {
         "k": "binOp", "op": "===",
-        "lhs": { "k": "const", "type": { "t": "fqn", "name": "System.Object" }, "value": null },
-        "rhs": { "k": "const", "type": { "t": "fqn", "name": "System.Object" }, "value": null }
+        "lhs": { "k": "const", "type": { "t": "fqn", "name": "System.Object" }, "value": {"a": "null"} },
+        "rhs": { "k": "const", "type": { "t": "fqn", "name": "System.Object" }, "value": {"a": "null"} }
       }
     }]
   }]

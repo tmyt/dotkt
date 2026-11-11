@@ -78,7 +78,7 @@ for name in derived_names:
     declaration = type_decl(cir, name)
     cir_calls.extend(
         node for node in objects(declaration.get("methods", []))
-        if node.get("k") == "callInstance" and node.get("super") is True
+        if node.get("k") == "callInstance" and node.get("virtual") is False
     )
 
 cir_expected = {

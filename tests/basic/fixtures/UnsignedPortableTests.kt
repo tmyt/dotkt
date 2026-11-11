@@ -23,6 +23,17 @@ private fun unsignedPortableDigits(value: ULong, radix: Int): String {
 }
 
 class UnsignedPortableTests {
+    @TestAttribute fun narrowUnsignedParsingChecksExactLiteralWidths() {
+        check("0".toUByteOrNull() == 0.toUByte())
+        check("255".toUByteOrNull() == UByte.MAX_VALUE)
+        check("256".toUByteOrNull() == null)
+        check("-1".toUByteOrNull() == null)
+        check("0".toUShortOrNull() == 0.toUShort())
+        check("65535".toUShortOrNull() == UShort.MAX_VALUE)
+        check("65536".toUShortOrNull() == null)
+        check("-1".toUShortOrNull() == null)
+    }
+
     @TestAttribute fun allRadicesUsePortableBodiesForBothWidths() {
         for (radix in 2..36) {
             for (raw in intArrayOf(0, 1, Int.MAX_VALUE, Int.MIN_VALUE, -1)) {

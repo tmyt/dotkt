@@ -4,7 +4,7 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
-using System.Text.Json;
+using DotKt.Bir;
 using DotKt.Cir;
 
 // Method/ctor body emission: control-flow prescan, arg/return coercion, array elem access, addr-of.
@@ -32,22 +32,23 @@ sealed partial class Emitter
         // own (a `cond`/`try` inside a bound value), and the delegation args are emitted here too. Scanning the whole
         // declaration would also define labels for subtrees that are never emitted (`params[].default`, `attrs`), and
         // ILGenerator refuses a label that is defined and never marked.
-        PrescanCfgLabels(c.Body.Element);
-        foreach (var tree in new TemporaryCirExecutable[] { c.PreStmts.OrDefault(), c.ThisArgs.OrDefault(), c.BaseArgs.OrDefault() })
-            if (tree != null && tree.Element.ValueKind is JsonValueKind.Array or JsonValueKind.Object) WalkCfgLabels(tree.Element);
+        PrescanCfgLabels(c.Body);
+        if (c.PreStmts.HasValue) WalkCfgLabels(c.PreStmts.Value);
+        if (c.ThisArgs.HasValue) WalkCfgLabels(c.ThisArgs.Value);
+        if (c.BaseArgs.HasValue) WalkCfgLabels(c.BaseArgs.Value);
 
         // `preStmts` — the constructor DELEGATION's evaluation plan, lowered to `var` declarations by bir2cir's
         // CallEvalLowering. A delegation's arguments ride the declaration rather than an expression, so there is no
         // `valueBlock` to hold the values it must evaluate exactly once; they are declared HERE, ahead of the
         // `ldarg.0` that begins the `this`/`base` call, which is where Kotlin evaluates them.
         if (c.PreStmts.HasValue)
-            foreach (var st in c.PreStmts.Value.Element.EnumerateArray()) EmitStmt(st);
+            foreach (var st in c.PreStmts.Value) EmitStmt(st);
 
         _il.Emit(OpCodes.Ldarg_0);
         if (c.ThisArgs.HasValue)
         {
             // `constructor(...) : this(...)` -> delegate to a sibling ctor (it runs field inits / base call).
-            foreach (var a in c.ThisArgs.Value.Element.EnumerateArray()) EmitExpr(a);
+            foreach (var a in c.ThisArgs.Value) EmitExpr(a);
             ConstructorInfo sibling = LinkLocalCtor(ti, c.LocalCtorIndex.Value);
             // Inside a GENERIC type, the sibling ctor must be referenced through the SELF-instantiation
             // `C`1<!T>` (the type over its OWN generic params), NOT the open definition `C`1` — a bare
@@ -61,12 +62,11 @@ sealed partial class Emitter
         {
             // `: base(...)` on a .NET base -> the matching base constructor (resolved by reflection). A constructed
             // generic base (`Collection<int>`) needs the static helper to map the open ctor onto the instantiation.
-            var ba = c.BaseArgs.HasValue ? c.BaseArgs.Value.Element : default;
             // bir2cir has already resolved the Kotlin delegation onto its physical CLR constructor and carried the
             // declaration as baseCtorRef. Reuse the same exact-link path as newClr; this layer does not form or rank
             // a constructor candidate set from the argument expressions.
             var ctor = RequiredRef<ConstructorInfo>(c.BaseCtorRef.OrDefault(), "constructor delegation");
-            if (ba.ValueKind == JsonValueKind.Array) EmitArgs(ba, ParametersOf(ctor));
+            if (c.BaseArgs.HasValue) EmitArgs(c.BaseArgs.Value, ParametersOf(ctor));
             EmitConstructor(_il, OpCodes.Call, ctor);
         }
         else if (ti.BaseName != null && _types.ContainsKey(ti.BaseName) && c.BaseArgs.HasValue)
@@ -82,26 +82,20 @@ sealed partial class Emitter
             var baseType = ti.TB.BaseType;
             if (baseType != null && baseType.IsGenericType && !baseType.IsGenericTypeDefinition)
                 bctor = AnchorConstructor(baseType, bctor);
-            foreach (var a in c.BaseArgs.Value.Element.EnumerateArray()) EmitExpr(a);
+            foreach (var a in c.BaseArgs.Value) EmitExpr(a);
             EmitConstructor(_il, OpCodes.Call, bctor);
         }
         else
         {
             EmitConstructor(_il, OpCodes.Call, WellKnown<ConstructorInfo>("Object.ctor"));
         }
-        foreach (var s in c.Body.Element.EnumerateArray()) EmitStmt(s);
+        foreach (var s in c.Body) EmitStmt(s);
         _il.Emit(OpCodes.Ret);
     }
 
     // bir2cir resolved this same-emission-unit call to a declaration index. This is a direct token lookup: ilemit does
     // not compare argument shapes, enumerate candidates, or choose an overload.
-    ConstructorBuilder LinkLocalCtor(TypeInfo ti, JsonElement node)
-    {
-        if (!node.TryGetProperty("localCtorIndex", out var indexNode) || indexNode.ValueKind != JsonValueKind.Number)
-            throw new InvalidOperationException($"ilemit: local constructor {ti.TB.FullName} is missing `localCtorIndex`; bir2cir must resolve the declaration");
-        var index = indexNode.GetInt32();
-        return LinkLocalCtor(ti, index);
-    }
+    ConstructorBuilder LinkLocalCtor(TypeInfo ti, OptionalField<int> index) => LinkLocalCtor(ti, index.Value);
 
     ConstructorBuilder LinkLocalCtor(TypeInfo ti, int index)
     {
@@ -134,7 +128,7 @@ sealed partial class Emitter
         // and re-checks once R1/#90 lands. (Replaced the prior `m.abstract`-flag re-derivation, which the SAM defeated.)
         if (mb.IsAbstract)
         {
-            var hasBody = m.Body.HasValue && m.Body.Value.Element.ValueKind == JsonValueKind.Array && m.Body.Value.Element.GetArrayLength() > 0;
+            var hasBody = m.Body.HasValue && m.Body.Value.Length > 0;
             var flagAbstract = m.Abstract.OrDefault();
             if (hasBody || !flagAbstract)
                 Console.Error.WriteLine($"ilemit: WARNING: abstract-slot body invariant — '{ti.TB?.Name}.{mname}' is declared "
@@ -147,8 +141,8 @@ sealed partial class Emitter
         _curTypeParams = EffectiveTps(ti);
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
         BeginMethod(mb, il, m, isStatic: mb.IsStatic);
-        PrescanCfgLabels(m.Body.Value.Element);
-        foreach (var s in m.Body.Value.Element.EnumerateArray()) EmitStmt(s);
+        PrescanCfgLabels(m.Body.Value);
+        foreach (var s in m.Body.Value) EmitStmt(s);
         // CIR may prove that a body terminates without fall-through (for example, an exact metadata throw stub).
         // Otherwise keep the verifier-safe fallback return used by ordinary emitted methods.
         if (!m.BodyTerminates.OrDefault())
@@ -178,25 +172,17 @@ sealed partial class Emitter
     // Define an IL Label for every CFG `label` node anywhere in the body (forward refs from goto/brIf), so the
     // single emit pass can branch to not-yet-emitted blocks. Recursive: labels can sit inside nested structured
     // bodies (a CFG-lowered `while` spliced into a still-structured `if`). See docs/bir-cir-spec.md.
-    void PrescanCfgLabels(JsonElement node)
+    void PrescanCfgLabels(IEnumerable<ICirNode> nodes)
     {
         _cfgLabels = new Dictionary<int, Label>();
-        WalkCfgLabels(node);
+        WalkCfgLabels(nodes);
     }
 
-    void WalkCfgLabels(JsonElement e)
+    void WalkCfgLabels(IEnumerable<ICirNode> nodes)
     {
-        if (e.ValueKind == JsonValueKind.Object)
-        {
-            if (e.TryGetProperty("k", out var k) && k.GetString() == "label")
-            {
-                var id = e.GetProperty("id").GetInt32();
-                if (!_cfgLabels.ContainsKey(id)) _cfgLabels[id] = _il.DefineLabel();
-            }
-            foreach (var p in e.EnumerateObject()) WalkCfgLabels(p.Value);
-        }
-        else if (e.ValueKind == JsonValueKind.Array)
-            foreach (var x in e.EnumerateArray()) WalkCfgLabels(x);
+        foreach (var root in nodes)
+            foreach (var label in CirExecutableWalk.DescendantsAndSelf(root).OfType<CirLabel>())
+                if (!_cfgLabels.ContainsKey(label.Id)) _cfgLabels[label.Id] = _il.DefineLabel();
     }
 
     void EmitLdcI4(int n)
@@ -223,11 +209,7 @@ sealed partial class Emitter
     // ---- statements ----
     // Does this statement list contain a `return` anywhere (recursing into if/while/try bodies)? Drives whether a
     // `try` needs a dedicated return label + trailing ret.
-    static bool StmtsHaveReturn(JsonElement arr)
-    {
-        foreach (var s in arr.EnumerateArray()) if (NodeHasReturn(s)) return true;
-        return false;
-    }
+    static bool StmtsHaveReturn(ICirStatement[] statements) => statements.Any(NodeHasReturn);
 
     // Does this node's physical subtree contain a `return`/`returnExpr` anywhere? A full structural walk: after an
     // inline splice a return can hide in ANY expression slot — a `use{}`/`run{}` non-local return in
@@ -237,44 +219,31 @@ sealed partial class Emitter
     // allocation + return-label marking — miss either and the leave targets an unmarked label (a bake failure). No CIR
     // node embeds ANOTHER method's body (newClosure/newDelegate reference their lifted method by NAME; the invoke body
     // travels as BIR `synthClass` and is stripped before CIR), so this walk never crosses a function boundary.
-    static bool NodeHasReturn(JsonElement n)
-    {
-        if (n.ValueKind == JsonValueKind.Object)
-        {
-            if (n.TryGetProperty("k", out var k) && k.GetString() is "return" or "returnExpr") return true;
-            foreach (var p in n.EnumerateObject()) if (NodeHasReturn(p.Value)) return true;
-        }
-        else if (n.ValueKind == JsonValueKind.Array)
-            foreach (var x in n.EnumerateArray()) if (NodeHasReturn(x)) return true;
-        return false;
-    }
+    static bool NodeHasReturn(ICirNode node) =>
+        CirExecutableWalk.DescendantsAndSelf(node).Any(n => n is CirReturn or CirReturnExpression);
 
     // Does this statement list ALWAYS return/throw (no fall-through)? Used to decide if a `try`'s fall-through path
     // is reachable (and thus whether to emit a `br` over the trailing ret).
-    static bool StmtsAlwaysReturn(JsonElement arr)
-    {
-        JsonElement last = default; bool any = false;
-        foreach (var s in arr.EnumerateArray()) { last = s; any = true; }
-        return any && StmtAlwaysReturns(last);
-    }
+    static bool StmtsAlwaysReturn(ICirStatement[] statements) =>
+        statements.Length != 0 && StmtAlwaysReturns(statements[^1]);
 
-    static bool StmtAlwaysReturns(JsonElement s)
+    static bool StmtAlwaysReturns(ICirStatement statement)
     {
-        switch (s.GetProperty("k").GetString())
+        switch (statement)
         {
-            case "return": case "throw": return true;
-            case "if":
+            case CirReturn: case CirThrow: return true;
+            case CirIf s:
                 bool hasElse = false;
-                foreach (var br in s.GetProperty("branches").EnumerateArray())
+                foreach (var br in s.Branches)
                 {
-                    if (br.TryGetProperty("else", out _)) hasElse = true;
-                    if (!StmtsAlwaysReturn(br.GetProperty("body"))) return false;
+                    if (br.Else.IsPresent) hasElse = true;
+                    if (!StmtsAlwaysReturn(br.Body)) return false;
                 }
                 return hasElse;
-            case "try":
-                if (!StmtsAlwaysReturn(s.GetProperty("body"))) return false;
-                foreach (var c in s.GetProperty("catches").EnumerateArray())
-                    if (!StmtsAlwaysReturn(c.GetProperty("body"))) return false;
+            case CirTry s:
+                if (!StmtsAlwaysReturn(s.Body)) return false;
+                foreach (var c in s.Catches)
+                    if (!StmtsAlwaysReturn(c.Body)) return false;
                 return true;
             default: return false;
         }
@@ -282,14 +251,11 @@ sealed partial class Emitter
 
 
     // CIR already selected the exact physical loop. Resolve only its local emission anchors.
-    (Label cont, Label brk) TargetLoop(JsonElement s)
+    (Label cont, Label brk) TargetLoop(int id)
     {
-        var id = LoopId(s);
         var loop = _loops.Single(loop => loop.id == id);
         return (loop.cont, loop.brk);
     }
-
-    static int LoopId(JsonElement s) => s.GetProperty("loopId").GetInt32();
 
     // Emit `value` COERCED to the store target's type — the ONE shared RHS coercion for every store site
     // (var init, setLocal into a local/arg, setField/setFieldExpr via setter or field, staticFieldSet):
@@ -298,7 +264,7 @@ sealed partial class Emitter
     //    sites used to emit the raw RHS, so `var a: Any = "x"; a = 42` stored a raw int32 into an object local ->
     //    NRE/heap corruption at use).
     // A null/unknown target emits the value as-is (no spurious boxing).
-    void EmitStoreCoerced(JsonElement value, Type target)
+    void EmitStoreCoerced(ICirExpression value, Type target)
     {
         if (target == null) { EmitExpr(value); return; }
         var got = EmitNullableCoerced(value, target);
@@ -329,12 +295,10 @@ sealed partial class Emitter
     }
 
     // Read an interface/base entry as its structured Fqn.
-    static DotKt.Bir.TypeNode.Fqn ReadFqn(JsonElement e) =>
-        DotKt.Bir.TypeNode.Read(e) as DotKt.Bir.TypeNode.Fqn;
+    static TypeNode.Fqn ReadFqn(TypeNode type) => type as TypeNode.Fqn;
 
     // An owner slot -> (open name, constructed type).
-    (string open, Type constructed) ParseOwnerSlot(JsonElement e) =>
-        ParseOwnerT((DotKt.Bir.TypeNode.Fqn)DotKt.Bir.TypeNode.Read(e));
+    (string open, Type constructed) ParseOwnerSlot(TypeNode type) => ParseOwnerT((TypeNode.Fqn)type);
 
     // The constructed type's GetX helpers return members whose declared types are still the OPEN params (`!0`);
     // substitute a type-level param by position to its concrete arg so callers box value types correctly.
@@ -389,10 +353,10 @@ sealed partial class Emitter
 
     // Emit call args, boxing each value arg passed to a reference/object param (param types known explicitly).
     // CIR must already contain the complete physical argument vector. Default realization belongs to bir2cir.
-    void EmitArgsTyped(JsonElement args, Type[] pt, MethodInfo mb = null)
+    void EmitArgsTyped(ICirExpression[] args, Type[] pt, MethodInfo mb = null)
     {
         int i = 0;
-        foreach (var a in args.EnumerateArray()) { if (pt != null && i < pt.Length) EmitArg(a, pt[i]); else EmitExpr(a); i++; }
+        foreach (var a in args) { if (pt != null && i < pt.Length) EmitArg(a, pt[i]); else EmitExpr(a); i++; }
         if (pt != null) RequireArgCount(i, pt.Length, mb?.ToString() ?? "typed call");
         else if (mb != null)
         {
@@ -407,21 +371,20 @@ sealed partial class Emitter
     // EmitArgsTyped does for method calls. bir2cir has already linked the declaration independently.
     // bir2cir and the schema gate require a complete, aligned vector. Keep the local length guard so an independently
     // malformed CIR fails by emitting no guessed coercions rather than indexing an unrelated slot.
-    void EmitNewArgs(JsonElement e, JsonElement nargs)
+    void EmitNewArgs(OptionalField<TypeNode[]> argTypes, ICirExpression[] nargs)
     {
         Type[] want = null;
-        if (e.TryGetProperty("argTypes", out var at) && at.ValueKind == JsonValueKind.Array
-            && at.GetArrayLength() == nargs.GetArrayLength())
-            want = at.EnumerateArray().Select(MapType).ToArray();
+        if (argTypes.HasValue && argTypes.Value.Length == nargs.Length)
+            want = argTypes.Value.Select(MapType).ToArray();
         int i = 0;
-        foreach (var a in nargs.EnumerateArray()) { if (want?[i] != null) EmitArg(a, want[i]); else EmitExpr(a); i++; }
+        foreach (var a in nargs) { if (want?[i] != null) EmitArg(a, want[i]); else EmitExpr(a); i++; }
     }
 
     // Prefer a BIR-carried concrete result type (`retType`) over reflecting an un-baked builder's `!0`/`!!0`.
-    Type RetOr(JsonElement e, Type fallback)
+    Type RetOr(OptionalField<TypeNode> ret, Type fallback)
     {
-        if (!e.TryGetProperty("ret", out var r)) return fallback;
-        var declared = MapType(r);
+        if (!ret.IsPresent) return fallback;
+        var declared = MapType(ret.Value);
         // A generic method `<T> f(): T` instantiated with T = kotlin.Unit genuinely PUSHES a kotlin.Unit value, yet a
         // Unit/statement-context call site carries retType="void" (kotc lowers Unit results to void). Trusting that
         // "void" would skip the caller's pop, stranding the kotlin.Unit on the stack (ilverify ReturnVoid — e.g. a
@@ -437,18 +400,18 @@ sealed partial class Emitter
     // what to recover: a value-type nullable `Nullable<V>` via `unbox.any` (a null ref -> HasValue=false; a boxed V
     // -> HasValue=true), a reference type via `castclass` (null stays null). When the caller ALSO wants `object`
     // (an internal nullable->nullable hand-off) there is nothing to do. A non-object actual return is untouched.
-    Type CoerceReturn(JsonElement e, Type actual)
+    Type CoerceReturn(OptionalField<TypeNode> ret, Type actual)
     {
-        if (actual == Bcl("System.Object") && e.TryGetProperty("ret", out var r))
+        if (actual == Bcl("System.Object") && ret.IsPresent)
         {
-            var want = MapType(r);
+            var want = MapType(ret.Value);
             if (want != null && want != Bcl("System.Object"))
             {
                 if (IsValueType(want) || want.IsGenericParameter) { _il.Emit(OpCodes.Unbox_Any, want); return want; }
                 _il.Emit(OpCodes.Castclass, want); return want;
             }
         }
-        return RetOr(e, actual);
+        return RetOr(ret, actual);
     }
 
     // Resolve a method on a (possibly generic) interface. When the instantiation carries a TypeBuilder/generic
@@ -497,13 +460,13 @@ sealed partial class Emitter
 
     // Load a managed pointer (&) to an addressable lvalue (for `constrained.` / struct-member calls). Falls back
     // to materializing the value into a temp and taking its address for arbitrary expressions.
-    void EmitAddr(JsonElement e)
+    void EmitAddr(ICirExpression expression)
     {
-        switch (e.GetProperty("k").GetString())
+        switch (expression)
         {
-            case "local":
+            case CirLocal e:
             {
-                var name = e.GetProperty("name").GetString();
+                var name = e.Name;
                 // A slot whose declared type is ALREADY a managed pointer (`ref T`) HOLDS the address — a `var x by
                 // byref(m())` delegate local, or the local a call-evaluation plan pins a ref-returning location into.
                 // Its address is its VALUE; `Ldloca` would hand out a `ref ref T` the callee cannot use.
@@ -513,81 +476,81 @@ sealed partial class Emitter
                 { _il.Emit(_argTypes[name].IsByRef ? OpCodes.Ldarg : OpCodes.Ldarga, a); return; }
                 break;
             }
-            case "byrefLoad":
+            case CirByRefLoad e:
             {
                 // Reading through a managed pointer yields the POINTEE; the address of that pointee is the pointer
                 // itself. A caller-side UnsafeAccessor field projection carries the pointer expression directly;
                 // a `var x by byref(...)` delegate read carries a named byref local. In either form, materializing the
                 // pointee into a temp would pass the temp's address and silently lose the callee's write.
-                if (e.TryGetProperty("ptr", out var pointer)) { EmitExpr(pointer); return; }
-                var bn = e.GetProperty("local").GetString();
+                if (e.Ptr.IsPresent) { EmitExpr(e.Ptr.Value); return; }
+                var bn = e.Local.Value;
                 if (_locals.TryGetValue(bn, out var bl) && bl.LocalType.IsByRef) { _il.Emit(OpCodes.Ldloc, bl); return; }
                 if (_args.TryGetValue(bn, out var ba) && _argTypes[bn].IsByRef) { _il.Emit(OpCodes.Ldarg, ba); return; }
                 break;
             }
-            case "this":
+            case CirThis:
                 _il.Emit(OpCodes.Ldarg_0);
                 return;
-            case "clrPropGet":
+            case CirPropertyGet e:
             {
                 // ClrMemberResolution projects a public CLR field through Kotlin property syntax as `clrPropGet`
                 // plus the explicit `member:"field"` decision. A real accessor is an rvalue and deliberately falls
                 // through to the temporary-address path; a field remains the same addressable CIR location it was
                 // before that physical reshape.
-                if (ClrMemberKind(e) != "field") break;
-                var projected = RequiredRef<FieldInfo>(e, "memberRef", "an external field address");
+                if (e.Member != "field") break;
+                var projected = RequiredRef<FieldInfo>(e.MemberRef.OrDefault(), "an external field address");
                 if (projected.IsLiteral) break; // a CLR literal has no storage
                 if (projected.IsStatic)
                 {
                     EmitField(_il, OpCodes.Ldsflda, projected);
                     return;
                 }
-                var projectedOwner = ClrRef(e.GetProperty("type"));
-                if (IsValueType(projectedOwner)) EmitAddr(e.GetProperty("recv"));
-                else EmitExpr(e.GetProperty("recv"));
+                var projectedOwner = ClrRef(e.Type);
+                if (IsValueType(projectedOwner)) EmitAddr(e.Recv.Value);
+                else EmitExpr(e.Recv.Value);
                 EmitField(_il, OpCodes.Ldflda, projected);
                 return;
             }
-            case "field":
+            case CirFieldRead e:
+            {
                 // A `field` node bir2cir resolved to an external ACCESSOR (member:"accessor") is a getter CALL, not a
                 // direct backing-field lvalue — its address is the materialized rvalue (temp + Ldloca) below, NOT Ldflda on
                 // the private cross-assembly field. Only a genuine direct-field node takes the Ldflda fast path here.
-                if (e.TryGetProperty("member", out var fam) && fam.ValueKind == JsonValueKind.String && fam.GetString() == "accessor") break;
+                if (e.Member.OrDefault() == "accessor") break;
                 // ECMA-335 `ldflda` over a VALUE-TYPE owner consumes the address of that owner. Loading a nested
                 // struct receiver by value first addresses a temporary copy, so `byref(holder.box.value)` silently
                 // loses the callee's write. Follow the CIR lvalue chain mechanically: a reference owner is a value,
                 // while a value owner is itself another addressable location (`array[i].box.value` recurses through
                 // `ldelema`; `holder.box.value` through the preceding `ldflda`). This is the address twin of the
                 // ordinary field read/write paths, which already make the same owner-type distinction.
-                if (IsValueType(ClrRef(e.GetProperty("ownerType")))) EmitAddr(e.GetProperty("recv"));
-                else EmitExpr(e.GetProperty("recv"));
-                EmitField(_il, OpCodes.Ldflda, PrimaryFromRef(e, "memberRef") as FieldInfo
-                    ?? ResolveLocalField(ParseOwnerSlot(e.GetProperty("ownerType")),
-                        e.GetProperty("name").GetString(), out _, "field address"));
+                if (IsValueType(ClrRef(e.OwnerType))) EmitAddr(e.Recv);
+                else EmitExpr(e.Recv);
+                EmitField(_il, OpCodes.Ldflda, PrimaryFromRef(e.MemberRef.OrDefault()) as FieldInfo
+                    ?? ResolveLocalField(ParseOwnerSlot(e.OwnerType), e.Name, out _, "field address"));
                 return;
-            case "staticField":
+            }
+            case CirStaticField e:
                 // An external owner names its field; a field this compilation emits is still found by name, which
                 // is the local axis (#395) rather than a second resolver living on here.
-                EmitField(_il, OpCodes.Ldsflda, e.TryGetProperty("fieldRef", out _)
-                    ? RequiredRef<FieldInfo>(e, "fieldRef", "field")
-                    : ResolveLocalField(ParseOwnerSlot(e.GetProperty("ownerType")),
-                        e.GetProperty("name").GetString(), out _, "static field address"));
+                EmitField(_il, OpCodes.Ldsflda, e.FieldRef.IsPresent
+                    ? RequiredRef<FieldInfo>(e.FieldRef.Value, "field")
+                    : ResolveLocalField(ParseOwnerSlot(e.OwnerType), e.Name, out _, "static field address"));
                 return;
-            case "arrayGet":
-                EmitExpr(e.GetProperty("array"));
-                EmitExpr(e.GetProperty("index"));
-                _il.Emit(OpCodes.Ldelema, MapType(e.GetProperty("elem")));
+            case CirArrayGet e:
+                EmitExpr(e.Array);
+                EmitExpr(e.Index);
+                _il.Emit(OpCodes.Ldelema, MapType(e.Elem));
                 return;
-            case "stackGet":
+            case CirStackGet e:
                 // The stack-buffer slot's own address (the value path Ldobj's through exactly this).
-                EmitStackCheckedAddr(e, MapType(e.GetProperty("elem")));
+                EmitStackCheckedAddr(e.Index, e.Len, e.Ptr, MapType(e.Elem));
                 return;
         }
         // THE RVALUE FALLBACK: materialize the value and hand out the temporary's address. That is the right answer for
         // an expression that designates no storage — but only when it is a VALUE. An expression that already yields a
         // managed pointer (a `ref`-returning property accessor, say) IS the address; copying it into a `ref T` local and
         // taking THAT address hands the callee a `ref ref T`.
-        var t = EmitExpr(e);
+        var t = EmitExpr(expression);
         if (t != null && t.IsByRef) return;
         var tmp = _il.DeclareLocal(t);
         _il.Emit(OpCodes.Stloc, tmp);
@@ -600,16 +563,16 @@ sealed partial class Emitter
     /// must be evaluated exactly ONCE and both halves need it. Emitting the check and the address as two independent
     /// pieces evaluated `e.index` twice, so `b[i++]` incremented twice and the check ran against a different element
     /// than the access: `Swap(byref(b[i++]), byref(b[i++]))` with `i == 0` left `i == 3` and threw.
-    void EmitStackCheckedAddr(JsonElement e, Type elem)
+    void EmitStackCheckedAddr(ICirExpression index, ICirExpression len, ICirExpression ptr, Type elem)
     {
         // The index first and once, into a temp both halves read. (Order is unchanged: index, then len, then ptr.)
-        EmitExpr(e.GetProperty("index"));
+        EmitExpr(index);
         var idx = _il.DeclareLocal(Bcl("System.Int32"));
         _il.Emit(OpCodes.Stloc, idx);
 
         // Throw IndexOutOfRangeException unless 0 <= index < len (unsigned compare catches negatives too).
         _il.Emit(OpCodes.Ldloc, idx);
-        EmitExpr(e.GetProperty("len"));
+        EmitExpr(len);
         var ok = _il.DefineLabel();
         _il.Emit(OpCodes.Blt_Un, ok);
         _il.Emit(OpCodes.Ldstr, "StackBuffer index out of bounds");
@@ -617,17 +580,17 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Throw);
         _il.MarkLabel(ok);
 
-        EmitExpr(e.GetProperty("ptr"));
+        EmitExpr(ptr);
         _il.Emit(OpCodes.Ldloc, idx);
         _il.Emit(OpCodes.Sizeof, elem);
         _il.Emit(OpCodes.Mul);
         _il.Emit(OpCodes.Add);
     }
 
-    void EmitArgs(JsonElement args, ParameterInfo[] ps)
+    void EmitArgs(ICirExpression[] args, ParameterInfo[] ps)
     {
         int i = 0;
-        foreach (var a in args.EnumerateArray()) { EmitArg(a, ps[i].ParameterType); i++; }
+        foreach (var a in args) { EmitArg(a, ps[i].ParameterType); i++; }
         RequireArgCount(i, ps.Length, "CLR call");
     }
 
@@ -639,12 +602,12 @@ sealed partial class Emitter
                 "default and vararg realization must be completed by bir2cir");
     }
 
-    void EmitArgs2(JsonElement[] args, ParameterInfo[] ps)
+    void EmitArgs2(ICirExpression[] args, ParameterInfo[] ps)
     {
         for (int i = 0; i < args.Length; i++) EmitArg(args[i], ps[i].ParameterType);
     }
 
-    void EmitArg(JsonElement a, Type want)
+    void EmitArg(ICirExpression a, Type want)
     {
         // A by-ref parameter (`out`/`ref`, from the `byref(x)` marker) -> pass the lvalue's address.
         if (want.IsByRef) { EmitAddr(a); return; }
@@ -699,7 +662,7 @@ sealed partial class Emitter
 
     // Args for a user method/ctor, boxing value types passed to reference (e.g. `object`/`Any`) params.
     // When the param type is unknown (lifted/unrecorded), emit the arg as-is (no spurious boxing).
-    void EmitCallArgs(JsonElement args, MethodInfo mb)
+    void EmitCallArgs(ICirExpression[] args, MethodInfo mb)
     {
         var pt = _mparams.TryGetValue(mb, out var p) ? p : null;
         // An in-assembly method's declared params live in `_mparams`; a REFERENCED method's don't (MethodBuilder can't
@@ -709,7 +672,7 @@ sealed partial class Emitter
         // `toString(object)` of an `Int?` (`box Nullable<int>` yields the boxed underlying value, or null).
         var ps = pt == null ? ParametersOf(mb) : null;
         int i = 0;
-        foreach (var a in args.EnumerateArray())
+        foreach (var a in args)
         {
             if (pt != null && i < pt.Length) EmitArg(a, pt[i]);
             else if (ps != null && i < ps.Length) EmitArg(a, ps[i].ParameterType);

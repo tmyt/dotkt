@@ -8,7 +8,7 @@
       "k":"enumBits",
       "type":{"t":"fqn","name":"Fixture.Access"},
       "underlying":"System.Int32",
-      "e":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":1}
+      "e":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":{"a": "i32", "value": 1}}
     }}]
   }]
 }

@@ -44,11 +44,11 @@ nullable = [node for node in conditional
                    and any(stmt["k"] != "sourcePoint" for stmt in part["stmts"])
                    for part in walk(node["value"]))]
 assert len(nullable) == 2, "nullable stores must use null-preserving conversions"
-assert all(any(part.get("k") == "const" and part.get("value") is None
+assert all(any(part.get("k") == "const" and part.get("value") == {"a": "null"}
                and is_type(part.get("type"), "dotkt$CharSequence")
                for part in walk(node["value"])) for node in nullable), "nullable branches must retain genuine null"
 inline = [node for node in stores if node["value"].get("k") == "new" and adapters(node["value"])]
 assert len(inline) == 2, "both inline early-return temporaries must remain synthetic and adapt the String fallback"
-assert all(adapter["args"][0].get("value") == ""
+assert all(adapter["args"][0].get("value") == {"a": "text", "value": ""}
            for node in inline for adapter in adapters(node["value"])), "inline empty returns must use the actual String value"
 print("CharSequence local-store CIR: synthetic locals, conditional/null-preserving stores and inline results are adapted")

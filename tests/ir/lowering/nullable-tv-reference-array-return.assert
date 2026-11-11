@@ -1,9 +1,9 @@
 # The exact copyOf declaration has a System.Array value ABI and retains both T and
 # N(T) witnesses. The concrete consumer explicitly projects its result to String[].
 +"name":"result","type":{"t":"array","elem":{"t":"fqn","name":"System.String"}},"init":{"k":"cast","type":{"t":"array","elem":{"t":"fqn","name":"System.String"}},"e":{"k":"callStatic"
-+"method":"copyOf","sig":[{"t":"fqn","name":"System.Array"},{"t":"fqn","name":"int"}],"typeArgs":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.String"}],"ret":{"t":"fqn","name":"System.Array"}
+?any(.[] | .. | objects; ir_matches({"method":"copyOf","sig":[{"t":"fqn","name":"System.Array"},{"t":"fqn","name":"int"}],"typeArgs":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.String"}],"ret":{"t":"fqn","name":"System.Array"}}))
 +"name":"copyOf","genericArity":2,"returnType":{"t":"fqn","name":"System.Array"},"callingConvention":"static","parameterTypes":[{"t":"fqn","name":"System.Array"},{"t":"fqn","name":"System.Int32"}]
 -"name":"result","type":{"t":"array","elem":{"t":"fqn","name":"object"}}
 # Any closes both witnesses at Object and explicitly projects to Object[].
 +"name":"anyResult","type":{"t":"array","elem":{"t":"fqn","name":"System.Object"}},"init":{"k":"cast","type":{"t":"array","elem":{"t":"fqn","name":"System.Object"}},"e":{"k":"callStatic"
-+"typeArgs":[{"t":"fqn","name":"System.Object"},{"t":"fqn","name":"System.Object"}],"ret":{"t":"fqn","name":"System.Array"}
+?any(.[] | .. | objects; ir_matches({"typeArgs":[{"t":"fqn","name":"System.Object"},{"t":"fqn","name":"System.Object"}],"ret":{"t":"fqn","name":"System.Array"}}))

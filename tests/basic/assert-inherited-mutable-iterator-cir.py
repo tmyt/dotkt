@@ -44,7 +44,7 @@ for call in calls:
     assert call["typeArgs"] == [{"t": "tv", "scope": "method", "i": 0}]
     assert call["args"][1] == {"k": "classRef", "type": {
         "t": "fqn", "name": "System.Collections.Generic.IReadOnlyCollection`1", "args": call["typeArgs"]}}
-    assert call["args"][2]["value"] == 0
+    assert call["args"][2]["value"] == {"a": "i32", "value": 0}
     assert not any(node.get("t") == "tv" and node.get("scope") == "type" for node in nodes(call["sig"]))
     assert not any(node.get("t") == "tv" and node.get("scope") == "type" for node in nodes(call["args"]))
 print("Inherited source query binds its exact erased dispatcher with a caller-framed witness and no owner-variable leak")

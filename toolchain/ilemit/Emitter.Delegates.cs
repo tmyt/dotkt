@@ -4,7 +4,7 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
-using System.Text.Json;
+using DotKt.Bir;
 
 // The canonical wide delegate family + Kotlin function-type (FunctionN/Action) resolution.
 sealed partial class Emitter
@@ -85,9 +85,9 @@ sealed partial class Emitter
     // The delegate a construction builds is the one its node names: bir2cir decided which delegate the construction
     // physically is (its natural one, or the slot's — including authoring a void-to-value adapter when no method
     // pointer could be compatible at all), and stated it as `funcType` + `delegateCtorRef`. Nothing is chosen here.
-    void EmitDelegateCtor(ILGenerator il, JsonElement node)
+    void EmitDelegateCtor(ILGenerator il, MemberRefNode reference)
     {
-        var ctor = RequiredRef<ConstructorInfo>(node, "delegateCtorRef", "a delegate construction");
+        var ctor = RequiredRef<ConstructorInfo>(reference, "a delegate construction");
         // PersistableConstructor already encodes composite open owners without changing their identity.
         // Keep ldftn/ldvirtftn and newobj in this body: passing the method pointer through an IntPtr
         // helper parameter loses the target-method information needed to verify delegate construction.
@@ -138,12 +138,12 @@ sealed partial class Emitter
     // The delegate's RETURN / PARAMETER .NET types from a structured `funcType` (a Fn node) — carried by the BIR, so we
     // never reflect the Invoke of a TypeBuilder-baked delegate (unreliable on an un-baked generic instantiation). The
     // funcType is always a structured Fn node (#37/#49).
-    Type FuncRetType(JsonElement e) =>
-        DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fn fn
+    Type FuncRetType(TypeNode type) =>
+        type is TypeNode.Fn fn
             ? MapType(fn.Ret) : throw new NotSupportedException("funcType is not a structured fn node");
 
-    List<Type> FuncArgTypes(JsonElement e) =>
-        DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fn fn
+    List<Type> FuncArgTypes(TypeNode type) =>
+        type is TypeNode.Fn fn
             ? fn.DelegateParams.Select(MapType).ToList()
             : throw new NotSupportedException("funcType is not a structured fn node");
 

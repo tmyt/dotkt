@@ -27,22 +27,29 @@ public static class OptionalFieldArrays
     public static T[] OrEmpty<T>(this OptionalField<T[]> field) => field.OrDefault() ?? Array.Empty<T>();
 }
 
-public sealed class OptionalFieldConverterFactory : JsonConverterFactory
+public class OptionalFieldConverterFactory : JsonConverterFactory
 {
+    protected virtual bool AllowNull => true;
     public override bool CanConvert(Type type) => type.IsGenericType && type.GetGenericTypeDefinition() == typeof(OptionalField<>);
     public override JsonConverter CreateConverter(Type type, JsonSerializerOptions options)
-        => (JsonConverter)Activator.CreateInstance(typeof(OptionalFieldConverter<>).MakeGenericType(type.GetGenericArguments()))!;
+        => (JsonConverter)Activator.CreateInstance(typeof(OptionalFieldConverter<>).MakeGenericType(type.GetGenericArguments()), [AllowNull])!;
 }
 
-public sealed class OptionalFieldConverter<T> : JsonConverter<OptionalField<T>>
+public sealed class NonNullOptionalFieldConverterFactory : OptionalFieldConverterFactory
+{
+    protected override bool AllowNull => false;
+}
+
+public sealed class OptionalFieldConverter<T>(bool allowNull) : JsonConverter<OptionalField<T>>
 {
     public override bool HandleNull => true;
     public override OptionalField<T> Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
-        => reader.TokenType == JsonTokenType.Null ? OptionalField<T>.Null
+        => reader.TokenType == JsonTokenType.Null ? allowNull ? OptionalField<T>.Null : throw new JsonException()
             : OptionalField<T>.Of(JsonSerializer.Deserialize<T>(ref reader, options));
     public override void Write(Utf8JsonWriter writer, OptionalField<T> value, JsonSerializerOptions options)
     {
         if (!value.IsPresent) throw new InvalidOperationException("Absent fields must be omitted by the containing record");
+        if (value.IsNull && !allowNull) throw new JsonException();
         if (value.IsNull) writer.WriteNullValue();
         else JsonSerializer.Serialize(writer, value.Value, options);
     }

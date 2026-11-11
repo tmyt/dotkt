@@ -69,7 +69,7 @@ if (args[0] == "generate")
     combinedCall["ret"] = Named("System.Int32");
     var combinedExpression = combinedCall["body"]![0]!["value"]!;
     combinedExpression["ret"] = Named("System.Int32");
-    combinedExpression["args"]!.AsArray().Add(new JsonObject { ["k"] = "const", ["type"] = Named("System.Int32"), ["value"] = 42 });
+    combinedExpression["args"]!.AsArray().Add(new JsonObject { ["k"] = "const", ["type"] = Named("System.Int32"), ["value"] = new JsonObject { ["a"] = "i32", ["value"] = 42 } });
     root["methods"]!.AsArray().Add(combinedCall);
     root["types"]!.AsArray().Add(new JsonObject {
         ["name"] = "ModifiedConstructors", ["kind"] = "class", ["vis"] = "public",
@@ -90,7 +90,7 @@ if (args[0] == "generate")
         openOwner["args"] = new JsonArray(new JsonObject { ["t"] = "tv", ["scope"] = "type", ["i"] = 0 });
         constructor["body"] = new JsonArray(new JsonObject {
             ["k"] = "setField", ["ownerType"] = openOwner, ["recv"] = new JsonObject { ["k"] = "this" },
-            ["name"] = "Tag", ["value"] = new JsonObject { ["k"] = "const", ["type"] = Named("System.Int32"), ["value"] = i + 1 }
+            ["name"] = "Tag", ["value"] = new JsonObject { ["k"] = "const", ["type"] = Named("System.Int32"), ["value"] = new JsonObject { ["a"] = "i32", ["value"] = i + 1 } }
         });
         genericConstructors.Add(constructor);
         var closedOwner = Named("GenericConstructors");
@@ -101,7 +101,7 @@ if (args[0] == "generate")
             ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = new JsonObject {
                 ["k"] = "new", ["type"] = closedOwner, ["localCtorIndex"] = i,
                 ["argTypes"] = new JsonArray(constructor["params"]![0]!["type"]!["of"]!.DeepClone()),
-                ["args"] = new JsonArray(new JsonObject { ["k"] = "const", ["type"] = Named("System.Object"), ["value"] = null })
+                ["args"] = new JsonArray(new JsonObject { ["k"] = "const", ["type"] = Named("System.Object"), ["value"] = new JsonObject { ["a"] = "null" } })
             } })
         });
     }
@@ -169,7 +169,7 @@ if (args[0] == "generate")
             ["params"] = new JsonArray(), ["ret"] = Named("System.Int32"), ["typeParams"] = new JsonArray()
         });
         body["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = new JsonObject {
-            ["k"] = "const", ["type"] = Named("System.Int32"), ["value"] = i + 11
+            ["k"] = "const", ["type"] = Named("System.Int32"), ["value"] = new JsonObject { ["a"] = "i32", ["value"] = i + 11 }
         } });
         slotBodies.Add(body);
     }
@@ -260,10 +260,10 @@ static JsonArray TypeParameters(params string[] names) => new(names.Select(name 
 static JsonObject Call(string name, JsonNode owner, JsonNode method, JsonArray? typeArguments = null)
 {
     var call = new JsonObject {
-        ["k"] = "callStatic", ["owner"] = owner["name"]!.DeepClone(), ["calleeOwner"] = owner.DeepClone(),
+        ["k"] = "callStatic", ["owner"] = owner.DeepClone(), ["calleeOwner"] = owner.DeepClone(),
         ["method"] = method["name"]!.DeepClone(), ["calleeRet"] = method["ret"]!.DeepClone(), ["ret"] = method["ret"]!.DeepClone(),
         ["sig"] = new JsonArray(method["params"]!.AsArray().Select(p => p!["type"]!.DeepClone()).ToArray()),
-        ["args"] = new JsonArray(new JsonObject { ["k"] = "const", ["type"] = Named("System.Object"), ["value"] = null })
+        ["args"] = new JsonArray(new JsonObject { ["k"] = "const", ["type"] = Named("System.Object"), ["value"] = new JsonObject { ["a"] = "null" } })
     };
     if (typeArguments != null) call["typeArgs"] = typeArguments;
     return new JsonObject {

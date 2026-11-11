@@ -21,7 +21,14 @@
 # the decoded carrier BODY is itself a node/type that also appears inline in the emitting
 # method's body (validated here). See spec §7.
 import json, re, sys, glob, os
+from pathlib import Path
 from typealias_schema import validate_aliases
+
+with (Path(__file__).resolve().parents[1] / "docs/bir-cir.schema.json").open() as source:
+    _definitions = json.load(source)["$defs"]
+_scalar_shapes = [_definitions[entry["$ref"].rsplit("/", 1)[1]]
+                  for entry in _definitions["cirScalarValue"]["oneOf"]]
+CIR_SCALAR_SHAPES = {shape["properties"]["a"]["const"]: shape for shape in _scalar_shapes}
 
 TYPE_TAGS = {"fqn", "tv", "star", "projection", "fn", "nullable", "oblivious", "array", "byRef", "ptr", "fnPtr", "mod"}
 
@@ -372,6 +379,32 @@ class V:
 
     def err(self, f, path, msg):
         self.viol.append((f, path, msg))
+
+    def physical_scalar(self, f, path, value):
+        tag = value.get("a") if isinstance(value, dict) else None
+        shape = CIR_SCALAR_SHAPES.get(tag) if isinstance(tag, str) else None
+        if shape is None:
+            self.err(f, path, "malformed CIR scalar")
+            return
+        if not set(shape["required"]) <= value.keys() or value.keys() - shape["properties"].keys():
+            self.err(f, path, "malformed CIR scalar fields")
+            return
+
+        def matches(item, field):
+            if "const" in field:
+                return item == field["const"]
+            kind = field["type"]
+            if kind == "array":
+                return isinstance(item, list) and all(matches(child, field["items"]) for child in item)
+            if kind == "integer":
+                return type(item) is int and field.get("minimum", item) <= item <= field.get("maximum", item)
+            return type(item) is {"boolean": bool, "string": str}[kind]
+
+        for key, item in value.items():
+            if not matches(item, shape["properties"][key]):
+                message = ("UTF-16 literal units must be integers in 0..65535"
+                           if value["a"] == "utf16" and key == "units" else "malformed CIR scalar field")
+                self.err(f, path + "/" + key, message)
 
     def rich_enum_decl(self, f, path, o, is_type_decl):
         """Validate kotc's exact current rich-enum type-declaration facts."""
@@ -817,7 +850,9 @@ class V:
 
     def walk(self, f, o, path, is_type_decl=False, role=None, native_signature=False):
         if isinstance(o, dict):
-            if "encoding" in o:
+            if f.endswith(".cir.json") and o.get("k") == "const":
+                self.physical_scalar(f, path + "/value", o.get("value"))
+            if "encoding" in o and f.endswith(".bir.json"):
                 if (not path.endswith(("/value", "/constant")) or set(o) != {"encoding", "units"}
                         or o["encoding"] != "utf16" or not isinstance(o.get("units"), list)):
                     self.err(f, path, "malformed UTF-16 literal payload")
@@ -1301,8 +1336,8 @@ class V:
                             self.err(f, path, f"{kind} localAccessor must carry an fqn accessorOwner")
                         if not isinstance(o.get("accessor"), str) or not o["accessor"]:
                             self.err(f, path, f"{kind} localAccessor must carry a non-empty accessor name")
-                        if not isinstance(o.get("delegateType"), dict) or "t" not in o["delegateType"]:
-                            self.err(f, path, f"{kind} localAccessor must carry its delegateType")
+                        # The physical accessor signature owns its exact delegate parameter;
+                        # delegateType is a consumed bir2cir binding fact, not a second CIR type slot.
                         if not isinstance(o.get("sig"), list) or len(o["sig"]) != 1:
                             self.err(f, path, f"{kind} localAccessor must carry its one-parameter declaration sig")
                         if o.get("dispatch") not in ("call", "callvirt", "constrained"):

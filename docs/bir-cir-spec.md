@@ -267,11 +267,12 @@ This is an incremental migration, not the completed typed-IR/binary-transport de
 owning passes still construct a DOM, and an explicitly temporary, schema-generated projection
 constructs typed physical declarations at their output boundary. Current BIR name-only generic
 declarations become physical records there; the CIR reader has no shorthand/legacy-format path.
-Executable bodies, constructor operands and field initializers alone retain named
-`TemporaryCirStatements`/`TemporaryCirExpressions`/`TemporaryCirExpression` adapters. No arbitrary
-declaration/root/extension fields can hide in those adapters. They must disappear when the owning
-passes and executable consumers migrate. The typed sanity entry passes declaration/scope facts to
-the shared invariants directly, without serializing declarations back into a DOM.
+Executable bodies, constructor operands and field initializers use concrete generated `CirNode`
+records with explicit statement/expression roles. ilemit consumes these records directly; executable
+child traversal follows their generated child edges, not JSON key names. Constants use the closed
+physical scalar subset of `AttributeArgument`, retaining widths, IEEE bit patterns and UTF-16 units.
+The typed sanity entry passes declaration/scope and executable facts to the shared invariants
+directly, without serializing them back into a DOM. No executable JSON adapter remains.
 
 ## 2. Node kinds — the `{"k":…}` expression/statement/decl vocabulary
 

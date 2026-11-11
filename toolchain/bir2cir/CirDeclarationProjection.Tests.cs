@@ -22,7 +22,7 @@ static partial class CirDeclarationProjection
         RoundtripMetadata.Stamp(file);
         AddCarrierDefinition(file, "KotlinCollectionIdentityAttribute");
         AttributeProjection.ApplyAll(new JsonNode[] { file });
-        using var declarations = ReadCirFileDeclaration(file);
+        var declarations = ReadCirFileDeclaration(file);
         AttributeApplication[][] sites = [declarations.Methods[0].RetAttrs.Value,
             declarations.Methods[0].Params[0].Attrs.Value, declarations.Fields[0].Attrs.Value,
             declarations.Properties.Value[0].Attrs.Value];
@@ -54,7 +54,7 @@ static partial class CirDeclarationProjection
         RoundtripMetadata.StripRuntimeAttrs(runtime);
         AddCarrierDefinition(runtime, "KotlinDeclarationIdentityAttribute");
         AttributeProjection.ApplyAll(new JsonNode[] { runtime });
-        using var runtimeDeclarations = ReadCirFileDeclaration(runtime);
+        var runtimeDeclarations = ReadCirFileDeclaration(runtime);
         var physical = runtimeDeclarations.Types[0].Methods.Value[0];
         if (physical.Name != "M" || physical.TypeParams.Value.Length != 2 || !physical.Body.HasValue
             || physical.Attrs.OrEmpty().Count(a => a.Attr is TypeNode.Fqn { Name: "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute" }) != 1)

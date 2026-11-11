@@ -64,7 +64,7 @@ shift = binary("numericShift", ">>>")
 assert shift["lhs"].get("k") == "local", shift
 distance = shift["rhs"]
 assert distance.get("k") == "binOp" and distance.get("op") == "&", shift
-assert distance["lhs"].get("k") == "local" and distance["rhs"].get("value") == 63, shift
+assert distance["lhs"].get("k") == "local" and distance["rhs"].get("value") == {"a": "i32", "value": 63}, shift
 assert not any(node.get("k") == "conv" for node in objects(distance)), shift
 for name, op, side, target in (
         ("numericLoopRange", "+", "rhs", "Int64"),

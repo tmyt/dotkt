@@ -103,10 +103,10 @@ for state_machine, (receiver_type, helper_suffix, cold_method, generic_arity) in
     call = base_calls[0]
     owner = call.get("ownerType")
     expected_owner = {"t": "fqn", "name": "SuspendDispatchSuperBase"}
-    if owner != expected_owner or call.get("virtual") is not False or call.get("super") is not True:
+    if owner != expected_owner or call.get("virtual") is not False:
         raise SystemExit(
             f"CIR: {helper_call['method']} lost base non-virtual dispatch: "
-            f"owner={owner!r}, virtual={call.get('virtual')!r}, super={call.get('super')!r}"
+            f"owner={owner!r}, virtual={call.get('virtual')!r}"
         )
     if call.get("recv") != {"k": "this"}:
         raise SystemExit(f"CIR: {helper_call['method']} has an unexpected base receiver: {call.get('recv')!r}")

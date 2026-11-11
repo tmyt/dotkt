@@ -25,6 +25,18 @@ class ValueBlockSchemaTests(unittest.TestCase):
         }
 
     def validate(self, node, phase):
+        node = copy.deepcopy(node)
+        if phase == "cir":
+            def physical(child):
+                if isinstance(child, dict):
+                    if child.get("k") == "const":
+                        child["value"] = {"a": "null"} if child["value"] is None else {"a": "i32", "value": child["value"]}
+                    for value in child.values():
+                        physical(value)
+                elif isinstance(child, list):
+                    for value in child:
+                        physical(value)
+            physical(node)
         validator = schema.V()
         validator.walk(f"current.{phase}.json", node, "$")
         return validator.viol

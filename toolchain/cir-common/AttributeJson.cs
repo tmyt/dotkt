@@ -7,6 +7,19 @@ using DotKt.Bir;
 
 namespace DotKt.Cir;
 
+// The scalar records are shared by metadata constants and executable constants.
+// Only the schema-declared scalar subset implements this role.
+[JsonConverter(typeof(ScalarValueJsonConverter))]
+public interface IScalarValue;
+
+public sealed class ScalarValueJsonConverter : JsonConverter<IScalarValue>
+{
+    public override IScalarValue Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
+        => JsonSerializer.Deserialize<AttributeArgument>(ref reader, options) as IScalarValue ?? throw new JsonException();
+    public override void Write(Utf8JsonWriter writer, IScalarValue value, JsonSerializerOptions options)
+        => JsonSerializer.Serialize(writer, (AttributeArgument)value, options);
+}
+
 // JSON is a boundary representation. No typed metadata value contains a DOM or arbitrary field bag.
 public static class AttributeJson
 {
@@ -25,6 +38,7 @@ public static class AttributeJson
             TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
         };
         options.Converters.Add(new TypeNodeMetadataConverter());
+        options.Converters.Add(new CirChildrenArrayJsonConverterFactory());
         return options;
     }
 

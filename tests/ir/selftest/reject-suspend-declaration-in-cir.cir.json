@@ -22,8 +22,7 @@
             "method": "suspendCoroutineUninterceptedOrReturn",
             "sig": [],
             "ret": { "t": "fqn", "name": "kotlin.Int" },
-            "args": [],
-            "suspendCall": true
+            "args": []
           }
         }
       ]
