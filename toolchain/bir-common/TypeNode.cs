@@ -462,7 +462,8 @@ public static class BirCarrier
     {
         if (version != JsonV1) throw new NotSupportedException($"unknown carrier version `{version}`");
         using var output = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(output)) write(writer, body);
+        using (var writer = new Utf8JsonWriter(output, new JsonWriterOptions { MaxDepth = BirJson.MaxDepth }))
+            write(writer, body);
         return output.ToArray();
     }
 

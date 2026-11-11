@@ -55,6 +55,18 @@ internal static class SourceMetadataTests
             throw new Exception("Duplicate source metadata property was accepted");
         }
         Console.WriteLine($"Kotlin -> C# source metadata, input isolation and carrier codec: {samples.Length} samples passed");
+        // A valid current document may exceed the writer's default 1000 levels
+        // while staying inside the shared 1024-level IR boundary.
+        SourceType deep = new SourceType.ParameterType(0, false, false, false, [], []);
+        var classifier = new SourceClassifier("sample", [], "Deep");
+        for (var i = 0; i < 1001; i++)
+            deep = new SourceType.ClassType(classifier, false, false, false, [], [], OuterType: deep);
+        var deepAlias = new SourceTypeAlias("sample", [], "DeepAlias", "public", [], deep, deep, []);
+        var deepBytes = BirCarrier.EncodeBody(BirCarrier.JsonV1, deepAlias, SourceMetadataJson.Write);
+        var restored = BirCarrier.DecodeBody(BirCarrier.JsonV1, deepBytes, SourceMetadataJson.Read).ExpandedType;
+        var levels = 0;
+        while (restored.OuterType is { } outer) { levels++; restored = outer; }
+        if (levels != 1001) throw new Exception("Deep source metadata was truncated");
     }
 
     static SourceTypeAlias Read(string json) => BirCarrier.DecodeBody(BirCarrier.JsonV1,
