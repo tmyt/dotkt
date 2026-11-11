@@ -917,7 +917,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 		"""{"cond":{"k":"objEq","lhs":{"k":"local","name":"name"},"rhs":{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(ent.name.asString())}}},"body":[{"k":"return","value":${sf(ent)}}]}"""
 	}
 	// Kotlin's `Enum.valueOf` throws IllegalArgumentException on an unknown name (@ClrTypeAlias System.ArgumentException).
-	val voThrow = throwExpr(newExc("kotlin.IllegalArgumentException", str("No enum constant $name")))
+	val voThrow = kotc.bir.BirThrowExpression(newExc("kotlin.IllegalArgumentException", "No enum constant $name")).toJson()
 	// With no entries there is no conditional arm: emit the failure as the method's unconditional body. Besides being
 	// the faithful control-flow shape, this avoids manufacturing an `if` whose interpolated branch list starts with a
 	// comma. Non-empty enums retain the ordinary linear name match followed by the same failure path.

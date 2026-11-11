@@ -5,6 +5,10 @@ import kotlin.test.assertEquals
 import kotc.backend.BirEmitter
 import kotc.backend.constant
 import kotc.backend.parameterNullCheck
+import kotc.backend.nonNullResult
+import kotc.backend.nullConstant
+import kotc.backend.sourceValueBlock
+import kotc.backend.yieldsNullAtJoin
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.impl.IrFactoryImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
@@ -15,6 +19,46 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.types.Variance
 
 class TypeNodeTest {
+    @Test
+    fun actualNonNullResultsKeepTypedBranchesAndExceptionMessages() {
+        val emitter = BirEmitter()
+        val value = BirLocal("bound")
+        val failure = BirThrowExpression(emitter.newExc("kotlin.NullPointerException", null))
+        val reference = nonNullResult(value, failure)
+        assertEquals(BirUnaryOperation("!", BirObjectEquals(value, nullConstant())), reference.cond)
+        assertEquals(value, reference.thenValue)
+        assertEquals(failure, reference.elseValue)
+        assertEquals(
+            """{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":{"k":"local","name":"bound"},"rhs":{"k":"const","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Nothing"}},"value":null}}},"then":{"k":"local","name":"bound"},"else":{"k":"throwExpr","value":{"k":"new","type":{"t":"fqn","name":"kotlin.NullPointerException"},"argTypes":[],"args":[]}}}""",
+            reference.toJson(),
+        )
+        val elem = TypeNode.Tv("method", 1)
+        val nullable = nonNullResult(value, failure, elem)
+        assertEquals(BirNullableHasValue(elem, value), nullable.cond)
+        assertEquals(BirNullableValue(elem, value), nullable.thenValue)
+        assertEquals(failure, nullable.elseValue)
+        val text = "quote\"\\\n\ud800"
+        val exception = emitter.newExc("kotlin.IllegalArgumentException", text)
+        assertEquals(BirConstant(TypeNode.Fqn("kotlin.String"), BirLiteral.TextLiteral(text)), exception.args.single())
+        assertEquals(listOf(TypeNode.Nullable(TypeNode.Fqn("kotlin.String"))), exception.argTypes)
+    }
+
+    @Test
+    fun typedValueBlocksCarryOnlyRootJoinFacts() {
+        val nullValue = nullConstant()
+        val inner = sourceValueBlock(emptyList(), nullValue)
+        val outer = sourceValueBlock(listOf(BirExpressionStatement(BirLocal("effect"))), inner)
+        assertEquals(true, outer.joinNullBranch)
+        assertEquals(true, outer.yieldsNullAtJoin())
+        assertEquals(false, sourceValueBlock(listOf(BirExpressionStatement(inner)), BirLocal("value")).yieldsNullAtJoin())
+        val transfer = sourceValueBlock(listOf(BirGoto(7)), BirThrowExpression(nullValue))
+        assertEquals(false, transfer.yieldsNullAtJoin())
+        assertEquals(
+            """{"k":"valueBlock","stmts":[{"k":"goto","id":7}],"result":{"k":"throwExpr","value":{"k":"const","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Nothing"}},"value":null}}}""",
+            transfer.toJson(),
+        )
+    }
+
     @Test
     fun actualParameterGuardConstructsATypedGraph() {
         val guard = parameterNullCheck("input", "message")

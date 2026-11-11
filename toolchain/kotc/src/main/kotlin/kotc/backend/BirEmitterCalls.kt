@@ -1435,13 +1435,13 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val arg = call.arguments.filterNotNull().first()
 		val velem = nullableElem(arg.type)
 		val nv = "__nn${scopeCounter++}"
-		val nvLoc = kotc.bir.BirLocal(nv).toJson()
-		val throwNpe = throwExpr(newExc("kotlin.NullPointerException", null))
+		val nvLoc = kotc.bir.BirLocal(nv)
+		val throwNpe = kotc.bir.BirThrowExpression(newExc("kotlin.NullPointerException", null))
 		if (velem != null) {
 			return valueBlockJson(
 				type = null,
 				stmts = """{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(velem).toJson()},"init":${expr(arg)}}""",
-				result = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${velem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${velem.toJson()},"e":$nvLoc},"else":$throwNpe}""",
+				result = nonNullResult(nvLoc, throwNpe, velem).toJson(),
 			)
 		}
 		// reference (or objEq-testable: generic `T?`) operand: bind once, `(t != null) ? t : throw` (value in
@@ -1450,11 +1450,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// and throws. (Unsigned `UInt?`/`UByte?`/... take the value-type HasValue/Value branch ABOVE: #118 -- they
 		// ARE value types on the CLR (`Nullable<uint>`), so `nullableElem` includes them via `isPrimitiveOrUnsigned`;
 		// a bare pass-through would leave a `Nullable<uint>` STRUCT at the use site, the #56 struct-consumer issue.)
-		val nullConst = nullConstJson()
 		return valueBlockJson(
 			type = null,
 			stmts = """{"k":"var","name":${str(nv)},"type":${birType(arg.type).toJson()},"init":${expr(arg)}}""",
-			result = """{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":$nullConst}},"then":$nvLoc,"else":$throwNpe}""",
+			result = nonNullResult(nvLoc, throwNpe).toJson(),
 		)
 	}
 

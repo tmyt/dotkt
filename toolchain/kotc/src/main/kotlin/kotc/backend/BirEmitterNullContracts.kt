@@ -9,6 +9,12 @@ import kotc.bir.BirLocal
 import kotc.bir.BirNew
 import kotc.bir.BirObjectEquals
 import kotc.bir.BirThrow
+import kotc.bir.BirExpression
+import kotc.bir.BirConditional
+import kotc.bir.BirUnaryOperation
+import kotc.bir.BirNullableHasValue
+import kotc.bir.BirNullableValue
+import kotc.bir.BirThrowExpression
 
 import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
@@ -89,8 +95,16 @@ private fun BirEmitter.ownerIsNamed(fn: IrFunction): Boolean {
 	return !owner.name.isSpecial
 }
 
-internal fun BirEmitter.nullConstJson(): String =
-	BirConstant(TypeNode.Nullable(TypeNode.Fqn("kotlin.Nothing")), BirLiteral.NullLiteral).toJson()
+internal fun nullConstant(): BirConstant =
+	BirConstant(TypeNode.Nullable(TypeNode.Fqn("kotlin.Nothing")), BirLiteral.NullLiteral)
+
+internal fun BirEmitter.nullConstJson(): String = nullConstant().toJson()
+
+/** The already-bound value is read, never evaluated again, on either non-null path. */
+internal fun nonNullResult(value: BirLocal, failure: BirExpression, nullableElement: TypeNode? = null): BirConditional =
+	if (nullableElement != null) BirConditional(
+		BirNullableHasValue(nullableElement, value), BirNullableValue(nullableElement, value), failure,
+	) else BirConditional(BirUnaryOperation("!", BirObjectEquals(value, nullConstant())), value, failure)
 
 /** `if (<ref> == null) throw NullPointerException(<msg>)` as a single `if`-branch BIR statement (no stack merge). */
 internal fun parameterNullCheck(parameterName: String, message: String): BirIf {
@@ -136,7 +150,7 @@ internal fun BirEmitter.preconditionChecks(fn: IrFunction): List<String> {
 }
 
 /**
- * The NPE message JSON for `fn`'s NON-NULL REFERENCE return POSTCONDITION, or null when `fn` is out of scope. A
+ * The plain NPE message text for `fn`'s NON-NULL REFERENCE return POSTCONDITION, or null when `fn` is out of scope. A
  * postcondition is a deliberate DotKt addition beyond JVM Kotlin — it guards a null leaking OUT of a public member via
  * a platform type / an unsound generic. Registered on `fn`'s return-target symbol around body emission (see
  * `withReturnPostcondition`); `stmt(IrReturn)` then wraps a genuine return value in a bind-check-throw valueBlock.
@@ -148,7 +162,7 @@ internal fun BirEmitter.returnCheckMessage(fn: IrSimpleFunction): String? {
 	if (!isPublicSurface(fn) || !ownerIsNamed(fn) || fn.isInline || fn.isSuspend) return null
 	if (!needsNonNullCheck(fn.returnType)) return null
 	val ownerMethod = fn.fqNameWhenAvailable?.asString() ?: fn.name.asString()
-	return str("$ownerMethod, non-null return value is null")
+	return "$ownerMethod, non-null return value is null"
 }
 
 /** Registers `fn`'s return postcondition (if any) for the duration of `emit`, then removes it. */
@@ -163,13 +177,13 @@ internal fun <T> BirEmitter.withReturnPostcondition(fn: IrSimpleFunction, emit: 
  * Used by explicit checked casts and public return postconditions. The compiler-only name cannot alias a source
  * parameter; source locals already use their declaration-owned slots.
  */
-internal fun BirEmitter.wrapNonNullValue(valueJson: String, valueType: IrType, msgJson: String): String {
+internal fun BirEmitter.wrapNonNullValue(valueJson: String, valueType: IrType, message: String): String {
 	val nv = "dotkt\$nonNullValue${scopeCounter++}"
-	val nvLoc = kotc.bir.BirLocal(nv).toJson()
-	val throwNpe = throwExpr(newExc("kotlin.NullPointerException", msgJson))
+	val nvLoc = BirLocal(nv)
+	val throwNpe = BirThrowExpression(newExc("kotlin.NullPointerException", message))
 	return valueBlockJson(
 		type = null,
 		stmts = """{"k":"var","name":${str(nv)},"type":${birType(valueType).toJson()},"init":$valueJson}""",
-		result = """{"k":"cond","cond":{"k":"unaryOp","op":"!","e":{"k":"objEq","lhs":$nvLoc,"rhs":${nullConstJson()}}},"then":$nvLoc,"else":$throwNpe}""",
+		result = nonNullResult(nvLoc, throwNpe).toJson(),
 	)
 }

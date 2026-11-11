@@ -23,7 +23,10 @@
       "oneOf": [
         { "$ref": "#/$defs/birConstant" }, { "$ref": "#/$defs/birLocal" },
         { "$ref": "#/$defs/birThis" }, { "$ref": "#/$defs/birObjectEquals" },
-        { "$ref": "#/$defs/birNew" }
+        { "$ref": "#/$defs/birNew" }, { "$ref": "#/$defs/birThrowExpression" },
+        { "$ref": "#/$defs/birUnaryOperation" }, { "$ref": "#/$defs/birConditional" },
+        { "$ref": "#/$defs/birNullableHasValue" }, { "$ref": "#/$defs/birNullableValue" },
+        { "$ref": "#/$defs/birValueBlock" }
       ]
     },
     "birStatementNode": {
@@ -54,6 +57,46 @@
       "type": "object", "x-dotkt-model": { "name": "BirExpressionStatement", "domain": "birCore", "role": "statement" },
       "properties": { "k": { "const": "exprStmt" }, "expr": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "expr"], "additionalProperties": false
+    },
+    "birThrowExpression": {
+      "type": "object", "x-dotkt-model": { "name": "BirThrowExpression", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "throwExpr" }, "value": { "$ref": "#/$defs/birExpressionNode" } },
+      "required": ["k", "value"], "additionalProperties": false
+    },
+    "birUnaryOperation": {
+      "type": "object", "x-dotkt-model": { "name": "BirUnaryOperation", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "unaryOp" }, "op": { "type": "string" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
+      "required": ["k", "op", "e"], "additionalProperties": false
+    },
+    "birConditional": {
+      "type": "object", "x-dotkt-model": { "name": "BirConditional", "domain": "birCore", "role": "expression" },
+      "properties": {
+        "k": { "const": "cond" }, "joinNullBranch": { "const": true },
+        "type": { "$ref": "#/$defs/type" }, "cond": { "$ref": "#/$defs/birExpressionNode" },
+        "then": { "$ref": "#/$defs/birExpressionNode", "x-dotkt-kotlin-name": "thenValue" },
+        "else": { "$ref": "#/$defs/birExpressionNode", "x-dotkt-kotlin-name": "elseValue" }
+      },
+      "required": ["k", "cond", "then", "else"], "additionalProperties": false
+    },
+    "birNullableHasValue": {
+      "type": "object", "x-dotkt-model": { "name": "BirNullableHasValue", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "nullableHasValue" }, "elem": { "$ref": "#/$defs/type" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
+      "required": ["k", "elem", "e"], "additionalProperties": false
+    },
+    "birNullableValue": {
+      "type": "object", "x-dotkt-model": { "name": "BirNullableValue", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "nullableValue" }, "elem": { "$ref": "#/$defs/type" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
+      "required": ["k", "elem", "e"], "additionalProperties": false
+    },
+    "birValueBlock": {
+      "type": "object", "x-dotkt-model": { "name": "BirValueBlock", "domain": "birCore", "role": "expression" },
+      "properties": {
+        "k": { "const": "valueBlock" }, "joinNullBranch": { "const": true },
+        "type": { "$ref": "#/$defs/type" },
+        "stmts": { "type": "array", "items": { "$ref": "#/$defs/birStatementNode" } },
+        "result": { "$ref": "#/$defs/birExpressionNode" }
+      },
+      "required": ["k", "stmts", "result"], "additionalProperties": false
     },
     "birNew": {
       "type": "object", "x-dotkt-model": { "name": "BirNew", "domain": "birCore", "role": "expression" },
