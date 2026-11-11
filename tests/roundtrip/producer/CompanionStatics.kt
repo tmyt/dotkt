@@ -70,6 +70,8 @@ class Box<T>(val v: T) {
         @Volatile @ClrField private var volatileSecret: Int = 7
         const val CODE: String = "generic-box"
         const val NAN: Double = Double.NaN
+        const val NEGATIVE_ZERO: Float = -0.0f
+        const val SMALLEST_DOUBLE: Double = Double.MIN_VALUE
         const val BIG: UInt = 4_000_000_000u
         lateinit var later: String
         suspend fun suspendedMake(value: Int): Int = value + 3

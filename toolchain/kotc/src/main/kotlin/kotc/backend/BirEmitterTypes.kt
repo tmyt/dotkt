@@ -376,17 +376,8 @@ internal fun BirEmitter.fqnJson(name: String): String = TypeNode.Fqn(name).toJso
  *  call sites that document the "preserve nullable type-arg" intent. bir2cir erases the marked arg. */
 internal fun BirEmitter.argElemNullable(at: IrType): TypeNode = birType(at)
 
-internal fun BirEmitter.constJson(c: IrConst): String = when (val v = c.value) {
-	is String -> stringLiteral(v)
-	is Boolean -> v.toString()
-	is Char -> v.code.toString()
-	null -> "null"
-	// NaN / ±Infinity are not valid JSON number tokens (`{"value":NaN}` breaks the parser) — emit them as a string
-	// the ilemit const handler decodes to the special double/float (`Double.NaN` etc. appear in stdlib `average()`).
-	is Double -> if (v.isNaN() || v.isInfinite()) str(v.toString()) else v.toString()
-	is Float -> if (v.isNaN() || v.isInfinite()) str(v.toString()) else v.toString()
-	else -> v.toString()
-}
+internal fun BirEmitter.constant(c: IrConst): kotc.bir.BirConstant =
+	kotc.bir.BirConstant(birType(c.type), kotc.bir.BirLiteral.fromValue(c.value))
 
 /** True if `t` is an array kotc emits array intrinsics (arrayGet/arraySet/arrayLen/forArray) for: a reference
  *  `Array<T>`, a signed primitive array, or an unsigned specialized array (`UByteArray`/…, #76 — native like

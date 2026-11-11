@@ -10,6 +10,7 @@ import argparse
 import json
 from pathlib import Path
 from source_metadata_model import outputs as source_metadata_outputs
+from bir_literal_models import outputs as bir_literal_outputs
 from cir_messagepack import generate as cir_messagepack
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -733,6 +734,7 @@ def outputs(schema):
     return {
         ROOT / "toolchain/cir-common/MessagePack.Generated.cs": cir_messagepack(definitions, model_type, non_null_field, allows_null),
         **type_parameter_models(definitions),
+        **bir_literal_outputs(ROOT, definitions),
         ROOT / "toolchain/cir-common/Executable.Model.Generated.cs": executable_model,
         ROOT / "toolchain/bir2cir/CirExecutableProjection.Generated.cs": executable_projection,
         ROOT / "toolchain/cir-common/Declaration.Model.Generated.cs": declaration_model,

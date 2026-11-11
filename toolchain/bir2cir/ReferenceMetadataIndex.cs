@@ -1995,16 +1995,12 @@ sealed partial class ReferenceMetadataIndex
         return false;
     }
 
-    // CIR const values use the same compact wire convention as kotc-authored BIR: non-finite floating-point values
-    // are strings because JSON has no tokens for them, and unsigned 32/64-bit values are their signed bit patterns
-    // because ilemit consumes them with GetInt32/GetInt64 before emitting the representation-identical ldc opcode.
-    // Reflection returns the CLR scalar, so normalize it here while bir2cir still owns the physical representation.
-    static JsonNode LiteralValueNode(object raw) => raw switch
+    // Reference constants enter the same typed scalar vocabulary as Kotlin constants.
+    // Retain floating bits; unsigned widths are still normalized by their owning physical binding.
+    internal static JsonNode LiteralValueNode(object raw) => raw switch
     {
-        double value when double.IsNaN(value) || double.IsInfinity(value) =>
-            JsonValue.Create(value.ToString("R", CultureInfo.InvariantCulture)),
-        float value when float.IsNaN(value) || float.IsInfinity(value) =>
-            JsonValue.Create(value.ToString("R", CultureInfo.InvariantCulture)),
+        double value => new Float64Literal(BitConverter.DoubleToInt64Bits(value)).ToDom(),
+        float value => new Float32Literal(BitConverter.SingleToInt32Bits(value)).ToDom(),
         uint value => JsonValue.Create(unchecked((int)value)),
         ulong value => JsonValue.Create(unchecked((long)value)),
         char value => JsonValue.Create((int)value),
@@ -7649,12 +7645,8 @@ sealed partial class ReferenceMetadataIndex
             uint v => JsonValue.Create(unchecked((int)v)),
             long v => JsonValue.Create(v),
             ulong v => JsonValue.Create(unchecked((long)v)),
-            float v when float.IsNaN(v) || float.IsInfinity(v) =>
-                JsonValue.Create(v.ToString("R", CultureInfo.InvariantCulture)),
-            double v when double.IsNaN(v) || double.IsInfinity(v) =>
-                JsonValue.Create(v.ToString("R", CultureInfo.InvariantCulture)),
-            float v => JsonValue.Create(v),
-            double v => JsonValue.Create(v),
+            float v => new Float32Literal(BitConverter.SingleToInt32Bits(v)).ToDom(),
+            double v => new Float64Literal(BitConverter.DoubleToInt64Bits(v)).ToDom(),
             _ => null,
         };
         if (value is not null && jsonValue is null) return null;

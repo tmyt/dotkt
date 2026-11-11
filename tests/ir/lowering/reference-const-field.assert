@@ -4,3 +4,5 @@
 +"name":"DotKt.Runtime.CompilerServices.KotlinTypeAttribute"
 -"name":"ANSWER","type":{"t":"fqn","name":"kotlin.String"}
 -"init":{"k":"const"
+?any(.[] | .fields[]?; ir_matches({"name":"NEGATIVE_ZERO","constant":{"a":"f32","bits":-2147483648}}))
+?any(.[] | .fields[]?; ir_matches({"name":"SMALLEST_DOUBLE","constant":{"a":"f64","bits":1}}))

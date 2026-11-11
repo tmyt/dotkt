@@ -312,7 +312,14 @@ or control-flow effects. When emitting Portable PDB symbols, ilemit maps it to
 the current IL offset, using a no-op anchor if two distinct authored points
 would otherwise share that offset. It never reconstructs source locations.
 
-### Literal code units
+### Literal values
+
+BIR constants are constructed as typed semantic values before their JSON boundary.
+Float/Double payloads use `{encoding:"f32",bits:Int32}` and
+`{encoding:"f64",bits:Int64}` respectively; bits are signed IEEE bit patterns,
+including signed zero, infinity and NaN payloads. The same value model receives
+referenced CLR constants. bir2cir owns conversion into the physical CIR scalar;
+ilemit does not parse source floating-point strings or choose the source width.
 
 A `const` Char has an integer `value` in 0..65535, not a one-character JSON string.
 String literal values use either a JSON string or the explicit payload

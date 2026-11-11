@@ -9,6 +9,18 @@
       "readOnly": true,
       "const": true,
       "init": { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "ok" }
+    },
+    {
+      "name": "NEGATIVE_ZERO",
+      "type": { "t": "fqn", "name": "kotlin.Float" },
+      "static": true, "readOnly": true, "const": true,
+      "init": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Float" }, "value": { "encoding": "f32", "bits": -2147483648 } }
+    },
+    {
+      "name": "SMALLEST_DOUBLE",
+      "type": { "t": "fqn", "name": "kotlin.Double" },
+      "static": true, "readOnly": true, "const": true,
+      "init": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Double" }, "value": { "encoding": "f64", "bits": 1 } }
     }
   ],
   "methods": [],
