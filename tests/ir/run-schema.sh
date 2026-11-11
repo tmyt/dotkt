@@ -28,9 +28,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT" || exit 1
 PY="${PYTHON:-python3}"
 
+"$PY" scripts/generate-ir-model.py --check || exit 1
 "$PY" tests/ir/test-typealias-schema.py || exit 1
 "$PY" tests/ir/test-generic-receiver-schema.py || exit 1
 "$PY" tests/ir/test-valueblock-schema.py || exit 1
+./gradlew -q :kotc:test --tests kotc.bir.TypeNodeTest || exit 1
+"$PY" tests/ir/check-type-model-coverage.py || exit 1
 
 if [ $# -gt 0 ]; then
   globs=("$@")
