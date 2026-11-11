@@ -1112,6 +1112,13 @@ describe language-specific API placement, not another wire schema: for example, 
 rank/SZ-array view while Kotlin does not acquire CLR physical signature fields. The schema gate
 checks generation and the Kotlin model's JSON output alongside the existing shared C# self-tests.
 
+Source alias declarations use the referenced `kotlin-typealias.schema.json`. Its model annotations
+generate Kotlin source records and a boundary writer too: `discriminator` and `variantSuffix` place
+closed cases in sealed unions, and `x-dotkt-kotlin-type` retains the source metadata integer widths.
+The producer carries typed declarations, annotations and source type references until file output;
+these are not executable CLR types. Schema-dependent semantic relations remain in the owning
+producer and validator rather than becoming CLR representation choices in the generator.
+
 Semantic equality, classifier identity, delegate-argument order and CLR representation decisions
 remain in their owning helpers/passes. JSON boundary encoding is separate from structural model
 declarations. This generated type vocabulary is an incremental foundation; it does not itself

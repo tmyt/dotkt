@@ -1003,7 +1003,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// (driven by the ref.dll @ClrTypeAlias index) DROPS the alias type def (hoisting a class's rule-3 members into the
 	// dotkt$ClrH_* helper; an interface/object alias is dropped with no helper). The drop is a no-op in the REFERENCE
 	// build (AliasHelperHoist is skipped there), so the ref assembly keeps the pure-Kotlin @ClrTypeAlias shapes verbatim.
-	fun emitFile(file: IrFile, typeAliases: List<String> = emptyList()): String {
+	fun emitFile(file: IrFile, typeAliases: List<kotc.bir.SourceTypeAlias> = emptyList()): String {
 		fileEntry = file.fileEntry
 		validateLateinitAnnotations(file)
 		// Per-FILE lifted state. One BirEmitter instance processes every file in turn, so these MUST be reset here —
@@ -1180,7 +1180,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// declaration string is identical, while deliberately retaining same-name/different-body entries for a loud
 		// downstream collision.
 		val types = (typeDefs + liftedTypes).distinct().joinToString(",")
-		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"properties":[$topPropRecords],"types":[$types],"refTypes":[${refTypesJson()}],"typeAliases":[${typeAliases.joinToString(",")}]}"""
+		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"properties":[$topPropRecords],"types":[$types],"refTypes":[${refTypesJson()}],"typeAliases":[${typeAliases.joinToString(",") { kotc.bir.SourceMetadataJson.encode(it) }}]}"""
 	}
 
 	/** Emit a flattened `inner class`: it captures the enclosing instance as a leading `__outer` ctor param/field. */

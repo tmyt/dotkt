@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dotkt/kotlin-typealias.schema.json",
   "title": "Actualized Kotlin alias declaration (bir-json/1)",
+  "x-dotkt-model": {"name": "SourceTypeAlias"},
   "type": "object",
   "required": ["packageName", "ownerPath", "name", "visibility", "typeParameters", "underlyingType", "expandedType", "annotations"],
   "additionalProperties": false,
@@ -18,10 +19,12 @@
   "$defs": {
     "path": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "classifier": {
+      "x-dotkt-model": {"name": "SourceClassifier"},
       "type": "object", "required": ["packageName", "ownerPath", "name"], "additionalProperties": false,
       "properties": {"packageName": {"type": "string"}, "ownerPath": {"$ref": "#/$defs/path"}, "name": {"type": "string", "minLength": 1}}
     },
     "parameter": {
+      "x-dotkt-model": {"name": "SourceTypeParameter"},
       "type": "object", "required": ["id", "name", "variance", "bounds", "annotations"], "additionalProperties": false,
       "properties": {
         "id": {"type": "integer", "minimum": 0}, "name": {"type": "string", "minLength": 1},
@@ -30,6 +33,7 @@
       }
     },
     "type": {
+      "x-dotkt-model": {"name": "SourceType", "discriminator": "kind", "variantSuffix": "Type"},
       "type": "object",
       "required": ["kind", "nullable", "suspend", "definitelyNotNull", "arguments", "annotations"],
       "additionalProperties": false,
@@ -48,29 +52,34 @@
       ]
     },
     "argument": {
+      "x-dotkt-model": {"name": "SourceTypeArgument", "discriminator": "variance", "variantSuffix": "Argument"},
       "type": "object", "required": ["variance"], "additionalProperties": false,
       "properties": {"variance": {"enum": ["inv", "in", "out", "star"]}, "type": {"$ref": "#/$defs/type"}},
       "allOf": [{"if": {"properties": {"variance": {"const": "star"}}}, "then": {"not": {"required": ["type"]}}, "else": {"required": ["type"]}}]
     },
     "annotations": {"type": "array", "items": {"$ref": "#/$defs/annotation"}},
     "annotation": {
+      "x-dotkt-model": {"name": "SourceAnnotation"},
       "type": "object", "required": ["classifier", "arguments"], "additionalProperties": false,
       "properties": {
         "classifier": {"$ref": "#/$defs/classifier"},
-        "arguments": {"type": "array", "items": {
-          "type": "object", "required": ["name", "value"], "additionalProperties": false,
-          "properties": {"name": {"type": "string", "minLength": 1}, "value": {"$ref": "#/$defs/value"}}
-        }}
+        "arguments": {"type": "array", "items": {"$ref": "#/$defs/annotationArgument"}}
       }
     },
+    "annotationArgument": {
+      "x-dotkt-model": {"name": "SourceAnnotationArgument"},
+      "type": "object", "required": ["name", "value"], "additionalProperties": false,
+      "properties": {"name": {"type": "string", "minLength": 1}, "value": {"$ref": "#/$defs/value"}}
+    },
     "value": {
+      "x-dotkt-model": {"name": "SourceAnnotationValue", "discriminator": "kind", "variantSuffix": "Value"},
       "type": "object", "required": ["kind", "unsigned"],
       "unevaluatedProperties": false,
       "properties": {"unsigned": {"type": "boolean"}},
       "oneOf": [
-        {"properties": {"kind": {"enum": ["byte", "char", "short", "int", "long", "boolean"]}, "value": {"type": "integer"}}, "required": ["value"]},
+        {"properties": {"kind": {"enum": ["byte", "char", "short", "int", "long", "boolean"]}, "value": {"type": "integer", "x-dotkt-kotlin-type": "Long"}}, "required": ["value"]},
         {"properties": {"kind": {"const": "string"}, "value": {"type": "string"}}, "required": ["value"]},
-        {"properties": {"kind": {"enum": ["float", "double"]}, "bits": {"type": "integer"}}, "required": ["bits"]},
+        {"properties": {"kind": {"enum": ["float", "double"]}, "bits": {"type": "integer", "x-dotkt-kotlin-type": "Long"}}, "required": ["bits"]},
         {"properties": {"kind": {"const": "class"}, "classifier": {"$ref": "#/$defs/classifier"}, "arrayDimensions": {"type": "integer", "minimum": 0}}, "required": ["classifier", "arrayDimensions"]},
         {"properties": {"kind": {"const": "enum"}, "classifier": {"$ref": "#/$defs/classifier"}, "name": {"type": "string", "minLength": 1}}, "required": ["classifier", "name"]},
         {"properties": {"kind": {"const": "annotation"}, "value": {"$ref": "#/$defs/annotation"}}, "required": ["value"]},

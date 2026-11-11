@@ -107,7 +107,7 @@ internal object TypeNodeJson {
         sb.append('}')
     }
 
-    private fun writeString(value: String, sb: StringBuilder) {
+    internal fun writeString(value: String, sb: StringBuilder) {
         sb.append('"')
         for (char in value) {
             when (char) {

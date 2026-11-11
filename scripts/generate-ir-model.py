@@ -2,12 +2,14 @@
 """Generate structural IR models from the maintained logical schema.
 
 Semantic operations, equality and representation choices stay in their owning
-compiler layers. This initial domain is TypeNode; other typed domains use the
-same schema authority as they migrate. No generic extension-data bag is emitted.
+compiler layers. Structural BIR/CIR use bir-cir.schema.json; source declaration
+metadata uses its referenced kotlin-typealias.schema.json. No generic
+extension-data bag is emitted.
 """
 import argparse
 import json
 from pathlib import Path
+from source_metadata_model import outputs as source_metadata_outputs
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "docs/bir-cir.schema.json"
@@ -305,7 +307,7 @@ def kotlin_json(variants, values, definitions):
         name = definition["x-dotkt-model"]["name"]
         lines += [f"    private fun write{name}(value: TypeNode.{name}, sb: StringBuilder) = with(value) {{",
                   *kotlin_writer_body(definition, False, "        ", definitions), "    }", ""]
-    lines += [r'''    private fun writeString(value: String, sb: StringBuilder) {
+    lines += [r'''    internal fun writeString(value: String, sb: StringBuilder) {
         sb.append('"')
         for (char in value) {
             when (char) {
@@ -664,6 +666,8 @@ def main():
     parser.add_argument("--check", action="store_true", help="check generated files without modifying them")
     args = parser.parse_args()
     expected = outputs(json.loads(SCHEMA.read_text(encoding="utf-8")))
+    expected.update(source_metadata_outputs(ROOT,
+        json.loads((ROOT / "docs/kotlin-typealias.schema.json").read_text(encoding="utf-8"))))
     stale = []
     for path, content in expected.items():
         if not path.exists() or path.read_text(encoding="utf-8") != content:

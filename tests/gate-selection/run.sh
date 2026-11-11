@@ -55,6 +55,7 @@ mixed_suites="$(suite_line tests/run-ilverify.sh tests/basic/fixtures/SomeTest.k
 assert_suites dll2klib-test tests/special/dll2klib-e2e/run.sh "$FULL_SUITES"
 assert_suites schema-consumers scripts/verify-schema.py 'nunit_corpus schema dll2klib'
 assert_suites schema-contract docs/bir-cir.schema.json 'nunit_corpus schema dll2klib'
+assert_suites source-metadata-contract docs/kotlin-typealias.schema.json 'nunit_corpus schema dll2klib'
 assert_suites sanity-corpus scripts/verify-sanity.py 'nunit_corpus sanity'
 assert_suites schema-runner tests/ir/run-schema.sh 'nunit_corpus schema'
 assert_suites sanity-runner tests/ir/run-sanity.sh 'nunit_corpus sanity'
