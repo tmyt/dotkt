@@ -1,78 +1,127 @@
+// Generated from docs/bir-cir.schema.json by scripts/generate-ir-model.py.
 package kotc.bir
 
-/** JSON boundary encoding, in deterministic required-then-optional field order. It shares C#'s logical type
- * contract; textual escaping need not be identical. No CLR representation is chosen here. */
 internal object TypeNodeJson {
-    fun encode(type: TypeNode): String = StringBuilder().also { write(type, it) }.toString()
+    fun encode(type: TypeNode): String = buildString { write(type, this) }
 
-    private fun write(type: TypeNode, sb: StringBuilder) {
-        with(type) {
-            when (this) {
-                is TypeNode.Fqn -> {
-                    sb.append("{\"t\":\"fqn\",\"name\":").append(esc(name))
-                    if (args != null) {
-                        sb.append(",\"args\":")
-                        writeArray(sb, args)
+    private fun write(value: TypeNode, sb: StringBuilder) {
+        when (value) {
+            is TypeNode.Fqn -> with(value) {
+                sb.append("{\"t\":\"fqn\"")
+                sb.append(",\"name\":")
+                writeString(name, sb)
+                if (args != null) {
+                    sb.append(",\"args\":")
+                    sb.append('[')
+                    args.forEachIndexed { index, item ->
+                        if (index > 0) sb.append(',')
+                        write(item, sb)
                     }
-                    classifier?.let { source ->
-                        sb.append(",\"classifier\":{\"packageName\":").append(esc(source.packageName))
-                        sb.append(",\"ownerPath\":[")
-                        source.ownerPath.forEachIndexed { index, owner ->
-                            if (index != 0) sb.append(',')
-                            sb.append(esc(owner))
-                        }
-                        sb.append("],\"name\":").append(esc(source.name)).append('}')
-                    }
-                    sb.append('}')
+                    sb.append(']')
                 }
-                is TypeNode.Tv -> sb.append("{\"t\":\"tv\",\"scope\":").append(esc(scope)).append(",\"i\":").append(i).append('}')
-                TypeNode.Star -> sb.append("{\"t\":\"star\"}")
-                is TypeNode.Projection -> {
-                    sb.append("{\"t\":\"projection\",\"variance\":").append(esc(variance)).append(",\"of\":")
-                    write(of, sb)
-                    sb.append('}')
+                if (classifier != null) {
+                    sb.append(",\"classifier\":")
+                    writeSourceClassifier(classifier, sb)
                 }
-                is TypeNode.Fn -> {
-                    sb.append("{\"t\":\"fn\",\"suspend\":").append(if (suspend) "true" else "false")
-                    sb.append(",\"ret\":"); write(ret, sb)
-                    sb.append(",\"params\":"); writeArray(sb, params)
-                    if (recv != null) { sb.append(",\"recv\":"); write(recv, sb) }
-                    sb.append('}')
+                sb.append('}')
+            }
+            is TypeNode.Tv -> with(value) {
+                sb.append("{\"t\":\"tv\"")
+                sb.append(",\"scope\":")
+                writeString(scope, sb)
+                sb.append(",\"i\":")
+                sb.append(i)
+                sb.append('}')
+            }
+            TypeNode.Star -> with(value) {
+                sb.append("{\"t\":\"star\"")
+                sb.append('}')
+            }
+            is TypeNode.Projection -> with(value) {
+                sb.append("{\"t\":\"projection\"")
+                sb.append(",\"variance\":")
+                writeString(variance, sb)
+                sb.append(",\"of\":")
+                write(of, sb)
+                sb.append('}')
+            }
+            is TypeNode.Fn -> with(value) {
+                sb.append("{\"t\":\"fn\"")
+                sb.append(",\"suspend\":")
+                sb.append(suspend)
+                sb.append(",\"ret\":")
+                write(ret, sb)
+                sb.append(",\"params\":")
+                sb.append('[')
+                params.forEachIndexed { index, item ->
+                    if (index > 0) sb.append(',')
+                    write(item, sb)
                 }
-                is TypeNode.Nullable -> { sb.append("{\"t\":\"nullable\",\"of\":"); write(of, sb); sb.append('}') }
-                is TypeNode.Oblivious -> { sb.append("{\"t\":\"oblivious\",\"of\":"); write(of, sb); sb.append('}') }
-                is TypeNode.Array -> { sb.append("{\"t\":\"array\",\"elem\":"); write(elem, sb); sb.append('}') }
-                is TypeNode.ByRef -> { sb.append("{\"t\":\"byRef\",\"of\":"); write(of, sb); sb.append('}') }
+                sb.append(']')
+                if (recv != null) {
+                    sb.append(",\"recv\":")
+                    write(recv, sb)
+                }
+                sb.append('}')
+            }
+            is TypeNode.Nullable -> with(value) {
+                sb.append("{\"t\":\"nullable\"")
+                sb.append(",\"of\":")
+                write(of, sb)
+                sb.append('}')
+            }
+            is TypeNode.Oblivious -> with(value) {
+                sb.append("{\"t\":\"oblivious\"")
+                sb.append(",\"of\":")
+                write(of, sb)
+                sb.append('}')
+            }
+            is TypeNode.Array -> with(value) {
+                sb.append("{\"t\":\"array\"")
+                sb.append(",\"elem\":")
+                write(elem, sb)
+                sb.append('}')
+            }
+            is TypeNode.ByRef -> with(value) {
+                sb.append("{\"t\":\"byRef\"")
+                sb.append(",\"of\":")
+                write(of, sb)
+                sb.append('}')
             }
         }
     }
 
-    private fun writeArray(sb: StringBuilder, types: List<TypeNode>) {
+    private fun writeSourceClassifier(value: TypeNode.SourceClassifier, sb: StringBuilder) = with(value) {
+        sb.append("{")
+        sb.append("\"packageName\":")
+        writeString(packageName, sb)
+        sb.append(",\"ownerPath\":")
         sb.append('[')
-        for ((index, type) in types.withIndex()) {
+        ownerPath.forEachIndexed { index, item ->
             if (index > 0) sb.append(',')
-            write(type, sb)
+            writeString(item, sb)
         }
         sb.append(']')
+        sb.append(",\"name\":")
+        writeString(name, sb)
+        sb.append('}')
     }
 
-    private fun esc(value: String): String {
-        val out = StringBuilder(value.length + 2)
-        out.append('"')
+    private fun writeString(value: String, sb: StringBuilder) {
+        sb.append('"')
         for (char in value) {
             when (char) {
-                '\\' -> out.append("\\\\")
-                '"' -> out.append("\\\"")
-                '\n' -> out.append("\\n")
-                '\r' -> out.append("\\r")
-                '\t' -> out.append("\\t")
-                '\b' -> out.append("\\b")
-                '\u000C' -> out.append("\\f")
-                else -> if (char.code < 0x20) out.append("\\u").append(char.code.toString(16).padStart(4, '0'))
-                        else out.append(char)
+                '\\' -> sb.append("\\\\")
+                '"' -> sb.append("\\\"")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                '\b' -> sb.append("\\b")
+                '\u000C' -> sb.append("\\f")
+                else -> if (char.code < 0x20) sb.append("\\u").append(char.code.toString(16).padStart(4, '0'))
+                        else sb.append(char)
             }
         }
-        out.append('"')
-        return out.toString()
+        sb.append('"')
     }
 }

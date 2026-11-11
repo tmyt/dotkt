@@ -124,6 +124,7 @@
         "ctx":     {
           "type": "array", "items": { "$ref": "#/$defs/type" },
           "x-dotkt-kotlin": false,
+          "x-dotkt-omit-empty": true,
           "description": "Reference-metadata-only: the CONTEXT parameters of a Kotlin context function type, restored from [KotlinContextFunctionType(N)] while constructing the reference KLIB. `context(A) B.(D) -> E` reads back as ctx=[A], recv=B, params=[D]. kotc BIR MUST omit it — there the fact rides the declaration-slot key `ctxFnType`, because a type node is rebuilt by many lowering passes and would lose it."
         },
         "clr":     {
@@ -159,7 +160,7 @@
     },
     "tArray": {
       "type": "object",
-      "x-dotkt-model": { "name": "Array", "csharpProjected": ["rank"], "csharpParameters": ["elem", { "name": "Rank", "type": "int", "default": "1" }, { "name": "SzArray", "type": "bool", "default": "true" }] },
+      "x-dotkt-model": { "name": "Array", "csharpProjected": ["rank"], "csharpParameters": ["elem", { "name": "Rank", "type": "int", "default": "1" }, { "name": "SzArray", "type": "bool", "default": "true" }], "csharpReadFactory": "ArrayFromWire({elem}, {rank})", "csharpWriteValidation": "ValidateArrayWire(node)" },
       "description": "Array<T> (this-assembly array). Replaces array:X.",
       "properties": {
         "t":    { "const": "array" },
@@ -167,6 +168,7 @@
         "rank": {
           "type": "integer", "minimum": 1, "maximum": 32,
           "x-dotkt-kotlin": false,
+          "x-dotkt-csharp-wire-value": "node.SzArray ? (int?)null : node.Rank",
           "description": "CIR-only: the rank of a GENERAL ECMA array (the CLR caps it at 32). ABSENT is the SZARRAY `T[]` — the vector, and the only array shape Kotlin source can spell. PRESENT means the general array: rank 2 or more is `T[,…]`, and rank 1 is the single-dimensional non-vector `T[*]`, which ECMA keeps distinct from `T[]` and reflection distinguishes with IsSZArray. An external member may declare both, and collapsing them would make those overloads indistinguishable. kotc MUST omit it."
         }
       },
@@ -197,7 +199,7 @@
     },
     "tFnPtr": {
       "type": "object",
-      "x-dotkt-model": { "name": "FnPtr", "kotlin": false },
+      "x-dotkt-model": { "name": "FnPtr", "kotlin": false, "csharpReadFactory": "ReadFunctionPointer({cc}, {genericArity}, {requiredParams}, {ret}, {params})", "csharpWriteValidation": "ValidateFunctionPointerWire(node)" },
       "description": "CIR-only exact ECMA function-pointer signature, distinct from Kotlin functions and CLR delegates.",
       "properties": {
         "t": { "const": "fnPtr" },

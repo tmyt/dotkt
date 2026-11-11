@@ -19,6 +19,7 @@
          so all three C# tools compile the SAME contract with no build-order dependency. -->
     <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
     <Compile Include="../bir-common/TypeNode.Model.Generated.cs" Link="TypeNode.Model.Generated.cs" />
+    <Compile Include="../bir-common/TypeNode.Json.Generated.cs" Link="TypeNode.Json.Generated.cs" />
     <Compile Include="../bir-common/NativeSignatureReader.cs" Link="NativeSignatureReader.cs" />
     <!-- Shared #370 scalar member reference: the ONE fully resolved external-member identity bir2cir authors and
          ilemit looks up exactly. Linked for the same reason as TypeNode — one compiled contract, no build order. -->

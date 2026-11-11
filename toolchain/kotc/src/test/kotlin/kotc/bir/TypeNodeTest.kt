@@ -23,6 +23,12 @@ class TypeNodeTest {
             assertEquals(expected, type.toJson())
             println("IR_TYPE_SAMPLE " + type.toJson())
         }
+        val escaped = TypeNode.Fqn("Q\"\\\n\r\t\b\u000C\u0001κ😀")
+        assertEquals(
+            """{"t":"fqn","name":"Q\"\\\n\r\t\b\f\u0001κ😀"}""",
+            escaped.toJson(),
+        )
+        println("IR_TYPE_SAMPLE " + escaped.toJson())
     }
 
     @Test

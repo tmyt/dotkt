@@ -263,6 +263,23 @@ public abstract partial record TypeNode
         return new FnPtr(convention, arity, required, result, parameters);
     }
 
+    // These are model/wire projections and cross-field invariants, not type lowering.
+    private static Array ArrayFromWire(TypeNode elem, int? rank)
+        => rank is int r ? Array.General(elem, r) : new Array(elem);
+
+    private static void ValidateArrayWire(Array node)
+    {
+        if (node.Rank < 1 || node.Rank > MaxArrayRank || node.SzArray && node.Rank != 1)
+            throw new ArgumentException("Malformed array shape");
+    }
+
+    private static void ValidateFunctionPointerWire(FnPtr node)
+    {
+        if (node.CallingConvention is < 0 or > 255 || node.GenericArity < 0
+            || node.RequiredParams < 0 || node.RequiredParams > node.Params.Length)
+            throw new ArgumentException("Malformed function-pointer shape");
+    }
+
     private static JsonNode? Required(JsonObject e, string name) =>
         TryProperty(e, name, out var value) ? value : throw new KeyNotFoundException(name);
 
@@ -410,13 +427,24 @@ public abstract partial record TypeNode
 
     /// <summary>Compact canonical JSON string of a type, sharing kotc's logical type contract.</summary>
     public static string ToJson(TypeNode t) =>
-        Write(t).ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+        TypeToJson(t);
 
     /// <summary>Parse a canonical type JSON string back into a <see cref="TypeNode"/>.</summary>
     public static TypeNode Parse(string json)
     {
-        using var doc = JsonDocument.Parse(json, BirJson.DocOptions);
-        return Read(doc.RootElement);
+        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json), new JsonReaderOptions { MaxDepth = BirJson.MaxDepth });
+        if (!reader.Read()) throw new FormatException();
+        var result = ReadJson(ref reader);
+        if (reader.Read()) throw new FormatException();
+        return result;
+    }
+
+    private static string TypeToJson(TypeNode type)
+    {
+        var output = new System.Buffers.ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(output, new JsonWriterOptions { MaxDepth = BirJson.MaxDepth }))
+            WriteJson(writer, type);
+        return Encoding.UTF8.GetString(output.WrittenSpan);
     }
 }
 
@@ -540,6 +568,22 @@ public static class TypeNodeSelfTest
             n++;
         }
         CheckSchemaProperties(all.Select(sample => TypeNode.Write(sample.node)));
+        CheckSchemaProperties(all.Select(sample => JsonNode.Parse(TypeNode.ToJson(sample.node))!));
+
+        // Object order is not part of type identity, including nested values and classifier metadata.
+        var reordered = TypeNode.Parse("""
+            {"args":[{"i":2,"scope":"method","t":"tv"}],
+             "classifier":{"name":"Inner","ownerPath":["Outer"],"packageName":"demo"},
+             "name":"demo.Outer.Inner","t":"fqn"}
+            """);
+        var ordered = new TypeNode.Fqn("demo.Outer.Inner", [new TypeNode.Tv("method", 2)]) {
+            Classifier = new TypeNode.SourceClassifier("demo", ["Outer"], "Inner") };
+        if (TypeNode.ToJson(reordered) != TypeNode.ToJson(ordered))
+            throw new Exception("[C# TypeNode] streaming read depends on object property order");
+        var escaped = new TypeNode.Fqn("Q\"\\\n\r\t\b\f\u0001κ😀");
+        if (TypeNode.ToJson(escaped) != TypeNode.Write(escaped).ToJsonString()
+            || TypeNode.Parse(TypeNode.ToJson(escaped)) != escaped)
+            throw new Exception("[C# TypeNode] streaming string escaping mismatch");
 
         // A vector and a rank-1 general array are DIFFERENT types, and the document distinguishes them by
         // whether a rank is stated at all — so neither may be read as the other.

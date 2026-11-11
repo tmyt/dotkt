@@ -1058,8 +1058,9 @@ receiver bindings before rendering the constructor body or subsequent members.
 ## 4. Shared helper API (single-source — the anti-drift linchpin)
 
 The `type` union and its `x-dotkt-model` annotations in `bir-cir.schema.json` own the structural
-type declarations. `scripts/generate-ir-model.py` emits the C# partial records and Kotlin sealed
-hierarchy; `--check` verifies checked-in generated files without rewriting them. Model annotations
+type declarations and boundary codecs. `scripts/generate-ir-model.py` emits the C# partial records,
+streaming JSON reader/writer and Kotlin sealed hierarchy/JSON writer; `--check` verifies checked-in
+generated files without rewriting them. Model annotations
 describe language-specific API placement, not another wire schema: for example, C# retains the
 rank/SZ-array view while Kotlin does not acquire CLR physical signature fields. The schema gate
 checks generation and the Kotlin model's JSON output alongside the existing shared C# self-tests.
@@ -1075,8 +1076,11 @@ ONE type read/write per language, used by EVERY site. No other code parses/build
 `birType(IrType): TypeNode` produces the node; nothing emits a type string.
 
 **C# (bir2cir / ilemit / dll2klib)** — the shared, generated `DotKt.Bir.TypeNode` record hierarchy plus
-`TypeNode Read(JsonElement)` / `TypeNode Read(JsonNode?)` / `JsonNode Write(TypeNode)` helpers linked into
-all three tools. Physical CLR fields and variants belong only to the C# model: `Fn.Clr` is absent in kotc
+`ReadJson(ref Utf8JsonReader)` / `WriteJson(Utf8JsonWriter, TypeNode)` boundary codecs linked into all three
+tools. `Parse(string)` and `ToJson(TypeNode)` use these codecs directly, without constructing a JSON DOM.
+The `Read(JsonElement)` / `Read(JsonNode?)` / `Write(TypeNode)` DOM adapters remain for passes and consumers
+not yet migrated to typed documents; they are not a serialization/reparse handoff between typed passes.
+Physical CLR fields and variants belong only to the C# model: `Fn.Clr` is absent in kotc
 BIR and required on ilemit-facing function types; ranked arrays, pointers, function pointers and signature
 modifiers retain the exact phase contracts in §1. Serialized types are read only through `TypeNode`; internal CLR identity lookup and
 signature-key canonicalization consume the resulting nodes rather than parsing wire-format strings.
