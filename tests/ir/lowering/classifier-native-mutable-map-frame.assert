@@ -1,7 +1,7 @@
 # A MutableMap cast checks its Kotlin classifier, not a closed invariant CLR dictionary construction.
 # Neither a caller-frame permutation nor concrete arguments impose an extra native cast on this opaque value.
 +"method":"kotlinCollectionCastCandidate"
-+"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":20
-+"k":"cast","e":
-+"ret":{"t":"fqn","name":"System.Object"},"body":[{"k":"return","value":{"k":"cast","e":
+?any(.[] | .. | objects; ir_matches({"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":{"a":"i32","value":20}}))
+?any(.[] | .. | objects; ir_matches({"k":"cast"}) and has("e"))
+?any(.[] | .. | objects; ir_matches({"ret":{"t":"fqn","name":"System.Object"},"body":{"$prefix":[{"k":"return","value":{"k":"cast","e":{"$any":true}}}]}}))
 -"name":"System.Collections.Generic.IDictionary","args":

@@ -235,7 +235,7 @@ public sealed partial record CirMethod : ICirCallable
     [JsonPropertyName("ret"), JsonRequired]
     public required TypeNode Ret { get; init; }
     [JsonPropertyName("body"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public OptionalField<TemporaryCirStatements> Body { get; init; }
+    public OptionalField<ICirStatement[]> Body { get; init; }
     [JsonPropertyName("typeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<CirTypeParameter[]> TypeParams { get; init; }
     [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -297,13 +297,13 @@ public sealed partial record CirConstructor : ICirCallable
     [JsonPropertyName("params"), JsonRequired]
     public required CirParameter[] Params { get; init; }
     [JsonPropertyName("baseArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public OptionalField<TemporaryCirExpressions> BaseArgs { get; init; }
+    public OptionalField<ICirExpression[]> BaseArgs { get; init; }
     [JsonPropertyName("thisArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public OptionalField<TemporaryCirExpressions> ThisArgs { get; init; }
+    public OptionalField<ICirExpression[]> ThisArgs { get; init; }
     [JsonPropertyName("delegationSig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<TypeNode[]> DelegationSig { get; init; }
     [JsonPropertyName("body"), JsonRequired]
-    public required TemporaryCirStatements Body { get; init; }
+    public required ICirStatement[] Body { get; init; }
     [JsonPropertyName("baseCtorRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<MemberRefNode> BaseCtorRef { get; init; }
     [JsonPropertyName("localCtorIndex"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -311,7 +311,7 @@ public sealed partial record CirConstructor : ICirCallable
     [JsonPropertyName("attrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<AttributeApplication[]> Attrs { get; init; }
     [JsonPropertyName("preStmts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public OptionalField<TemporaryCirStatements> PreStmts { get; init; }
+    public OptionalField<ICirStatement[]> PreStmts { get; init; }
     [JsonPropertyName("pos"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<CirSourcePosition> Pos { get; init; }
 }
@@ -331,7 +331,7 @@ public sealed partial record CirField
     [JsonPropertyName("vis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<string> Vis { get; init; }
     [JsonPropertyName("init"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public OptionalField<TemporaryCirExpression> Init { get; init; }
+    public OptionalField<ICirExpression> Init { get; init; }
     [JsonPropertyName("constant"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<AttributeArgument> Constant { get; init; }
     [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]

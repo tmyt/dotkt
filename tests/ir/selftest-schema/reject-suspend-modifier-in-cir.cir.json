@@ -20,7 +20,7 @@
               "t": "fqn",
               "name": "System.Int32"
             },
-            "value": 1
+            "value": {"a": "i32", "value": 1}
           }
         }
       ]

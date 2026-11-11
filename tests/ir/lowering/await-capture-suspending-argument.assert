@@ -7,8 +7,8 @@
 # evaluated after the resume instead (`awaitCaptureReceiver` would run on the wrong side of it).
 #
 # The receiver CALL, evaluated into the bound field ahead of the suspension:
-+"name":"__awaitable$1","value":{"k":"callStatic","owner":null,"method":"awaitCaptureReceiver"
+?any(.[] | .. | objects; ir_matches({"name":"__awaitable$1","value":{"k":"callStatic","owner":null,"method":"awaitCaptureReceiver"}}))
 # a field, so it survives the resume — a MoveNext local would not:
 +"name":"__awaitable$1","type":{"t":"fqn","name":"System.Threading.Tasks.Task","args":[{"t":"fqn","name":"System.Int32"}]}
 # and it is what ConfigureAwait is called on after the resume:
-+"method":"ConfigureAwait","recv":{"k":"field","ownerType":{"t":"fqn","name":"AwaitCaptureSuspendingArgumentKt_awaitCaptureSuspendingArgument$sm"},"recv":{"k":"this"},"name":"__awaitable$1"
+?any(.[] | .. | objects; ir_matches({"method":"ConfigureAwait","recv":{"k":"field","ownerType":{"t":"fqn","name":"AwaitCaptureSuspendingArgumentKt_awaitCaptureSuspendingArgument$sm"},"recv":{"k":"this"},"name":"__awaitable$1"}}))

@@ -15,7 +15,6 @@
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
-using System.Text.Json;
 using DotKt.Cir;
 using DotKt.Bir;
 
@@ -296,12 +295,6 @@ sealed partial class Emitter
     /// producer defect, and falling back to a search would be the emitter deciding whether the build survives —
     /// the exact arrangement this change removes everywhere else.
     /// </summary>
-    T RequiredRef<T>(JsonElement node, string carrier, string kind) where T : MemberInfo =>
-        PrimaryFromRef(node, carrier) as T
-            ?? throw new InvalidOperationException(
-                $"ilemit: {kind} carries no resolved `{carrier}`. The members a construction builds through are "
-                + "named by the pass that minted it; a node without one is an earlier-layer drop");
-
     T RequiredRef<T>(MemberRefNode reference, string operation) where T : MemberInfo
         => PrimaryFromRef(reference) as T
             ?? throw new InvalidOperationException($"ilemit: {operation} has no resolved member reference");
@@ -533,15 +526,6 @@ sealed partial class Emitter
     /// emitted by this compilation. Required external-reference callers wrap this in RequiredRef and fail closed;
     /// no legacy owner/name/signature descriptor is consulted.
     /// </summary>
-    MemberInfo PrimaryFromRef(JsonElement node, string carrier)
-    {
-        if (node.ValueKind != JsonValueKind.Object
-            || !node.TryGetProperty(carrier, out var element)
-            || element.ValueKind != JsonValueKind.Object) return null;
-        var reference = MemberRefNode.Read(element);
-        return PrimaryFromRef(reference);
-    }
-
     MemberInfo PrimaryFromRef(MemberRefNode reference) => reference == null ? null
         : Sanction(AnchorOnUseSite(ResolveMemberRef(reference), reference));
 

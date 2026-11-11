@@ -1,6 +1,6 @@
 {
   "fileClass": "LiteralTextKt",
   "methods": [{"name":"text","params":[],"ret":{"t":"fqn","name":"System.String"},"body":[
-    {"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.String"},"value":{"encoding":"utf16","units":[65536]}}}
+    {"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.String"},"value":{"a": "utf16", "units": [65536]}}}
   ]}]
 }

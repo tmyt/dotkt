@@ -71,6 +71,7 @@
 # ACCEPT case — `<name>.bir.json` plus a `<name>.assert` file of lines:
 #     +<substring>   the emitted CIR MUST contain it
 #     -<substring>   the emitted CIR must NOT contain it
+#     ?<jq predicate> structural predicate over emitted files; ir_matches checks object subsets and ordered arrays
 # Blank lines and `#` comments are ignored. The CIR is matched as its emitted JSON text with whitespace stripped.
 #
 # REJECT case — `reject-<name>.bir.json` plus a `reject-<name>.expected` file holding ONE substring per line: bir2cir
@@ -82,6 +83,7 @@ cd "$ROOT"
 
 need_tool bir2cir
 need_dotnet_reference_sets
+"${PYTHON:-python3}" tests/ir/test-lowering-patterns.py
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 if [[ ! -f "$STDLIB_REF_DLL" ]]; then
 	echo "LOWERING GATE: RED — exact-intrinsic compiler metadata fixture requires $STDLIB_REF_DLL"
@@ -157,7 +159,7 @@ run_fixture() {
 	fi
 
 	expected="$stem.assert"
-	if [[ ! -f "$expected" ]] || ! grep -qE '^[+-].' "$expected"; then
+	if [[ ! -f "$expected" ]] || ! grep -qE '^[+?-].' "$expected"; then
 		echo "  LOWERING FAIL  $name: no effective .assert file"
 		return 1
 	fi
@@ -181,6 +183,9 @@ run_fixture() {
 			fi ;;
 			'-'*) if [[ "$text" == *"${line:1}"* ]]; then
 				echo "  LOWERING FAIL  $name: the CIR CONTAINS ${line:1}"; bad=1
+			fi ;;
+			'?'*) if ! jq -L "$ROOT/tests/ir" -s -e 'include "lowering-pattern"; '"${line:1}" "$out"/*.cir.json >/dev/null; then
+				echo "  LOWERING FAIL  $name: CIR predicate failed: ${line:1}"; bad=1
 			fi ;;
 			*) echo "  LOWERING FAIL  $name: malformed assertion line: $line"; bad=1 ;;
 		esac

@@ -22,31 +22,13 @@ public interface ICirCallable
     OptionalField<CirSourcePosition> Pos { get; }
 }
 
-public sealed partial record CirFileDeclaration : IDisposable
+public sealed partial record CirFileDeclaration
 {
     CirMethod[] ICirContainer.DeclaredMethods => Methods;
     CirConstructor[] ICirContainer.DeclaredConstructors => Array.Empty<CirConstructor>();
     CirField[] ICirContainer.DeclaredFields => Fields;
     CirProperty[] ICirContainer.DeclaredProperties => Properties.OrEmpty();
 
-    public void Dispose()
-    {
-        DisposeExecutables(this);
-        foreach (var type in Types) DisposeExecutables(type);
-    }
-
-    static void DisposeExecutables(ICirContainer container)
-    {
-        foreach (var method in container.DeclaredMethods) method.Body.OrDefault()?.Dispose();
-        foreach (var ctor in container.DeclaredConstructors)
-        {
-            ctor.Body.Dispose();
-            ctor.PreStmts.OrDefault()?.Dispose();
-            ctor.BaseArgs.OrDefault()?.Dispose();
-            ctor.ThisArgs.OrDefault()?.Dispose();
-        }
-        foreach (var field in container.DeclaredFields) field.Init.OrDefault()?.Dispose();
-    }
 }
 
 public sealed partial record CirTypeDeclaration

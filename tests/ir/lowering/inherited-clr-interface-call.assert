@@ -6,7 +6,7 @@
 # The Kotlin collection remains opaque with ArrayDeque<String> in KotlinType metadata. Its two-argument add
 # selects its declared opaque carrier slot with an Object value parameter rather than inventing a native receiver.
 # The one-argument overload keeps Kotlin Boolean dispatch.
-+"ownerType":{"t":"fqn","name":"kotlin.collections.ArrayDeque$star"},"virtual":true,"recv":{"k":"local","name":"values"},"method":"$star$add$20"
+?any(.[] | .. | objects; ir_matches({"ownerType":{"t":"fqn","name":"kotlin.collections.ArrayDeque$star"},"virtual":true,"recv":{"k":"local","name":"values"},"method":"$star$add$20"}))
 +"declaringType":{"t":"fqn","name":"kotlin.collections.ArrayDeque$star"},"name":"$star$add$20","genericArity":0,"returnType":{"t":"fqn","name":"void"},"callingConvention":"instance","parameterTypes":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}]
 +"bytes":"eyJ0IjoiZnFuIiwibmFtZSI6ImtvdGxpbi5jb2xsZWN0aW9ucy5BcnJheURlcXVlIiwiYXJncyI6W3sidCI6ImZxbiIsIm5hbWUiOiJrb3RsaW4uU3RyaW5nIn1dfQ=="
 
@@ -17,5 +17,5 @@
 # Its opaque Kotlin collection receiver goes through the exact-token runtime, with the static closure retained.
 +"method":"starProjectionInvokeUnit"
 +"k":"classRef","type":{"t":"fqn","name":"System.Collections.Generic.ICollection\u00601","args":[{"t":"fqn","name":"System.Int32"}]}
-+"k":"const","type":{"t":"fqn","name":"System.String"},"value":"Clear"
+?any(.[] | .. | objects; ir_matches({"k":"const","type":{"t":"fqn","name":"System.String"},"value":{"a":"text","value":"Clear"}}))
 -"method":"clrCollAdd"

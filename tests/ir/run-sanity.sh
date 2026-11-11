@@ -41,12 +41,9 @@ SANITY_CHECK="build/ir-sanity-check/SanityCheck.dll"
 # SELF-TEST first (tests/ir/selftest/*.cir.json): the validators check whatever is on disk, so one that silently
 # stopped checking would look exactly like a clean corpus. Each `reject-*.cir.json` is a shape the compiler must
 # never emit and the validators must refuse, with the message its `.expected` file names; each `accept-*.cir.json`
-# is the legitimate shape next door, so a validator that refused everything fails here too. Today this covers the
-# SUSPENSION-LOWERED invariant (the emitted corpus contains no escaped suspension — that is the point — and no
-# surviving `mods.suspend` either) and the §2.7 STAMP-AGREEMENT invariant,
-# whose subject `sty` does not survive into CIR at all: bir2cir checks that one on the PRE-lowering BIR
-# (tests/ir/lowering/reject-stale-sty-after-passes pins the chokepoint), and the fixtures here are what hold both
-# implementations of the relation to the same accepted-equivalence set.
+# is the legitimate shape next door, so a validator that refused everything fails here too. Source stamp
+# relations live separately in source-stamps/*.bir.json and exercise bir2cir's actual pre-lowering check.
+# Neither `sty` nor `suspendCall` is physical CIR vocabulary; do not keep CIR refusal fixtures for those inputs.
 #
 # BOTH implementations are asserted. scripts/verify-sanity.py is only the corpus net; the NORMATIVE checker is the
 # C# IrSanity compiled into ilemit, which is what actually stops a bad build. Asserting only the mirror would leave
@@ -64,6 +61,31 @@ elif ! dotnet build tests/ir/sanity-check/SanityCheck.csproj -c Release \
   echo "  SELFTEST FAIL  could not build the normative C# sanity-check host"; self_rc=1
 fi
 if [ $self_rc -ne 0 ]; then echo "SANITY GATE: RED (self-test setup)"; exit 1; fi
+
+# Current BIR type-stamp agreement is checked before physical type lowering. The normative host selects that
+# existing checkpoint explicitly, rather than accepting a source tree through the physical CIR reader.
+for f in tests/ir/source-stamps/*.bir.json; do
+  [[ -e "$f" ]] || continue
+  want=""
+  if [[ "$(basename "$f")" == reject-* ]]; then
+    want="$(cat "${f%.bir.json}.expected" 2>/dev/null)"
+    if [[ -z "$want" ]]; then echo "  SELFTEST FAIL  $(basename "$f"): missing expectation"; self_rc=1; continue; fi
+  fi
+  for checker in normative mirror; do
+    if [[ "$checker" == normative ]]; then
+      out="$(dotnet "$SANITY_CHECK" --source-stamps "$f" 2>&1)"; frc=$?
+    else
+      out="$("$PY" scripts/verify-sanity.py "$f" 2>&1)"; frc=$?
+    fi
+    if { [[ -z "$want" ]] && [[ $frc -eq 0 ]]; } ||
+       { [[ -n "$want" ]] && [[ $frc -ne 0 ]] && printf '%s' "$out" | grep -qF -- "$want"; }; then
+      echo "  SELFTEST ok    $(basename "$f") ($checker source stamps)"
+    else
+      echo "  SELFTEST FAIL  $(basename "$f") ($checker source stamps)"; self_rc=1
+      printf '%s\n' "$out" | sed 's/^/                 /'
+    fi
+  done
+done
 
 for f in tests/ir/selftest/reject-*.cir.json; do
   [ -e "$f" ] || continue

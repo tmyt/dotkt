@@ -4,7 +4,6 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
-using System.Text.Json;
 
 // Type-spec mapping: BIR type tokens/TypeNode -> System.Type (MapType, ClrRef, generic construction).
 sealed partial class Emitter
@@ -19,10 +18,7 @@ sealed partial class Emitter
             : definition.MakeGenericType(arguments);
 
     // The bare NAME a type slot carries, for a name-keyed opcode switch (const/conv).
-    static string SlotName(JsonElement e) =>
-        e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f
-            ? f.Name
-            : null;
+    static string SlotName(DotKt.Bir.TypeNode type) => (type as DotKt.Bir.TypeNode.Fqn)?.Name;
 
     // A primitive type slot may now arrive as the @ClrTypeAlias BCL name ("System.Int32") rather than the CLR
     // shorthand ("int"): bir2cir routes primitives through the ref.dll alias index (the redundant hardcoded
@@ -40,7 +36,7 @@ sealed partial class Emitter
     };
 
     // A clr* owner/type slot is a structured Type node authored by bir2cir.
-    Type ClrRef(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
+    Type ClrRef(DotKt.Bir.TypeNode type) => MapType(type);
 
     // A bare type-IDENTITY string (no legacy grammar prefix — those are retired, #48): a CLR-shorthand primitive routes
     // through MapType (which owns the shorthand switch — `argTypes` may synthesize e.g. "string" so the ctor-overload
@@ -58,8 +54,6 @@ sealed partial class Emitter
             throw new NotSupportedException($"invalid CIR generic argument `System.Void` from {source}");
         return type;
     }
-
-    Type MapType(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
 
     Type MapType(DotKt.Bir.TypeNode t) => t switch
     {
@@ -83,9 +77,6 @@ sealed partial class Emitter
     {
         internal bool HasModifiers => Required.Length != 0 || Optional.Length != 0;
     }
-
-    DeclaredSignatureSlot MapSignatureSlot(JsonElement slot)
-        => MapSignatureSlot(DotKt.Bir.TypeNode.Read(slot));
 
     DeclaredSignatureSlot MapSignatureSlot(DotKt.Bir.TypeNode type)
     {

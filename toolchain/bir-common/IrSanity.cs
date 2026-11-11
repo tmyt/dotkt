@@ -343,8 +343,8 @@ public static partial class IrSanity
             if (e.ValueKind == JsonValueKind.Object)
             {
                 if (e.TryGetProperty("k", out var k) && k.ValueKind == JsonValueKind.String && k.GetString() == "label"
-                    && e.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt32(out var id) && !seen.Add(id))
-                    throw new IrSanityException(decl, $"duplicate CFG label id {id} in the same body");
+                    && e.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt32(out var id))
+                    CheckDuplicateLabel(decl, id, seen);
                 foreach (var p in e.EnumerateObject()) Walk(p.Value);
             }
             else if (e.ValueKind == JsonValueKind.Array)
@@ -354,6 +354,29 @@ public static partial class IrSanity
     }
 
     static bool HasNonNull(JsonElement e, string prop) => e.TryGetProperty(prop, out var v) && v.ValueKind != JsonValueKind.Null;
+
+    static void CheckDuplicateLabel(string declaration, int id, HashSet<int> seen)
+    {
+        if (!seen.Add(id)) throw new IrSanityException(declaration, $"duplicate CFG label id {id} in the same body");
+    }
+
+    static void CheckKnownLocal(string declaration, string kind, string name, HashSet<string> declared)
+    {
+        if (!declared.Contains(name))
+            throw new IrSanityException(declaration, $"'{kind}' references undeclared local '{name}' (no matching var/param in scope)");
+    }
+
+    static void CheckKnownLabel(string declaration, string kind, int id, HashSet<int> labels)
+    {
+        if (!labels.Contains(id))
+            throw new IrSanityException(declaration, $"'{kind}' targets CFG label id {id} with no matching 'label' node in the body");
+    }
+
+    static void CheckLoopComparison(string declaration, string comparison)
+    {
+        if (comparison is not ("<=" or "<" or ">="))
+            throw new IrSanityException(declaration, $"'for' loop has unsupported 'cmp' operator '{comparison}' (expected '<=', '<', or '>=')");
+    }
 
     // Walk the tree, checking each node's MEANING invariant. Unmatched kinds (and type nodes, whose `k` vocabulary is
     // disjoint from these) just recurse.
@@ -391,18 +414,18 @@ public static partial class IrSanity
                 {
                     case "local":
                     case "setLocal":
-                        if (node.TryGetProperty("name", out var nEl) && nEl.ValueKind == JsonValueKind.String && !declared.Contains(nEl.GetString()))
-                            throw new IrSanityException(decl, $"'{kEl.GetString()}' references undeclared local '{nEl.GetString()}' (no matching var/param in scope)");
+                        if (node.TryGetProperty("name", out var nEl) && nEl.ValueKind == JsonValueKind.String)
+                            CheckKnownLocal(decl, kEl.GetString(), nEl.GetString(), declared);
                         break;
                     case "byrefLoad":
                     case "byrefStore":
-                        if (node.TryGetProperty("local", out var blEl) && blEl.ValueKind == JsonValueKind.String && !declared.Contains(blEl.GetString()))
-                            throw new IrSanityException(decl, $"'{kEl.GetString()}' references undeclared local '{blEl.GetString()}' (no matching var/param in scope)");
+                        if (node.TryGetProperty("local", out var blEl) && blEl.ValueKind == JsonValueKind.String)
+                            CheckKnownLocal(decl, kEl.GetString(), blEl.GetString(), declared);
                         break;
                     case "goto":
                     case "brIf":
-                        if (node.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt32(out var gid) && !labels.Contains(gid))
-                            throw new IrSanityException(decl, $"'{kEl.GetString()}' targets CFG label id {gid} with no matching 'label' node in the body");
+                        if (node.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt32(out var gid))
+                            CheckKnownLabel(decl, kEl.GetString(), gid, labels);
                         break;
                     case "binOp":
                         if (!HasNonNull(node, "lhs") || !HasNonNull(node, "rhs"))
@@ -439,9 +462,7 @@ public static partial class IrSanity
                     case "for":
                         if (node.TryGetProperty("cmp", out var cmpEl) && cmpEl.ValueKind == JsonValueKind.String)
                         {
-                            var cmp = cmpEl.GetString();
-                            if (cmp != "<=" && cmp != "<" && cmp != ">=")
-                                throw new IrSanityException(decl, $"'for' loop has unsupported 'cmp' operator '{cmp}' (expected '<=', '<', or '>=')");
+                            CheckLoopComparison(decl, cmpEl.GetString());
                         }
                         break;
                 }

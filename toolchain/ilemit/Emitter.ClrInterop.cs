@@ -4,21 +4,22 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
-using System.Text.Json;
+using DotKt.Bir;
+using DotKt.Cir;
 using System.Globalization;
 
 // CLR interop emission: @Clr native calls, property/event access, ctor picking, BCL-intrinsic handlers.
 sealed partial class Emitter
 {
-    Type EmitNativeClrSafeCastValue(JsonElement e)
+    Type EmitNativeClrSafeCastValue(CirSafeCastValue e)
     {
         // `x as? T` for value T -> `T?`: isinst boxed-T, then unbox+wrap, else empty Nullable<T>.
-        var elem = NativeType(e.GetProperty("elem"));
+        var elem = NativeType(e.Elem);
         var nt = ConstructedType(Bcl("System.Nullable`1"), elem);
         var res = _il.DeclareLocal(nt);
         var has = _il.DefineLabel();
         var done = _il.DefineLabel();
-        EmitExpr(e.GetProperty("e"));
+        EmitExpr(e.E);
         _il.Emit(OpCodes.Isinst, elem);
         _il.Emit(OpCodes.Dup);
         _il.Emit(OpCodes.Brtrue, has);
@@ -29,15 +30,15 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Br, done);
         _il.MarkLabel(has);
         _il.Emit(OpCodes.Unbox_Any, elem);
-        EmitConstructor(_il, OpCodes.Newobj, RequiredRef<ConstructorInfo>(e, "ctorRef", "a nullable conversion"));
+        EmitConstructor(_il, OpCodes.Newobj, RequiredRef<ConstructorInfo>(e.CtorRef, "a nullable conversion"));
         _il.MarkLabel(done);
         return nt;
     }
 
-    Type EmitNativeClrNullableNull(JsonElement e)
+    Type EmitNativeClrNullableNull(CirNullableNull e)
     {
         // `null` typed as Int? -> a Nullable<T> with HasValue=false. NOT ldnull: a value type has no null reference.
-        var elem = NativeType(e.GetProperty("elem"));
+        var elem = NativeType(e.Elem);
         var nt = ConstructedType(Bcl("System.Nullable`1"), elem);
         var loc = _il.DeclareLocal(nt);
         _il.Emit(OpCodes.Ldloca, loc);
@@ -46,32 +47,32 @@ sealed partial class Emitter
         return nt;
     }
 
-    Type EmitNativeClrNullableWrap(JsonElement e)
+    Type EmitNativeClrNullableWrap(CirNullableWrap e)
     {
-        var elem = NativeType(e.GetProperty("elem"));
+        var elem = NativeType(e.Elem);
         var nt = ConstructedType(Bcl("System.Nullable`1"), elem);
-        EmitExpr(e.GetProperty("e"));
-        EmitConstructor(_il, OpCodes.Newobj, RequiredRef<ConstructorInfo>(e, "ctorRef", "a nullable conversion"));
+        EmitExpr(e.E);
+        EmitConstructor(_il, OpCodes.Newobj, RequiredRef<ConstructorInfo>(e.CtorRef, "a nullable conversion"));
         return nt;
     }
 
-    Type EmitNativeClrNullableHasValue(JsonElement e)
+    Type EmitNativeClrNullableHasValue(CirNullableHasValue e)
     {
-        var elem = NativeType(e.GetProperty("elem"));
+        var elem = NativeType(e.Elem);
         var nt = ConstructedType(Bcl("System.Nullable`1"), elem);
-        EmitExpr(e.GetProperty("e"));
+        EmitExpr(e.E);
         var loc = _il.DeclareLocal(nt);
         _il.Emit(OpCodes.Stloc, loc);
         _il.Emit(OpCodes.Ldloca, loc);
-        EmitMethod(_il, OpCodes.Call, RequiredRef<MethodInfo>(e, "hasValueRef", "a nullable conversion"));
+        EmitMethod(_il, OpCodes.Call, RequiredRef<MethodInfo>(e.HasValueRef, "a nullable conversion"));
         return Bcl("System.Boolean");
     }
 
-    Type EmitNativeClrNullableValue(JsonElement e)
+    Type EmitNativeClrNullableValue(CirNullableValue e)
     {
-        var elem = NativeType(e.GetProperty("elem"));
+        var elem = NativeType(e.Elem);
         var nt = ConstructedType(Bcl("System.Nullable`1"), elem);
-        var src = EmitExpr(e.GetProperty("e"));
+        var src = EmitExpr(e.E);
         // REDUNDANT unwrap: the source already holds the non-nullable `elem`, not a `Nullable<elem>`. The 2.4.0
         // frontend emits a nested `nullableValue{ nullableValue{ x } }` for a safe-call member access, so the outer
         // node lands on an already-unwrapped value. `stloc` of a raw `elem` into a `Nullable<elem>` local would
@@ -86,7 +87,7 @@ sealed partial class Emitter
         var loc = _il.DeclareLocal(nt);
         _il.Emit(OpCodes.Stloc, loc);
         _il.Emit(OpCodes.Ldloca, loc);
-        EmitMethod(_il, OpCodes.Call, RequiredRef<MethodInfo>(e, "valueRef", "a nullable conversion"));
+        EmitMethod(_il, OpCodes.Call, RequiredRef<MethodInfo>(e.ValueRef, "a nullable conversion"));
         return elem;
     }
 
@@ -99,56 +100,54 @@ sealed partial class Emitter
         || left != null && right != null
             && string.Equals(ProvenanceTypeIdentity(left), ProvenanceTypeIdentity(right), StringComparison.Ordinal);
 
-    Type EmitNativeClrTypeOf(JsonElement e)
+    Type EmitNativeClrTypeOf(CirClassReference e)
     {
-        var t = NativeType(e.GetProperty("type"));
+        var t = NativeType(e.Type);
         _il.Emit(OpCodes.Ldtoken, t);
         EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
         return Bcl("System.Type");
     }
 
-    Type EmitNativeClrGetType(JsonElement e)
+    Type EmitNativeClrGetType(CirGetType e)
     {
-        var got = EmitExpr(e.GetProperty("e"));
+        var got = EmitExpr(e.E);
         if (got != null && NeedsBoxToRef(got)) _il.Emit(OpCodes.Box, got);
         EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.GetType"));
         return Bcl("System.Type");
     }
 
-    Type EmitNativeClrEnumValue(JsonElement e)
+    Type EmitNativeClrEnumValue(CirEnumValue e)
     {
-        if (e.TryGetProperty("physicalValue", out var pv)
-            && e.TryGetProperty("underlying", out var ut))
+        if (e.PhysicalValue.IsPresent && e.Underlying.IsPresent)
         {
-            EmitEnumConstantBits(ut.GetString(), pv.GetString());
+            EmitEnumConstantBits(e.Underlying.Value, e.PhysicalValue.Value);
         }
         else
         {
             // A locally-declared Kotlin basic enum has contiguous 0..N values by construction.
-            _il.Emit(OpCodes.Ldc_I4, e.GetProperty("ordinal").GetInt32());
+            _il.Emit(OpCodes.Ldc_I4, e.Ordinal.Value);
         }
-        return NativeType(e.GetProperty("type"));
+        return NativeType(e.Type);
     }
 
-    Type EmitNativeClrEnumOrdinal(JsonElement e)
+    Type EmitNativeClrEnumOrdinal(CirEnumOrdinal e)
     {
-        if (e.TryGetProperty("values", out var values))
+        if (e.Values.IsPresent)
         {
-            var et = NativeType(e.GetProperty("type"));
+            var et = NativeType(e.Type.Value);
             var local = _il.DeclareLocal(et);
-            EmitExpr(e.GetProperty("e"));
+            EmitExpr(e.E);
             _il.Emit(OpCodes.Stloc, local);
             var done = _il.DefineLabel();
-            foreach (var value in values.EnumerateArray())
+            foreach (var value in e.Values.Value)
             {
                 var next = _il.DefineLabel();
                 _il.Emit(OpCodes.Ldloc, local);
                 EmitEnumConstantBits(
-                    value.GetProperty("underlying").GetString(),
-                    value.GetProperty("physicalValue").GetString());
+                    value.Underlying, value.PhysicalValue);
                 _il.Emit(OpCodes.Ceq);
                 _il.Emit(OpCodes.Brfalse, next);
-                _il.Emit(OpCodes.Ldc_I4, value.GetProperty("ordinal").GetInt32());
+                _il.Emit(OpCodes.Ldc_I4, value.Ordinal);
                 _il.Emit(OpCodes.Br, done);
                 _il.MarkLabel(next);
             }
@@ -156,30 +155,29 @@ sealed partial class Emitter
             _il.MarkLabel(done);
             return Bcl("System.Int32");
         }
-        if (e.TryGetProperty("type", out _))
+        if (e.Type.IsPresent)
             throw new InvalidDataException("ilemit: typed enum ordinal has no physical declaration map");
         // The typeless local-basic form has contiguous physical values and needs only Conv_I4.
-        EmitExpr(e.GetProperty("e"));
+        EmitExpr(e.E);
         _il.Emit(OpCodes.Conv_I4);
         return Bcl("System.Int32");
     }
 
-    Type EmitNativeClrEnumValues(JsonElement e)
+    Type EmitNativeClrEnumValues(CirEnumValues e)
     {
-        var et = NativeType(e.GetProperty("type"));
-        if (e.TryGetProperty("values", out var values))
+        var et = NativeType(e.Type);
+        if (e.Values.IsPresent)
         {
-            _il.Emit(OpCodes.Ldc_I4, values.GetArrayLength());
+            _il.Emit(OpCodes.Ldc_I4, e.Values.Value.Length);
             _il.Emit(OpCodes.Newarr, et);
             var index = 0;
-            foreach (var value in values.EnumerateArray())
+            foreach (var value in e.Values.Value)
             {
                 _il.Emit(OpCodes.Dup);
                 _il.Emit(OpCodes.Ldc_I4, index++);
                 EmitEnumConstantBits(
-                    value.GetProperty("underlying").GetString(),
-                    value.GetProperty("physicalValue").GetString());
-                EmitStelem(Bcl(value.GetProperty("underlying").GetString()));
+                    value.Underlying, value.PhysicalValue);
+                EmitStelem(Bcl(value.Underlying));
             }
             return et.MakeArrayType();
         }
@@ -230,24 +228,24 @@ sealed partial class Emitter
         }
     }
 
-    Type EmitNativeClrEnumParse(JsonElement e)
+    Type EmitNativeClrEnumParse(CirEnumParse e)
     {
-        var et = NativeType(e.GetProperty("type"));
+        var et = NativeType(e.Type);
         _il.Emit(OpCodes.Ldtoken, et);
         EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
-        EmitExpr(e.GetProperty("arg"));
+        EmitExpr(e.Arg);
         EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Enum.Parse"));
         _il.Emit(OpCodes.Unbox_Any, et);
         return et;
     }
 
-    Type EmitClrNew(JsonElement e)
+    Type EmitClrNew(CirNewClr e)
     {
-        var type = ClrRef(e.GetProperty("type"));
-        var args = e.GetProperty("args");
+        var type = ClrRef(e.Type);
+        var args = e.Args;
         // bir2cir already resolved the constructor and carried its complete scalar memberRef. Link that exact
         // declaration; there is no argument-applicability or arity fallback here.
-        var ctor = LinkClrCtor(type, e);
+        var ctor = LinkClrCtor(type, e.MemberRef);
         EmitArgs(args, ParametersOf(ctor));
         EmitConstructor(_il, OpCodes.Newobj, ctor);
         return type;
@@ -255,28 +253,29 @@ sealed partial class Emitter
 
     // PrimaryFromRef already anchors the declaration onto the exact use-site owner from the scalar reference.
     /// <summary>The constructor a `newClr` or a base delegation names. A lookup, not a choice.</summary>
-    ConstructorInfo LinkClrCtor(Type type, JsonElement e, string carrier = "memberRef")
+    ConstructorInfo LinkClrCtor(Type type, MemberRefNode reference)
     {
-        if (PrimaryFromRef(e, carrier) is ConstructorInfo referenced) return referenced;
+        if (PrimaryFromRef(reference) is ConstructorInfo referenced) return referenced;
         throw new InvalidOperationException(
-            $"ilemit: construction of {type?.FullName} carries no resolved `{carrier}`. Every external member "
+            $"ilemit: construction of {type?.FullName} carries no resolved constructor reference. Every external member "
             + "arrives named; a node without one is an earlier-layer drop");
     }
 
     // The scalar reference supplies the complete declaration identity. This helper only projects that identity into
     // the target metadata universe; it does not construct or rank a candidate set from the call node.
     /// <summary>The method a `clr*` call names. A lookup, not a choice.</summary>
-    MethodInfo LinkClrMethod(Type type, string name, JsonElement e, bool instance)
+    readonly record struct ClrMethodTarget(MemberRefNode Reference, bool LocalAccessor,
+        OptionalField<TypeNode> LocalOwner, TypeNode[] Signature);
+
+    MethodInfo LinkClrMethod(Type type, string name, ClrMethodTarget target, bool instance)
     {
-        if (PrimaryFromRef(e, "memberRef") is MethodInfo referenced) return referenced;
-        if (e.TryGetProperty("localAccessor", out var local) && local.ValueKind == JsonValueKind.True)
+        if (PrimaryFromRef(target.Reference) is MethodInfo referenced) return referenced;
+        if (target.LocalAccessor)
         {
-            var sig = SigNodes(e)
+            var sig = target.Signature
                 ?? throw new InvalidOperationException(
                     $"ilemit: local accessor {type?.FullName}.{name} carries no exact signature");
-            var owner = e.TryGetProperty("accessorOwner", out var accessorOwner)
-                ? accessorOwner : e.GetProperty("type");
-            return ResolveMethod(ParseOwnerSlot(owner), name, out _, sig, 0);
+            return ResolveMethod(ParseOwnerSlot(target.LocalOwner.Value), name, out _, sig, 0);
         }
         throw new InvalidOperationException(
             $"ilemit: clr{(instance ? "Instance" : "Static")} call to {type?.FullName}.{name} carries no resolved "
@@ -295,17 +294,6 @@ sealed partial class Emitter
 
     static Type[] SafeInterfaces(Type t) { try { return t.GetInterfaces(); } catch { return Array.Empty<Type>(); } }
 
-    // The declaration-side clrOverrideRef names the exact MethodImpl target. A generic base's resolved declaration is
-    // re-anchored mechanically onto the constructed base before DefineMethodOverride.
-    /// <summary>The base virtual an external override implements. A lookup, not a choice.</summary>
-    MethodInfo LinkOverrideBase(Type baseT, string name, JsonElement m, Type derivedTb)
-    {
-        if (PrimaryFromRef(m, "clrOverrideRef") is MethodInfo referenced) return referenced;
-        throw new InvalidOperationException(
-            $"ilemit: override of {baseT?.FullName}.{name} carries no resolved `clrOverrideRef`. Every external "
-            + "member arrives named; a node without one is an earlier-layer drop");
-    }
-
     // The bir2cir clrInstance `dispatch` decision (call | callvirt | constrained) -> the IL opcode. bir2cir computed it
     // from the resolved MethodInfo IsVirtual/IsFinal + owner value-type-ness + the `super` base-slot flag (issue #14);
     // ilemit no longer re-derives it. `constrained.` prefixes the callvirt with the receiver type (== the node `type`).
@@ -320,29 +308,39 @@ sealed partial class Emitter
         }
     }
 
-    Type EmitClrCall(JsonElement e, bool instance, bool deref = true)
+    Type EmitClrCall(CirNativeStatic e, bool deref = true) =>
+        EmitClrCall(e.Type, e.Method,
+            new ClrMethodTarget(e.MemberRef.OrDefault(), e.LocalAccessor.OrDefault(), e.AccessorOwner.IsPresent ? e.AccessorOwner : e.Type, CallSignature(e.CalleeParams, e.Sig)),
+            e.TypeArgs, e.Args, e.Ret, null, null, instance: false, deref: deref);
+
+    Type EmitClrCall(CirNativeInstance e, bool deref = true) =>
+        EmitClrCall(e.Type, e.Method,
+            new ClrMethodTarget(e.MemberRef.OrDefault(), e.LocalAccessor.OrDefault(), e.AccessorOwner.IsPresent ? e.AccessorOwner : e.Type, CallSignature(e.CalleeParams, e.Sig)),
+            e.TypeArgs, e.Args, e.Ret, e.Recv, e.Dispatch, instance: true, deref: deref);
+
+    Type EmitClrCall(TypeNode owner, string name, ClrMethodTarget target, OptionalField<TypeNode[]> typeArguments,
+        ICirExpression[] args, OptionalField<TypeNode> ret, ICirExpression receiver, string dispatch, bool instance, bool deref)
     {
         // `ClrRef` (not `ResolveType`) so a method on a constructed generic .NET type (`Collection<int>`) resolves.
-        var type = ClrRef(e.GetProperty("type"));
-        var name = e.GetProperty("method").GetString();
+        var type = ClrRef(owner);
         // bir2cir already resolved the overload and carried the complete memberRef; ilemit only links that identity.
-        var mi = LinkClrMethod(type, name, e, instance);
+        var mi = LinkClrMethod(type, name, target, instance);
         // A generic BCL method (`System.Array.Fill<T>(T[],T,int,int)`) resolved as its open DEFINITION must be
         // instantiated with the call's type args (threaded by bir2cir from the @ClrIntrinsic generic Kotlin callee),
         // or the emitted MethodSpec stays open -> "method/type not fully instantiated" at run. Non-generic targets
         // leave IsGenericMethodDefinition false, so this is a no-op there.
         if (mi.IsGenericMethodDefinition
-            && e.TryGetProperty("typeArgs", out var clrTa) && clrTa.ValueKind == JsonValueKind.Array && clrTa.GetArrayLength() > 0)
-            mi = ConstructedMethod(mi, clrTa.EnumerateArray().Select(a => MapType(a)).ToArray());
+            && typeArguments.HasValue && typeArguments.Value.Length > 0)
+            mi = ConstructedMethod(mi, typeArguments.Value.Select(MapType).ToArray());
         // A value-type receiver's instance method needs a managed pointer (e.g. struct Vec2.Mag2()); the `constrained.`
         // dispatch (below) likewise needs the receiver ADDRESS. (A generic `Array<T>.clone()` is already retargeted by
         // bir2cir to the `System.Array` owner, so its `T[]` receiver is statically assignable — no cast needed here.)
         if (instance)
         {
-            if (IsValueType(type)) EmitAddr(e.GetProperty("recv"));
-            else EmitExpr(e.GetProperty("recv"));
+            if (IsValueType(type)) EmitAddr(receiver);
+            else EmitExpr(receiver);
         }
-        EmitArgs(e.GetProperty("args"), ParametersOf(mi));
+        EmitArgs(args, ParametersOf(mi));
         // Dispatch is a bir2cir DECISION carried on the node (call | callvirt | constrained) — computed from the
         // resolved MethodInfo's IsVirtual/IsFinal + the owner value-type-ness + the `super` (issue #14 base-slot) flag.
         // ilemit no longer derives it from reflected `mi.IsVirtual/IsFinal`. A static call is unconditionally `call`.
@@ -350,9 +348,7 @@ sealed partial class Emitter
         {
             // `dispatch` is a REQUIRED bir2cir decision — a missing one is a producer defect, NOT a silent `callvirt`
             // default (which on a value-type owner is unverifiable CallVirtOnValueType). Fail loud (consume-only doctrine).
-            if (!e.TryGetProperty("dispatch", out var dEl) || dEl.ValueKind != JsonValueKind.String)
-                throw new InvalidOperationException($"ilemit: clrInstance {type?.FullName}.{name} is missing its `dispatch` decision; bir2cir must carry call, callvirt, or constrained");
-            EmitClrDispatch(mi, dEl.GetString(), type);
+            EmitClrDispatch(mi, dispatch, type);
         }
         else
             EmitMethod(_il, OpCodes.Call, mi);
@@ -371,7 +367,7 @@ sealed partial class Emitter
         // STATIC type we hand back must be the substituted one or the caller mis-types its temp/local — so trust the
         // BIR `ret` hint, which already carries the substituted type. (Only when the reflected return is still open.)
         if ((methodReturn.IsGenericParameter || methodReturn.ContainsGenericParameters)
-            && e.TryGetProperty("ret", out var rh))
+            && ret.IsPresent)
         {
             // The `ret` hint is a structured TypeNode. A method-scope Tv return
             // (`IReadOnlyList<T>::get_Item` on the non-generic
@@ -379,17 +375,17 @@ sealed partial class Emitter
             // a standalone `!0` token in a non-generic method body is INVALID metadata (`box !0` -> BadImageFormat at
             // JIT). MapType resolves the structured Tv against `_curMethodParams` to the method's own `!!T`, so the
             // caller boxes/consumes the correct method-scope token.
-            Type hinted = TryMapType(rh);
+            Type hinted = TryMapType(ret.Value);
             if (hinted != null) return hinted;
         }
         return methodReturn;
     }
 
     // A type slot for an IL-opcode context (newarr elem / conv / default).
-    Type NativeType(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
+    Type NativeType(TypeNode type) => MapType(type);
 
     // MapType (structured-TypeNode resolution) that returns null instead of throwing.
-    Type TryMapType(JsonElement e) { try { return MapType(e); } catch { return null; } }
+    Type TryMapType(TypeNode type) { try { return MapType(type); } catch { return null; } }
 
     // ResolveType but returns null instead of throwing (for optional/best-effort overload resolution).
     Type TryResolveType(string name)
@@ -401,16 +397,16 @@ sealed partial class Emitter
     // and stamped a `member` discriminator: "accessor" (a real .NET property — carries the
     // resolved accessor memberRef + `dispatch`) or "field" (a public/const field). ilemit no longer reclassifies
     // property vs get_ method vs field, and no longer derives dispatch from the reflected accessor.
-    Type EmitClrPropGet(JsonElement e)
+    Type EmitClrPropGet(CirPropertyGet e)
     {
-        var type = ClrRef(e.GetProperty("type"));
-        var isStatic = e.GetProperty("static").GetBoolean();
-        if (ClrMemberKind(e) == "accessor")
+        var type = ClrRef(e.Type);
+        var isStatic = e.Static;
+        if (e.Member == "accessor")
         {
-            var getter = LinkClrMethod(type, e.GetProperty("accessor").GetString(), e, instance: !isStatic);
-            if (!isStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
+            var getter = LinkClrMethod(type, e.Accessor.Value, new ClrMethodTarget(e.MemberRef.OrDefault(), e.LocalAccessor.OrDefault(), e.AccessorOwner.IsPresent ? e.AccessorOwner : e.Type, CallSignature(e.CalleeParams, e.Sig)), instance: !isStatic);
+            if (!isStatic) { if (IsValueType(type)) EmitAddr(e.Recv.Value); else EmitExpr(e.Recv.Value); }
             if (isStatic) EmitMethod(_il, OpCodes.Call, getter);
-            else EmitClrDispatch(getter, RequireDispatch(e, type, "clrPropGet"), type);   // call | callvirt | constrained (bir2cir decision)
+            else EmitClrDispatch(getter, RequireDispatch(e.Dispatch, type, "clrPropGet"), type);
             return ReturnTypeOf(getter);
         }
         // A .NET FIELD surfaced as a Kotlin property (bir2cir resolved member:"field"). A `const` (literal) field has no
@@ -418,51 +414,43 @@ sealed partial class Emitter
         // The reference first: a field is a member like any other, and re-finding it by name is the selection
         // this change exists to remove — a derived type's static field can hide a base instance field of the
         // same name, and a name lookup cannot tell which one bir2cir resolved.
-        var fld = RequiredRef<FieldInfo>(e, "memberRef", "an external field access");
+        var fld = RequiredRef<FieldInfo>(e.MemberRef.OrDefault(), "an external field access");
         if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), FieldTypeOf(fld));
-        if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
-        MaybeVolatile(fld, e);
+        if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.Recv.Value); else EmitExpr(e.Recv.Value); }
+        MaybeVolatile(fld, e.Volatile.OrDefault());
         EmitField(_il, fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
         return FieldTypeOf(fld);
     }
 
     // W1-S3 (#46 / #121) CONSUME-ONLY property SET (twin of EmitClrPropGet).
-    Type EmitClrPropSet(JsonElement e)
+    Type EmitClrPropSet(CirPropertySet e)
     {
-        var type = ClrRef(e.GetProperty("type"));
-        var isStatic = e.GetProperty("static").GetBoolean();
-        if (ClrMemberKind(e) == "accessor")
+        var type = ClrRef(e.Type);
+        var isStatic = e.Static;
+        if (e.Member == "accessor")
         {
-            var setter = LinkClrMethod(type, e.GetProperty("accessor").GetString(), e, instance: !isStatic);
-            if (!isStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
-            EmitArgs2(new[] { e.GetProperty("value") }, ParametersOf(setter));
+            var setter = LinkClrMethod(type, e.Accessor.Value, new ClrMethodTarget(e.MemberRef.OrDefault(), e.LocalAccessor.OrDefault(), e.AccessorOwner.IsPresent ? e.AccessorOwner : e.Type, CallSignature(e.CalleeParams, e.Sig)), instance: !isStatic);
+            if (!isStatic) { if (IsValueType(type)) EmitAddr(e.Recv.Value); else EmitExpr(e.Recv.Value); }
+            EmitArgs2(new[] { e.Value }, ParametersOf(setter));
             if (isStatic) EmitMethod(_il, OpCodes.Call, setter);
-            else EmitClrDispatch(setter, RequireDispatch(e, type, "clrPropSet"), type);
+            else EmitClrDispatch(setter, RequireDispatch(e.Dispatch, type, "clrPropSet"), type);
             return Bcl("System.Void");
         }
         // A writable .NET FIELD surfaced as a Kotlin (mutable) property -> field store.
         // The reference first: a field is a member like any other, and re-finding it by name is the selection
         // this change exists to remove — a derived type's static field can hide a base instance field of the
         // same name, and a name lookup cannot tell which one bir2cir resolved.
-        var fld = RequiredRef<FieldInfo>(e, "memberRef", "an external field access");
-        if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
-        EmitNullableCoerced(e.GetProperty("value"), FieldTypeOf(fld));
-        MaybeVolatile(fld, e);
+        var fld = RequiredRef<FieldInfo>(e.MemberRef.OrDefault(), "an external field access");
+        if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.Recv.Value); else EmitExpr(e.Recv.Value); }
+        EmitNullableCoerced(e.Value, FieldTypeOf(fld));
+        MaybeVolatile(fld, e.Volatile.OrDefault());
         EmitField(_il, fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
         return Bcl("System.Void");
     }
 
-    // The bir2cir `member` discriminator ("accessor" | "field"), a REQUIRED W1-S3 decision. A missing one is a producer
-    // defect (ilemit must not re-derive the member kind), not a silent field fallback.
-    static string ClrMemberKind(JsonElement e)
+    static string RequireDispatch(OptionalField<string> dispatch, Type type, string what)
     {
-        if (e.TryGetProperty("member", out var m) && m.ValueKind == JsonValueKind.String) return m.GetString();
-        throw new InvalidOperationException($"ilemit: clr property/field node is missing its `member` discriminator; bir2cir ClrMemberResolution must carry accessor or field");
-    }
-
-    static string RequireDispatch(JsonElement e, Type type, string what)
-    {
-        if (e.TryGetProperty("dispatch", out var d) && d.ValueKind == JsonValueKind.String) return d.GetString();
+        if (dispatch.HasValue) return dispatch.Value;
         throw new InvalidOperationException($"ilemit: {what} on {type?.FullName} is missing its `dispatch` decision; bir2cir must carry call, callvirt, or constrained");
     }
 
@@ -475,21 +463,21 @@ sealed partial class Emitter
     // carried dispatch.
     // bir2cir materializes the handler as the accessor's exact nominal delegate once, before it reaches either add or
     // remove. ilemit neither re-resolves its Invoke nor reconstructs a delegate conversion from the value's shape.
-    Type EmitClrEvent(JsonElement e, bool add)
+    Type EmitClrEvent(TypeNode owner, bool isStatic, string accessorName, ClrMethodTarget target,
+        OptionalField<string> carriedDispatch, OptionalField<ICirExpression> receiver, bool handlerExact, ICirExpression handler, bool add)
     {
-        var type = ClrRef(e.GetProperty("type"));
-        bool isStatic = e.GetProperty("static").GetBoolean();
-        var accessor = LinkClrMethod(type, e.GetProperty("accessor").GetString(), e, instance: !isStatic);
-        var dispatch = isStatic ? null : RequireDispatch(e, type, add ? "clrEventAdd" : "clrEventRemove");
+        var type = ClrRef(owner);
+        var accessor = LinkClrMethod(type, accessorName, target, instance: !isStatic);
+        var dispatch = isStatic ? null : RequireDispatch(carriedDispatch, type, add ? "clrEventAdd" : "clrEventRemove");
         if (!isStatic)
         {
-            if (IsValueType(type) || dispatch == "constrained") EmitAddr(e.GetProperty("recv"));
-            else EmitExpr(e.GetProperty("recv"));
+            if (IsValueType(type) || dispatch == "constrained") EmitAddr(receiver.Value);
+            else EmitExpr(receiver.Value);
         }
-        if (!e.TryGetProperty("handlerExact", out var exact) || !exact.GetBoolean())
+        if (!handlerExact)
             throw new InvalidOperationException(
                 "ilemit: CLR event handler is not the exact accessor delegate; bir2cir must materialize it");
-        EmitExpr(e.GetProperty("handler"));
+        EmitExpr(handler);
         if (isStatic) EmitMethod(_il, OpCodes.Call, accessor);
         else EmitClrDispatch(accessor, dispatch, type);
         return Bcl("System.Void");
@@ -499,14 +487,14 @@ sealed partial class Emitter
     // A capturing closure over an enclosing type param (`{ seed }` in `generateSequence<T>`) is a GENERIC class;
     // left as its open definition the `newobj Closure`1::.ctor(!0)` operand is OPEN -> a TypeLoadException at run.
     // Close it with the node's explicit `typeArgs`. Shared by the main newClosure emit and delegate-arg binding.
-    (ConstructorInfo Ctor, MethodInfo Invoke) ResolveClosure(JsonElement e)
+    (ConstructorInfo Ctor, MethodInfo Invoke) ResolveClosure(CirClosure e)
     {
-        var ct = _types[SlotName(e.GetProperty("closureType"))];
+        var ct = _types[SlotName(e.ClosureType)];
         ConstructorInfo ctor = ct.Ctor;
-        MethodInfo invoke = ct.Methods[e.GetProperty("method").GetString()];
+        MethodInfo invoke = ct.Methods[e.Method];
         Type constructed = null;
-        if (e.TryGetProperty("typeArgs", out var taProp) && taProp.GetArrayLength() > 0)
-            constructed = ConstructedType(ct.TB, taProp.EnumerateArray().Select(a => MapType(a)).ToArray());
+        if (e.TypeArgs.IsPresent && e.TypeArgs.Value.Length > 0)
+            constructed = ConstructedType(ct.TB, e.TypeArgs.Value.Select(MapType).ToArray());
         else if (ct.TB.IsGenericTypeDefinition)
             throw new InvalidOperationException("generic CIR closure has no explicit type arguments");
         if (constructed != null)
@@ -525,19 +513,19 @@ sealed partial class Emitter
     // The method's trailing `ret` is appended by EmitTrailingRet (all three are void). ilemit knows NO Kotlin here — the
     // delegate + field are already resolved. Declaration markers and event-read dialect nodes never reach this layer;
     // the retained stdlib ClrEvent runtime class uses ordinary class/member emission.
-    void EmitClrEventAccessorImpl(JsonElement e)
+    void EmitClrEventAccessorImpl(CirEventAccessorBody e)
     {
-        var kind = e.GetProperty("kind").GetString();
-        var fieldName = e.GetProperty("name").GetString();
-        var d = MapType(e.GetProperty("delegateType"));
-        var isStatic = e.GetProperty("static").GetBoolean();
+        var kind = e.Kind;
+        var fieldName = e.Name;
+        var d = MapType(e.DelegateType);
+        var isStatic = e.Static;
         // S5 (#113): a missing backing field is a bir2cir/kotc synthesis defect — a legible breadcrumb, not an opaque miss.
         if (_curTi == null || !_curTi.Fields.TryGetValue(fieldName, out var field))
             throw new InvalidOperationException($"ilemit: clrEventAccessorImpl backing field '{fieldName}' is absent on '{_curTi?.TB?.Name}'; bir2cir ClrEventImplBinding must insert `<E>$delegate`");
         if (kind == "raise")
         {
             EmitClrEventRaise(field, d, isStatic,
-                RequiredRef<MethodInfo>(e, "invokeRef", "clrEventAccessorImpl raise"));
+                RequiredRef<MethodInfo>(e.InvokeRef.OrDefault(), "clrEventAccessorImpl raise"));
             return;
         }
         EmitClrEventCas(e, field, d, isStatic, add: kind == "add");
@@ -547,11 +535,11 @@ sealed partial class Emitter
     //   D cur = this.field; do { D cmp = cur; D upd = (D)Delegate.Combine/Remove(cmp, value);
     //       cur = Interlocked.CompareExchange<D>(ref this.field, upd, cmp); } while (cur != cmp);
     // Instance: arg0 = this, arg1 = value. Static: arg0 = value. Reference comparison, not delegate equality.
-    void EmitClrEventCas(JsonElement node, FieldInfo field, Type d, bool isStatic, bool add)
+    void EmitClrEventCas(CirEventAccessorBody node, FieldInfo field, Type d, bool isStatic, bool add)
     {
         // The three members this loop runs through are named by the pass that authored the accessor.
-        var combine = RequiredRef<MethodInfo>(node, add ? "combineRef" : "removeRef", "clrEventAccessorImpl");
-        var cmpx = ConstructedMethod(RequiredRef<MethodInfo>(node, "compareExchangeRef", "clrEventAccessorImpl"), d);
+        var combine = RequiredRef<MethodInfo>((add ? node.CombineRef : node.RemoveRef).OrDefault(), "clrEventAccessorImpl");
+        var cmpx = ConstructedMethod(RequiredRef<MethodInfo>(node.CompareExchangeRef.OrDefault(), "clrEventAccessorImpl"), d);
         var cur = _il.DeclareLocal(d); var cmp = _il.DeclareLocal(d); var upd = _il.DeclareLocal(d);
         var retry = _il.DefineLabel();
         if (!isStatic) _il.Emit(OpCodes.Ldarg_0);

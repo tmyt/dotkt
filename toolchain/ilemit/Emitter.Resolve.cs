@@ -4,7 +4,6 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
-using System.Text.Json;
 using DotKt.Cir;
 
 // Member resolution: fields/methods/ctors against TypeBuilders + reflected BCL, sig-key matching, type lookup.
@@ -568,20 +567,15 @@ sealed partial class Emitter
     // descriptor's own (already-constructed) parameter vector. Resolution only — the descriptor decided the slot.
 
 
-    MethodInfo ApplyTypeArgs(MethodInfo m, JsonElement e, out Type retType, out Type[] paramTypes)
+    MethodInfo ApplyTypeArgs(MethodInfo m, DotKt.Bir.TypeNode[] typeArguments, out Type retType, out Type[] paramTypes)
     {
         // Defense: an unresolved call (FindMethod/FindStatic returned null — e.g. a bad owner the CIR should never carry)
         // must fail with a legible message naming the call, not a cryptic Dictionary ArgumentNullException(key) below.
-        if (m == null)
-        {
-            var mn = e.TryGetProperty("method", out var mnEl) && mnEl.ValueKind == JsonValueKind.String ? mnEl.GetString() : "?";
-            var on = e.TryGetProperty("owner", out var onEl) && onEl.ValueKind != JsonValueKind.Null ? SlotName(onEl) : null;
-            throw new NotSupportedException($"unresolved method: {(on != null ? on + "." : "")}{mn}");
-        }
+        if (m == null) throw new NotSupportedException("unresolved method");
         var ps = _mparams.TryGetValue(m, out var p) ? p : null;
-        if (e.TryGetProperty("typeArgs", out var ta) && ta.GetArrayLength() > 0)
+        if (typeArguments.Length > 0)
         {
-            var targs = ta.EnumerateArray().Select(x => MapType(x)).ToArray();
+            var targs = typeArguments.Select(MapType).ToArray();
             if (m is SignatureMethod signature && signature.IsGenericMethodDefinition
                 && signature.GetGenericArguments().Length == targs.Length)
             {
@@ -727,18 +721,15 @@ sealed partial class Emitter
 
     static string PhysicalMethodName(CirMethod methodDef) => methodDef.Name;
 
-    static int CalledMethodArity(JsonElement call) =>
-        call.TryGetProperty("typeArgs", out var tas) && tas.ValueKind == JsonValueKind.Array
-            ? tas.GetArrayLength()
-            : 0;
+    static DotKt.Bir.TypeNode[] MethodTypeArguments(DotKt.Cir.OptionalField<DotKt.Bir.TypeNode[]> arguments)
+        => arguments.IsPresent ? arguments.Value : [];
 
     // The call node's `sig` — a STRUCTURED TypeNode array (#37 m3b) — read into TypeNode[] for the structural overload
     // match (`Matches`) and the canonical `SigKey`. Null when the node carries no `sig` array; empty array for a nullary
     // sig (`sig.Length == 0` -> argc 0 convention).
-    static DotKt.Bir.TypeNode[] SigNodes(JsonElement e) =>
-        (e.TryGetProperty("calleeParams", out var s) || e.TryGetProperty("sig", out s)) && s.ValueKind == JsonValueKind.Array
-            ? s.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray()
-            : null;
+    static DotKt.Bir.TypeNode[] CallSignature(DotKt.Cir.OptionalField<DotKt.Bir.TypeNode[]> declaration,
+        DotKt.Cir.OptionalField<DotKt.Bir.TypeNode[]> useSite)
+        => declaration.IsPresent ? declaration.OrDefault() : useSite.OrDefault();
 
     // The CANONICAL call/substitution-key encoding of a Type node. A type variable is a wildcard here so a call in a
     // constructed owner frame can reach an open declaration alias. DefinitionSigCanon is the distinct MethodDef key.
@@ -1098,24 +1089,19 @@ sealed partial class Emitter
     // Resolve an owner-less static call/delegate target ONLY through its producer-carried file-class identity.
     // A missing/misspelled hint is a malformed CIR contract: never fall back to a module-wide first name match,
     // which can silently bind a same-simple-name top-level function from another file/package (#204).
-    MethodInfo FindCalleeOwnedStatic(JsonElement node, string kind, string name, DotKt.Bir.TypeNode[] sig = null,
-        int methodArity = 0)
+    MethodInfo FindCalleeOwnedStatic(DotKt.Bir.TypeNode ownerNode, string kind, string name, DotKt.Bir.TypeNode[] sig = null,
+        int methodArity = 0, DotKt.Bir.TypeNode declarationReturn = null)
     {
-        if (!node.TryGetProperty("calleeOwner", out var ownerNode)
-            || ownerNode.ValueKind == JsonValueKind.Null
-            || SlotName(ownerNode) is not string owner || owner.Length == 0)
+        if (ownerNode == null || SlotName(ownerNode) is not string owner || owner.Length == 0)
             throw new NotSupportedException($"{kind} target '{name}' is missing required calleeOwner");
         // `calleeOwner` is a CIR TypeSpec, not just a declaration name. Preserve a carried construction such as
         // `Owner<!0>` when a lifted local function has been restored to its nearest CLR type. Collapsing through
         // SlotName/FindMethod resolves the member on the open `Owner`1` definition; the later generic-static fallback
         // then canonicalizes it to `Owner<object>`, losing the caller's enclosing T and producing invalid IL. The
         // structured ResolveMethod overload anchors the MethodBuilder directly on the exact owner construction.
-        return ResolveMethod(ParseOwnerSlot(ownerNode), name, out _, sig, methodArity, LocalDeclarationReturn(node))
+        return ResolveMethod(ParseOwnerSlot(ownerNode), name, out _, sig, methodArity, declarationReturn)
             ?? throw new NotSupportedException($"{kind} target '{owner}.{name}' was not found through calleeOwner");
     }
-
-    static DotKt.Bir.TypeNode LocalDeclarationReturn(JsonElement node) =>
-        node.TryGetProperty("calleeRet", out var result) ? DotKt.Bir.TypeNode.Read(result) : null;
 
     bool MatchesDeclarationReturn(TypeInfo owner, MethodBuilder method, DotKt.Bir.TypeNode declarationReturn) =>
         declarationReturn == null || owner.MethodDeclarationReturns[method] == DefinitionSigCanon(declarationReturn);
@@ -1196,9 +1182,9 @@ sealed partial class Emitter
     /// The DEFINITION is a lookup — the reference names it. The instantiation is not part of which declaration is
     /// meant (ECMA II.9.8 puts it on the method spec), so it is applied here, to whatever the reference named.
     /// </remarks>
-    MethodInfo ResolveGenericMethod(Type type, string name, Type[] typeArgs, JsonElement e, bool instance = false)
+    MethodInfo ResolveGenericMethod(Type type, string name, Type[] typeArgs, DotKt.Bir.MemberRefNode reference, bool instance = false)
     {
-        if (PrimaryFromRef(e, "memberRef") is MethodInfo definition) return ConstructedMethod(definition, typeArgs);
+        if (PrimaryFromRef(reference) is MethodInfo definition) return ConstructedMethod(definition, typeArgs);
         throw new InvalidOperationException(
             $"ilemit: generic call to {type?.FullName}.{name}<{typeArgs.Length}> carries no resolved member "
             + "reference. Every external member arrives named; a node without one is an earlier-layer drop");

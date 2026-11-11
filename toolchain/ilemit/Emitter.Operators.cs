@@ -4,38 +4,34 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
-using System.Text.Json;
+using DotKt.Cir;
 
 // Operator/constant/array/concat expression emission (arithmetic, conversions, literals).
 sealed partial class Emitter
 {
-    Type EmitConst(JsonElement e)
+    Type EmitConst(CirConstant e)
     {
-        var t = PrimShorthandName(SlotName(e.GetProperty("type")));
-        var v = e.GetProperty("value");
-        switch (t)
+        switch (e.Value)
         {
-            case "string":
-                if (v.ValueKind == JsonValueKind.Null) { _il.Emit(OpCodes.Ldnull); return Bcl("System.String"); }
-                _il.Emit(OpCodes.Ldstr, DotKt.Bir.LiteralText.Read(v)); return Bcl("System.String");
-            case "int": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.Int32");
-            case "long": _il.Emit(OpCodes.Ldc_I8, v.GetInt64()); return Bcl("System.Int64");
-            // Unsigned consts carry the SIGNED bit-pattern (e.g. 4000000000u stored as -294967296); the same
-            // ldc opcode loads the right bits, only the stack TYPE differs (so add/print are unsigned).
-            case "uint": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.UInt32");
-            case "ulong": _il.Emit(OpCodes.Ldc_I8, v.GetInt64()); return Bcl("System.UInt64");
-            case "byte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.Byte");
-            case "ushort": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.UInt16");
-            // Signed Byte/Short (Kotlin Byte = sbyte token, Short = Int16). Without these a `const sbyte`/`const short`
-            // fell to default -> Ldnull -> InvalidProgramException when passed to an sbyte/short parameter.
-            case "sbyte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.SByte");
-            case "short": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.Int16");
-            // NaN / ±Infinity are emitted as a JSON STRING (not a number token, which JSON forbids) — parse them back.
-            case "double": _il.Emit(OpCodes.Ldc_R8, v.ValueKind == JsonValueKind.String ? double.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetDouble()); return Bcl("System.Double");
-            case "float": _il.Emit(OpCodes.Ldc_R4, v.ValueKind == JsonValueKind.String ? float.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetSingle()); return Bcl("System.Single");
-            case "bool": _il.Emit(v.GetBoolean() ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); return Bcl("System.Boolean");
-            case "char": _il.Emit(OpCodes.Ldc_I4, (int)v.GetUInt16()); return Bcl("System.Char");
-            default: _il.Emit(OpCodes.Ldnull); return Bcl("System.Object");
+            case AttributeArgument.NullValue:
+                _il.Emit(OpCodes.Ldnull);
+                return PrimShorthandName(SlotName(e.Type)) == "string" ? Bcl("System.String") : Bcl("System.Object");
+            case AttributeArgument.TextValue v: _il.Emit(OpCodes.Ldstr, v.Value); return Bcl("System.String");
+            case AttributeArgument.Utf16Value v:
+                _il.Emit(OpCodes.Ldstr, new string(v.Units.Select(unit => (char)unit).ToArray())); return Bcl("System.String");
+            case AttributeArgument.Int32Value v: _il.Emit(OpCodes.Ldc_I4, v.Value); return Bcl("System.Int32");
+            case AttributeArgument.Int64Value v: _il.Emit(OpCodes.Ldc_I8, v.Value); return Bcl("System.Int64");
+            case AttributeArgument.UInt32Value v: _il.Emit(OpCodes.Ldc_I4, unchecked((int)v.Value)); return Bcl("System.UInt32");
+            case AttributeArgument.UInt64Value v: _il.Emit(OpCodes.Ldc_I8, unchecked((long)v.Value)); return Bcl("System.UInt64");
+            case AttributeArgument.UInt8Value v: _il.Emit(OpCodes.Ldc_I4, (int)v.Value); return Bcl("System.Byte");
+            case AttributeArgument.UInt16Value v: _il.Emit(OpCodes.Ldc_I4, (int)v.Value); return Bcl("System.UInt16");
+            case AttributeArgument.Int8Value v: _il.Emit(OpCodes.Ldc_I4, (int)v.Value); return Bcl("System.SByte");
+            case AttributeArgument.Int16Value v: _il.Emit(OpCodes.Ldc_I4, (int)v.Value); return Bcl("System.Int16");
+            case AttributeArgument.Float64Value v: _il.Emit(OpCodes.Ldc_R8, BitConverter.Int64BitsToDouble(v.Bits)); return Bcl("System.Double");
+            case AttributeArgument.Float32Value v: _il.Emit(OpCodes.Ldc_R4, BitConverter.Int32BitsToSingle(v.Bits)); return Bcl("System.Single");
+            case AttributeArgument.BooleanValue v: _il.Emit(v.Value ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); return Bcl("System.Boolean");
+            case AttributeArgument.CharValue v: _il.Emit(OpCodes.Ldc_I4, (int)v.Value); return Bcl("System.Char");
+            default: throw new InvalidOperationException("Unknown CIR scalar");
         }
     }
 
@@ -56,11 +52,11 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Ldc_I4, Convert.ToInt32(cv)); return ft;   // sbyte/byte/short/ushort/int
     }
 
-    Type EmitBin(JsonElement e)
+    Type EmitBin(CirBinary e)
     {
-        var op = e.GetProperty("op").GetString();
-        var lt = EmitExpr(e.GetProperty("lhs"));
-        EmitExpr(e.GetProperty("rhs"));
+        var op = e.Op;
+        var lt = EmitExpr(e.Lhs);
+        EmitExpr(e.Rhs);
         // Unsigned operands (Kotlin UInt/ULong -> .NET uint/ulong) need the UNSIGNED CIL ops for division and
         // remainder (a direct `bin` on the raw unsigned operand). Reads the CIR operand type only -- no Kotlin
         // knowledge. Without this, `a / b` on UInt >= 2^31 is silently wrong (signed Div on the bit pattern).
@@ -129,10 +125,10 @@ sealed partial class Emitter
         _il.MarkLabel(done);
     }
 
-    Type EmitUn(JsonElement e)
+    Type EmitUn(CirUnary e)
     {
-        var op = e.GetProperty("op").GetString();
-        var t = EmitExpr(e.GetProperty("e"));
+        var op = e.Op;
+        var t = EmitExpr(e.E);
         switch (op)
         {
             case "-": _il.Emit(OpCodes.Neg); return t;
@@ -145,10 +141,10 @@ sealed partial class Emitter
 
     // A CIR `conv` instruction -> the matching CIL conv opcode; returns the target CLR type. ilemit only selects the
     // opcode for the requested target width — WHERE a Kotlin numeric conversion becomes a `conv` node is bir2cir's call.
-    Type EmitConv(JsonElement e)
+    Type EmitConv(CirConvert e)
     {
-        EmitExpr(e.GetProperty("e"));
-        var to = PrimShorthandName(SlotName(e.GetProperty("to")));
+        EmitExpr(e.E);
+        var to = PrimShorthandName(SlotName(e.To));
         switch (to)
         {
             case "int" or "kotlin.Int": _il.Emit(OpCodes.Conv_I4); return Bcl("System.Int32");
@@ -170,13 +166,13 @@ sealed partial class Emitter
     }
 
     // Array literal (`intArrayOf(...)` / `arrayOf(...)`) -> newarr + per-element stelem.
-    Type EmitNewArray(JsonElement e)
+    Type EmitNewArray(CirNewArray e)
     {
-        var elem = MapType(e.GetProperty("elem"));
-        var elems = e.GetProperty("elems").EnumerateArray().ToList();
-        _il.Emit(OpCodes.Ldc_I4, elems.Count);
+        var elem = MapType(e.Elem);
+        var elems = e.Elems;
+        _il.Emit(OpCodes.Ldc_I4, elems.Length);
         _il.Emit(OpCodes.Newarr, elem);
-        for (int i = 0; i < elems.Count; i++)
+        for (int i = 0; i < elems.Length; i++)
         {
             _il.Emit(OpCodes.Dup);
             _il.Emit(OpCodes.Ldc_I4, i);
@@ -194,19 +190,19 @@ sealed partial class Emitter
     // behavior (a value into a reference element `Array<Any?>` / `object[]`), so a `gp:T`-element array
     // (AbstractCollection.toArray's `newarr !T`) is UNTOUCHED — routing it through the broad EmitNullableCoerced would
     // spuriously unbox.any an object element into the `gp:T` slot (regressed the collection/map stdlib emit).
-    void EmitArrayElemCoerced(JsonElement value, Type elem)
+    void EmitArrayElemCoerced(ICirExpression value, Type elem)
     {
         if (elem.IsGenericType && elem.GetGenericTypeDefinition() == Bcl("System.Nullable`1")) { EmitNullableCoerced(value, elem); return; }
         var et = EmitExpr(value);
         if (et != null && NeedsBoxToRef(et) && !IsValueType(elem) && !elem.IsGenericParameter) _il.Emit(OpCodes.Box, et);
     }
 
-    Type EmitConcat(JsonElement e)
+    Type EmitConcat(CirConcat e)
     {
-        var parts = e.GetProperty("parts").EnumerateArray().ToList();
-        _il.Emit(OpCodes.Ldc_I4, parts.Count);
+        var parts = e.Parts;
+        _il.Emit(OpCodes.Ldc_I4, parts.Length);
         _il.Emit(OpCodes.Newarr, Bcl("System.Object"));
-        for (int i = 0; i < parts.Count; i++)
+        for (int i = 0; i < parts.Length; i++)
         {
             _il.Emit(OpCodes.Dup);
             _il.Emit(OpCodes.Ldc_I4, i);
@@ -220,11 +216,10 @@ sealed partial class Emitter
 
     // Emit an expression, coercing a bare `T` (or a null literal) to `Nullable<T>` when `want` is a Nullable<T>.
     // Shared by EmitArg and EmitCond so value-type `T?` flows correctly through args and if/when branches.
-    Type EmitNullableCoerced(JsonElement node, Type want)
+    Type EmitNullableCoerced(ICirExpression node, Type want)
     {
         bool wantNullable = want != null && want.IsGenericType && want.GetGenericTypeDefinition() == Bcl("System.Nullable`1");
-        if (wantNullable && node.TryGetProperty("k", out var k) && k.GetString() is "const" or "clr.const"
-            && node.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Null)
+        if (wantNullable && node is CirConstant { Value: AttributeArgument.NullValue })
         {
             var loc = _il.DeclareLocal(want);
             _il.Emit(OpCodes.Ldloca, loc); _il.Emit(OpCodes.Initobj, want); _il.Emit(OpCodes.Ldloc, loc);
@@ -254,7 +249,7 @@ sealed partial class Emitter
     // `cond` typed `gp:V` whose `else` branch is the object-typed `value`/`__subj` local; without the universal
     // `unbox.any <want>` the reference sits where a value/`!!V` is expected -> a value reinterpreted from a reference
     // -> garbage. Scoped to cond branches (not the shared EmitNullableCoerced) so ordinary object->gp stores are untouched.
-    Type EmitBranchCoerced(JsonElement node, Type want)
+    Type EmitBranchCoerced(ICirExpression node, Type want)
     {
         var got = EmitNullableCoerced(node, want);
         // A VOID-producing branch (a statement-like arm: `x.close()`/`println(...)`/a Unit `const void`, or a
@@ -276,20 +271,20 @@ sealed partial class Emitter
         return got;
     }
 
-    Type EmitCond(JsonElement e)
+    Type EmitCond(CirConditional e)
     {
         // Branch coercions and the result slot use the physical result type stated by CIR.
-        var want = e.TryGetProperty("type", out var tt) ? ClrRef(tt) : null;
+        var want = e.Type.IsPresent ? ClrRef(e.Type.Value) : null;
         // A stack join of two implementations need not retain their common interface. Materialize the
         // result type already stated by CIR, rather than claiming that the merged stack has that type.
         var result = want != null && want != Bcl("System.Void") ? _il.DeclareLocal(want) : null;
         var elseL = _il.DefineLabel(); var end = _il.DefineLabel();
-        EmitExpr(e.GetProperty("cond")); _il.Emit(OpCodes.Brfalse, elseL);
-        var t = EmitBranchCoerced(e.GetProperty("then"), want);
+        EmitExpr(e.Cond); _il.Emit(OpCodes.Brfalse, elseL);
+        var t = EmitBranchCoerced(e.Then, want);
         if (result != null) _il.Emit(OpCodes.Stloc, result);
         _il.Emit(OpCodes.Br, end);
         _il.MarkLabel(elseL);
-        EmitBranchCoerced(e.GetProperty("else"), want);
+        EmitBranchCoerced(e.Else, want);
         if (result != null) _il.Emit(OpCodes.Stloc, result);
         _il.MarkLabel(end);
         if (result != null) _il.Emit(OpCodes.Ldloc, result);
@@ -299,17 +294,17 @@ sealed partial class Emitter
     // Kotlin structural `==`: `if (a == null) b == null else a.Equals((object)b)`.
     // Value types are boxed first — boxing a Nullable<T> with HasValue=false yields a real null ref,
     // so the same null-safe shape works for `Int?` as for reference types.
-    Type EmitObjMethod(JsonElement e)
+    Type EmitObjMethod(CirObjectMethod e)
     {
         // Kotlin Any-method on a builtin receiver -> System.Object virtual (box value types first).
-        var rt = EmitExpr(e.GetProperty("recv"));
+        var rt = EmitExpr(e.Recv);
         if (NeedsBoxToRef(rt)) _il.Emit(OpCodes.Box, rt);
-        switch (e.GetProperty("method").GetString())
+        switch (e.Method)
         {
             case "GetHashCode": EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.GetHashCode")); return Bcl("System.Int32");
             case "ToString": EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.ToString")); return Bcl("System.String");
             case "Equals":
-                var at = EmitExpr(e.GetProperty("arg"));
+                var at = EmitExpr(e.Arg.Value);
                 if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);
                 EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.Equals"));
                 return Bcl("System.Boolean");
@@ -317,22 +312,22 @@ sealed partial class Emitter
         return Bcl("System.Object");
     }
 
-    Type EmitObjEq(JsonElement e)
+    Type EmitObjEq(CirObjectEqual e)
     {
         var nonNull = _il.DefineLabel();
         var done = _il.DefineLabel();
-        var lt = EmitExpr(e.GetProperty("lhs"));
+        var lt = EmitExpr(e.Lhs);
         if (NeedsBoxToRef(lt)) _il.Emit(OpCodes.Box, lt);
         _il.Emit(OpCodes.Dup);
         _il.Emit(OpCodes.Brtrue, nonNull);
         _il.Emit(OpCodes.Pop);                                   // a is null -> result = (b == null)
-        var rt1 = EmitExpr(e.GetProperty("rhs"));
+        var rt1 = EmitExpr(e.Rhs);
         if (NeedsBoxToRef(rt1)) _il.Emit(OpCodes.Box, rt1);
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Ceq);
         _il.Emit(OpCodes.Br, done);
         _il.MarkLabel(nonNull);                                  // a non-null -> a.Equals((object)b)
-        var rt2 = EmitExpr(e.GetProperty("rhs"));
+        var rt2 = EmitExpr(e.Rhs);
         if (NeedsBoxToRef(rt2)) _il.Emit(OpCodes.Box, rt2);
         EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.Equals"));
         _il.MarkLabel(done);

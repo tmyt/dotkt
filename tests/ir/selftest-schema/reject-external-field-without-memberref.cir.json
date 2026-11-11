@@ -9,7 +9,7 @@
         "k": "field",
         "ownerType": { "t": "fqn", "name": "External.Widget" },
         "name": "Value",
-        "recv": { "k": "const", "type": { "t": "fqn", "name": "External.Widget" }, "value": null }
+        "recv": { "k": "const", "type": { "t": "fqn", "name": "External.Widget" }, "value": {"a": "null"} }
       }
     }]
   }]

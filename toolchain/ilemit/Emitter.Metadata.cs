@@ -6,7 +6,6 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text;
-using System.Text.Json;
 using DotKt.Bir;
 using DotKt.Cir;
 
@@ -39,11 +38,9 @@ sealed partial class Emitter
 
     // Emit the `volatile.` prefix before a ld/st opcode when the field is volatile (no-op otherwise). Pairs with the
     // `modreq(IsVolatile)` on the field itself — this is what the C# compiler emits for a `volatile` field access.
-    void MaybeVolatile(FieldInfo fld, JsonElement? access = null)
+    void MaybeVolatile(FieldInfo fld, bool carried = false)
     {
-        var isVolatile = fld != null && _volatileFields.Contains(fld) ||
-            access is JsonElement carried && carried.TryGetProperty("volatile", out var marker) &&
-            marker.ValueKind == JsonValueKind.True;
+        var isVolatile = fld != null && _volatileFields.Contains(fld) || carried;
         if (isVolatile) _il.Emit(OpCodes.Volatile);
     }
 

@@ -63,11 +63,11 @@ calibrates the host, so a host that stopped calling the checker cannot make the 
 
 **Sanity (`*.cir.json`).**
 
-- The **suspension-lowered** invariant (check 6) — `reject-unlowered-suspension` is a `suspendCall:true` left
-  in an ordinary method body, which ilemit would emit as a plain invocation with no resume point.
-  `accept-lowered-suspension` is the legitimate neighbour: the cold-lowered `f$dotkt_suspend` call, which
-  carries no tag.
-- The **stamp-agreement** invariant (check 7, spec §2.7). Four refusals, one per way the relation can refute:
+- `accept-lowered-suspension` exercises an ordinary cold-entry call. Source-only `suspendCall` flags cannot
+  inhabit the typed CIR graph; there are no fixtures pinning a dedicated diagnostic for that obsolete CIR input.
+- The **stamp-agreement** invariant (check 7, spec §2.7) lives in `../source-stamps/*.bir.json`.
+  These current BIR fixtures exercise the actual pre-lowering checkpoint, not the physical CIR reader.
+  Four refusals, one per way the relation can refute:
   `reject-stale-sty` is the shape that motivated the check — a call retyped to `List<object>` whose frontend `sty`
   still claims `List<Int?>`, two unrelated invariant reified generics, so a slot declared from the stamp is invalid
   IL; `reject-stale-sty-scalar` is a `dynRet` whose head name simply differs; `reject-stale-sty-under-nullable` and
@@ -78,7 +78,7 @@ calibrates the host, so a host that stopped calling the checker cannot make the 
   rather than as a pin on each present arm: several of its cases (a type variable, an absent stamp, a shape of
   unlike arity) are accepted by the relation's catch-all, so they would still pass with the arm that names them
   deleted. The arms a fixture genuinely pins are the vocabulary table, `kotlin.Nothing`, and the two above.
-  Note the CHOKEPOINT for this invariant is not here — `sty` is stripped on the way to CIR, so bir2cir checks it on
+  `sty` is stripped on the way to CIR, so bir2cir checks it on
   the pre-lowering BIR and `tests/ir/lowering/reject-stale-sty-after-passes` is what pins that call.
 - The **collection-view completeness** invariant (check 8) — `reject-missing-readonly-collection-view` states
   `IList<String>` and nothing else, which is the CIR of a type whose Kotlin read-only view has no CLR face to land
@@ -91,11 +91,4 @@ calibrates the host, so a host that stopped calling the checker cannot make the 
   `mods.suspend` on a declaration. Check 6 used to EXEMPT such a method, because ilemit keyed its own
   stdlib-stub/app-refusal policy on the same flag before walking a body. That policy moved into bir2cir, which
   now states the physical body of an un-lowered suspend declaration itself and drops the modifier, so the flag
-  is refused outright and the exemption is gone. The fixture also still carries the escaped `suspendCall`, so a
-  regression that restored the exemption without restoring the flag would be caught by check 6 alone.
-- The **width of that exemption**, which is the easy thing to get wrong — `reject-unlowered-suspension-in-ctor`
-  and `reject-unlowered-suspension-in-static-init` carry `mods.suspend` on the constructor and on the
-  containing type, and must STILL be refused. ilemit's suspend guard lives in `EmitMethodBody` alone: it emits
-  a constructor body, and builds a type initializer from the fields, without ever consulting the flag. An
-  exemption derived from the scope's declaration rather than from its KIND lets a suspension through exactly
-  there, and these two are what say so.
+  is refused outright and the exemption is gone. The fixture isolates that current declaration invariant.

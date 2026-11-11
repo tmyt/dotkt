@@ -4,7 +4,7 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
-using System.Text.Json;
+using DotKt.Cir;
 using DotKt.Toolchain;
 
 sealed partial class Emitter
@@ -24,13 +24,12 @@ sealed partial class Emitter
                 && (EndLine > Line || (EndLine == Line && EndColumn > Column))));
     }
 
-    void RecordSourcePoint(JsonElement node)
+    void RecordSourcePoint(CirSourcePoint node)
     {
         if (_portablePdbPath == null) return;
-        var point = node.TryGetProperty("span", out var span)
-            ? new SourcePoint(_il.ILOffset, span.GetProperty("f").GetString(),
-                span.GetProperty("l").GetInt32(), span.GetProperty("c").GetInt32(),
-                span.GetProperty("el").GetInt32(), span.GetProperty("ec").GetInt32())
+        var point = node.Span.IsPresent
+            ? new SourcePoint(_il.ILOffset, node.Span.Value.F,
+                node.Span.Value.L, node.Span.Value.C, node.Span.Value.El, node.Span.Value.Ec)
             : new SourcePoint(_il.ILOffset, null, 0, 0, 0, 0);
         // For example, a Kotlin line can be wider than Portable PDB's 16-bit column range.
         if (!point.IsRepresentable) return;

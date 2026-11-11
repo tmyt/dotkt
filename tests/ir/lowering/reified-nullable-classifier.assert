@@ -12,6 +12,6 @@
 +"name":"Item2"
 +"k":"if","branches":[{"cond":
 +"name":"System.InvalidCastException"
-+"k":"cond","type":{"t":"fqn","name":"object"}
+?any(.[] | .. | objects; ir_matches({"k":"cond","type":{"t":"fqn","name":"object"}}))
 -kotlinRuntimeTypeWitness
 -kotlinClassifierRef

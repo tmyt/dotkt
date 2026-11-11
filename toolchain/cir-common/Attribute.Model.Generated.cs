@@ -33,21 +33,21 @@ public sealed partial record NamedAttributeArgument([property: JsonPropertyName(
 [JsonDerivedType(typeof(AttributeArgument.UnencodableValue), "unencodable")]
 public abstract partial record AttributeArgument
 {
-    public sealed partial record NullValue() : AttributeArgument;
-    public sealed partial record BooleanValue([property: JsonPropertyName("value")] bool Value) : AttributeArgument;
-    public sealed partial record CharValue([property: JsonPropertyName("value")] ushort Value) : AttributeArgument;
-    public sealed partial record Int8Value([property: JsonPropertyName("value")] sbyte Value) : AttributeArgument;
-    public sealed partial record UInt8Value([property: JsonPropertyName("value")] byte Value) : AttributeArgument;
-    public sealed partial record Int16Value([property: JsonPropertyName("value")] short Value) : AttributeArgument;
-    public sealed partial record UInt16Value([property: JsonPropertyName("value")] ushort Value) : AttributeArgument;
-    public sealed partial record Int32Value([property: JsonPropertyName("value")] int Value) : AttributeArgument;
-    public sealed partial record UInt32Value([property: JsonPropertyName("value")] uint Value) : AttributeArgument;
-    public sealed partial record Int64Value([property: JsonPropertyName("value")] long Value) : AttributeArgument;
-    public sealed partial record UInt64Value([property: JsonPropertyName("value")] ulong Value) : AttributeArgument;
-    public sealed partial record Float32Value([property: JsonPropertyName("bits")] int Bits) : AttributeArgument;
-    public sealed partial record Float64Value([property: JsonPropertyName("bits")] long Bits) : AttributeArgument;
-    public sealed partial record TextValue([property: JsonPropertyName("value")] string Value) : AttributeArgument;
-    public sealed partial record Utf16Value([property: JsonPropertyName("units")] ushort[] Units) : AttributeArgument;
+    public sealed partial record NullValue() : AttributeArgument, IScalarValue;
+    public sealed partial record BooleanValue([property: JsonPropertyName("value")] bool Value) : AttributeArgument, IScalarValue;
+    public sealed partial record CharValue([property: JsonPropertyName("value")] ushort Value) : AttributeArgument, IScalarValue;
+    public sealed partial record Int8Value([property: JsonPropertyName("value")] sbyte Value) : AttributeArgument, IScalarValue;
+    public sealed partial record UInt8Value([property: JsonPropertyName("value")] byte Value) : AttributeArgument, IScalarValue;
+    public sealed partial record Int16Value([property: JsonPropertyName("value")] short Value) : AttributeArgument, IScalarValue;
+    public sealed partial record UInt16Value([property: JsonPropertyName("value")] ushort Value) : AttributeArgument, IScalarValue;
+    public sealed partial record Int32Value([property: JsonPropertyName("value")] int Value) : AttributeArgument, IScalarValue;
+    public sealed partial record UInt32Value([property: JsonPropertyName("value")] uint Value) : AttributeArgument, IScalarValue;
+    public sealed partial record Int64Value([property: JsonPropertyName("value")] long Value) : AttributeArgument, IScalarValue;
+    public sealed partial record UInt64Value([property: JsonPropertyName("value")] ulong Value) : AttributeArgument, IScalarValue;
+    public sealed partial record Float32Value([property: JsonPropertyName("bits")] int Bits) : AttributeArgument, IScalarValue;
+    public sealed partial record Float64Value([property: JsonPropertyName("bits")] long Bits) : AttributeArgument, IScalarValue;
+    public sealed partial record TextValue([property: JsonPropertyName("value")] string Value) : AttributeArgument, IScalarValue;
+    public sealed partial record Utf16Value([property: JsonPropertyName("units")] ushort[] Units) : AttributeArgument, IScalarValue;
     public sealed partial record BytesValue([property: JsonPropertyName("bytes")] byte[] Bytes) : AttributeArgument;
     public sealed partial record TypeValue([property: JsonPropertyName("type"), JsonConverter(typeof(TypeNodeMetadataConverter))] TypeNode Type) : AttributeArgument;
     public sealed partial record ArrayValue([property: JsonPropertyName("elems")] AttributeArgument[] Elems, [property: JsonPropertyName("elem"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull), JsonConverter(typeof(TypeNodeMetadataConverter))] TypeNode? Elem = null) : AttributeArgument;

@@ -45,7 +45,7 @@ public static class DeclarationSelfTest
             PseudoFields = ["EntryPoint"], AttributeCtorRef = constructor };
         var method = new CirMethod { Name = "M", Static = false, Override = true, Virtual = true,
             Abstract = false, Vis = "protected", Params = [parameter], Ret = integer,
-            Body = TemporaryCirStatements.FromNode(JsonNode.Parse("""[{"k":"return","value":{"k":"local","name":"value"}}]""")!),
+            Body = new ICirStatement[] { new CirReturn { Value = new CirLocal { Name = "value" } } },
             TypeParams = new[] { generic }, Attrs = attributes, RetAttrs = attributes, Mods = modifiers,
             Pos = position, Generated = true, ObjectOverride = true, ClrFinal = false, SpecialName = false,
             ClrInterfaceSlotBridge = true, RequiresClrOverride = true, ClrOverrideRef = reference, SuspendBridge = false,
@@ -55,12 +55,12 @@ public static class DeclarationSelfTest
             RetSuspendFnType = owner, SuspendRet = integer, RetCtxFnType = 1,
         };
         var ctor = new CirConstructor { Vis = "public", Params = [parameter],
-            BaseArgs = TemporaryCirExpressions.FromNode(new JsonArray()), ThisArgs = OptionalField<TemporaryCirExpressions>.Null,
-            DelegationSig = new TypeNode[] { integer }, Body = TemporaryCirStatements.FromNode(new JsonArray()),
+            BaseArgs = Array.Empty<ICirExpression>(), ThisArgs = OptionalField<ICirExpression[]>.Null,
+            DelegationSig = new TypeNode[] { integer }, Body = [],
             BaseCtorRef = constructor, LocalCtorIndex = 0, Attrs = attributes,
-            PreStmts = TemporaryCirStatements.FromNode(new JsonArray()), Pos = position };
+            PreStmts = Array.Empty<ICirStatement>(), Pos = position };
         var field = new CirField { Name = "F", Type = integer, Static = false, ReadOnly = false, InitOnly = false,
-            Vis = "private", Init = TemporaryCirExpression.FromNode(JsonNode.Parse("""{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":42}""")),
+            Vis = "private", Init = new CirConstant { Type = integer, Value = new AttributeArgument.Int32Value(42) },
             Constant = new AttributeArgument.Int32Value(42), Volatile = false, Const = false, Lateinit = false,
             Attrs = attributes, NullableFlags = new[] { 2 }, SuspendFnType = owner, Pos = position };
         var property = new CirProperty { Name = "P", Type = integer, Get = "get_P", GetSig = Array.Empty<TypeNode>(),
@@ -78,18 +78,18 @@ public static class DeclarationSelfTest
             Methods = new[] { method }, Properties = new[] { property }, Attrs = attributes, Mods = modifiers,
             Pos = position, InterfaceSlotRefs = new[] { slots }, ClrEvents = new[] { @event }, Underlying = integer,
             Entries = new[] { entry }, Params = new[] { parameter }, Ret = integer, RetAttrs = attributes };
-        using var file = new CirFileDeclaration { FileClass = "Facade", HasMain = false, Methods = [method],
+        var file = new CirFileDeclaration { FileClass = "Facade", HasMain = false, Methods = [method],
             Fields = [field], Types = [type], Properties = new[] { property }, AssemblyAttrs = attributes,
             Attrs = attributes, WellKnownRefs = new Dictionary<string, MemberRefNode> { ["physical"] = reference }, Pos = position };
         var json = DeclarationJson.Write(file);
-        using var read = DeclarationJson.Read(Encoding.UTF8.GetBytes(json));
+        var read = DeclarationJson.Read(Encoding.UTF8.GetBytes(json));
         if (DeclarationJson.Write(read) != json || !read.Methods[0].InlineBir.Value.SequenceEqual(method.InlineBir.Value)
-            || read.Methods[0].Body.Value.Element[0].GetProperty("k").GetString() != "return"
+            || read.Methods[0].Body.Value[0] is not CirReturn
             || read.Types[0].Ctors.Value[0].ThisArgs.IsNull != true)
             throw new Exception("CIR declaration roundtrip changed a physical fact or executable subtree");
         foreach (var kind in Enum.GetValues<CirTypeKind>())
         {
-            using var variant = DeclarationJson.Read(Encoding.UTF8.GetBytes(DeclarationJson.Write(file with { Types = [type with { Kind = kind }] })));
+            var variant = DeclarationJson.Read(Encoding.UTF8.GetBytes(DeclarationJson.Write(file with { Types = [type with { Kind = kind }] })));
             if (variant.Types[0].Kind != kind) throw new Exception("CIR declaration kind changed");
         }
         // Record schema coverage uses actual serialized values, not reflection over the declarations alone.
@@ -113,10 +113,10 @@ public static class DeclarationSelfTest
 
     static void Presence(CirFileDeclaration file, CirField field)
     {
-        using var sample = file with { Fields = [field with { Name = "absent", Init = default },
-            field with { Name = "null", Init = OptionalField<TemporaryCirExpression>.Null },
+        var sample = file with { Fields = [field with { Name = "absent", Init = default },
+            field with { Name = "null", Init = OptionalField<ICirExpression>.Null },
             field with { Name = "value", Init = field.Init }] };
-        using var read = DeclarationJson.Read(Encoding.UTF8.GetBytes(DeclarationJson.Write(sample)));
+        var read = DeclarationJson.Read(Encoding.UTF8.GetBytes(DeclarationJson.Write(sample)));
         if (read.Fields[0].Init.IsPresent || !read.Fields[1].Init.IsNull || !read.Fields[2].Init.HasValue)
             throw new Exception("CIR absent/null/value distinction changed");
         CheckNullFields(sample.Fields[1]);

@@ -9,7 +9,6 @@ using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
-using System.Text.Json;
 using DotKt.Toolchain;
 
 static class IlEmit
@@ -121,24 +120,20 @@ static class IlEmit
             }
             using var target = new TargetReferenceUniverse(compileRefs, runtimeRefs, targetRid, ridGraphPath);
             var files = new List<DotKt.Cir.CirFileDeclaration>();
-            try
-            {
-                foreach (var path in bir) files.Add(DotKt.Cir.DeclarationJson.ReadFile(path));
-                var assemblyOptions = assemblyOptionsPath == null ? null : SdkAssemblyOptions.Read(assemblyOptionsPath);
-                var versions = assemblyOptions?.Versions();
-                var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions);
-                var declarations = MergeByFileClass(files);
+            foreach (var path in bir) files.Add(DotKt.Cir.DeclarationJson.ReadFile(path));
+            var assemblyOptions = assemblyOptionsPath == null ? null : SdkAssemblyOptions.Read(assemblyOptionsPath);
+            var versions = assemblyOptions?.Versions();
+            var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions);
+            var declarations = MergeByFileClass(files);
+            new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
+                nativeResources, versions, jitDebugging, portablePdbPath: portablePdbPath,
+                deterministic: assemblyOptions?.Deterministic ?? false)
+                .EmitAssembly(declarations);
+            // Both images consume the same reusable typed graph.
+            if (referenceAssemblyPath != null)
                 new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
-                    nativeResources, versions, jitDebugging, portablePdbPath: portablePdbPath,
-                    deterministic: assemblyOptions?.Deterministic ?? false)
-                    .EmitAssembly(declarations);
-                // Reuse declaration signatures/metadata for the reference image; keep body adapters alive for both.
-                if (referenceAssemblyPath != null)
-                    new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
-                        versions: versions, referenceAssemblyPath: referenceAssemblyPath,
-                        deterministic: assemblyOptions?.Deterministic ?? false).EmitAssembly(declarations);
-            }
-            finally { foreach (var file in files) file.Dispose(); }
+                    versions: versions, referenceAssemblyPath: referenceAssemblyPath,
+                    deterministic: assemblyOptions?.Deterministic ?? false).EmitAssembly(declarations);
             return 0;
         }
         catch (Exception ex)
@@ -237,17 +232,6 @@ sealed partial class Emitter
     internal string CurrentDecl =>
         (_ctxPos != null ? _ctxPos + ": " : "")
         + (_ctxType ?? "?") + "." + (_ctxMethod ?? "?") + (_ctxNode != null ? " [" + _ctxNode + "]" : "");
-
-    // Extract the `File.kt:line` (or bare `File.kt`) from a decl's optional `pos` {f,l,c}; null when absent.
-    static string PosOf(JsonElement decl)
-    {
-        if (decl.ValueKind != JsonValueKind.Object || !decl.TryGetProperty("pos", out var pos) || pos.ValueKind != JsonValueKind.Object) return null;
-        if (!pos.TryGetProperty("f", out var f) || f.ValueKind != JsonValueKind.String) return null;
-        var file = Path.GetFileName(f.GetString());
-        if (pos.TryGetProperty("l", out var l) && l.ValueKind == JsonValueKind.Number && l.TryGetInt32(out var line) && line >= 0)
-            return file + ":" + line;
-        return file;
-    }
 
     static string PosOf(DotKt.Cir.CirSourcePosition position)
         => position == null ? null : Path.GetFileName(position.F)
