@@ -72,7 +72,7 @@ public abstract partial record TypeNode
             {
                 writer.WriteStartObject();
                 writer.WriteString("t", "tv");
-                if (node.Scope is not null && node.Scope is not ("type" or "method")) throw new ArgumentException();
+                if (node.Scope is not ("type" or "method")) throw new ArgumentException();
                 writer.WritePropertyName("scope");
                 writer.WriteStringValue(node.Scope);
                 if (node.I < 0) throw new ArgumentException();
@@ -92,7 +92,7 @@ public abstract partial record TypeNode
             {
                 writer.WriteStartObject();
                 writer.WriteString("t", "projection");
-                if (node.Variance is not null && node.Variance is not ("in" or "out")) throw new ArgumentException();
+                if (node.Variance is not ("in" or "out")) throw new ArgumentException();
                 writer.WritePropertyName("variance");
                 writer.WriteStringValue(node.Variance);
                 writer.WritePropertyName("of");
@@ -122,7 +122,7 @@ public abstract partial record TypeNode
                 }
                 if ((node.Clr) is { } value_clr)
                 {
-                    if (value_clr is not null && value_clr is not ("System.Func" or "System.Action" or "DotKt.Runtime.CompilerServices.KFunc" or "DotKt.Runtime.CompilerServices.KAction")) throw new ArgumentException();
+                    if (value_clr is not ("System.Func" or "System.Action" or "DotKt.Runtime.CompilerServices.KFunc" or "DotKt.Runtime.CompilerServices.KAction")) throw new ArgumentException();
                     writer.WritePropertyName("clr");
                     writer.WriteStringValue(value_clr);
                 }

@@ -3,8 +3,8 @@
 //
 // NORMATIVE: docs/bir-cir-spec.md §1 (the Type schema) + §4 (the shared helper API).
 // A Type is ALWAYS a JSON object with a `t` discriminator — there is NO bare-string type. Readers
-// dispatch(t); they NEVER split/scan a string. Structural data is generated from the schema; semantic helpers
-// and the JSON boundary live here.
+// dispatch(t); they NEVER split/scan a string. Structural data and streaming codecs are schema-generated;
+// semantic helpers and the temporary DOM adapters live here.
 //
 // It agrees with kotc.bir.TypeNode for BIR. The phase extensions are all bir2cir-authored CIR facts kotc
 // omits: Fn.Clr (the physical delegate family) and the three ECMA signature carriers Ptr, Array.Rank and
@@ -569,6 +569,16 @@ public static class TypeNodeSelfTest
         }
         CheckSchemaProperties(all.Select(sample => TypeNode.Write(sample.node)));
         CheckSchemaProperties(all.Select(sample => JsonNode.Parse(TypeNode.ToJson(sample.node))!));
+
+        // Required enum values must satisfy the current schema when encoded.
+        foreach (TypeNode malformed in new TypeNode[] {
+            new TypeNode.Projection(null!, new TypeNode.Star()), new TypeNode.Tv(null!, 0),
+        })
+        {
+            try { TypeNode.ToJson(malformed); }
+            catch (ArgumentException) { continue; }
+            throw new Exception("[C# TypeNode] writer emitted a null required enum");
+        }
 
         // Object order is not part of type identity, including nested values and classifier metadata.
         var reordered = TypeNode.Parse("""

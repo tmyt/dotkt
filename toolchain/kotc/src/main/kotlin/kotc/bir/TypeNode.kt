@@ -1,5 +1,5 @@
 // Generated from docs/bir-cir.schema.json by scripts/generate-ir-model.py.
-// Semantic helpers and JSON boundary encoding are maintained separately.
+// Structural model; the boundary codec is generated in TypeNodeJson.kt.
 package kotc.bir
 
 sealed class TypeNode {

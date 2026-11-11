@@ -104,11 +104,12 @@ def csharp_read_value(field, definitions):
         field.get("type", "string")]
 
 
-def csharp_constraints(field, expression):
+def csharp_constraints(field, expression, nullable=True):
     checks = []
     if "enum" in field:
         choices = " or ".join(json.dumps(value) for value in field["enum"])
-        checks.append(f"{expression} is not null && {expression} is not ({choices})")
+        predicate = f"{expression} is not ({choices})"
+        checks.append(f"{expression} is not null && {predicate}" if nullable else predicate)
     if "minimum" in field:
         checks.append(f'{expression} < {field["minimum"]}')
     if "maximum" in field:
@@ -182,7 +183,7 @@ def csharp_writer_body(definition, definitions, derived, indent):
             lines += [f"{indent}if (({expression}) is {condition} value_{key})", f"{indent}{{"]
             expression = f"value_{key}"
             field_indent += "    "
-        for check in csharp_constraints(field, expression):
+        for check in csharp_constraints(field, expression, nullable=False):
             lines.append(f"{field_indent}if ({check}) throw new ArgumentException();")
         lines += [f'{field_indent}writer.WritePropertyName("{key}");',
                   *csharp_write_value(field, expression, definitions, field_indent)]
@@ -320,7 +321,7 @@ def outputs(schema):
         csharp.append(f'        ("{name}", [{keys}]),')
     csharp += ["    ];", "}", ""]
     kotlin = ["// Generated from docs/bir-cir.schema.json by scripts/generate-ir-model.py.",
-              "// Semantic helpers and JSON boundary encoding are maintained separately.",
+              "// Structural model; the boundary codec is generated in TypeNodeJson.kt.",
               "package kotc.bir", "", "sealed class TypeNode {"]
     for definition in variants:
         if definition["x-dotkt-model"].get("kotlin", True):
