@@ -12,16 +12,19 @@ namespace DotKt.Bir;
 public static class LiteralText
 {
     public static JsonNode Encode(string text)
+        => RequiresCodeUnits(text) ? new JsonObject
+        {
+            ["encoding"] = "utf16",
+            ["units"] = new JsonArray(text.Select(c => (JsonNode?)JsonValue.Create((int)c)).ToArray()),
+        } : JsonValue.Create(text)!;
+
+    public static bool RequiresCodeUnits(string text)
     {
         for (int i = 0; i < text.Length; i++)
             if (char.IsSurrogate(text[i]) &&
                 (!char.IsHighSurrogate(text[i]) || i + 1 == text.Length || !char.IsLowSurrogate(text[++i])))
-                return new JsonObject
-                {
-                    ["encoding"] = "utf16",
-                    ["units"] = new JsonArray(text.Select(c => (JsonNode?)JsonValue.Create((int)c)).ToArray()),
-                };
-        return JsonValue.Create(text)!;
+                return true;
+        return false;
     }
 
     public static string Read(JsonElement value)
@@ -29,6 +32,13 @@ public static class LiteralText
         if (value.ValueKind == JsonValueKind.String) return value.GetString()!;
         if (value.GetProperty("encoding").GetString() != "utf16") throw new JsonException("Unknown literal text encoding");
         return new string(value.GetProperty("units").EnumerateArray().Select(u => (char)u.GetUInt16()).ToArray());
+    }
+
+    public static string Read(JsonNode value)
+    {
+        if (value is JsonValue text) return text.GetValue<string>();
+        if (value["encoding"]?.GetValue<string>() != "utf16") throw new JsonException("Unknown literal text encoding");
+        return new string(((JsonArray)value["units"]!).Select(unit => (char)checked((ushort)unit!.GetValue<int>())).ToArray());
     }
 
 }

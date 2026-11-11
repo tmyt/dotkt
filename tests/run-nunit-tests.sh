@@ -862,6 +862,7 @@ for proj in "${PROJECTS[@]}"; do
 			"$dir/bin/$CONFIGURATION/net10.0/InteropProducer.dll" "$interop_klib" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/ImportedEnumLiteralTests.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/ImportedEnumLiteralTests.cir.json" \
+			"$interop_dll" \
 			>"$ROOT/build/nunit-$name.imported-enum-literals.log" 2>&1; then
 			echo "  imported enum entries retain exact native declaration identities and physical bits"
 		else

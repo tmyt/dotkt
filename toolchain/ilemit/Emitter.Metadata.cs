@@ -7,8 +7,10 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Text.Json;
+using DotKt.Bir;
+using DotKt.Cir;
 
-// The BIR `attr`-node -> ECMA-335 custom-attribute blob path (BuildAttribute/TryAttribute/ConstArgValue) + parameter
+// Typed physical CIR metadata -> ECMA-335 custom-attribute blobs and parameter
 // metadata. #71 S2:
 // ilemit no longer GENERATES any Kotlin round-trip metadata — bir2cir (RoundtripMetadata) emits every [Kotlin*]/
 // [Nullable]/[NullableContext] as an ordinary CIR `attrs` entry (standard attrs resolve from the target BCL);
@@ -76,61 +78,42 @@ sealed partial class Emitter
     // skips it). kotc emits EVERY annotation verbatim (it is just metadata to the frontend); the CLR layer decides
     // what is encodable. The blob is encoded here instead of through CustomAttributeBuilder: CAB validates target-MLC
     // parameter Types against host-runtime argument Types, which would reintroduce the mixed-universe bug #336 removes.
-    EncodedAttribute? BuildAttribute(JsonElement a)
+    EncodedAttribute? BuildAttribute(AttributeApplication a)
     {
-        var attr = SlotName(a.GetProperty("attr"));   // `attr` is a structured `{t:fqn}` identity node (#48)
-        var args = a.GetProperty("args").EnumerateArray().Select(ConstArgValue).ToArray();
-        var namedArgs = a.TryGetProperty("namedArgs", out var named)
-            ? named.EnumerateArray().Select(item => new NamedAttributeArg(
-                item.GetProperty("kind").GetString() == "field",
-                item.GetProperty("name").GetString(),
-                ClrRef(item.GetProperty("type")),
-                ConstArgValue(item.GetProperty("value")))).ToArray()
+        var attr = (a.Attr as TypeNode.Fqn)?.Name ?? throw new InvalidOperationException("Invalid attribute type");
+        var args = a.Args.Select(ConstArgValue).ToArray();
+        var namedArgs = a.NamedArgs is { } named
+            ? named.Select(item => new NamedAttributeArg(
+                item.Kind == "field", item.Name, MapType(item.Type), ConstArgValue(item.Value))).ToArray()
             : Array.Empty<NamedAttributeArg>();
-        if (a.TryGetProperty("attrExternal", out var extF) && extF.GetBoolean())
+        if (a.AttrExternal == true)
         {
-            // An EXTERNAL .NET attribute (#54/#48): its type lives in a referenced assembly, not this one. The carried
-            // declared parameter vector must identify its constructor exactly; an ABI miss is not repaired by arity.
-            var at = a.TryGetProperty("attrAssembly", out var attrAssembly)
-                ? _target.ResolveType(attr, attrAssembly.GetString())
-                : ClrRef(attr);
-            var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s)).ToArray();
-            // An applied attribute is a call, and the constructor it calls is named like any other member.
-            // Selecting it from the declared argument vector was the last place a blob encoder chose a member.
-            if (PrimaryFromRef(a, "memberRef") is not ConstructorInfo nctor)
-                throw new InvalidOperationException(
-                    $"ilemit: applied attribute [{attr}] carries no resolved member reference. Every external "
-                    + "member arrives named; a node without one is an earlier-layer drop");
-            return TryAttribute(nctor, argTypes, args, namedArgs, attr);
+            var argTypes = a.ArgTypes.Select(MapType).ToArray();
+            if (PrimaryFromRef(a.MemberRef) is not ConstructorInfo constructor)
+                throw new InvalidOperationException($"Applied attribute [{attr}] has no resolved constructor");
+            return TryAttribute(constructor, argTypes, args, namedArgs, attr);
         }
-        // The attribute type must be emitted in THIS assembly (present in _types). A stdlib-only annotation that the app
-        // merely APPLIES — e.g. `@kotlin.OptIn(ExperimentalAtomicApi::class)` opting into an experimental stdlib API — is
-        // NOT defined here, so `_types[attr]` would KeyNotFound. Skip it (like an un-encodable attr): it is a compile-time
-        // opt-in marker with no need to survive into the app's IL.
         if (!_types.ContainsKey(attr))
         {
             Console.Error.WriteLine($"ilemit: skipping custom attribute [{attr}]: type not emitted in this assembly");
             return null;
         }
         var ti = _types[attr];
-        // Ensure the attribute type's ctors are defined even if this stamp runs before pass 3 reaches that type
-        // (a `@KotlinDefault` on an earlier type's parameter), then link the exact carried declaration signature.
         EnsureCtorsDefined(ti);
-        var declaredArgTypes = a.GetProperty("argTypes").EnumerateArray()
-            .Select(t => SigCanon(DotKt.Bir.TypeNode.Read(t))).ToArray();
+        var declaredArgTypes = a.ArgTypes.Select(SigCanon).ToArray();
         var hits = new List<(ConstructorInfo ctor, Type[] parameterTypes)>();
         for (int i = 0; i < ti.Ctors.Count; i++)
         {
             var ps = ti.CtorDefs[i].GetProperty("params");
             if (ps.GetArrayLength() != declaredArgTypes.Length) continue;
             var parameterNodes = ps.EnumerateArray().Select(p => p.GetProperty("type")).ToArray();
-            if (!parameterNodes.Select(t => SigCanon(DotKt.Bir.TypeNode.Read(t))).SequenceEqual(declaredArgTypes)) continue;
+            if (!parameterNodes.Select(t => SigCanon(TypeNode.Read(t))).SequenceEqual(declaredArgTypes)) continue;
             hits.Add((ti.Ctors[i], parameterNodes.Select(MapType).ToArray()));
         }
         if (hits.Count == 0)
-            return TryAttribute(null, Array.Empty<Type>(), args, namedArgs, attr); // existing policy: an unencodable source annotation is skipped
+            return TryAttribute(null, Array.Empty<Type>(), args, namedArgs, attr);
         if (hits.Count > 1)
-            throw new InvalidOperationException($"ilemit: attribute constructor descriptor {attr}{a.GetProperty("argTypes").GetRawText()} links {hits.Count} local declarations");
+            throw new InvalidOperationException($"Attribute constructor {attr}[{string.Join(",", declaredArgTypes)}] links {hits.Count} declarations");
         return TryAttribute(hits[0].ctor, hits[0].parameterTypes, args, namedArgs, attr);
     }
 
@@ -147,7 +130,7 @@ sealed partial class Emitter
             var an = SlotName(a.GetProperty("attr"));   // structured `{t:fqn}` identity node (#48)
             var anExternal = a.TryGetProperty("attrExternal", out var anExt) && anExt.GetBoolean();
             if (!anExternal && !_types.ContainsKey(an)) continue;
-            var encoded = BuildAttribute(a); if (encoded != null) set(encoded.Constructor, encoded.Blob);
+            var encoded = BuildAttribute(AttributeJson.Read(a)); if (encoded != null) set(encoded.Constructor, encoded.Blob);
         }
     }
 
@@ -367,52 +350,32 @@ sealed partial class Emitter
         else throw new ArgumentException("custom attribute string is too long");
     }
 
-    object ConstArgValue(JsonElement e)
+    object ConstArgValue(AttributeArgument value) => value switch
     {
-        // A `bytes` arg-value kind (base64) -> a real byte[] fixed argument (a codec extension, NOT Kotlin knowledge):
-        // bir2cir base64-encodes the carrier payloads ([KotlinInline]/[KotlinSuspendFunctionType] (version,byte[])) and
-        // the nested NullableAttribute(byte[]) form through this. Mutually exclusive with `value`/`type`; its byte[]
-        // runtime type drives BuildCab's exact-ctor pick above.
-        if (e.TryGetProperty("bytes", out var bb)) return Convert.FromBase64String(bb.GetString());
-        if (e.TryGetProperty("k", out var constantKind) && constantKind.GetString() == "classRef")
-            return ClrRef(e.GetProperty("type"));
-        if (e.TryGetProperty("k", out constantKind) && constantKind.GetString() == "newArray")
-            return e.GetProperty("elems").EnumerateArray().Select(ConstArgValue).ToArray();
-        // A CIR enum constant already carries the exact physical underlying type and value selected by bir2cir.
-        // Attribute blobs and Param constants encode that primitive value; ilemit does not recover it from an enum
-        // declaration, entry name, or field order.
-        if (e.TryGetProperty("k", out var kind) && kind.GetString() == "enumValue")
-        {
-            if (e.TryGetProperty("physicalValue", out var physical)
-                && e.TryGetProperty("underlying", out var underlying))
-                return EnumConstantValue(underlying.GetString(), physical.GetString());
-            return e.GetProperty("ordinal").GetInt32();
-        }
-        // Annotation arguments are always compile-time constants (const nodes).
-        if (!e.TryGetProperty("value", out var v)) return null;
-        var ty = e.TryGetProperty("type", out var tEl) ? PrimShorthandName(SlotName(tEl)) : null;
-        if (ty == "string" && v.ValueKind != JsonValueKind.Null) return DotKt.Bir.LiteralText.Read(v);
-        switch (v.ValueKind)
-        {
-            case JsonValueKind.String:
-                return v.GetString();
-            case JsonValueKind.True: return true;
-            case JsonValueKind.False: return false;
-            case JsonValueKind.Number:
-                return ty switch
-                {
-                    "char" => (char)v.GetUInt16(),
-                    "long" => (object)v.GetInt64(),
-                    "double" => v.GetDouble(),
-                    "float" => (float)v.GetDouble(),
-                    "short" => (short)v.GetInt32(),
-                    "sbyte" => (sbyte)v.GetInt32(),
-                    "byte" => (byte)v.GetInt32(),   // an unsigned byte arg (NullableAttribute/NullableContextAttribute)
-                    _ => v.GetInt32(),
-                };
-            default: return null;
-        }
-    }
+        AttributeArgument.NullValue => null,
+        AttributeArgument.UnencodableValue => null,
+        AttributeArgument.BooleanValue v => v.Value,
+        AttributeArgument.CharValue v => (char)v.Value,
+        AttributeArgument.Int8Value v => v.Value,
+        AttributeArgument.UInt8Value v => v.Value,
+        AttributeArgument.Int16Value v => v.Value,
+        AttributeArgument.UInt16Value v => v.Value,
+        AttributeArgument.Int32Value v => v.Value,
+        AttributeArgument.UInt32Value v => v.Value,
+        AttributeArgument.Int64Value v => v.Value,
+        AttributeArgument.UInt64Value v => v.Value,
+        AttributeArgument.Float32Value v => BitConverter.Int32BitsToSingle(v.Bits),
+        AttributeArgument.Float64Value v => BitConverter.Int64BitsToDouble(v.Bits),
+        AttributeArgument.TextValue v => v.Value,
+        AttributeArgument.Utf16Value v => new string(v.Units.Select(unit => (char)unit).ToArray()),
+        AttributeArgument.BytesValue v => v.Bytes,
+        AttributeArgument.TypeValue v => MapType(v.Type),
+        AttributeArgument.ArrayValue v => v.Elems.Select(ConstArgValue).ToArray(),
+        AttributeArgument.EnumValue { PhysicalValue: { } physical, Underlying: { } underlying } =>
+            EnumConstantValue(underlying, physical),
+        AttributeArgument.EnumValue v => v.Ordinal ?? throw new InvalidOperationException("Invalid enum constant"),
+        _ => throw new InvalidOperationException("Invalid metadata value"),
+    };
 
     // Emit parameter NAMES into the metadata (DefineParameter is 1-based; 0 = return). ilemit otherwise defines
     // methods by type only, so the names are lost — and dll2klib falls back to arg0/arg1, which blocks named-argument
@@ -442,7 +405,7 @@ sealed partial class Emitter
             if (vararg) SetAttribute(pb.SetCustomAttribute,
                 // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 Bcl("System.ParamArrayAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
-            if (hasDefault) pb.SetConstant(ConstArgValue(dflt));
+            if (hasDefault) pb.SetConstant(ConstArgValue(AttributeJson.ReadArgument(dflt)));
             // Apply each param attribute whose type this assembly can encode (an in-assembly emitted type, or an
             // `attrExternal`-flagged referenced type); an attr referencing a type not in `_types` is skipped (BuildAttribute
             // would KeyNotFound) — the same "the CLR layer decides what is encodable" policy the method-level path uses.
@@ -452,7 +415,7 @@ sealed partial class Emitter
                     var an = SlotName(a.GetProperty("attr"));   // structured `{t:fqn}` identity node (#48)
                     var anExternal = a.TryGetProperty("attrExternal", out var anExt) && anExt.GetBoolean();
                     if (!anExternal && !_types.ContainsKey(an)) continue;
-                    var encoded = BuildAttribute(a); if (encoded != null) pb.SetCustomAttribute(encoded.Constructor, encoded.Blob);
+                    var encoded = BuildAttribute(AttributeJson.Read(a)); if (encoded != null) pb.SetCustomAttribute(encoded.Constructor, encoded.Blob);
                 }
             i++;
         }
