@@ -30,8 +30,7 @@ static class GenericSelfInstantiation
         var names = new List<string>();
         if (tps is JsonArray a)
             foreach (var t in a)
-                if (t is JsonValue v && v.TryGetValue<string>(out var s)) names.Add(s);
-                else if (t is JsonObject o && Str(o["name"]) is string n) names.Add(n);
+                names.Add(t["name"].GetValue<string>());
         return names;
     }
 

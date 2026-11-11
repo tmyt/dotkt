@@ -468,7 +468,7 @@ static partial class StringCharSequenceBridge
             ["body"] = body,
         };
         if (typeArgs.Count > 0)
-            synth["typeParams"] = new JsonArray(typeArgs.Select((_, i) => (JsonNode)JsonValue.Create("T" + i)).ToArray());
+            synth["typeParams"] = new JsonArray(typeArgs.Select((_, i) => (JsonNode)new TypeParameterDeclaration("T" + i).ToDom()).ToArray());
 
         var closure = new JsonObject
         {

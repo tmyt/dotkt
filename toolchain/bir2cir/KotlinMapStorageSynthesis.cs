@@ -240,7 +240,7 @@ static partial class KotlinMapStorageSynthesis
         AppendNativeFaces(refs, declarationOnly, methods);
         return new JsonObject {
             ["name"] = CarrierName, ["kind"] = "interface", ["vis"] = "public", ["generated"] = true,
-            ["typeParams"] = new JsonArray("K", "V"), ["base"] = null,
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "K" }, new JsonObject { ["name"] = "V" }), ["base"] = null,
             ["fields"] = new JsonArray(), ["ctors"] = new JsonArray(), ["methods"] = methods,
             ["interfaces"] = new JsonArray(TypeJson.Write(dictionary),
                 TypeJson.Write(F("System.Collections.Generic.IReadOnlyDictionary", K, V)),

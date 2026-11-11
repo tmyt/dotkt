@@ -1,7 +1,7 @@
 {
   "fileClass": "CollisionOwnerKt", "hasMain": false, "fields": [], "methods": [],
   "types": [{
-    "name": "CollisionBox", "kind": "class", "typeParams": ["T"], "base": null, "interfaces": [],
+    "name": "CollisionBox", "kind": "class", "typeParams": [{"name":"T"}], "base": null, "interfaces": [],
     "fields": [], "ctors": [],
     "methods": [{
       "name": "value", "static": true, "kotlinStatic": true, "override": false, "virtual": false,

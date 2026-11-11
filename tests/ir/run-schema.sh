@@ -32,7 +32,8 @@ PY="${PYTHON:-python3}"
 "$PY" tests/ir/test-typealias-schema.py || exit 1
 "$PY" tests/ir/test-generic-receiver-schema.py || exit 1
 "$PY" tests/ir/test-valueblock-schema.py || exit 1
-./gradlew -q :kotc:test --tests kotc.bir.TypeNodeTest --tests kotc.bir.SourceMetadataTest || exit 1
+./gradlew -q :kotc:test --tests kotc.bir.TypeNodeTest --tests kotc.bir.SourceMetadataTest \
+    --tests kotc.bir.TypeParameterDeclarationTest || exit 1
 "$PY" tests/ir/check-type-model-coverage.py || exit 1
 "$PY" tests/ir/check-source-metadata-coverage.py || exit 1
 
@@ -75,7 +76,8 @@ fi
 if ! dotnet run --project tests/ir/type-codec/Probe.csproj --no-launch-profile \
     -p:DotKtBir2CirPath="$ROOT/$BIR2CIR_DLL" -p:DotKtDll2KlibDirectory="$ROOT/$DLL2KLIB_DIR" -- \
     "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeNodeTest.xml" \
-    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.SourceMetadataTest.xml"; then
+    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.SourceMetadataTest.xml" \
+    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeParameterDeclarationTest.xml"; then
   echo "SCHEMA GATE: RED (cross-language type/source metadata codecs)"; exit 1
 fi
 

@@ -346,7 +346,7 @@ sealed class NullableWitnessDemand
                     }
                     if (kind == "newSuspendLambda")
                     {
-                        WalkOperands(obj, "body", "typeArgs", "typeParams", "typeParamDecls", "funcType",
+                        WalkOperands(obj, "body", "typeArgs", "typeParams", "funcType",
                             SuspendLambdaLowering.SplicedDeclarationFrameKey);
                         var nested = Nested(obj["body"] ?? new JsonArray());
                         if (nested.Count == 0) return;

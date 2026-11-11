@@ -7,7 +7,7 @@
     {
       "name": "ReferenceGenericStaticProbe",
       "kind": "class",
-      "typeParams": ["T"],
+      "typeParams": [{"name":"T"}],
       "base": null,
       "interfaces": [],
       "fields": [

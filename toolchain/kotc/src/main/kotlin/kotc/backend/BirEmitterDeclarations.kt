@@ -1,6 +1,7 @@
 package kotc.backend
 
 import kotc.bir.TypeNode
+import kotc.bir.TypeParameterDeclaration
 import org.jetbrains.kotlin.backend.common.collectTailRecursionCalls
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
@@ -2003,11 +2004,9 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// bare names dropped every constraint, and a member that needs one (`v.get()` on a `T : Box<U>` capture) then has no
 	// constraint to dispatch through — a silently wrong signature, not a diagnostic. Their bounds render through the
 	// typeArgSubst installed above, so a bound naming another captured param resolves in THIS class's space.
-	val ownTpsJson = typeParamsJson(ownTps).removePrefix(""","typeParams":[""").removeSuffix("]")
-	val extraJson = typeParamsJson(capturedTpParams.toList())
-		.removePrefix(""","typeParams":[""").removeSuffix("]")
-	val tpEntries = listOf(ownTpsJson, extraJson).filter { it.isNotEmpty() }.joinToString(",")
-	val tpJson = if (tpEntries.isEmpty()) "" else ""","typeParams":[$tpEntries]"""
+	val typeParameters = typeParameterDeclarations(ownTps) + typeParameterDeclarations(capturedTpParams.toList())
+	val tpJson = if (typeParameters.isEmpty()) "" else
+		""","typeParams":${typeParameters.joinToString(",", "[", "]") { it.toJson() }}"""
 	// #68: a compiler-generated synthetic (a lifted anon-object / local class) carries `generated:true` — a STRUCTURAL
 	// fact (no `<>` CLR-unspeakability marker; that is ilemit's concern). ilemit reads it to stamp [CompilerGenerated].
 	val generatedFlag = if (generated) ""","generated":true""" else ""
@@ -2376,12 +2375,14 @@ internal fun BirEmitter.isInlineWithLambda(fn: IrSimpleFunction): Boolean =
 // source declarations; their `ClrAwaitBridge` fact is copied onto the suspend call for bir2cir.
 
 /**
- * `,"typeParams":[...]` for a generic class/interface/method (empty when non-generic). An unconstrained param
- * is a bare name string `"T"`; a bounded one (`<T : Comparable<T>>`) is `{"name":"T","constraints":[...]}`
- * (each constraint a BIR type). Only the implicit nullable top bound `kotlin.Any?` is omitted.
+ * The source declaration's generic frame. Every slot is a declaration record;
+ * references use positional TypeNode.Tv values rather than declaration names.
+ * Only the implicit nullable top bound `kotlin.Any?` is omitted.
  */
-internal fun BirEmitter.typeParamDeclarationsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String {
-	val entries = tps.joinToString(",") { tp ->
+internal fun BirEmitter.typeParameterDeclarations(
+	tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>,
+): List<TypeParameterDeclaration> =
+	tps.map { tp ->
 		// kotc emits the PURE-KOTLIN bound in EVERY build (#66): the `kotlin.Comparable` upper-bound DROP is a
 		// SUBSTITUTION CONSEQUENCE (a substituted BCL primitive has no kotlin.Comparable bound), so it belongs to
 		// bir2cir (StdlibSubstituteTypeParams, rt-build only), NOT here. Non-null Any is a real source
@@ -2401,19 +2402,16 @@ internal fun BirEmitter.typeParamDeclarationsJson(tps: List<org.jetbrains.kotlin
 			org.jetbrains.kotlin.types.Variance.IN_VARIANCE -> "in"
 			else -> null
 		}
-		val reified = tp.isReified
-		if (bounds.isEmpty() && variance == null && !reified) str(tp.name.asString())
-		else {
-			val parts = ArrayList<String>()
-			parts.add(""""name":${str(tp.name.asString())}""")
-			if (bounds.isNotEmpty()) parts.add(""""constraints":[${bounds.joinToString(",") { str(it) }}]""")
-			if (variance != null) parts.add(""""variance":${str(variance)}""")
-			if (reified) parts.add(""""reified":true""")
-			"{${parts.joinToString(",")}}"
-		}
+		TypeParameterDeclaration(
+			name = tp.name.asString(),
+			reified = true.takeIf { tp.isReified },
+			variance = variance,
+			constraints = bounds.takeIf { it.isNotEmpty() },
+		)
 	}
-	return "[$entries]"
-}
+
+internal fun BirEmitter.typeParamDeclarationsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String =
+	typeParameterDeclarations(tps).joinToString(",", "[", "]") { it.toJson() }
 
 internal fun BirEmitter.typeParamsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String =
 	if (tps.isEmpty()) "" else ""","typeParams":${typeParamDeclarationsJson(tps)}"""

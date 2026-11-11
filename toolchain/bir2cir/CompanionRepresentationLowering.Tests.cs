@@ -12,7 +12,7 @@ static class CompanionRepresentationLoweringTests
           {"name":"Probe.Owner"},
           {"name":"Probe.Owner.<companion:Named>",
            "kotlinCompanion":{"owner":"Probe.Owner","name":"Named","visibility":"public"}},
-          {"name":"Probe.Generic","typeParams":["T"]},
+          {"name":"Probe.Generic","typeParams":[{"name":"T"}]},
           {"name":"Probe.Generic.<companion:Named>",
            "kotlinCompanion":{"owner":"Probe.Generic","name":"Named","visibility":"internal"}}]}
         """)!;
@@ -119,7 +119,7 @@ static class CompanionRepresentationLoweringTests
           {"name":"Outer.<companion:Named>.Child","semanticOwner":"Outer.<companion:Named>"},
           {"name":"Outer.<companion:Named>",
            "kotlinCompanion":{"owner":"Outer","name":"Named","visibility":"public"}},
-          {"name":"Outer","typeParams":["T"]}],
+          {"name":"Outer","typeParams":[{"name":"T"}]}],
          "body":[{"k":"companionValue","companionType":{"t":"fqn","name":"Outer.<companion:Named>.Child.<companion:Named>"}}]}
         """)!;
         var local = CompanionRepresentationLowering.Apply(new[] { root });

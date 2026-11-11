@@ -2269,7 +2269,7 @@ static class KotlinOverrideSlotBridge
                 type => type.Name == "System.Int32", false))
             throw new InvalidOperationException("Nullable bridge confused reference annotations with CLR nullable values");
         var slotMethod = JsonNode.Parse("""
-          {"typeParams":[{"name":"R","constraints":[{"t":"tv","scope":"type","i":0}]},"P"]}
+          {"typeParams":[{"name":"R","constraints":[{"t":"tv","scope":"type","i":0}]},{"name":"P"}]}
           """).AsObject();
         var implementation = JsonNode.Parse("""
           {"typeParams":[{"name":"R","constraints":[{"t":"fqn","name":"Animal"}]},
@@ -2286,7 +2286,7 @@ static class KotlinOverrideSlotBridge
             || implementation["typeParams"][1]["constraints"].AsArray().Count != 1)
             throw new InvalidOperationException("Override source selection consumed or mutated a physical companion constraint");
         OwnerConstrainedMethodLowering.RecordOverride(implementation, slotMethod["typeParams"].AsArray(),
-            ownerArguments, new JsonArray("T"));
+            ownerArguments, new JsonArray(new TypeParameterDeclaration("T").ToDom()));
         var overrideBounds = JsonNode.Parse(implementation[OwnerConstrainedMethodLowering.OverrideBoundsKey].GetValue<string>()).AsArray();
         if (overrideBounds.Count != 2
             || !overrideBounds.OfType<JsonObject>().Select(row => row["index"].GetValue<int>()).SequenceEqual(new[] { 0, 1 }))

@@ -154,7 +154,7 @@ static class ComparableRepresentationLowering
             ["name"] = name, [DeclarationIdentityBinding.Key] = identity,
             ["static"] = true, ["vis"] = "public", ["generated"] = true,
             ["virtual"] = false, ["override"] = false, ["abstract"] = false,
-            ["typeParams"] = new JsonArray("T"), ["ret"] = TypeJson.Write(Result),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }), ["ret"] = TypeJson.Write(Result),
             ["attrs"] = new JsonArray(new JsonObject {
                 ["attr"] = TypeJson.Fqn("System.Runtime.CompilerServices.CompilerGeneratedAttribute"), ["args"] = new JsonArray(),
             }),

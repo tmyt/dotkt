@@ -199,7 +199,7 @@ static class SuspendLambdaLowering
         // Bottom-up: lower any nested suspend lambdas inside THIS lambda's body first (their SMs + `new`
         // replacements land before this lambda's SM is built over the already-lowered body).
         var body = node["body"] as JsonArray ?? new JsonArray();
-        var lambdaParameters = node["typeParamDecls"] is JsonArray declarations
+        var lambdaParameters = node["typeParams"] is JsonArray declarations
             ? new JsonArray(declarations.Skip(ownerTypeParamCount).Select(p => p?.DeepClone()).ToArray()) : null;
         Walk(body, ctx, owner, newTypes, counter, baseIsLocal, outerSelf, lambdaParameters);
 
@@ -216,7 +216,7 @@ static class SuspendLambdaLowering
         var resultType = TypeJson.Read(node["suspendRet"]);
         var funcType = TypeJson.Read(node["funcType"]) as TypeNode.Fn;
         var typeArgs = ReadStrings(node["typeParams"]);
-        var typeParamDecls = node["typeParamDecls"] as JsonArray;
+        var typeParamDecls = node["typeParams"] as JsonArray;
         var ctorTypeArgs = node["typeArgs"] as JsonArray;
         var smName = ctx + "_lambda" + (++counter[0]) + "$sm";
 
@@ -231,7 +231,6 @@ static class SuspendLambdaLowering
             smName, arity, captures, outerCaptureName, lambdaParams, body, resultType, typeArgs, typeParamDecls,
             ownerTypeParamCount, effBaseIsLocal,
             _calleeRet, restricted, _refs);
-        node.Remove("typeParamDecls");
         if (sm == null) return node;   // arity < 0 (never) -> keep the node; arbitrary N is now expressible
 
         sm["semanticOwner"] = owner;
@@ -320,11 +319,10 @@ static class SuspendLambdaLowering
         // still carry the original correspondence directly on their construction edge.
         var declarationArgs = node[SplicedDeclarationFrameKey] as JsonArray ?? oldArgs;
         var oldNames = node["typeParams"] as JsonArray ?? new JsonArray();
-        var oldDecls = node["typeParamDecls"] as JsonArray;
         var denseFrame = Str(node["typeFrame"]) == "dense";
         // Leave a malformed cardinality untouched: BuildLambda's established construction-channel check below owns
         // that refusal and its stable diagnostic. This helper only normalizes well-formed semantic input.
-        if (oldArgs.Count != oldNames.Count || (oldDecls != null && oldDecls.Count != oldNames.Count))
+        if (oldArgs.Count != oldNames.Count)
             return 0;
 
         static bool IsOwnerSlot(JsonNode arg, int slot) =>
@@ -333,12 +331,10 @@ static class SuspendLambdaLowering
         static string ParamName(JsonNode parameter) => parameter switch
         {
             JsonObject declaration => Str(declaration["name"]),
-            JsonValue value when value.TryGetValue<string>(out var name) => name,
             _ => null,
         };
 
         var consumed = new HashSet<int>();
-        var names = new JsonArray();
         var declarations = new JsonArray();
         var args = new JsonArray();
         var frameSlots = new Dictionary<(string Scope, int Index), TypeNode>();
@@ -357,14 +353,12 @@ static class SuspendLambdaLowering
                 .FirstOrDefault(index => !consumed.Contains(index) && IsOwnerSlot(oldArgs[index], slot), -1);
             var ownerDeclaration = ownerParams[slot]
                 ?? throw new InvalidOperationException($"generic owner '{owner}' has a missing slot {slot}");
-            var nameNode = existing >= 0 ? oldNames[existing] : JsonValue.Create(ParamName(ownerDeclaration));
             // An exact semantic-owner slot is constrained by the owner declaration, regardless of how this carrier
             // was materialized. InlineSplice can provide only a dense placeholder name for an existing slot; using
             // that placeholder as the declaration silently drops `T : ...` and makes any Owner<!0> field invalid.
             var declarationNode = ownerDeclaration;
-            if (ParamName(nameNode) is null || ParamName(declarationNode) is null)
+            if (ParamName(declarationNode) is null)
                 throw new InvalidOperationException($"generic owner '{owner}' has an unnamed slot {slot}");
-            names.Add(nameNode?.DeepClone());
             declarations.Add(declarationNode?.DeepClone());
             args.Add(TypeJson.Write(new TypeNode.Tv("type", slot)));
             callerSlots[("type", slot)] = new TypeNode.Tv("type", slot);
@@ -379,8 +373,7 @@ static class SuspendLambdaLowering
         for (var index = 0; index < oldArgs.Count; index++)
             if (!consumed.Contains(index))
             {
-                names.Add(oldNames[index]?.DeepClone());
-                var declaration = (oldDecls?[index] ?? oldNames[index])?.DeepClone();
+                var declaration = oldNames[index]?.DeepClone();
                 // This construction edge selects the caller's physical method parameter. The lambda's saved
                 // semantic declaration predates bound erasure and must not impose a stronger CLR constraint.
                 // Keep the erased dispatch facts too, for member uses inside the eventual state machine.
@@ -388,10 +381,7 @@ static class SuspendLambdaLowering
                     && methodParameters != null && methodVariable.I < methodParameters.Count)
                 {
                     declaration = methodParameters[methodVariable.I]?.DeepClone();
-                    if (declaration is JsonObject declared)
-                        declared["name"] = ParamName(oldNames[index]);
-                    else
-                        declaration = oldNames[index]?.DeepClone();
+                    declaration["name"] = ParamName(oldNames[index]);
                     callerDeclarations.Add(declarations.Count);
                 }
                 declarations.Add(declaration);
@@ -425,7 +415,6 @@ static class SuspendLambdaLowering
                     if (!callerSlots.ContainsKey(("method", dependency)))
                     {
                         var parameter = methodParameters[dependency];
-                        names.Add(JsonValue.Create(ParamName(parameter)));
                         callerDeclarations.Add(declarations.Count);
                         declarations.Add(parameter.DeepClone());
                         args.Add(TypeJson.Write(new TypeNode.Tv("method", dependency)));
@@ -496,8 +485,7 @@ static class SuspendLambdaLowering
             selectedFrameSlots = callerDeclarations.Contains(index) ? callerSlots : frameSlots;
             RewriteTypes(declarations[index]);
         }
-        node["typeParams"] = names;
-        node["typeParamDecls"] = declarations;
+        node["typeParams"] = declarations;
         node["typeArgs"] = args;
         if (constructionValues != null) node["capValues"] = constructionValues;
         if (constructionFunctionType != null) node["funcType"] = constructionFunctionType;
@@ -556,8 +544,7 @@ static class SuspendLambdaLowering
         var list = new List<string>();
         if (arr is JsonArray a)
             foreach (var it in a)
-                if (it is JsonValue v && v.TryGetValue<string>(out var s)) list.Add(s);
-                else if (it is JsonObject o && Str(o["name"]) is string n) list.Add(n);
+                list.Add(it["name"].GetValue<string>());
         return list;
     }
 }

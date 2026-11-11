@@ -19,3 +19,4 @@ foreach (var line in report.Descendants("system-out").SelectMany(output => outpu
 if (count == 0) throw new Exception("No actual Kotlin type samples were exercised");
 Console.WriteLine($"Kotlin -> C# streaming type codec: {count} actual samples passed");
 SourceMetadataTests.Run(args[1]);
+TypeParameterTests.Run(args[2]);

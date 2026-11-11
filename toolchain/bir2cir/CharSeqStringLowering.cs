@@ -273,7 +273,7 @@ static class CharSeqStringLowering
             case "newSuspendLambda":
                 // This carrier becomes a state-machine declaration after this pass. Its generic
                 // bounds must use the same physical representation as ordinary declarations.
-                LowerConstraints(node["typeParamDecls"] as JsonArray);
+                LowerConstraints(node["typeParams"] as JsonArray);
                 return node;
             case "var":
                 if (IsCharSeqSlot(node["type"]))

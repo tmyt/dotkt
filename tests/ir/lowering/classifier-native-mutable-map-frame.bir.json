@@ -4,7 +4,7 @@
   "methods": [
     {
       "name": "permuted", "declarationId": "mutable-native-permuted", "static": true,
-      "typeParams": ["K", "V"],
+      "typeParams": [{"name":"K"}, {"name":"V"}],
       "params": [{"name": "value", "type": {"t": "fqn", "name": "kotlin.Any"}}],
       "ret": {"t": "fqn", "name": "kotlin.collections.MutableMap", "args": [
         {"t": "tv", "scope": "method", "i": 1}, {"t": "tv", "scope": "method", "i": 0}

@@ -37,7 +37,7 @@ static partial class CirDeclarationProjection
         var runtimeMethod = Method();
         runtimeMethod[DeclarationIdentityBinding.Key] = "probe:runtime";
         runtimeMethod["declarationSourceName"] = "M";
-        runtimeMethod["typeParams"] = new JsonArray("T", "N");
+        runtimeMethod["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "N" });
         runtimeMethod[ReifiedNullabilityWitnessLowering.SemanticIndicesKey] = new JsonArray(0);
         runtimeMethod[ReifiedNullabilityWitnessLowering.WitnessIndicesKey] = new JsonArray(1);
         runtimeMethod[FBoundStarProjectionErasure.InnerConstructorFactoryKey] = new JsonObject {

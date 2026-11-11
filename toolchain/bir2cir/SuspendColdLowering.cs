@@ -798,7 +798,7 @@ static partial class SuspendColdLowering
             ["kind"] = "class",
             ["abstract"] = false,
             ["vis"] = "internal",
-            ["typeParams"] = new JsonArray("T"),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             ["base"] = null,
             ["interfaces"] = new JsonArray(Tw(new TypeNode.Fqn(
                 "kotlin.coroutines.Continuation", new TypeNode[] { tv }))),
@@ -1488,9 +1488,7 @@ static partial class SuspendColdLowering
         {
             _isLambda = true;
             _restrictedBase = restricted;
-            var allTypeParamDecls = typeParamDecls?.DeepClone() as JsonArray
-                ?? new JsonArray((typeParams ?? new List<string>())
-                    .Select(n => (JsonNode)JsonValue.Create(n)).ToArray());
+            var allTypeParamDecls = typeParamDecls?.DeepClone() as JsonArray ?? new JsonArray();
             if (ownerTypeParamCount < 0 || ownerTypeParamCount > allTypeParamDecls.Count)
                 throw new InvalidOperationException(
                     $"suspend lambda '{smName}' declares {allTypeParamDecls.Count} generic slot(s) but " +
@@ -1537,8 +1535,7 @@ static partial class SuspendColdLowering
             var names = new List<string>();
             if (tps is JsonArray a)
                 foreach (var t in a)
-                    if (t is JsonValue v && v.TryGetValue<string>(out var s)) names.Add(s);
-                    else if (t is JsonObject o && Str(o["name"]) is string n) names.Add(n);
+                    names.Add(t["name"].GetValue<string>());
             return names;
         }
 

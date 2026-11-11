@@ -16,7 +16,7 @@
         {
           "name": "hiddenGeneric",
           "declarationId": "lowering:unsafe-accessor:hiddenGeneric",
-          "typeParams": ["T"],
+          "typeParams": [{"name":"T"}],
           "static": false,
           "override": false,
           "virtual": false,
@@ -68,7 +68,7 @@
               { "k": "const", "type": { "t": "fqn", "name": "kotlin.Boolean" }, "value": true }
             ],
             "memberVisibility": "protected",
-            "memberMethodTypeParams": ["T"],
+            "memberMethodTypeParams": [{"name":"T"}],
             "memberSignature": [{ "t": "tv", "scope": "method", "i": 0 }],
             "memberReturnType": { "t": "fqn", "name": "kotlin.Unit" }
           }

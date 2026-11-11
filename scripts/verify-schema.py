@@ -292,22 +292,11 @@ CLR_OWNER_KINDS = {
     "clrPropGet", "clrPropSet", "clrStaticField", "clrEventGet", "clrEventAdd", "clrEventRemove", "constrainedCall",
     "clrEventRaise",   # §4.3: the raise handle read — its `type` is the receiver's owner FQN (BIR-only; bir2cir -> callInstance)
 }
-# Keys that legitimately hold an ARRAY containing bare strings: only the type-PARAMETER
-# name-declaration shorthand (typeParams may be ["T"] instead of [{name:"T"}]). A type-param
-# DECLARATION names a variable; references to it use positional tv{scope,i} nodes (§1), so this
-# is a decl-name list, NOT a type-usage slot. bir2cir's internal resolved-member parameter vector is structured
-# TypeNode data and never crosses either serialized phase boundary; the retired lossy `shapes` island is gone.
+# String arrays carry explicit flags or roles. Generic declarations are records;
+# references to their slots are TypeNode.Tv values, not declaration names.
 STRARR_OK = {
-    "typeParams",
-    "sharedCellTypeParams",                    # inline capture cell declaration's independent generic frame.
-    "typeParamDecls",                          # newSuspendLambda's full declaration-form copy of typeParams;
-                                                # bare names are the same declaration shorthand, not type usages.
-    "capturedTypeParams",                       # #275: enclosing CLR generic-slot declaration names copied onto
-                                                # the nested companion carrier, not Type usages.
     "specialConstraints",                      # CIR-only CLR generic-param flags (class/struct/new/allows-ref-struct), copied from a
                                                 # referenced receiver onto a C# 14 extension grouping/wrapper.
-    "memberOwnerTypeParams",                    # #225: declaration-form owner frame carried on a member edge.
-    "memberMethodTypeParams",                   # #225: declaration-form method frame carried on a member edge.
     "kotlinAccessors",                          # #397: BIR-only Property declaration roles (get/set), not Type usages.
     "pseudoFields",                             # CIR pinvoke: frozen DllImport pseudo-attribute field-name vector.
 }
@@ -1181,7 +1170,7 @@ class V:
                                         "declarationSignatureAllocation"):
                     if declaration_key in o:
                         self.err(f, path, f"{declaration_key} is a BIR declaration-identity fact and must be consumed before CIR")
-                for ownership_key in ("semanticOwner", "staticSemanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):
+                for ownership_key in ("semanticOwner", "staticSemanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "lexicalOwnerTypeParamCount"):
                     if ownership_key in o:
                         self.err(f, path, f"{ownership_key} is a BIR ownership fact and must be consumed before CIR")
                 for member_fact in ("memberVisibility", "memberType", "memberOwnerTypeParams",

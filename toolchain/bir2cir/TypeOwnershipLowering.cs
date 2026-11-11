@@ -664,9 +664,7 @@ static class TypeOwnershipLowering
 
             var captured = new JsonArray();
             var usedNames = typeParams
-                .Select(parameter => parameter is JsonObject declaration
-                    ? Str(declaration["name"])
-                    : Str(parameter))
+                .Select(parameter => Str(parameter["name"]))
                 .Where(name => name != null)
                 .ToHashSet(StringComparer.Ordinal);
             for (var i = 0; i < count; i++)
@@ -679,8 +677,7 @@ static class TypeOwnershipLowering
                 // compiler-owned physical name. dll2klib drops these leading slots via KotlinInnerAttribute.
                 var physicalName = $"dotkt$outer{i}";
                 while (!usedNames.Add(physicalName)) physicalName += "$";
-                if (parameter is JsonObject declaration) declaration["name"] = physicalName;
-                else parameter = JsonValue.Create(physicalName);
+                parameter["name"] = physicalName;
                 captured.Add(parameter);
             }
             for (var i = 0; i < count; i++)

@@ -731,7 +731,7 @@ static class DeclarationIdentityBinding
         var inherited = new JsonObject {
             ["name"] = "inherited", ["virtual"] = true,
             ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),
-            ["typeParams"] = new JsonArray("T", "S"),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "S" }),
             [NullableGenericErasure.MethodTypeParameterBoundsPre] = "{\"bounds\":{\"0\":[]}}",
             [NullableRepresentationTypes.MethodFrameKey] = new NullableRepresentationFrame(1,
                 Array.Empty<int>(), storageIndices: new[] { 0 }).ToJson().ToJsonString(),
