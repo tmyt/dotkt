@@ -456,6 +456,30 @@ public static class BirCarrier
 {
     public const string JsonV1 = "bir-json/1";
 
+    public delegate T JsonBodyReader<T>(ref Utf8JsonReader reader);
+
+    public static byte[] EncodeBody<T>(string version, T body, Action<Utf8JsonWriter, T> write)
+    {
+        if (version != JsonV1) throw new NotSupportedException($"unknown carrier version `{version}`");
+        using var output = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(output, new JsonWriterOptions { MaxDepth = BirJson.MaxDepth }))
+            write(writer, body);
+        return output.ToArray();
+    }
+
+    public static T DecodeBody<T>(string version, byte[] content, JsonBodyReader<T> read)
+    {
+        if (version != JsonV1) throw new NotSupportedException($"unknown carrier version `{version}`");
+        var reader = new Utf8JsonReader(content, new JsonReaderOptions {
+            MaxDepth = BirJson.DocOptions.MaxDepth, CommentHandling = BirJson.DocOptions.CommentHandling,
+            AllowTrailingCommas = BirJson.DocOptions.AllowTrailingCommas,
+        });
+        if (!reader.Read()) throw new FormatException();
+        var body = read(ref reader);
+        if (reader.Read()) throw new FormatException();
+        return body;
+    }
+
     public static byte[] EncodeBody(string version, JsonNode body)
     {
         return version switch

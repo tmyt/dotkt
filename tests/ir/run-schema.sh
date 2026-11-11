@@ -60,17 +60,23 @@ done
 # the reader that must honour it are checked together rather than one being assumed from the other.
 echo "== verify-schema: shared BIR/CIR codec self-test (toolchain/bir-common) =="
 BIR2CIR_DLL="build/bir2cir-bin/bir2cir.dll"
+DLL2KLIB_DIR="build/dll2klib-bin"
 if [ ! -f "$BIR2CIR_DLL" ]; then
   echo "  SELFTEST FAIL  $BIR2CIR_DLL is missing — build the toolchain first (make bir2cir)"
   echo "SCHEMA GATE: RED (shared codec self-test)"; exit 1
+fi
+if [ ! -f "$DLL2KLIB_DIR/dll2klib.dll" ]; then
+  echo "  SELFTEST FAIL  $DLL2KLIB_DIR/dll2klib.dll is missing — build the toolchain first (make dll2klib)"
+  echo "SCHEMA GATE: RED (shared source metadata codec)"; exit 1
 fi
 if ! dotnet "$BIR2CIR_DLL" --selftest; then
   echo "SCHEMA GATE: RED (shared codec self-test)"; exit 1
 fi
 if ! dotnet run --project tests/ir/type-codec/Probe.csproj --no-launch-profile \
-    -p:DotKtBir2CirPath="$ROOT/$BIR2CIR_DLL" -- \
-    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeNodeTest.xml"; then
-  echo "SCHEMA GATE: RED (cross-language type codec)"; exit 1
+    -p:DotKtBir2CirPath="$ROOT/$BIR2CIR_DLL" -p:DotKtDll2KlibDirectory="$ROOT/$DLL2KLIB_DIR" -- \
+    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeNodeTest.xml" \
+    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.SourceMetadataTest.xml"; then
+  echo "SCHEMA GATE: RED (cross-language type/source metadata codecs)"; exit 1
 fi
 
 # SELF-TEST next: the validator checks whatever is on disk, so one that silently stopped checking would look

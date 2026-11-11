@@ -163,13 +163,11 @@ sealed class Pipeline
         foreach (var input in inputs)
         {
             var path = Path.GetFullPath(input);
-            var json = File.ReadAllText(path);
-            var root = JsonNode.Parse(json, documentOptions: BirJson.DocOptions) ?? throw new UsageException($"bir2cir: invalid JSON root: {path}");
-            RoundtripMetadata.FreezeTypeAliases(root);
+            var (root, aliases) = BirInputJson.Read(File.ReadAllBytes(path));
+            RoundtripMetadata.FreezeTypeAliases(root, aliases);
             DefaultBirCarrier.FreezeSourceDefaults(root);
             files.Add(new BirFile(
                 path,
-                json,
                 root,
                 SuspendShapeAnalyzer.Analyze(root)));
         }
@@ -1852,7 +1850,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
     }
 }
 
-sealed record BirFile(string Path, string Json, JsonNode Root, SuspendShapeAnalysis Suspend);
+sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions

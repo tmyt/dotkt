@@ -67,7 +67,7 @@ internal static class PackageFailureProbe
         {
             var type = module.DefineType(name + ".Bad", TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
             var method = type.DefineMethod("Run", MethodAttributes.Public | MethodAttributes.Static, typeof(void), Type.EmptyTypes);
-            var bytes = (byte[])codec.GetMethod("EncodeBody")!.Invoke(null,
+            var bytes = (byte[])codec.GetMethod("EncodeBody", [typeof(string), typeof(JsonNode)])!.Invoke(null,
                 [version, new JsonObject { ["visibility"] = "bad" + name }])!;
             method.SetCustomAttribute(new CustomAttributeBuilder(constructor, [version, bytes]));
             method.GetILGenerator().Emit(OpCodes.Ret);

@@ -12,6 +12,8 @@
     <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
     <Compile Include="../bir-common/TypeNode.Model.Generated.cs" Link="TypeNode.Model.Generated.cs" />
     <Compile Include="../bir-common/TypeNode.Json.Generated.cs" Link="TypeNode.Json.Generated.cs" />
+    <Compile Include="../bir-common/SourceMetadata.Model.Generated.cs" Link="SourceMetadata.Model.Generated.cs" />
+    <Compile Include="../bir-common/SourceMetadata.Json.Generated.cs" Link="SourceMetadata.Json.Generated.cs" />
     <Compile Include="../bir-common/FunctionPointerVocabulary.cs" Link="FunctionPointerVocabulary.cs" />
     <Compile Include="../bir-common/NullableRepresentationFrame.cs" Link="NullableRepresentationFrame.cs" />
     <Compile Include="../bir-common/BirJson.cs" Link="BirJson.cs" />

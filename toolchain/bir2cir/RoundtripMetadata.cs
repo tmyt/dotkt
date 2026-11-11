@@ -91,14 +91,17 @@ static class RoundtripMetadata
 
     // Declaration metadata is opaque to every physical representation pass. Encode it at the input boundary,
     // before any traversal can confuse a Kotlin alias's classifier or parameter with an executable CLR slot.
-    public static void FreezeTypeAliases(JsonNode root)
+    public static void FreezeTypeAliases(JsonNode root, IReadOnlyList<SourceTypeAlias> aliases)
     {
-        if (root is not JsonObject file || file["typeAliases"] is not JsonArray aliases) return;
-        file.Remove("typeAliases");
+        if (root is not JsonObject file) throw new FormatException();
         if (aliases.Count == 0) return;
         var attrs = file["assemblyAttrs"] as JsonArray ?? new JsonArray();
         file["assemblyAttrs"] = attrs;
-        foreach (var alias in aliases) attrs.Add(JsonCarrierAttr(AKTypeAlias, alias));
+        foreach (var alias in aliases)
+        {
+            var content = BirCarrier.EncodeBody(BirCarrier.JsonV1, alias, SourceMetadataJson.Write);
+            attrs.Add(Marker(AKTypeAlias, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content))));
+        }
     }
 
     // ---------------------------------------------------------------------------------------------------------------
