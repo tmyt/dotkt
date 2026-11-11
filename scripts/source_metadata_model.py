@@ -1,5 +1,6 @@
 """Generate source declaration models from the existing alias schema, not CLR types."""
 import json
+from source_metadata_messagepack import outputs as messagepack_outputs
 
 
 def outputs(root, schema):
@@ -308,6 +309,7 @@ def outputs(root, schema):
     };
 }''', ""])
     return {
+        **messagepack_outputs(root, named, definitions, variants, parameters, cs_type, cs_name, type_name),
         root / "toolchain/kotc/src/main/kotlin/kotc/bir/SourceMetadata.kt": "\n".join(model),
         root / "toolchain/kotc/src/main/kotlin/kotc/bir/SourceMetadataJson.kt": "\n".join(writer),
         root / "toolchain/bir-common/SourceMetadata.Model.Generated.cs": "\n".join(cs_model),

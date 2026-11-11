@@ -16,7 +16,8 @@ internal sealed class KotlinTypeAliasMetadata
         attributes.ValidateCarrierTargets(AttributeName, HandleKind.AssemblyDefinition);
         _declarations = reader.IsAssembly
             ? attributes.CarrierPayloads(MetadataTokens.EntityHandle(0x20000001), AttributeName)
-                .Select(payload => BirCarrier.DecodeBody(payload.Codec, payload.Content, SourceMetadataJson.Read)).ToArray()
+                .Select(payload => BirCarrier.DecodeBody(payload.Codec, payload.Content,
+                    SourceMetadataJson.Read, SourceMetadataMessagePack.Read)).ToArray()
             : [];
         var identities = new HashSet<string>(StringComparer.Ordinal);
         foreach (var declaration in _declarations)

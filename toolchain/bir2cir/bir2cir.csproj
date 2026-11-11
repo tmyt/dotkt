@@ -18,6 +18,9 @@
     <Compile Include="../bir-common/TypeNode.Json.Generated.cs" Link="TypeNode.Json.Generated.cs" />
     <Compile Include="../bir-common/SourceMetadata.Model.Generated.cs" Link="SourceMetadata.Model.Generated.cs" />
     <Compile Include="../bir-common/SourceMetadata.Json.Generated.cs" Link="SourceMetadata.Json.Generated.cs" />
+    <Compile Include="../bir-common/SourceMetadata.MessagePack.Generated.cs" Link="SourceMetadata.MessagePack.Generated.cs" />
+    <Compile Include="../bir-common/BirCarrier.MessagePack.cs" Link="BirCarrier.MessagePack.cs" />
+    <Compile Include="../bir-common/IrMessagePack.cs" Link="IrMessagePack.cs" />
     <Compile Include="../cir-common/Attribute.Model.Generated.cs" Link="Attribute.Model.Generated.cs" />
     <Compile Include="../cir-common/AttributeJson.cs" Link="AttributeJson.cs" />
     <Compile Include="../cir-common/AttributeSelfTest.cs" Link="AttributeSelfTest.cs" />
@@ -65,5 +68,6 @@
     <!-- MetadataDeclaredMembers uses this version's internal declared-member readers.
          Re-audit that adapter and its equivalence tests when upgrading this dependency. -->
     <PackageReference Include="System.Reflection.MetadataLoadContext" Version="[9.0.0]" />
+    <PackageReference Include="MessagePack" Version="[3.1.12]" />
   </ItemGroup>
 </Project>

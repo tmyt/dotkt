@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dotkt/kotlin-typealias.schema.json",
-  "title": "Actualized Kotlin alias declaration (bir-json/1)",
+  "title": "Actualized Kotlin alias declaration",
   "x-dotkt-model": {"name": "SourceTypeAlias"},
   "type": "object",
   "required": ["packageName", "ownerPath", "name", "visibility", "typeParameters", "underlyingType", "expandedType", "annotations"],

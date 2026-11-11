@@ -14,11 +14,17 @@
     <Compile Include="../bir-common/TypeNode.Json.Generated.cs" Link="TypeNode.Json.Generated.cs" />
     <Compile Include="../bir-common/SourceMetadata.Model.Generated.cs" Link="SourceMetadata.Model.Generated.cs" />
     <Compile Include="../bir-common/SourceMetadata.Json.Generated.cs" Link="SourceMetadata.Json.Generated.cs" />
+    <Compile Include="../bir-common/SourceMetadata.MessagePack.Generated.cs" Link="SourceMetadata.MessagePack.Generated.cs" />
+    <Compile Include="../bir-common/BirCarrier.MessagePack.cs" Link="BirCarrier.MessagePack.cs" />
+    <Compile Include="../bir-common/IrMessagePack.cs" Link="IrMessagePack.cs" />
     <Compile Include="../bir-common/FunctionPointerVocabulary.cs" Link="FunctionPointerVocabulary.cs" />
     <Compile Include="../bir-common/NullableRepresentationFrame.cs" Link="NullableRepresentationFrame.cs" />
     <Compile Include="../bir-common/BirJson.cs" Link="BirJson.cs" />
     <PackageReference Include="Google.Protobuf" Version="3.35.1" />
     <PackageReference Include="Grpc.Tools" Version="2.83.0" PrivateAssets="All" />
     <Protobuf Include="KlibMetadata.proto" GrpcServices="None" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MessagePack" Version="[3.1.12]" />
   </ItemGroup>
 </Project>

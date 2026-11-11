@@ -15,8 +15,8 @@ file still produces BIR, but owns no executable file facade. Before any physical
 bir2cir consumes the list and encodes each declaration as an ordinary CIR `assemblyAttrs` application of
 `DotKt.Runtime.CompilerServices.KotlinTypeAliasAttribute(string version, byte[] content)`. Its embedded
 definition is internal, sealed, compiler-generated, and has assembly-only `AttributeUsage` with
-`AllowMultiple=true` and `Inherited=false`. The version is `bir-json/1`; content is structured UTF-8 JSON,
-not protobuf or a serialized KLIB. ilemit applies assembly attributes literally after their constructors
+`AllowMultiple=true` and `Inherited=false`. The emitted codec is `bir-msgpack/1`; content is a MessagePack
+map of the structured declaration, not protobuf or a serialized KLIB. ilemit applies assembly attributes literally after their constructors
 are defined. Declaration metadata survives reference-body stripping.
 
 The declaration schema is [kotlin-typealias.schema.json](kotlin-typealias.schema.json).
@@ -63,11 +63,16 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   not by repeating the base declaration's annotation. The full override closure makes this independent of source
   order; a newly introduced setter over a `val` has no inherited setter declaration and is not widened with its getter.
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
-  `codec/schema-version` identifier; only `"bir-json/1"` is defined today. `content` is the codec-encoded body
-  (today `UTF8(json)`). The dispatch shape leaves room for other codecs without reserving a particular identifier.
-- A single `BirCarrier.DecodeBody(version, byte[])` / `EncodeBody(version, node)`
-  (`toolchain/bir-common/TypeNode.cs`) dispatches on `version`. An UNKNOWN version is REJECTED
-  (loud `NotSupportedException`, never a silent mis-decode).
+  codec identifier. `bir-json/1` represents structured UTF-8 JSON; `bir-msgpack/1` represents MessagePack maps
+  with the same logical keys and values. Source alias carriers currently emit MessagePack; other carriers
+  still emit JSON until their typed codecs migrate. Neither identifier is a compiler-compatibility promise.
+- `BirCarrier` entry points select the declared codec. Typed binary domains supply their JSON and MessagePack
+  callbacks through `BirCarrier.MessagePack.cs`; the remaining domains use JSON-only overloads in `TypeNode.cs`
+  until they migrate. Unsupported identifiers fail with `NotSupportedException`, never silent mis-decoding.
+- MessagePack scalar strings use UTF-8 unless the logical UTF-16 value contains a lone surrogate. Such strings
+  use extension type `1`, whose payload is the complete sequence of little-endian 16-bit code units. Map keys
+  retain their logical names; integer signedness/width and raw floating-point bits remain schema-owned facts.
+  Dispatch uses the declared codec, never content sniffing or a fallback from one codec to another.
 - Carriers include `KotlinInlineAttribute(string version, byte[] content)` (inline-fn body),
   `KotlinSuspendFunctionTypeAttribute(string version, byte[] content)` (a `suspend (…) -> T` position's
   pre-erasure `fn` `Type` shape), and `KotlinConstructorAdapterAttribute(string version, byte[] content)`
@@ -815,7 +820,7 @@ Every identifier in the serialization vocabulary is **lowerCamelCase**, uniforml
   - **.NET attribute TYPE names** are UpperCamel — `KotlinInlineAttribute`, `KotlinSuspendFunctionTypeAttribute`,
     `KotlinDefaultAttribute` — because they are CLR types and MUST follow the CLR/BCL convention. Their
     *constructor-arg / field* names still follow the lowerCamel rule.
-  - **carrier version tags** use the `codec/schema-version` shape — currently `"bir-json/1"` — and are not vocabulary
+  - **carrier codec tags** use the `type/version` shape — `"bir-json/1"` and `"bir-msgpack/1"` — and are not vocabulary
     identifiers; the `/` separates codec from schema-major.
 - **SCOPE — vocabulary, NOT payload data.** This policy governs the format's OWN identifiers (the
   meta-language: `k`/`t` tags, field names, `mods` keys, decl kinds). It does **NOT** govern the DATA those

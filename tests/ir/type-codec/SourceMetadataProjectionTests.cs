@@ -12,6 +12,10 @@ internal static class SourceMetadataProjectionTests
     public static void Run(string json)
     {
         var source = P.BirCarrier.DecodeBody(P.BirCarrier.JsonV1, Encoding.UTF8.GetBytes(json), P.SourceMetadataJson.Read);
+        var binary = P.BirCarrier.EncodeBody(P.BirCarrier.MessagePackV1, source,
+            P.SourceMetadataJson.Write, P.SourceMetadataMessagePack.Write);
+        source = P.BirCarrier.DecodeBody(P.BirCarrier.MessagePackV1, binary,
+            P.SourceMetadataJson.Read, P.SourceMetadataMessagePack.Read);
         var tool = typeof(P.SourceTypeAlias).Assembly;
         var projection = tool.GetType("KotlinTypeAliasMetadata", true)!;
         var namesType = tool.GetType("NameTable", true)!;

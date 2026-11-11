@@ -48,6 +48,10 @@ class SourceMetadataTest {
         val encoded = SourceMetadataJson.encode(declaration)
         assertEquals(encoded, SourceMetadataJson.encode(declaration))
         println("IR_SOURCE_METADATA_SAMPLE $encoded")
+        println("IR_SOURCE_METADATA_MSGPACK ${java.util.Base64.getEncoder().encodeToString(SourceMetadataMessagePack.encode(declaration))}")
+        val utf16 = declaration.copy(annotations = listOf(SourceAnnotation(classifier, listOf(
+            SourceAnnotationArgument("text", SourceAnnotationValue.StringValue(false, "prefix\ud800middle\udc00suffix😀\u0000"))))))
+        println("IR_SOURCE_METADATA_UTF16_MSGPACK ${java.util.Base64.getEncoder().encodeToString(SourceMetadataMessagePack.encode(utf16))}")
     }
 
     private fun projectedAnnotation(): SourceAnnotation {
