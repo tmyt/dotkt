@@ -70,7 +70,7 @@ public static class DeclarationSelfTest
         var entry = new CirEnumEntry { Name = "Entry", Ordinal = 0, Underlying = "System.Int32",
             PhysicalValue = "-19", Attrs = attributes };
         var slots = new CirInterfaceSlotSet { Owner = owner, Assembly = "Physical", Slots = [reference] };
-        var @event = new CirEvent { Name = "Changed", DelegateType = new TypeNode.Fqn("Physical.Handler") };
+        var @event = new CirEvent { K = "clrEventDecl", Name = "Changed", DelegateType = new TypeNode.Fqn("Physical.Handler") };
         var type = new CirTypeDeclaration { Name = "Nested", Kind = CirTypeKind.Class, Vis = "internal",
             Generated = false, Abstract = false, Final = false, SpecialName = false, BeforeFieldInit = false,
             NestedIn = "Parent", Base = owner, Interfaces = new TypeNode[] { owner }, TypeParams = new[] { generic },

@@ -308,9 +308,10 @@ static partial class CirDeclarationProjection
 
     public static CirEvent ReadCirEvent(JsonNode node)
     {
-        CheckFields(node, ["name", "delegateType"]);
+        CheckFields(node, ["k", "name", "delegateType"]);
         return new CirEvent
         {
+            K = node["k"]!.GetValue<string>(),
             Name = node["name"]!.GetValue<string>(),
             DelegateType = TypeJson.Read(node["delegateType"]!),
         };

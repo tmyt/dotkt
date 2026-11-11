@@ -432,6 +432,8 @@ public sealed partial record CirInterfaceSlotSet
 
 public sealed partial record CirEvent
 {
+    [JsonPropertyName("k"), JsonRequired]
+    public required string K { get; init; }
     [JsonPropertyName("name"), JsonRequired]
     public required string Name { get; init; }
     [JsonPropertyName("delegateType"), JsonRequired]
@@ -466,7 +468,7 @@ internal static class DeclarationWireContract
         ("CirEnumEntry", ["name", "ordinal", "underlying", "physicalValue", "attrs"]),
         ("CirMethodImpl", ["owner", "member", "arity", "params", "ret", "typeParams", "memberRef"]),
         ("CirInterfaceSlotSet", ["owner", "assembly", "slots"]),
-        ("CirEvent", ["name", "delegateType"]),
+        ("CirEvent", ["k", "name", "delegateType"]),
         ("CirSourcePosition", ["f", "l", "c"]),
     ];
     internal static readonly (string Name, string[] Fields)[] NullableProperties =

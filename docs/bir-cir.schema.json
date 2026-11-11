@@ -482,8 +482,8 @@
     },
     "cirEvent": {
       "type": "object", "x-dotkt-model": { "name": "CirEvent", "domain": "cirDeclarations" },
-      "properties": { "name": { "type": "string" }, "delegateType": { "$ref": "#/$defs/type" } },
-      "required": ["name", "delegateType"], "additionalProperties": false
+      "properties": { "k": { "type": "string", "const": "clrEventDecl" }, "name": { "type": "string" }, "delegateType": { "$ref": "#/$defs/type" } },
+      "required": ["k", "name", "delegateType"], "additionalProperties": false
     },
     "cirStatementList": { "type": "array", "items": { "$ref": "#/$defs/node" }, "x-dotkt-csharp-type": "TemporaryCirStatements", "$comment": "Explicit body-only JSON adapter; removed when CIR statements migrate, never a declaration/root field bag." },
     "cirExpressionList": { "type": ["array", "null"], "items": { "$ref": "#/$defs/node" }, "x-dotkt-csharp-type": "TemporaryCirExpressions", "$comment": "Constructor delegation operands; explicit null remains distinct from an absent field." },
