@@ -30,6 +30,9 @@
     <Compile Include="../cir-common/ExecutableSelfTest.cs" Link="ExecutableSelfTest.cs" />
     <Compile Include="../cir-common/Declaration.cs" Link="Declaration.cs" />
     <Compile Include="../cir-common/DeclarationJson.cs" Link="DeclarationJson.cs" />
+    <Compile Include="../cir-common/MessagePack.Generated.cs" Link="CirMessagePack.Generated.cs" />
+    <Compile Include="../cir-common/CirFileCodec.cs" Link="CirFileCodec.cs" />
+    <Compile Include="../cir-common/MessagePackSelfTest.cs" Link="MessagePackSelfTest.cs" />
     <Compile Include="../cir-common/DeclarationSelfTest.cs" Link="DeclarationSelfTest.cs" />
     <Compile Include="../cir-common/OptionalField.cs" Link="OptionalField.cs" />
     <Compile Include="../cir-common/IrSanity.Cir.cs" Link="IrSanity.Cir.cs" />

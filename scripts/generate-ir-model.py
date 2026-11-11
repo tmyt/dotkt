@@ -10,6 +10,7 @@ import argparse
 import json
 from pathlib import Path
 from source_metadata_model import outputs as source_metadata_outputs
+from cir_messagepack import generate as cir_messagepack
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "docs/bir-cir.schema.json"
@@ -649,6 +650,7 @@ def outputs(schema):
     declaration_model, declaration_projection = declaration_models(definitions)
     executable_model, executable_projection = executable_models(definitions)
     return {
+        ROOT / "toolchain/cir-common/MessagePack.Generated.cs": cir_messagepack(definitions, model_type, non_null_field, allows_null),
         ROOT / "toolchain/cir-common/Executable.Model.Generated.cs": executable_model,
         ROOT / "toolchain/bir2cir/CirExecutableProjection.Generated.cs": executable_projection,
         ROOT / "toolchain/cir-common/Declaration.Model.Generated.cs": declaration_model,

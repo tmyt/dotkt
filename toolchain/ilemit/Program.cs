@@ -120,7 +120,7 @@ static class IlEmit
             }
             using var target = new TargetReferenceUniverse(compileRefs, runtimeRefs, targetRid, ridGraphPath);
             var files = new List<DotKt.Cir.CirFileDeclaration>();
-            foreach (var path in bir) files.Add(DotKt.Cir.DeclarationJson.ReadFile(path));
+            foreach (var path in bir) files.Add(DotKt.Cir.CirFileCodec.Read(path));
             var assemblyOptions = assemblyOptionsPath == null ? null : SdkAssemblyOptions.Read(assemblyOptionsPath);
             var versions = assemblyOptions?.Versions();
             var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions);

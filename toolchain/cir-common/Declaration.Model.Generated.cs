@@ -482,7 +482,7 @@ internal static class DeclarationWireContract
         ("CirMethod", []),
         ("CirConstructor", ["baseArgs", "thisArgs"]),
         ("CirField", ["init"]),
-        ("CirProperty", []),
+        ("CirProperty", ["get", "set"]),
         ("CirEnumEntry", []),
         ("CirMethodImpl", []),
         ("CirInterfaceSlotSet", []),

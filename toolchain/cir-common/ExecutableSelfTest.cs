@@ -29,6 +29,7 @@ public static class ExecutableSelfTest
         var tags = new[] { "block", "sourcePoint", "var", "var", "for", "local", "local",
             "exprStmt", "valueBlock", "setLocal", "local", "local", "try", "return", "local",
             "throw", "local", "sourcePoint" };
+        CheckBinary(root);
         var encoded = JsonSerializer.Serialize<ICirStatement>(root, AttributeJson.Options);
         var decoded = JsonSerializer.Deserialize<ICirStatement>(encoded, AttributeJson.Options) as CirBlock
             ?? throw new InvalidOperationException("Executable role codec lost the concrete root");
@@ -54,6 +55,7 @@ public static class ExecutableSelfTest
                 Value = new AttributeArgument.Utf16Value([0xd800, 0x0041, 0xdc00]) }
         })
         {
+            CheckBinary(new CirExpressionStatement { Expr = constant });
             var text = JsonSerializer.Serialize<ICirExpression>(constant, AttributeJson.Options);
             var copy = JsonSerializer.Deserialize<ICirExpression>(text, AttributeJson.Options) as CirConstant
                 ?? throw new InvalidOperationException("Executable scalar lost its node role");
@@ -76,5 +78,15 @@ public static class ExecutableSelfTest
             throw new InvalidOperationException("Malformed current executable scalar/role/field was accepted");
         }
         Console.WriteLine("[typed CIR executables] self-test OK (closed roles, child order, presence, source spans, current malformed shapes)");
+    }
+
+    private static void CheckBinary(ICirStatement body)
+    {
+        var file = new CirFileDeclaration { FileClass = "CodecProbe", HasMain = false, Fields = [], Types = [],
+            Methods = [new CirMethod { Name = "Probe", Static = true, Override = false, Virtual = false,
+                Params = [], Ret = new TypeNode.Fqn("System.Void"),
+                Body = new ICirStatement[] { body } }] };
+        if (DeclarationJson.Write(CirFileCodec.Decode(CirFileCodec.Encode(file))) != DeclarationJson.Write(file))
+            throw new InvalidOperationException("CIR MessagePack changed executable roles, evaluation order, presence or scalar bits");
     }
 }

@@ -16,7 +16,7 @@ public static class DeclarationSelfTest
         // Serialization samples deliberately cover every record field, not a semantically executable program.
         // Real signature/body/MethodImpl emission is exercised by target-universe and the compiler corpus.
         var integer = new TypeNode.Fqn("System.Int32");
-        var owner = new TypeNode.Fqn("Physical.Owner", [new TypeNode.Tv("type", 0)]);
+        var owner = new TypeNode.Fqn("Physical.Owner`1", [new TypeNode.Tv("type", 0)]);
         var reference = new MemberRefNode("method", "Physical", owner, "M", 1, integer,
             MemberRefNode.Instance, [integer]);
         var constructor = new MemberRefNode("ctor", "Physical", new TypeNode.Fqn("Physical.Attribute"),
@@ -83,6 +83,8 @@ public static class DeclarationSelfTest
             Attrs = attributes, WellKnownRefs = new Dictionary<string, MemberRefNode> { ["physical"] = reference }, Pos = position };
         var json = DeclarationJson.Write(file);
         var read = DeclarationJson.Read(Encoding.UTF8.GetBytes(json));
+        if (DeclarationJson.Write(CirFileCodec.Decode(CirFileCodec.Encode(file))) != json)
+            throw new Exception("CIR MessagePack changed a declaration, executable subtree or opaque byte payload");
         if (DeclarationJson.Write(read) != json || !read.Methods[0].InlineBir.Value.SequenceEqual(method.InlineBir.Value)
             || read.Methods[0].Body.Value[0] is not CirReturn
             || read.Types[0].Ctors.Value[0].ThisArgs.IsNull != true)
@@ -91,6 +93,8 @@ public static class DeclarationSelfTest
         {
             var variant = DeclarationJson.Read(Encoding.UTF8.GetBytes(DeclarationJson.Write(file with { Types = [type with { Kind = kind }] })));
             if (variant.Types[0].Kind != kind) throw new Exception("CIR declaration kind changed");
+            if (CirFileCodec.Decode(CirFileCodec.Encode(variant)).Types[0].Kind != kind)
+                throw new Exception("CIR MessagePack declaration kind changed");
         }
         // Record schema coverage uses actual serialized values, not reflection over the declarations alone.
         object[] records = [import, modifiers, file, type, generic, parameter, method, ctor, field, property, entry, descriptor, slots, @event, position];
@@ -117,10 +121,18 @@ public static class DeclarationSelfTest
             field with { Name = "null", Init = OptionalField<ICirExpression>.Null },
             field with { Name = "value", Init = field.Init }] };
         var read = DeclarationJson.Read(Encoding.UTF8.GetBytes(DeclarationJson.Write(sample)));
+        var binary = CirFileCodec.Decode(CirFileCodec.Encode(sample));
+        if (binary.Fields[0].Init.IsPresent || !binary.Fields[1].Init.IsNull || !binary.Fields[2].Init.HasValue)
+            throw new Exception("CIR MessagePack absent/null/value distinction changed");
         if (read.Fields[0].Init.IsPresent || !read.Fields[1].Init.IsNull || !read.Fields[2].Init.HasValue)
             throw new Exception("CIR absent/null/value distinction changed");
         CheckNullFields(sample.Fields[1]);
         CheckNullFields(file.Types[0] with { Base = OptionalField<TypeNode>.Null });
+        var accessor = file.Properties.Value[0] with { Set = OptionalField<string>.Null };
+        var propertyFile = file with { Properties = new[] { accessor } };
+        CheckNullFields(accessor);
+        if (!CirFileCodec.Decode(CirFileCodec.Encode(propertyFile)).Properties.Value[0].Set.IsNull)
+            throw new Exception("CIR MessagePack lost the explicit no-setter property record");
     }
 
     static void CheckNullFields(object record)

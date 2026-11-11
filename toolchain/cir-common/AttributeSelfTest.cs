@@ -36,6 +36,11 @@ public static class AttributeSelfTest
             [new NamedAttributeArgument("field", "Payload", new TypeNode.Array(new TypeNode.Fqn("System.Byte")),
                 new A.BytesValue([42]))]);
         var first = JsonSerializer.Serialize(application, AttributeJson.Options);
+        var file = new CirFileDeclaration { FileClass = "Attributes", HasMain = false, Methods = [], Fields = [], Types = [],
+            AssemblyAttrs = new[] { application } };
+        var binary = CirFileCodec.Decode(CirFileCodec.Encode(file)).AssemblyAttrs.Value[0];
+        if (JsonSerializer.Serialize(binary, AttributeJson.Options) != first)
+            throw new Exception("Physical attribute MessagePack changed scalar bits, text, types, arrays or opaque bytes");
         using var document = JsonDocument.Parse(first, BirJson.DocOptions);
         var parsed = document.RootElement.Deserialize<AttributeApplication>(AttributeJson.Options)!;
         var second = JsonSerializer.Serialize(parsed, AttributeJson.Options);
