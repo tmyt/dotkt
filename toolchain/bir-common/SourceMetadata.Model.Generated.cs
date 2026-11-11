@@ -44,4 +44,3 @@ public abstract record SourceAnnotationValue(bool Unsigned)
     public sealed record AnnotationValue(bool Unsigned, SourceAnnotation Value) : SourceAnnotationValue(Unsigned);
     public sealed record ArrayValue(bool Unsigned, SourceAnnotationValue[] Value) : SourceAnnotationValue(Unsigned);
 }
-
