@@ -18,6 +18,82 @@
 
   "$defs": {
 
+    "birExpressionNode": {
+      "x-dotkt-model": { "name": "BirExpression" },
+      "oneOf": [
+        { "$ref": "#/$defs/birConstant" }, { "$ref": "#/$defs/birLocal" },
+        { "$ref": "#/$defs/birThis" }, { "$ref": "#/$defs/birObjectEquals" },
+        { "$ref": "#/$defs/birNew" }
+      ]
+    },
+    "birStatementNode": {
+      "x-dotkt-model": { "name": "BirStatement" },
+      "oneOf": [
+        { "$ref": "#/$defs/birExpressionNode" }, { "$ref": "#/$defs/birSourcePoint" },
+        { "$ref": "#/$defs/birBreak" }, { "$ref": "#/$defs/birContinue" },
+        { "$ref": "#/$defs/birGoto" }, { "$ref": "#/$defs/birLabel" },
+        { "$ref": "#/$defs/birThrow" }, { "$ref": "#/$defs/birIf" },
+        { "$ref": "#/$defs/birVariable" }
+      ]
+    },
+    "birBranch": {
+      "x-dotkt-model": { "name": "BirBranch" },
+      "oneOf": [ { "$ref": "#/$defs/birConditionalBranch" }, { "$ref": "#/$defs/birElseBranch" } ]
+    },
+    "birConstant": {
+      "type": "object", "x-dotkt-model": { "name": "BirConstant", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "const" }, "type": { "$ref": "#/$defs/type" }, "value": { "$ref": "#/$defs/literalValue" } },
+      "required": ["k", "type", "value"], "additionalProperties": false
+    },
+    "birObjectEquals": {
+      "type": "object", "x-dotkt-model": { "name": "BirObjectEquals", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "objEq" }, "lhs": { "$ref": "#/$defs/birExpressionNode" }, "rhs": { "$ref": "#/$defs/birExpressionNode" } },
+      "required": ["k", "lhs", "rhs"], "additionalProperties": false
+    },
+    "birNew": {
+      "type": "object", "x-dotkt-model": { "name": "BirNew", "domain": "birCore", "role": "expression" },
+      "properties": {
+        "k": { "const": "new" }, "type": { "$ref": "#/$defs/type" },
+        "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "args": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
+        "constructorDeclarationId": { "type": "string" },
+        "localCtorIndex": { "type": "integer", "minimum": 0 },
+        "memberVisibility": { "enum": ["private", "protected", "internal"] },
+        "memberOwnerTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
+        "memberSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+      },
+      "required": ["k", "type", "args"], "additionalProperties": false
+    },
+    "birThrow": {
+      "type": "object", "x-dotkt-model": { "name": "BirThrow", "domain": "birCore", "role": "statement" },
+      "properties": { "k": { "const": "throw" }, "value": { "$ref": "#/$defs/birExpressionNode" } },
+      "required": ["k", "value"], "additionalProperties": false
+    },
+    "birIf": {
+      "type": "object", "x-dotkt-model": { "name": "BirIf", "domain": "birCore", "role": "statement" },
+      "properties": { "k": { "const": "if" }, "branches": { "type": "array", "items": { "$ref": "#/$defs/birBranch" } } },
+      "required": ["k", "branches"], "additionalProperties": false
+    },
+    "birConditionalBranch": {
+      "type": "object", "x-dotkt-model": { "name": "BirConditionalBranch", "domain": "birCoreValues", "interfaces": ["BirBranch"] },
+      "properties": { "cond": { "$ref": "#/$defs/birExpressionNode" }, "body": { "type": "array", "items": { "$ref": "#/$defs/birStatementNode" } } },
+      "required": ["cond", "body"], "additionalProperties": false
+    },
+    "birElseBranch": {
+      "type": "object", "x-dotkt-model": { "name": "BirElseBranch", "domain": "birCoreValues", "interfaces": ["BirBranch"] },
+      "properties": { "else": { "const": true }, "body": { "type": "array", "items": { "$ref": "#/$defs/birStatementNode" } } },
+      "required": ["else", "body"], "additionalProperties": false
+    },
+    "birVariable": {
+      "type": "object", "x-dotkt-model": { "name": "BirVariable", "domain": "birCore", "role": "statement" },
+      "properties": {
+        "k": { "const": "var" }, "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
+        "init": { "oneOf": [ { "$ref": "#/$defs/birExpressionNode" }, { "type": "null" } ] },
+        "joinNullBranch": { "const": true }
+      },
+      "required": ["k", "name", "type"], "additionalProperties": false
+    },
+
     "birLocal": {
       "type": "object", "x-dotkt-model": { "name": "BirLocal", "domain": "birCore", "role": "expression" },
       "properties": { "k": { "const": "local" }, "name": { "type": "string" }, "outer": { "type": "boolean" }, "sty": { "$ref": "#/$defs/type" } },
@@ -48,8 +124,14 @@
       "properties": { "k": { "const": "goto" }, "id": { "type": "integer" } },
       "required": ["k", "id"], "additionalProperties": false
     },
+    "birLabel": {
+      "type": "object", "x-dotkt-model": { "name": "BirLabel", "domain": "birCore", "role": "statement" },
+      "properties": { "k": { "const": "label" }, "id": { "type": "integer" } },
+      "required": ["k", "id"], "additionalProperties": false
+    },
 
     "literalValue": {
+      "x-dotkt-model": { "name": "BirLiteral" },
       "oneOf": [
         { "type": ["string", "number", "boolean", "null"] },
         { "$ref": "#/$defs/utf16Literal" },

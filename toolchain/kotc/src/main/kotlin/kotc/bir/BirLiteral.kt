@@ -1,6 +1,6 @@
 package kotc.bir
 
-sealed class BirLiteral {
+sealed class BirLiteral : BirValue {
     data object NullLiteral : BirLiteral() {
         override fun writeJson(output: StringBuilder) { output.append("null") }
     }
@@ -14,7 +14,7 @@ sealed class BirLiteral {
         override fun writeJson(output: StringBuilder) { LiteralText.writeJson(value, output) }
     }
 
-    abstract fun writeJson(output: StringBuilder)
+    abstract override fun writeJson(output: StringBuilder)
     fun toJson(): String = buildString { writeJson(this) }
 
     companion object {
@@ -31,15 +31,5 @@ sealed class BirLiteral {
             is Double -> Float64Literal(value.toRawBits())
             else -> error("Unexpected Kotlin IR scalar value")
         }
-    }
-}
-
-data class BirConstant(val type: TypeNode, val value: BirLiteral) : BirExpression {
-    override fun writeJson(output: StringBuilder) {
-        output.append("{\"k\":\"const\",\"type\":")
-        TypeNodeJson.write(type, output)
-        output.append(",\"value\":")
-        value.writeJson(output)
-        output.append('}')
     }
 }

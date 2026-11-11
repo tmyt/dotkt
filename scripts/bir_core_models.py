@@ -8,27 +8,52 @@ def outputs(root, definitions):
     lines = ["// Generated from docs/bir-cir.schema.json; run scripts/generate-ir-model.py.",
              "package kotc.bir", ""]
 
+    def nullable(field):
+        return (isinstance(field.get("type"), list) and "null" in field["type"]
+                or {"type": "null"} in field.get("oneOf", []))
+
+    def non_null(field):
+        if isinstance(field.get("type"), list):
+            kinds = [kind for kind in field["type"] if kind != "null"]
+            if len(kinds) != 1:
+                raise ValueError("Source field needs exactly one non-null logical type")
+            return {**field, "type": kinds[0]}
+        if nullable(field):
+            choices = [choice for choice in field["oneOf"] if choice != {"type": "null"}]
+            if len(choices) != 1:
+                raise ValueError("Source field needs exactly one non-null logical shape")
+            return choices[0]
+        return field
+
     def shape_type(field):
+        field = non_null(field)
         if "$ref" in field:
             ref = field["$ref"].removeprefix("#/$defs/")
             return "TypeNode" if ref == "type" else definitions[ref]["x-dotkt-model"]["name"]
-        kind = field["type"]
-        if isinstance(kind, list):
-            if len(kind) != 2 or "null" not in kind:
-                raise ValueError("Source field needs one logical type and optional null")
-            kind = next(item for item in kind if item != "null")
+        if field.get("type") == "array":
+            item = field["items"]
+            return "List<" + shape_type(item) + ("?" if nullable(item) else "") + ">"
+        kind = field.get("type", "string" if "enum" in field else None)
+        if kind is None and "const" in field:
+            kind = {bool: "boolean", int: "integer", str: "string"}[type(field["const"])]
         return {"string": "String", "integer": "Int", "boolean": "Boolean"}[kind]
 
-    def nullable(field):
-        return isinstance(field.get("type"), list) and "null" in field["type"]
-
-    def write(field, value):
+    def write(field, value, indent, depth=0):
+        if nullable(field):
+            return [indent + f'if ({value} == null) output.append("null")', indent + "else {",
+                    *write(non_null(field), value, indent + "    ", depth), indent + "}"]
         if "$ref" in field:
-            return (f"TypeNodeJson.write({value}, output)" if field["$ref"] == "#/$defs/type"
-                    else f"{value}.writeJson(output)")
+            return [indent + f"{value}.writeJson(output)"]
+        if field.get("type") == "array":
+            index, item = f"index{depth}", f"item{depth}"
+            return [indent + "output.append('[')",
+                    indent + f"{value}.forEachIndexed {{ {index}, {item} ->",
+                    indent + f"    if ({index} > 0) output.append(',')",
+                    *write(field["items"], item, indent + "    ", depth + 1),
+                    indent + "}", indent + "output.append(']')"]
         if shape_type(field) == "String":
-            return f"TypeNodeJson.writeString({value}, output)"
-        return f"output.append({value})"
+            return [indent + f"TypeNodeJson.writeString({value}, output)"]
+        return [indent + f"output.append({value})"]
 
     tags = set()
     for shape in selected:
@@ -44,31 +69,47 @@ def outputs(root, definitions):
                 raise ValueError("BIR source tags and roles must be explicit and unique")
             tags.add(tag)
         parameters = []
-        for key, field in fields:
+        ordered = [pair for pair in fields if pair[0] in required] + [
+            pair for pair in fields if pair[0] not in required]
+        for key, field in ordered:
+            if key in required and "const" in field:
+                continue
             optional = key not in required
+            name = field.get("x-dotkt-kotlin-name", key)
+            value_type = shape_type(field)
             if optional and nullable(field):
-                raise ValueError("Nullable optional fields require explicit presence, not a null default")
-            value_type = shape_type(field) + ("?" if optional or nullable(field) else "")
-            parameters.append(f"    val {key}: {value_type}" + (" = null" if optional else ""))
-        lines += [f'data class {info["name"]}(', ",\n".join(parameters), ")" +
-                  (" : Bir" + info["role"].capitalize() if is_node else "") + " {",
-                  ("    override " if is_node else "    ") + "fun writeJson(output: StringBuilder) {"]
+                value_type = f"BirField<{value_type}>"
+                default = " = BirField.Absent"
+            else:
+                value_type += "?" if optional or nullable(field) else ""
+                default = " = null" if optional else ""
+            parameters.append(f"    val {name}: {value_type}{default}")
+        bases = ["Bir" + info["role"].capitalize()] if is_node else info.get("interfaces", ["BirValue"])
+        lines += [f'data class {info["name"]}(', ",\n".join(parameters),
+                  ") : " + ", ".join(bases) + " {",
+                  "    override fun writeJson(output: StringBuilder) {"]
         opening = '{"k":' + json.dumps(tag) if is_node else "{"
         lines += ["        output.append(" + json.dumps(opening) + ")"]
         for index, (key, field) in enumerate(fields):
             optional = key not in required
-            indent = "            " if optional else "        "
-            if optional:
-                lines += [f"        {key}?.let {{ value ->"]
+            name = field.get("x-dotkt-kotlin-name", key)
             prefix = ("," if is_node or index else "") + json.dumps(key) + ":"
-            lines += [indent + "output.append(" + json.dumps(prefix) + ")"]
-            value = "value" if optional else key
-            if nullable(field):
-                lines += [indent + f'if ({value} == null) output.append("null")',
-                          indent + "else " + write(field, value)]
+            append_key = "output.append(" + json.dumps(prefix) + ")"
+            if key in required and "const" in field:
+                lines += ["        " + append_key,
+                          "        output.append(" + json.dumps(json.dumps(field["const"])) + ")"]
+            elif optional and nullable(field):
+                lines += [f"        when (val present = {name}) {{",
+                          "            BirField.Absent -> {}",
+                          "            BirField.Null -> {",
+                          "                " + append_key,
+                          '                output.append("null")', "            }",
+                          "            is BirField.Value -> {", "                " + append_key,
+                          *write(non_null(field), "present.value", "                "), "            }", "        }"]
+            elif optional:
+                lines += [f"        {name}?.let {{ value ->", "            " + append_key,
+                          *write(field, "value", "            "), "        }"]
             else:
-                lines += [indent + write(field, value)]
-            if optional:
-                lines += ["        }"]
+                lines += ["        " + append_key, *write(field, name, "        ")]
         lines += ["        output.append('}')", "    }", "}", ""]
     return {root / "toolchain/kotc/src/main/kotlin/kotc/bir/BirCore.Generated.kt": "\n".join(lines)}

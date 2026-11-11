@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotc.backend.BirEmitter
 import kotc.backend.constant
+import kotc.backend.parameterNullCheck
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.impl.IrFactoryImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrConstImpl
@@ -14,6 +15,35 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.types.Variance
 
 class TypeNodeTest {
+    @Test
+    fun actualParameterGuardConstructsATypedGraph() {
+        val guard = parameterNullCheck("input", "message")
+        val branch = guard.branches.single() as BirConditionalBranch
+        val condition = branch.cond as BirObjectEquals
+        assertEquals(BirLocal("input"), condition.lhs)
+        assertEquals(BirLiteral.NullLiteral, (condition.rhs as BirConstant).value)
+        val exception = (branch.body.single() as BirThrow).value as BirNew
+        assertEquals(TypeNode.Fqn("kotlin.NullPointerException"), exception.type)
+        assertEquals(listOf(TypeNode.Nullable(TypeNode.Fqn("kotlin.String"))), exception.argTypes)
+        assertEquals(BirLiteral.TextLiteral("message"), (exception.args.single() as BirConstant).value)
+        println("IR_BIR_CORE_SAMPLE " + guard.toJson())
+    }
+
+    @Test
+    fun typedSourceFieldsPreserveAbsentNullAndAnExpression() {
+        val type = TypeNode.Fqn("kotlin.String")
+        val absent = BirVariable("v", type)
+        val uninitialized = absent.copy(init = BirField.Null)
+        val initialized = absent.copy(init = BirField.Value(BirConstant(type, BirLiteral.TextLiteral("v"))))
+        assertEquals("""{"k":"var","name":"v","type":{"t":"fqn","name":"kotlin.String"}}""", absent.toJson())
+        assertEquals("""{"k":"var","name":"v","type":{"t":"fqn","name":"kotlin.String"},"init":null}""", uninitialized.toJson())
+        assertEquals("""{"k":"var","name":"v","type":{"t":"fqn","name":"kotlin.String"},"init":{"k":"const","type":{"t":"fqn","name":"kotlin.String"},"value":"v"}}""", initialized.toJson())
+        val branch = BirElseBranch(listOf(BirLocal("v")))
+        val output = StringBuilder()
+        branch.writeJson(output)
+        assertEquals("""{"else":true,"body":[{"k":"local","name":"v"}]}""", output.toString())
+    }
+
     @Test
     fun sourceCoreNodesKeepSemanticFieldsUntilTheBoundary() {
         val samples: List<Pair<BirNode, String>> = listOf(
@@ -27,6 +57,7 @@ class TypeNodeTest {
             BirBreak(null) to """{"k":"break","label":null}""",
             BirContinue("outer") to """{"k":"continue","label":"outer"}""",
             BirGoto(91) to """{"k":"goto","id":91}""",
+            BirLabel(91) to """{"k":"label","id":91}""",
         )
         samples.forEach { (node, expected) -> assertEquals(expected, node.toJson()) }
         val output = StringBuilder("prefix:")

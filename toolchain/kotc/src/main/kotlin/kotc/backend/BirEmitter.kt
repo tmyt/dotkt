@@ -932,7 +932,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
-	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: """{"k":"local","name":${str(localSlotName(d))}}"""
+	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: kotc.bir.BirLocal(localSlotName(d)).toJson()
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) refType(d) else birType(d.type)
 

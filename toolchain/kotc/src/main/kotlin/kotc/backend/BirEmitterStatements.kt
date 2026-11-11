@@ -160,7 +160,7 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String
 	is IrSetField -> {
 		val ownerClass = node.symbol.owner.parent as? IrClass
 		val clr = ownerClass?.let { clrName(it) }
-		val recvJson = node.receiver?.let { expr(it) } ?: """{"k":"this"}"""
+		val recvJson = node.receiver?.let { expr(it) } ?: kotc.bir.BirThis().toJson()
 		// #89: a STATIC backing field (top-level property -> file class; companion property -> enclosing class) ->
 		// a `staticFieldSet`, NO receiver. Reached from the property's OWN custom setter body writing `field`.
 		// `staticFieldSet` is a void EXPRESSION node (ilemit EmitExpr), so wrap it as an `exprStmt` in this
@@ -198,7 +198,7 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String
 		val spliced = inlineReturnSubst[node.returnTargetSymbol]
 		if (spliced != null) {
 			val (res, end) = spliced
-			val goto = """{"k":"goto","id":$end}"""
+			val goto = kotc.bir.BirGoto(end).toJson()
 			// No return-site coerceValue/wrapNonNullValue here (unlike the non-spliced arm below): a spliced
 			// `return@lambda <value-type-nullable>` into a bare-value result-local is well-typed only via a smart-cast,
 			// which Fir2Ir materializes as a narrowed IrGetValue / IMPLICIT_CAST — already `nullableValue`-unwrapped by

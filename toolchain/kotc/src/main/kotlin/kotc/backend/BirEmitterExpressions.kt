@@ -403,7 +403,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		val staticOwner = staticBackingFieldOwner(node.symbol.owner)
 		val ownerClass = node.symbol.owner.parent as? IrClass
 		val clr = ownerClass?.let { clrName(it) }
-		val recvJson = node.receiver?.let { expr(it) } ?: """{"k":"this"}"""
+		val recvJson = node.receiver?.let { expr(it) } ?: kotc.bir.BirThis().toJson()
 		val fldName = node.symbol.owner.name.asString()
 		val copyDefault = if (activeDataClassCopyDefault) ",\"dataClassCopyDefault\":true" else ""
 		val generatedEquals = if (activeGeneratedEqualsFieldRead) ",\"generatedEqualsFieldRead\":true" else ""
@@ -595,7 +595,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		val spliced = inlineReturnSubst[node.returnTargetSymbol]
 		if (spliced != null) {
 			val (res, end) = spliced
-			val goto = """{"k":"goto","id":$end}"""
+			val goto = kotc.bir.BirGoto(end).toJson()
 			// Unlike the NON-spliced arm below, the value stored into the splice result-local needs NO return-site
 			// coerceValue/wrapNonNullValue: a `return@lambda <value-type-nullable>` into a bare-value slot is only
 			// well-typed via a smart-cast, which Fir2Ir always materializes as a narrowed IrGetValue or an IMPLICIT_CAST

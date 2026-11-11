@@ -126,7 +126,7 @@ internal fun BirEmitter.tailrecJump(call: IrCall, ctx: BirEmitter.TailrecCtx): S
 	val stmts = ArrayList<String>()
 	reassigns.forEach { stmts.add("""{"k":"var","name":${str(it.tmp)},"type":${birType(it.type).toJson()},"init":${it.valueJson}}""") }
 	reassigns.forEach { stmts.add("""{"k":"setLocal","name":${str(it.name)},"value":{"k":"local","name":${str(it.tmp)}}}""") }
-	stmts.add("""{"k":"goto","id":${ctx.startLabel}}""")
+	stmts.add(kotc.bir.BirGoto(ctx.startLabel).toJson())
 	return valueBlockJson(type = null, stmts = stmts.joinToString(","), result = unreachableResultJson())
 }
 
@@ -137,13 +137,13 @@ internal fun BirEmitter.cfgWhile(node: IrWhileLoop): String {
 	val body = loopBody(node.body)
 	cfgLoopStack.removeAt(cfgLoopStack.size - 1)
 	val parts = ArrayList<String>()
-	parts.add("""{"k":"label","id":$start}""")
+	parts.add(kotc.bir.BirLabel(start).toJson())
 	sourcePointJson(node.condition)?.let { parts.add(it) }
 	parts.add("""{"k":"brIf","id":$end,"on":false,"cond":${expr(node.condition)}}""")
 	body.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
 	parts.add(hiddenSourcePoint)
-	parts.add("""{"k":"goto","id":$start}""")
-	parts.add("""{"k":"label","id":$end}""")
+	parts.add(kotc.bir.BirGoto(start).toJson())
+	parts.add(kotc.bir.BirLabel(end).toJson())
 	return """{"k":"block","body":[${parts.joinToString(",")}]}"""
 }
 
@@ -154,12 +154,12 @@ internal fun BirEmitter.cfgDoWhile(node: IrDoWhileLoop): String {
 	val body = loopBody(node.body)
 	cfgLoopStack.removeAt(cfgLoopStack.size - 1)
 	val parts = ArrayList<String>()
-	parts.add("""{"k":"label","id":$start}""")
+	parts.add(kotc.bir.BirLabel(start).toJson())
 	body.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
-	parts.add("""{"k":"label","id":$cont}""")
+	parts.add(kotc.bir.BirLabel(cont).toJson())
 	sourcePointJson(node.condition)?.let { parts.add(it) }
 	parts.add("""{"k":"brIf","id":$start,"on":true,"cond":${expr(node.condition)}}""")
-	parts.add("""{"k":"label","id":$end}""")
+	parts.add(kotc.bir.BirLabel(end).toJson())
 	return """{"k":"block","body":[${parts.joinToString(",")}]}"""
 }
 
@@ -244,7 +244,7 @@ internal fun BirEmitter.tryExpr(node: IrTry): String {
 	return valueBlockJson(
 		type = null,
 		stmts = """{"k":"var","name":${str(tv)},"type":${bt.toJson()}$varFact},$tryS""",
-		result = """{"k":"local","name":${str(tv)}}""",
+		result = kotc.bir.BirLocal(tv).toJson(),
 		yieldsNull = nullBranch,
 	)
 }
@@ -322,11 +322,11 @@ internal fun BirEmitter.cfgWhen(node: IrWhen): String {
 			parts.add("""{"k":"brIf","id":$next,"on":false,"cond":${expr(br.condition)}}""")
 			stmt(br.result).takeIf { it.isNotEmpty() }?.let { parts.add(it) }
 			parts.add(hiddenSourcePoint)
-			parts.add("""{"k":"goto","id":$end}""")
-			parts.add("""{"k":"label","id":$next}""")
+			parts.add(kotc.bir.BirGoto(end).toJson())
+			parts.add(kotc.bir.BirLabel(next).toJson())
 		}
 	}
-	parts.add("""{"k":"label","id":$end}""")
+	parts.add(kotc.bir.BirLabel(end).toJson())
 	return """{"k":"block","body":[${parts.joinToString(",")}]}"""
 }
 
@@ -357,7 +357,7 @@ internal fun BirEmitter.bindOnce(init: IrExpression, type: IrType, prefix: Strin
 	val bt = birType(type)
 	val vt = if (bt is TypeNode.Oblivious && bt.of is TypeNode.Tv) OBJ else bt
 	return """{"k":"var","name":${str(tv)},"type":${vt.toJson()},"init":${expr(init)}}""" to
-		"""{"k":"local","name":${str(tv)}}"""
+		kotc.bir.BirLocal(tv).toJson()
 }
 
 internal fun BirEmitter.blockExpr(block: IrBlock): String {
@@ -467,7 +467,7 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			// ELVIS lowers to `when { tmp == null -> fallback; else -> tmp }`:
 			// branches[0].result is the fallback; branches.last() is tmp (ignored — we read .Value).
 			val elseResult = expr(whenExpr.branches.first().result)
-			val nvLoc = """{"k":"local","name":${str(nv)}}"""
+			val nvLoc = kotc.bir.BirLocal(nv).toJson()
 			return valueBlockJson(
 				type = null,
 				stmts = """{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(elem).toJson()},"init":$init}""",
