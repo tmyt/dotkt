@@ -1,8 +1,13 @@
 {
   "fileClass": "SelftestKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
   "methods": [
     {
       "name": "nativeValue",
+      "override": false,
+      "virtual": false,
       "static": true,
       "extern": true,
       "params": [],

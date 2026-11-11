@@ -1,5 +1,5 @@
-using System.Text.Json;
 using DotKt.Bir;
+using DotKt.Cir;
 
 // These are validator fixtures, not complete emit-ready assemblies. Call the normative checker in the
 // built ilemit directly: an unrelated failure later in emission must not count as sanity acceptance.
@@ -13,8 +13,8 @@ try
 {
     foreach (var file in args)
     {
-        using var document = JsonDocument.Parse(File.ReadAllText(file), BirJson.DocOptions);
-        IrSanity.Check(new[] { document.RootElement });
+        using var declaration = DeclarationJson.ReadFile(file);
+        IrSanity.Check(new[] { declaration });
         Console.WriteLine($"IrSanity accepted: {file}");
     }
     return 0;

@@ -1,5 +1,5 @@
 {
-  "fileClass": "BodyMapKt", "fields": [], "methods": [],
+  "fileClass": "BodyMapKt", "hasMain": false, "fields": [], "methods": [],
   "types": [{"name":"BodyMap", "kind":"interface", "vis":"public", "fields":[], "ctors":[], "properties":[], "interfaces":[],
     "methods":[
       {"name":"a", "static":false,"abstract":true,"override":false,"virtual":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"System.Void"},"body":[]},

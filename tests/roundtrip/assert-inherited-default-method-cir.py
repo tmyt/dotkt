@@ -56,7 +56,7 @@ assert len(forwarders) == 1
 calls = [node for node in objects(forwarders[0]["body"]) if node.get("k") == "callInstance"]
 exact_owner = {"t": "fqn", "name": owner + "`2", "args": [
     {"t": "fqn", "name": "System.Object"}, {"t": "fqn", "name": "System.Object"}]}
-assert physical_type["typeParams"] == ["T", "$storage0"]
+assert physical_type["typeParams"] == [{"name": "T"}, {"name": "$storage0"}]
 assert len(calls) == 1 and calls[0]["ownerType"] == exact_owner
 assert calls[0]["method"] == body["name"] and calls[0].get("virtual") is True
 assert calls[0]["sig"] == [carrier] and calls[0]["ret"] == {"t": "fqn", "name": "System.Int32"}

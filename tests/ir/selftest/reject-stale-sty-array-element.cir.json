@@ -1,8 +1,14 @@
 {
   "fileClass": "SelftestKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
   "methods": [
     {
       "name": "twoArraysOfDifferentElements",
+      "static": false,
+      "override": false,
+      "virtual": false,
       "params": [],
       "ret": { "t": "array", "elem": { "t": "fqn", "name": "int" } },
       "body": [

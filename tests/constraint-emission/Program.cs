@@ -67,7 +67,7 @@ static JsonArray Parameters(string[] constraints, string scope) => new(
     new JsonObject { ["name"] = "T", ["constraints"] = new JsonArray(constraints.Select(s =>
         (JsonNode)(s is "N" or "P" ? new JsonObject {
             ["t"] = "tv", ["scope"] = scope, ["i"] = s == "N" ? 1 : 2
-        } : Named(s))).ToArray()) }, JsonValue.Create("N"), JsonValue.Create("P"));
+        } : Named(s))).ToArray()) }, new JsonObject { ["name"] = "N" }, new JsonObject { ["name"] = "P" });
 static void Reject(Action action)
 {
     try { action(); }

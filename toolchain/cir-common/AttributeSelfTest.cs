@@ -37,20 +37,20 @@ public static class AttributeSelfTest
                 new A.BytesValue([42]))]);
         var first = JsonSerializer.Serialize(application, AttributeJson.Options);
         using var document = JsonDocument.Parse(first, BirJson.DocOptions);
-        var parsed = AttributeJson.Read(document.RootElement);
+        var parsed = document.RootElement.Deserialize<AttributeApplication>(AttributeJson.Options)!;
         var second = JsonSerializer.Serialize(parsed, AttributeJson.Options);
         if (first != second) throw new Exception("Physical attribute roundtrip changed a value");
         var container = new JsonObject { ["attribute"] = JsonValue.Create(application),
             ["default"] = JsonValue.Create<A>(arguments[18]) };
         using var boundary = JsonDocument.Parse(container.ToJsonString(outerWriterOptions));
-        if (JsonSerializer.Serialize(AttributeJson.Read(boundary.RootElement.GetProperty("attribute")), AttributeJson.Options) != first
-            || AttributeJson.ReadArgument(boundary.RootElement.GetProperty("default")) is not A.TypeValue)
+        if (JsonSerializer.Serialize(boundary.RootElement.GetProperty("attribute").Deserialize<AttributeApplication>(AttributeJson.Options), AttributeJson.Options) != first
+            || boundary.RootElement.GetProperty("default").Deserialize<A>(AttributeJson.Options) is not A.TypeValue)
             throw new Exception("Typed metadata changed at the current output-container boundary");
         var reordered = new JsonObject();
         foreach (var pair in ((JsonObject)JsonNode.Parse(first)!).Reverse())
             reordered[pair.Key] = pair.Value?.DeepClone();
         using var reorderedDocument = JsonDocument.Parse(reordered.ToJsonString());
-        if (JsonSerializer.Serialize(AttributeJson.Read(reorderedDocument.RootElement), AttributeJson.Options) != first)
+        if (JsonSerializer.Serialize(reorderedDocument.RootElement.Deserialize<AttributeApplication>(AttributeJson.Options), AttributeJson.Options) != first)
             throw new Exception("Attribute decoding depends on root property order");
         var seen = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         void Remember(string tag, JsonObject value)

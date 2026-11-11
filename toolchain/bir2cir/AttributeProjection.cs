@@ -104,8 +104,15 @@ static class AttributeProjection
                     value["ordinal"]?.GetValue<int>(), value["type"] is { } type ? TypeJson.Read(type) : null);
         }
         if (!value.ContainsKey("value")) return new A.UnencodableValue();
-        if (value["value"] is not { } literal) return new A.NullValue();
-        var hint = TypeJson.Read(value["type"]) as TypeNode.Fqn;
+        if (value["value"] is null) return new A.NullValue();
+        return Literal(value["value"], TypeJson.Read(value["type"]));
+    }
+
+    public static A Literal(JsonNode literal, TypeNode type)
+    {
+        if (literal is null) return new A.NullValue();
+        while (type is TypeNode.Mod modifier) type = modifier.Of;
+        var hint = type as TypeNode.Fqn;
         if (literal is JsonObject || hint?.Name is "System.String" or "string")
             return Text(LiteralText.Read(literal));
         if (literal.GetValueKind() == JsonValueKind.True || literal.GetValueKind() == JsonValueKind.False)
@@ -203,7 +210,7 @@ static class AttributeProjection
             {
                 if (value.TryGetProperty("attr", out _))
                 {
-                    var metadata = AttributeJson.Read(value);
+                    var metadata = value.Deserialize<AttributeApplication>(AttributeJson.Options);
                     if (metadata.Args.Single() is not A.Utf16Value units
                         || !units.Units.SequenceEqual(new ushort[] { 0xd800, 'x', 0xdfff }))
                         throw new Exception("Metadata projection lost UTF16 or cross-file declaration ownership");
@@ -213,7 +220,7 @@ static class AttributeProjection
                 {
                     if (property.Name == "default")
                     {
-                        if (AttributeJson.ReadArgument(property.Value) is not A.Int32Value { Value: 42 })
+                        if (property.Value.Deserialize<A>(AttributeJson.Options) is not A.Int32Value { Value: 42 })
                             throw new Exception("Metadata projection lost the parameter default");
                         defaults++;
                     }

@@ -5,6 +5,7 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using DotKt.Cir;
 
 // Method/ctor body emission: control-flow prescan, arg/return coercion, array elem access, addr-of.
 sealed partial class Emitter
@@ -19,9 +20,9 @@ sealed partial class Emitter
         return true;
     }
 
-    void EmitCtorBody(TypeInfo ti, ConstructorBuilder cb, JsonElement c)
+    void EmitCtorBody(TypeInfo ti, ConstructorBuilder cb, CirConstructor c)
     {
-        _ctxType = ti.TB?.Name; _ctxMethod = ".ctor"; _ctxNode = null; _ctxPos = PosOf(c);   // #84 breadcrumb + #112 P2 source pos
+        _ctxType = ti.TB?.Name; _ctxMethod = ".ctor"; _ctxNode = null; _ctxPos = PosOf(c.Pos.OrDefault());
         var il = cb.GetILGenerator();
         if (EmitReferenceStub(il)) return;
         _methodRetType = Bcl("System.Void");
@@ -31,24 +32,23 @@ sealed partial class Emitter
         // own (a `cond`/`try` inside a bound value), and the delegation args are emitted here too. Scanning the whole
         // declaration would also define labels for subtrees that are never emitted (`params[].default`, `attrs`), and
         // ILGenerator refuses a label that is defined and never marked.
-        PrescanCfgLabels(c.GetProperty("body"));
-        AddCfgLabels(c, "preStmts");
-        AddCfgLabels(c, "thisArgs");
-        AddCfgLabels(c, "baseArgs");
+        PrescanCfgLabels(c.Body.Element);
+        foreach (var tree in new TemporaryCirExecutable[] { c.PreStmts.OrDefault(), c.ThisArgs.OrDefault(), c.BaseArgs.OrDefault() })
+            if (tree != null && tree.Element.ValueKind is JsonValueKind.Array or JsonValueKind.Object) WalkCfgLabels(tree.Element);
 
         // `preStmts` — the constructor DELEGATION's evaluation plan, lowered to `var` declarations by bir2cir's
         // CallEvalLowering. A delegation's arguments ride the declaration rather than an expression, so there is no
         // `valueBlock` to hold the values it must evaluate exactly once; they are declared HERE, ahead of the
         // `ldarg.0` that begins the `this`/`base` call, which is where Kotlin evaluates them.
-        if (c.TryGetProperty("preStmts", out var pre) && pre.ValueKind == JsonValueKind.Array)
-            foreach (var st in pre.EnumerateArray()) EmitStmt(st);
+        if (c.PreStmts.HasValue)
+            foreach (var st in c.PreStmts.Value.Element.EnumerateArray()) EmitStmt(st);
 
         _il.Emit(OpCodes.Ldarg_0);
-        if (c.TryGetProperty("thisArgs", out var ta) && ta.ValueKind == JsonValueKind.Array)
+        if (c.ThisArgs.HasValue)
         {
             // `constructor(...) : this(...)` -> delegate to a sibling ctor (it runs field inits / base call).
-            foreach (var a in ta.EnumerateArray()) EmitExpr(a);
-            ConstructorInfo sibling = LinkLocalCtor(ti, c);
+            foreach (var a in c.ThisArgs.Value.Element.EnumerateArray()) EmitExpr(a);
+            ConstructorInfo sibling = LinkLocalCtor(ti, c.LocalCtorIndex.Value);
             // Inside a GENERIC type, the sibling ctor must be referenced through the SELF-instantiation
             // `C`1<!T>` (the type over its OWN generic params), NOT the open definition `C`1` — a bare
             // `call C`1::.ctor` is "not fully instantiated" at JIT. Mirrors the base-ctor anchoring below
@@ -61,19 +61,19 @@ sealed partial class Emitter
         {
             // `: base(...)` on a .NET base -> the matching base constructor (resolved by reflection). A constructed
             // generic base (`Collection<int>`) needs the static helper to map the open ctor onto the instantiation.
-            var ba = c.TryGetProperty("baseArgs", out var b) && b.ValueKind == JsonValueKind.Array ? b : default;
+            var ba = c.BaseArgs.HasValue ? c.BaseArgs.Value.Element : default;
             // bir2cir has already resolved the Kotlin delegation onto its physical CLR constructor and carried the
             // declaration as baseCtorRef. Reuse the same exact-link path as newClr; this layer does not form or rank
             // a constructor candidate set from the argument expressions.
-            var ctor = LinkClrCtor(ti.ClrBase, c, "baseCtorRef");
+            var ctor = RequiredRef<ConstructorInfo>(c.BaseCtorRef.OrDefault(), "constructor delegation");
             if (ba.ValueKind == JsonValueKind.Array) EmitArgs(ba, ParametersOf(ctor));
             EmitConstructor(_il, OpCodes.Call, ctor);
         }
-        else if (ti.BaseName != null && _types.ContainsKey(ti.BaseName) && c.TryGetProperty("baseArgs", out var ba2) && ba2.ValueKind == JsonValueKind.Array)
+        else if (ti.BaseName != null && _types.ContainsKey(ti.BaseName) && c.BaseArgs.HasValue)
         {
             // bir2cir carries the frontend-selected local declaration signature. Link that exact declaration; choosing
             // a same-arity base constructor here would make ilemit an overload-resolution authority.
-            ConstructorInfo bctor = LinkLocalCtor(_types[ti.BaseName], c);
+            ConstructorInfo bctor = LinkLocalCtor(_types[ti.BaseName], c.LocalCtorIndex.Value);
             // A generic base instantiated over THIS type's own type params (`class D<T> : Base<T>()`) has its
             // parent set to the CONSTRUCTED base `Base<!T>` (ti.TB.BaseType); the base-ctor operand must be scoped
             // to that constructed type, not the open definition `Base<>` — a bare `call Base``1::.ctor` is "not
@@ -82,14 +82,14 @@ sealed partial class Emitter
             var baseType = ti.TB.BaseType;
             if (baseType != null && baseType.IsGenericType && !baseType.IsGenericTypeDefinition)
                 bctor = AnchorConstructor(baseType, bctor);
-            foreach (var a in ba2.EnumerateArray()) EmitExpr(a);
+            foreach (var a in c.BaseArgs.Value.Element.EnumerateArray()) EmitExpr(a);
             EmitConstructor(_il, OpCodes.Call, bctor);
         }
         else
         {
             EmitConstructor(_il, OpCodes.Call, WellKnown<ConstructorInfo>("Object.ctor"));
         }
-        foreach (var s in c.GetProperty("body").EnumerateArray()) EmitStmt(s);
+        foreach (var s in c.Body.Element.EnumerateArray()) EmitStmt(s);
         _il.Emit(OpCodes.Ret);
     }
 
@@ -100,17 +100,22 @@ sealed partial class Emitter
         if (!node.TryGetProperty("localCtorIndex", out var indexNode) || indexNode.ValueKind != JsonValueKind.Number)
             throw new InvalidOperationException($"ilemit: local constructor {ti.TB.FullName} is missing `localCtorIndex`; bir2cir must resolve the declaration");
         var index = indexNode.GetInt32();
+        return LinkLocalCtor(ti, index);
+    }
+
+    ConstructorBuilder LinkLocalCtor(TypeInfo ti, int index)
+    {
         if ((uint)index >= (uint)ti.Ctors.Count)
             throw new InvalidOperationException($"ilemit: local constructor index {index} is outside {ti.TB.FullName}'s {ti.Ctors.Count} declarations");
         return ti.Ctors[index];
     }
 
-    void EmitMethodBody(TypeInfo ti, JsonElement m)
+    void EmitMethodBody(TypeInfo ti, CirMethod m)
     {
         // #84 diagnostic breadcrumb — set BEFORE any read of `m`, so a malformed def (e.g. a missing `name`, the exact
         // bir2cir-bug class #84 targets) is attributed to THIS type, not the previously-emitted method. Refined to the
         // method name once resolved below.
-        _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null; _ctxPos = PosOf(m); _curTi = ti;   // #112 P2: decl source pos
+        _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null; _ctxPos = PosOf(m.Pos.OrDefault()); _curTi = ti;
         var mname = PhysicalMethodName(m);
         _ctxMethod = mname;
         // Pick THIS def's own MethodBuilder by signature (overloads share `mname`; the name-keyed map holds only the
@@ -129,8 +134,8 @@ sealed partial class Emitter
         // and re-checks once R1/#90 lands. (Replaced the prior `m.abstract`-flag re-derivation, which the SAM defeated.)
         if (mb.IsAbstract)
         {
-            var hasBody = m.TryGetProperty("body", out var abody) && abody.ValueKind == JsonValueKind.Array && abody.GetArrayLength() > 0;
-            var flagAbstract = m.TryGetProperty("abstract", out var af) && af.GetBoolean();
+            var hasBody = m.Body.HasValue && m.Body.Value.Element.ValueKind == JsonValueKind.Array && m.Body.Value.Element.GetArrayLength() > 0;
+            var flagAbstract = m.Abstract.OrDefault();
             if (hasBody || !flagAbstract)
                 Console.Error.WriteLine($"ilemit: WARNING: abstract-slot body invariant — '{ti.TB?.Name}.{mname}' is declared "
                     + $"abstract but its CIR def {(hasBody ? "carries a body" : "lacks the abstract flag")}; skipping body emission because of an upstream bir2cir/kotc defect.");
@@ -142,11 +147,11 @@ sealed partial class Emitter
         _curTypeParams = EffectiveTps(ti);
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
         BeginMethod(mb, il, m, isStatic: mb.IsStatic);
-        PrescanCfgLabels(m.GetProperty("body"));
-        foreach (var s in m.GetProperty("body").EnumerateArray()) EmitStmt(s);
+        PrescanCfgLabels(m.Body.Value.Element);
+        foreach (var s in m.Body.Value.Element.EnumerateArray()) EmitStmt(s);
         // CIR may prove that a body terminates without fall-through (for example, an exact metadata throw stub).
         // Otherwise keep the verifier-safe fallback return used by ordinary emitted methods.
-        if (!(m.TryGetProperty("bodyTerminates", out var bodyTerminates) && bodyTerminates.GetBoolean()))
+        if (!m.BodyTerminates.OrDefault())
             EmitTrailingRet();
     }
 
@@ -173,14 +178,6 @@ sealed partial class Emitter
     // Define an IL Label for every CFG `label` node anywhere in the body (forward refs from goto/brIf), so the
     // single emit pass can branch to not-yet-emitted blocks. Recursive: labels can sit inside nested structured
     // bodies (a CFG-lowered `while` spliced into a still-structured `if`). See docs/bir-cir-spec.md.
-    // Fold one more tree of the SAME frame into the label map [PrescanCfgLabels] just built (a constructor emits its
-    // `preStmts` and delegation args alongside its body).
-    void AddCfgLabels(JsonElement decl, string key)
-    {
-        if (decl.TryGetProperty(key, out var t) && t.ValueKind is JsonValueKind.Array or JsonValueKind.Object)
-            WalkCfgLabels(t);
-    }
-
     void PrescanCfgLabels(JsonElement node)
     {
         _cfgLabels = new Dictionary<int, Label>();
@@ -208,17 +205,17 @@ sealed partial class Emitter
         else _il.Emit(OpCodes.Ldc_I4, n);
     }
 
-    void BeginMethod(MethodBase method, ILGenerator il, JsonElement m, bool isStatic)
+    void BeginMethod(MethodBase method, ILGenerator il, ICirCallable m, bool isStatic)
     {
         _sourceMethod = method;
         _il = il; _args.Clear(); _argTypes.Clear(); _locals.Clear();
         int i = isStatic ? 0 : 1; // arg0 = this for instance methods
-        foreach (var p in m.GetProperty("params").EnumerateArray())
+        foreach (var p in m.Params)
         {
             // A nameless param (the round-trip attribute-class ctors, #71 S2 — no Param row) is unreferenceable by
             // body IL anyway; skip its arg-map entry but still advance the arg index.
-            var pn = p.TryGetProperty("name", out var nn) ? nn.GetString() : null;
-            if (!string.IsNullOrEmpty(pn)) { _argTypes[pn] = MapType(p.GetProperty("type")); _args[pn] = i; }
+            var pn = p.Name.OrDefault();
+            if (!string.IsNullOrEmpty(pn)) { _argTypes[pn] = MapType(p.Type); _args[pn] = i; }
             i++;
         }
     }

@@ -22,6 +22,12 @@
     <Compile Include="../bir-common/TypeNode.Json.Generated.cs" Link="TypeNode.Json.Generated.cs" />
     <Compile Include="../cir-common/Attribute.Model.Generated.cs" Link="Attribute.Model.Generated.cs" />
     <Compile Include="../cir-common/AttributeJson.cs" Link="AttributeJson.cs" />
+    <Compile Include="../cir-common/Declaration.Model.Generated.cs" Link="Declaration.Model.Generated.cs" />
+    <Compile Include="../cir-common/Declaration.cs" Link="Declaration.cs" />
+    <Compile Include="../cir-common/DeclarationJson.cs" Link="DeclarationJson.cs" />
+    <Compile Include="../cir-common/OptionalField.cs" Link="OptionalField.cs" />
+    <Compile Include="../cir-common/TemporaryExecutableJson.cs" Link="TemporaryExecutableJson.cs" />
+    <Compile Include="../cir-common/IrSanity.Cir.cs" Link="IrSanity.Cir.cs" />
     <Compile Include="../bir-common/NativeSignatureReader.cs" Link="NativeSignatureReader.cs" />
     <!-- Shared #370 scalar member reference: the ONE fully resolved external-member identity bir2cir authors and
          ilemit looks up exactly. Linked for the same reason as TypeNode — one compiled contract, no build order. -->

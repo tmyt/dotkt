@@ -16,6 +16,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
 using System.Text.Json;
+using DotKt.Cir;
 using DotKt.Bir;
 
 sealed partial class Emitter
@@ -146,40 +147,38 @@ sealed partial class Emitter
     /// no type arguments, no overload picked from context — so one table per document says them all, and the
     /// emitter keeps the expansion while the member arrives named.
     /// </remarks>
-    void LoadWellKnown(IEnumerable<JsonElement> files)
+    void LoadWellKnown(IEnumerable<CirFileDeclaration> files)
     {
         _auditArmed = true;
         foreach (var file in files)
         {
-            if (file.ValueKind != JsonValueKind.Object
-                || !file.TryGetProperty("wellKnownRefs", out var table)
-                || table.ValueKind != JsonValueKind.Object) continue;
-            foreach (var entry in table.EnumerateObject())
+            if (!file.WellKnownRefs.HasValue) continue;
+            foreach (var entry in file.WellKnownRefs.Value)
             {
-                if (entry.Value.ValueKind != JsonValueKind.Object) continue;
-                if (!WellKnownRoles.Contains(entry.Name, StringComparer.Ordinal))
+                if (entry.Value == null) continue;
+                if (!WellKnownRoles.Contains(entry.Key, StringComparer.Ordinal))
                     throw new InvalidOperationException(
-                        $"ilemit: fixed-member table contains unknown role '{entry.Name}'");
+                        $"ilemit: fixed-member table contains unknown role '{entry.Key}'");
                 try
                 {
-                    var resolved = ResolveMemberRef(MemberRefNode.Read(entry.Value));
+                    var resolved = ResolveMemberRef(entry.Value);
                     // Every document states the same fixed member for a role. Taking the first and skipping the
                     // rest would make a disagreement invisible — and a disagreement means two documents were
                     // resolved against different reference sets, which is worth stopping for.
-                    if (_wellKnown.TryGetValue(entry.Name, out var already))
+                    if (_wellKnown.TryGetValue(entry.Key, out var already))
                     {
                         if (already.MetadataToken != resolved.MetadataToken || already.Module != resolved.Module)
                             throw new InvalidOperationException(
                                 $"ilemit: two documents name different members for the fixed-member role "
-                                + $"`{entry.Name}`: {Describe(already)} and {Describe(resolved)}");
+                                + $"`{entry.Key}`: {Describe(already)} and {Describe(resolved)}");
                         continue;
                     }
-                    _wellKnown[entry.Name] = Sanction(resolved);
+                    _wellKnown[entry.Key] = Sanction(resolved);
                 }
                 catch (Exception ex)
                 {
                     throw new InvalidOperationException(
-                        $"ilemit: the document's `{entry.Name}` reference does not resolve: {ex.Message}", ex);
+                        $"ilemit: the document's `{entry.Key}` reference does not resolve: {ex.Message}", ex);
                 }
             }
         }
@@ -234,9 +233,7 @@ sealed partial class Emitter
     /// </remarks>
     MethodInfo[] NamedInterfaceSlots(TypeInfo ti, TypeNode.Fqn ownerSpec, Type owner)
     {
-        if (ti.Def.ValueKind != JsonValueKind.Object
-            || !ti.Def.TryGetProperty("interfaceSlotRefs", out var sets)
-            || sets.ValueKind != JsonValueKind.Array)
+        if (ti.TypeDeclaration is not { InterfaceSlotRefs.HasValue: true } declaration)
             throw new InvalidOperationException(
                 $"ilemit: type '{ti.TB}' reaches external interface '{owner}' without interfaceSlotRefs");
         // This is a carrier identity, not a call-binding key: preserve type-variable scope and position so I<!0>
@@ -247,28 +244,20 @@ sealed partial class Emitter
         var expectedDeclaringKey = DefinitionSigCanon(new TypeNode.Fqn(ownerDef.FullName,
             ownerSpec.Args == null ? null : ownerSpec.Args.ToArray()));
         var assembly = ownerDef.Assembly.GetName().Name;
-        var matches = sets.EnumerateArray().Where(set =>
-            set.ValueKind == JsonValueKind.Object
-            && set.TryGetProperty("owner", out var stated)
-            && ReadFqn(stated) is TypeNode.Fqn statedOwner
+        var matches = declaration.InterfaceSlotRefs.Value.Where(set =>
+            set.Owner is TypeNode.Fqn statedOwner
             && DefinitionSigCanon(statedOwner) == ownerKey
-            && set.TryGetProperty("assembly", out var scope)
-            && scope.ValueKind == JsonValueKind.String
-            && string.Equals(scope.GetString(), assembly, StringComparison.Ordinal)).ToArray();
+            && string.Equals(set.Assembly, assembly, StringComparison.Ordinal)).ToArray();
         if (matches.Length != 1)
             throw new InvalidOperationException(
                 $"ilemit: type '{ti.TB}' carries {matches.Length} interface-slot set(s) for "
                 + $"'{ownerKey}' in assembly '{assembly}', expected exactly one");
-        if (!matches[0].TryGetProperty("slots", out var slots) || slots.ValueKind != JsonValueKind.Array)
-            throw new InvalidOperationException(
-                $"ilemit: type '{ti.TB}' carries a malformed interface-slot set for '{ownerKey}'");
         var found = new List<MethodInfo>();
-        foreach (var slot in slots.EnumerateArray())
+        foreach (var reference in matches[0].Slots)
         {
-            if (slot.ValueKind != JsonValueKind.Object)
+            if (reference == null)
                 throw new InvalidOperationException(
                     $"ilemit: type '{ti.TB}' carries a non-reference slot for '{ownerKey}'");
-            var reference = MemberRefNode.Read(slot);
             if (reference.Kind != MemberRefNode.Kinds.Method
                 || !string.Equals(reference.Assembly, assembly, StringComparison.Ordinal)
                 || reference.DeclaringType is not TypeNode.Fqn statedOwner
@@ -312,6 +301,10 @@ sealed partial class Emitter
             ?? throw new InvalidOperationException(
                 $"ilemit: {kind} carries no resolved `{carrier}`. The members a construction builds through are "
                 + "named by the pass that minted it; a node without one is an earlier-layer drop");
+
+    T RequiredRef<T>(MemberRefNode reference, string operation) where T : MemberInfo
+        => PrimaryFromRef(reference) as T
+            ?? throw new InvalidOperationException($"ilemit: {operation} has no resolved member reference");
 
     /// <summary>The member a reference names, resolved exactly. Never a search.</summary>
     MemberInfo ResolveMemberRef(MemberRefNode reference)

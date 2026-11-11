@@ -42,7 +42,7 @@ def facts(declaration, name):
 source_owner = "roundtrip.protectedgenericowner.ReferencedProtectedGenericOwnerBase"
 source = next(item for item in producer["types"] if item["name"] == source_owner)
 assert source["typeParams"] == [
-    {"name": "T", "constraints": [{"t": "tv", "scope": "type", "i": 1}]}, "$nullable0"]
+    {"name": "T", "constraints": [{"t": "tv", "scope": "type", "i": 1}]}, {"name": "$nullable0"}]
 original = next(method for method in source["methods"] if method["name"] == "snapshot")
 assert original["ret"] == storage and [param["type"] for param in original["params"]] == [storage]
 assert original["vis"] == "protected" and facts(original, "KotlinCallableVisibility") == [{"visibility": "protected"}]

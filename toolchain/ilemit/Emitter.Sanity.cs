@@ -20,7 +20,7 @@ sealed partial class Emitter
     // Run the shared sanity invariants over every method/ctor/static-field-initializer in the CIR, before any emit.
     // Every check is intra-declaration and needs no Reflection.Emit state, so fail-before-any-work is the cleanest
     // contract. Re-throw the layer-agnostic IrSanityException as ilemit's CirSanityException for the Main catch.
-    void CheckCir(List<JsonElement> files)
+    void CheckCir(List<DotKt.Cir.CirFileDeclaration> files)
     {
         try { IrSanity.Check(files); }
         catch (IrSanityException ex) { throw new CirSanityException(ex.Decl, ex.Message); }

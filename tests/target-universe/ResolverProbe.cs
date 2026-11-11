@@ -167,30 +167,50 @@ static class ResolverProbe
 
     public static void CheckMerge(string emitterPath)
     {
-        var merge = Assembly.LoadFrom(Path.GetFullPath(emitterPath)).GetType("IlEmit", throwOnError: true)!
+        var emitter = Assembly.LoadFrom(Path.GetFullPath(emitterPath));
+        var merge = emitter.GetType("IlEmit", throwOnError: true)!
             .GetMethod("MergeByFileClass", BindingFlags.Static | BindingFlags.NonPublic)!;
-        using var first = JsonDocument.Parse("""{"fileClass":"Shared","methods":[{"name":"first"}],"fields":[1],"properties":[2],"types":[3],"assemblyAttrs":[4]}""");
-        using var other = JsonDocument.Parse("""{"fileClass":"Other","methods":[]}""");
-        using var synthetic = JsonDocument.Parse("""{"types":[{"name":"Synthetic"}]}""");
-        using var empty = JsonDocument.Parse("""{"fileClass":"","types":[{"name":"Empty"}]}""");
-        using var continuation = JsonDocument.Parse("""{"fileClass":"Shared","hasMain":true,"methods":[{"name":"second"}],"fields":[5],"properties":[6],"types":[7],"assemblyAttrs":[8]}""");
-        List<JsonElement> Merge(params JsonDocument[] documents) => (List<JsonElement>)merge.Invoke(null, [documents.ToList()])!;
+        // Use the actual production declaration type/codec from ilemit, not a second linked model assembly.
+        var codec = emitter.GetType("DotKt.Cir.DeclarationJson", throwOnError: true)!;
+        var declaration = emitter.GetType("DotKt.Cir.CirFileDeclaration", throwOnError: true)!;
+        object Read(string json) => codec.GetMethod("Read")!.Invoke(null, [System.Text.Encoding.UTF8.GetBytes(json)])!;
+        JsonNode Inspect(object value) => JsonNode.Parse((string)codec.GetMethod("Write")!.Invoke(null, [value, false])!)!;
+        object Root(string file, string name, bool main = false) => Read($$$"""
+            {"fileClass":"{{{file}}}","hasMain":{{{(main ? "true" : "false")}}},
+             "methods":[{"name":"{{{name}}}","static":true,"override":false,"virtual":false,"params":[],"ret":{"t":"fqn","name":"void"},"body":[]}],
+             "fields":[{"name":"{{{name}}}","type":{"t":"fqn","name":"System.Int32"}}],
+             "properties":[{"name":"{{{name}}}","type":{"t":"fqn","name":"System.Int32"}}],
+             "types":[{"name":"{{{name}}}","kind":"class"}],
+             "assemblyAttrs":[{"attr":{"t":"fqn","name":"A"},"argTypes":[],"args":[]}]}
+            """);
+        using var first = (IDisposable)Root("Shared", "first");
+        using var other = (IDisposable)Root("Other", "other");
+        using var synthetic = (IDisposable)Root("", "Synthetic");
+        using var empty = (IDisposable)Root("", "Empty");
+        using var continuation = (IDisposable)Root("Shared", "second", true);
+        System.Collections.IList Merge(params object[] documents)
+        {
+            var list = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(declaration))!;
+            foreach (var document in documents) list.Add(document);
+            return (System.Collections.IList)merge.Invoke(null, [list])!;
+        }
         var distinct = Merge(first, synthetic, empty, other);
         var original = new[] { first, synthetic, empty, other };
         for (var index = 0; index < original.Length; index++)
-            if (!distinct[index].Equals(original[index].RootElement))
+            if (!ReferenceEquals(distinct[index], original[index]))
                 throw new Exception("Distinct CIR containers were copied/reordered");
         var combined = Merge(first, synthetic, continuation, other, empty);
-        if (combined.Count != 4 || !combined[0].GetProperty("hasMain").GetBoolean()
-            || combined[1].GetProperty("types")[0].GetProperty("name").GetString() != "Synthetic"
-            || combined[2].GetProperty("fileClass").GetString() != "Other"
-            || combined[3].GetProperty("types")[0].GetProperty("name").GetString() != "Empty")
+        var grouped = combined.Cast<object>().Select(Inspect).ToArray();
+        if (combined.Count != 4 || !grouped[0]["hasMain"]!.GetValue<bool>()
+            || grouped[1]["types"]![0]!["name"]!.GetValue<string>() != "Synthetic"
+            || grouped[2]["fileClass"]!.GetValue<string>() != "Other"
+            || grouped[3]["types"]![0]!["name"]!.GetValue<string>() != "Empty")
             throw new Exception("CIR grouping/order/synthetic independence changed");
         foreach (var key in new[] { "methods", "fields", "properties", "types", "assemblyAttrs" })
-            if (combined[0].GetProperty(key).GetArrayLength() != 2)
+            if (grouped[0][key]!.AsArray().Count != 2)
                 throw new Exception("CIR container merge dropped declarations: " + key);
-        if (combined[0].GetProperty("methods")[0].GetProperty("name").GetString() != "first"
-            || combined[0].GetProperty("methods")[1].GetProperty("name").GetString() != "second")
+        if (grouped[0]["methods"]![0]!["name"]!.GetValue<string>() != "first"
+            || grouped[0]["methods"]![1]!["name"]!.GetValue<string>() != "second")
             throw new Exception("Merged CIR declaration order changed");
         Console.WriteLine("PASS CIR merge: distinct documents retained; shared file classes merge every declaration list in stable order");
     }

@@ -284,6 +284,7 @@
     },
     "pinvoke": {
       "type": "object",
+      "x-dotkt-model": { "name": "CirPInvoke", "domain": "cirDeclarations" },
       "description": "CIR-only normalized MethodDef/ImplMap descriptor for a CLR P/Invoke declaration. bir2cir consumes Kotlin external + the DllImportAttribute pseudo-attribute into this complete physical instruction; ilemit emits it one-to-one and no CustomAttribute row survives.",
       "properties": {
         "module": { "type": "string", "minLength": 1 },
@@ -312,6 +313,7 @@
     "//== MODIFIERS (§2.1) + VISIBILITY ==//": null,
     "mods": {
       "type": "object",
+      "x-dotkt-model": { "name": "CirModifiers", "domain": "cirDeclarations" },
       "description": "Order-free set of name:true flags (absent = not set). Replaces the $kmods string-concat + the final,inline,ext,… comma string + scattered flat booleans. Visibility is NOT a mod (see `vis`).",
       "properties": {
         "inline":     { "const": true }, "infix":     { "const": true },
@@ -334,6 +336,158 @@
       "additionalProperties": false
     },
     "vis": { "enum": ["public", "private", "protected", "internal", "protectedInternal"] },
+
+    "//== PHYSICAL CIR DECLARATIONS ==//": null,
+    "cirFile": {
+      "type": "object", "x-dotkt-model": { "name": "CirFileDeclaration", "domain": "cirDeclarations", "interfaces": ["ICirContainer"], "sourceDefaults": { "hasMain": false, "methods": [], "fields": [], "types": [] } },
+      "description": "Physical output unit. Declaration records contain only typed fields; executable subtrees have a named temporary adapter until node migration.",
+      "properties": {
+        "fileClass": { "type": "string" }, "hasMain": { "type": "boolean" },
+        "methods": { "type": "array", "items": { "$ref": "#/$defs/cirMethod" } },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/cirField" } },
+        "types": { "type": "array", "items": { "$ref": "#/$defs/cirTypeDeclaration" } },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/cirProperty" } },
+        "assemblyAttrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
+        "wellKnownRefs": { "type": "object", "additionalProperties": { "$ref": "#/$defs/memberRef" }, "x-dotkt-csharp-type": "System.Collections.Generic.Dictionary<string, MemberRefNode>" },
+        "pos": { "$ref": "#/$defs/pos" }
+      }, "required": ["fileClass", "hasMain", "methods", "fields", "types"], "additionalProperties": false
+    },
+    "cirTypeKind": {
+      "x-dotkt-model": { "name": "CirTypeKind", "domain": "cirDeclarations" },
+      "enum": ["class", "interface", "object", "enum", "annotation", "delegate"]
+    },
+    "cirTypeDeclaration": {
+      "type": "object", "x-dotkt-model": { "name": "CirTypeDeclaration", "domain": "cirDeclarations", "interfaces": ["ICirContainer"] },
+      "properties": {
+        "name": { "type": "string" }, "kind": { "$ref": "#/$defs/cirTypeKind" }, "vis": { "type": "string" },
+        "generated": { "type": "boolean" }, "abstract": { "type": "boolean" }, "final": { "type": "boolean" },
+        "specialName": { "type": "boolean" }, "beforeFieldInit": { "type": "boolean" },
+        "nestedIn": { "type": "string" }, "base": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
+        "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/cirTypeParameter" } },
+        "capturedTypeParams": { "type": "array", "items": { "$ref": "#/$defs/cirTypeParameter" } },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/cirField" } },
+        "ctors": { "type": "array", "items": { "$ref": "#/$defs/cirConstructor" } },
+        "methods": { "type": "array", "items": { "$ref": "#/$defs/cirMethod" } },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/cirProperty" } },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
+        "mods": { "$ref": "#/$defs/mods" }, "pos": { "$ref": "#/$defs/pos" },
+        "interfaceSlotRefs": { "type": "array", "items": { "$ref": "#/$defs/cirInterfaceSlotSet" } },
+        "clrEvents": { "type": "array", "items": { "$ref": "#/$defs/cirEvent" } },
+        "underlying": { "$ref": "#/$defs/type" },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/cirEnumEntry" } },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/cirParameter" } }, "ret": { "$ref": "#/$defs/type" },
+        "retAttrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } }
+      }, "required": ["name", "kind"], "additionalProperties": false
+    },
+    "cirTypeParameter": {
+      "type": "object", "x-dotkt-model": { "name": "CirTypeParameter", "domain": "cirDeclarations" },
+      "description": "One physical generic parameter declaration, including all constraint rows. Names in expressions are a different domain.",
+      "properties": {
+        "name": { "type": "string" }, "variance": { "type": "string" },
+        "constraints": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "specialConstraints": { "type": "array", "items": { "type": "string" } }
+      }, "required": ["name"], "additionalProperties": false
+    },
+    "cirParameter": {
+      "type": "object", "x-dotkt-model": { "name": "CirParameter", "domain": "cirDeclarations" },
+      "properties": {
+        "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "mods": { "$ref": "#/$defs/mods" },
+        "default": { "$ref": "#/$defs/cirAttributeArgument" },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
+        "nullableFlags": { "type": "array", "items": { "type": "integer" } },
+        "suspendFnType": { "$ref": "#/$defs/type" }, "ctxFnType": { "type": "integer" }
+      }, "required": ["type"], "additionalProperties": false
+    },
+    "cirMethod": {
+      "type": "object", "x-dotkt-model": { "name": "CirMethod", "domain": "cirDeclarations", "interfaces": ["ICirCallable"], "sourceDefaults": { "static": false, "override": false, "virtual": false, "params": [] } },
+      "properties": {
+        "name": { "type": "string" }, "static": { "type": "boolean" }, "override": { "type": "boolean" },
+        "virtual": { "type": "boolean" }, "abstract": { "type": "boolean" }, "vis": { "type": "string" },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/cirParameter" } }, "ret": { "$ref": "#/$defs/type" },
+        "body": { "$ref": "#/$defs/cirStatementList" },
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/cirTypeParameter" } },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
+        "retAttrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
+        "mods": { "$ref": "#/$defs/mods" }, "pos": { "$ref": "#/$defs/pos" }, "generated": { "type": "boolean" },
+        "objectOverride": { "type": "boolean" }, "clrFinal": { "type": "boolean" }, "specialName": { "type": "boolean" },
+        "suspendBridge": { "type": "boolean" },
+        "clrInterfaceSlotBridge": { "type": "boolean" }, "requiresClrOverride": { "type": "boolean" },
+        "clrOverrideRef": { "$ref": "#/$defs/memberRef" },
+        "clrInterfaceImpls": { "type": "array", "items": { "$ref": "#/$defs/cirMethodImpl" } },
+        "clrBaseImpls": { "type": "array", "items": { "$ref": "#/$defs/cirMethodImpl" } },
+        "extern": { "type": "boolean" }, "pinvoke": { "$ref": "#/$defs/pinvoke" }, "bodyTerminates": { "type": "boolean" },
+        "independentAliasSlot": { "type": "boolean" }, "physicalSlotBridge": { "type": "boolean" },
+        "inlineBir": { "type": "string", "contentEncoding": "base64", "x-dotkt-csharp-type": "byte[]" },
+        "retNothing": { "type": "boolean" }, "retNullableFlags": { "type": "array", "items": { "type": "integer" } },
+        "retSuspendFnType": { "$ref": "#/$defs/type" }, "suspendRet": { "$ref": "#/$defs/type" }, "retCtxFnType": { "type": "integer" }
+      }, "required": ["name", "static", "override", "virtual", "params", "ret"], "additionalProperties": false
+    },
+    "cirConstructor": {
+      "type": "object", "x-dotkt-model": { "name": "CirConstructor", "domain": "cirDeclarations", "interfaces": ["ICirCallable"], "sourceDefaults": { "params": [] } },
+      "properties": {
+        "vis": { "type": "string" }, "params": { "type": "array", "items": { "$ref": "#/$defs/cirParameter" } },
+        "baseArgs": { "$ref": "#/$defs/cirExpressionList" }, "thisArgs": { "$ref": "#/$defs/cirExpressionList" },
+        "delegationSig": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "body": { "$ref": "#/$defs/cirStatementList" },
+        "baseCtorRef": { "$ref": "#/$defs/memberRef" }, "localCtorIndex": { "type": "integer" },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
+        "preStmts": { "$ref": "#/$defs/cirStatementList" }, "pos": { "$ref": "#/$defs/pos" }
+      }, "required": ["params", "body"], "additionalProperties": false
+    },
+    "cirField": {
+      "type": "object", "x-dotkt-model": { "name": "CirField", "domain": "cirDeclarations" },
+      "properties": {
+        "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "static": { "type": "boolean" },
+        "readOnly": { "type": "boolean" }, "initOnly": { "type": "boolean" }, "vis": { "type": "string" },
+        "init": { "$ref": "#/$defs/cirExpression" }, "constant": { "$ref": "#/$defs/cirAttributeArgument" },
+        "volatile": { "type": "boolean" }, "const": { "type": "boolean" }, "lateinit": { "type": "boolean" },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
+        "nullableFlags": { "type": "array", "items": { "type": "integer" } }, "suspendFnType": { "$ref": "#/$defs/type" },
+        "pos": { "$ref": "#/$defs/pos" }
+      }, "required": ["name", "type"], "additionalProperties": false
+    },
+    "cirProperty": {
+      "type": "object", "x-dotkt-model": { "name": "CirProperty", "domain": "cirDeclarations" },
+      "properties": {
+        "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
+        "get": { "type": "string" }, "getSig": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "getRet": { "$ref": "#/$defs/type" }, "getMethodArity": { "type": "integer" },
+        "set": { "type": "string" }, "setSig": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "setRet": { "$ref": "#/$defs/type" }, "setMethodArity": { "type": "integer" },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
+        "nullableFlags": { "type": "array", "items": { "type": "integer" } }, "suspendFnType": { "$ref": "#/$defs/type" },
+        "mods": { "$ref": "#/$defs/mods" }, "vis": { "type": "string" }, "recv": { "$ref": "#/$defs/type" }, "pos": { "$ref": "#/$defs/pos" }
+      }, "required": ["name", "type"], "additionalProperties": false
+    },
+    "cirEnumEntry": {
+      "type": "object", "x-dotkt-model": { "name": "CirEnumEntry", "domain": "cirDeclarations" },
+      "properties": {
+        "name": { "type": "string" }, "ordinal": { "type": "integer" }, "underlying": { "type": "string" }, "physicalValue": { "type": "string" },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } }
+      }, "required": ["name"], "additionalProperties": false
+    },
+    "cirMethodImpl": {
+      "type": "object", "x-dotkt-model": { "name": "CirMethodImpl", "domain": "cirDeclarations" },
+      "properties": {
+        "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "arity": { "type": "integer" },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "ret": { "$ref": "#/$defs/type" },
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/cirTypeParameter" } }, "memberRef": { "$ref": "#/$defs/memberRef" }
+      }, "required": ["owner", "member", "arity", "params", "ret"], "additionalProperties": false
+    },
+    "cirInterfaceSlotSet": {
+      "type": "object", "x-dotkt-model": { "name": "CirInterfaceSlotSet", "domain": "cirDeclarations" },
+      "properties": { "owner": { "$ref": "#/$defs/type" }, "assembly": { "type": "string" }, "slots": { "type": "array", "items": { "$ref": "#/$defs/memberRef" } } },
+      "required": ["owner", "assembly", "slots"], "additionalProperties": false
+    },
+    "cirEvent": {
+      "type": "object", "x-dotkt-model": { "name": "CirEvent", "domain": "cirDeclarations" },
+      "properties": { "k": { "type": "string", "const": "clrEventDecl" }, "name": { "type": "string" }, "delegateType": { "$ref": "#/$defs/type" } },
+      "required": ["k", "name", "delegateType"], "additionalProperties": false
+    },
+    "cirStatementList": { "type": "array", "items": { "$ref": "#/$defs/node" }, "x-dotkt-csharp-type": "TemporaryCirStatements", "$comment": "Explicit body-only JSON adapter; removed when CIR statements migrate, never a declaration/root field bag." },
+    "cirExpressionList": { "type": ["array", "null"], "items": { "$ref": "#/$defs/node" }, "x-dotkt-csharp-type": "TemporaryCirExpressions", "$comment": "Constructor delegation operands; explicit null remains distinct from an absent field." },
+    "cirExpression": { "oneOf": [{ "$ref": "#/$defs/node" }, { "type": "null" }], "x-dotkt-csharp-type": "TemporaryCirExpression", "$comment": "Field initializer adapter only; explicit null states no initializer. Removed with executable node migration." },
 
     "//== DECLARATIONS ==//": null,
     "typeParam": {
@@ -603,6 +757,7 @@
     },
     "pos": {
       "type": "object",
+      "x-dotkt-model": { "name": "CirSourcePosition", "domain": "cirDeclarations" },
       "$comment": "#112 P2: OPTIONAL decl-level SOURCE POSITION (File.kt:line), threaded kotc -> BIR -> CIR so an ilemit/bir2cir emit failure or a shared IrSanity violation points at the originating declaration. Diagnostics-only; absent = pre-#112 behavior (a synthetic with no source omits it). Numeric l/c so the schema validator's bare-string check is not tripped; pos.f is the one string (verify-schema.py STR_OK).",
       "properties": {
         "f": { "type": "string", "description": "source file path (IrFileEntry.name)" },

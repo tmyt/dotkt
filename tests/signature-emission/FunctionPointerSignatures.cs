@@ -32,11 +32,11 @@ internal static unsafe class FunctionPointerSignatures
             new JsonArray(new JsonObject { ["name"] = "p", ["type"] = methodPointer.DeepClone() }),
             new JsonObject { ["k"] = "var", ["name"] = "copy", ["type"] = methodPointer.DeepClone(), ["init"] = Local("p") },
             new JsonObject { ["k"] = "return", ["value"] = Local("copy") });
-        echo["typeParams"] = new JsonArray("U");
+        echo["typeParams"] = new JsonArray(new JsonObject { ["name"] = "U" });
         var listEcho = Method("EchoList", listPointer,
             new JsonArray(new JsonObject { ["name"] = "p", ["type"] = listPointer.DeepClone() }),
             new JsonObject { ["k"] = "return", ["value"] = Local("p") });
-        listEcho["typeParams"] = new JsonArray("U");
+        listEcho["typeParams"] = new JsonArray(new JsonObject { ["name"] = "U" });
         var fields = new JsonArray();
         var methods = new JsonArray(echo, listEcho);
         foreach (var (name, pointer) in new[] { ("Pointer", typePointer), ("Cdecl", cdecl) })
@@ -54,7 +54,7 @@ internal static unsafe class FunctionPointerSignatures
         fields.Add(new JsonObject { ["name"] = "NestedPointer", ["vis"] = "public", ["static"] = true,
             ["type"] = new JsonObject { ["t"] = "ptr", ["of"] = typePointer.DeepClone() } });
         document["types"]!.AsArray().Add(new JsonObject {
-            ["name"] = "FunctionPointerMethods", ["kind"] = "class", ["vis"] = "public", ["typeParams"] = new JsonArray("T"),
+            ["name"] = "FunctionPointerMethods", ["kind"] = "class", ["vis"] = "public", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             ["base"] = Named("System.Object"), ["interfaces"] = new JsonArray(), ["ctors"] = new JsonArray(),
             ["fields"] = fields, ["methods"] = methods, ["properties"] = new JsonArray(new JsonObject {
                 ["name"] = "Value", ["type"] = typePointer.DeepClone(), ["get"] = "GetPointer",

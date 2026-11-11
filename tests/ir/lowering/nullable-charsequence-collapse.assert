@@ -4,7 +4,7 @@
 
 # Reference null literals have the canonical object representation, then an explicit String slot coercion.
 # The literal-null return is not rewritten through LibraryKt.toString.
-+"name":"literalNull","static":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"System.String"},"body":[{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.String"},"e":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}}]
++"name":"literalNull","static":true,"override":false,"virtual":false,"vis":"public","params":[],"ret":{"t":"fqn","name":"System.String"},"body":[{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.String"},"e":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}}]
 
 # A potentially-null StringBuilder is evaluated once, null-tested, and snapshot only in the else arm.
 +"k":"valueBlock","stmts":[{"k":"var","name":"__cssnapshot$1","type":{"t":"fqn","name":"System.Object"},"init":{"k":"local","name":"value"}}]
@@ -16,7 +16,7 @@
 -"method":"toString","sig":[{"t":"fqn","name":"object"}],"args":[{"k":"local","name":"value"}]
 
 # The three other independently implemented boundaries also preserve null while lowering their physical slots.
-+"name":"nullableSink","static":true,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"System.String"}
-+"name":"nullableVar","static":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"void"},"body":[{"k":"var","name":"localCs","type":{"t":"fqn","name":"System.String"},"init":{"k":"cast","type":{"t":"fqn","name":"System.String"},"e":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}}]
-+"name":"nullableCall","static":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"void"},"body":[{"k":"exprStmt","expr":{"k":"callStatic","method":"nullableSink","sig":[{"t":"fqn","name":"System.String"}],"args":[{"k":"cast","type":{"t":"fqn","name":"System.String"},"e":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}]
-+"name":"nullableCast","static":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"System.String"},"body":[{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.String"},"e":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}}]
++"name":"nullableSink","static":true,"override":false,"virtual":false,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"System.String"}
++"name":"nullableVar","static":true,"override":false,"virtual":false,"vis":"public","params":[],"ret":{"t":"fqn","name":"void"},"body":[{"k":"var","name":"localCs","type":{"t":"fqn","name":"System.String"},"init":{"k":"cast","type":{"t":"fqn","name":"System.String"},"e":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}}]
++"name":"nullableCall","static":true,"override":false,"virtual":false,"vis":"public","params":[],"ret":{"t":"fqn","name":"void"},"body":[{"k":"exprStmt","expr":{"k":"callStatic","method":"nullableSink","sig":[{"t":"fqn","name":"System.String"}],"args":[{"k":"cast","type":{"t":"fqn","name":"System.String"},"e":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}]
++"name":"nullableCast","static":true,"override":false,"virtual":false,"vis":"public","params":[],"ret":{"t":"fqn","name":"System.String"},"body":[{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.String"},"e":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}}]

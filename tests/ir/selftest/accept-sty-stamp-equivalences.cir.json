@@ -1,8 +1,14 @@
 {
   "fileClass": "SelftestKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
   "methods": [
     {
       "name": "a_typeVariableIsAWildcard",
+      "static": false,
+      "override": false,
+      "virtual": false,
       "params": [],
       "ret": { "t": "fqn", "name": "object" },
       "body": [
@@ -36,6 +42,9 @@
     },
     {
       "name": "b_oneClrTypeInThreeVocabularies",
+      "static": false,
+      "override": false,
+      "virtual": false,
       "params": [],
       "ret": { "t": "fqn", "name": "bool" },
       "body": [
@@ -69,6 +78,9 @@
     },
     {
       "name": "c_bottomInhabitsEverySlot",
+      "static": false,
+      "override": false,
+      "virtual": false,
       "params": [],
       "ret": { "t": "fqn", "name": "string" },
       "body": [
@@ -89,6 +101,9 @@
     },
     {
       "name": "e_nullabilityIsAnAnnotationAxis",
+      "static": false,
+      "override": false,
+      "virtual": false,
       "params": [],
       "ret": { "t": "fqn", "name": "string" },
       "body": [
@@ -109,6 +124,9 @@
     },
     {
       "name": "f_arrayInTwoSpellings",
+      "static": false,
+      "override": false,
+      "virtual": false,
       "params": [],
       "ret": { "t": "array", "elem": { "t": "fqn", "name": "int" } },
       "body": [
@@ -129,6 +147,9 @@
     },
     {
       "name": "g_shapesThisCheckDeclinesToJudge",
+      "static": false,
+      "override": false,
+      "virtual": false,
       "params": [],
       "ret": { "t": "fqn", "name": "kotlin.collections.List" },
       "body": [
@@ -162,6 +183,9 @@
     },
     {
       "name": "missingIsNotDisagreement",
+      "static": false,
+      "override": false,
+      "virtual": false,
       "params": [],
       "ret": { "t": "fqn", "name": "int" },
       "body": [
