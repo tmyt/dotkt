@@ -53,6 +53,9 @@ static class NetInteropBinding
         {
             foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value);   // children first (bottom-up)
             Reshape(obj);
+            // This pass owns companion classification. A Kotlin instance carrier
+            // can keep its ordinary call shape, but the classification hint is consumed.
+            obj.Remove("companionCall");
         }
         else if (node is JsonArray arr)
         {

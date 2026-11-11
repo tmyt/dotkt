@@ -45,7 +45,7 @@ nunit_prepare_cohort() {
 nunit_build_project() {
 	local root="$1" configuration="$2" project="$3" name
 	name="${project//\//-}"
-	dotnet build "$root/$project" -c "$configuration" --no-restore -m:1 -v:q --nologo \
+	dotnet build "$root/$project" -c "$configuration" --no-restore -m:1 -v:normal --nologo \
 		-p:CustomAfterMicrosoftCommonTargets="$root/tests/support/nunit/record-ir.targets" \
 		-p:DotKtTestIrManifest="$root/build/nunit-ir-corpus.pending" \
 		> "$root/build/nunit-$name.build.log" 2>&1

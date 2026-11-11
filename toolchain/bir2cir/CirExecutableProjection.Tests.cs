@@ -29,7 +29,7 @@ static partial class CirDeclarationProjection
             ["k"] = "callInstance", ["method"] = "Read", ["ownerType"] = TypeJson.Fqn("Consumer"),
             ["recv"] = sourceLocal, ["args"] = new JsonArray(Local("temporary")),
             ["clrOwnerResolved"] = true, ["virtual"] = false,
-            ["super"] = true,
+            ["super"] = true, ["static"] = false,
             ["calleeParams"] = new JsonArray(TypeJson.Fqn("System.UInt64")),
             ["calleeRet"] = TypeJson.Fqn("System.UInt64"),
         };
@@ -42,10 +42,29 @@ static partial class CirDeclarationProjection
             throw new InvalidOperationException("Executable projection changed exact call facts or evaluation edges");
         using var document = JsonDocument.Parse(JsonSerializer.Serialize<ICirExpression>(projected, AttributeJson.Options));
         if (document.RootElement.TryGetProperty("clrOwnerResolved", out _)
+            || document.RootElement.TryGetProperty("static", out _)
             || document.RootElement.TryGetProperty("super", out _)
             || document.RootElement.GetProperty("recv").TryGetProperty("sty", out _)
             || sourceLocal["sty"] is null)
             throw new InvalidOperationException("A consumed bir2cir binding marker reached physical CIR");
+        var staticSource = new JsonObject {
+            ["k"] = "callStatic", ["method"] = "Read", ["owner"] = TypeJson.Fqn("Consumer"),
+            ["sig"] = new JsonArray(TypeJson.Fqn("System.UInt64")),
+            ["argTypes"] = new JsonArray(TypeJson.Fqn("System.UInt64")),
+            ["args"] = new JsonArray(Local("temporary")),
+        };
+        var staticCall = (CirCallStatic)ReadCirNode(staticSource);
+        var castSource = new JsonObject {
+            ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Object"),
+            ["sty"] = TypeJson.Fqn("System.Object"), ["e"] = Local("temporary"),
+        };
+        var objectSource = new JsonObject {
+            ["k"] = "objMethod", ["method"] = "ToString", ["recv"] = Local("receiver"), ["anySlot"] = true,
+        };
+        if (staticCall.Sig.Value.Single() != new TypeNode.Fqn("System.UInt64")
+            || ReadCirNode(castSource) is not CirCast { Type: TypeNode.Fqn { Name: "System.Object" } }
+            || ReadCirNode(objectSource) is not CirObjectMethod { Method: "ToString" })
+            throw new InvalidOperationException("Consuming source typing facts changed an established physical operation");
         var metadataOnly = new JsonObject {
             ["fields"] = new JsonArray(new JsonObject {
                 ["init"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Double"), ["value"] = 1.0 }
@@ -93,6 +112,41 @@ static partial class CirDeclarationProjection
         var interopReferences = ReferenceMetadataIndex.Build(new[] {
             typeof(object).Assembly.Location, typeof(System.Numerics.Vector3).Assembly.Location,
         }.Distinct().ToArray());
+        foreach (var add in new[] { false, true })
+        foreach (var local in new[] { false, true })
+        {
+            var accessor = add ? "add_ProcessExit" : "remove_ProcessExit";
+            var operation = new JsonObject {
+                ["k"] = add ? "clrEventAdd" : "clrEventRemove", ["type"] = TypeJson.Fqn("System.AppDomain"),
+                ["event"] = "ProcessExit", ["static"] = false, ["recv"] = Local("receiver"),
+                ["handler"] = Local("handler"), ["handlerExact"] = true,
+            };
+            if (local)
+            {
+                operation["localAccessor"] = true;
+                operation["accessor"] = accessor;
+                operation["accessorOwner"] = TypeJson.Fqn("LocalOwner");
+                operation["delegateType"] = TypeJson.Fqn("System.EventHandler");
+                operation["sig"] = new JsonArray(TypeJson.Fqn("System.EventHandler"));
+                operation["dispatch"] = "callvirt";
+                operation[DeclarationIdentityBinding.Key] = "selected-event-accessor";
+                operation["memberVisibility"] = "public";
+            }
+            ClrMemberResolution.Apply(operation, interopReferences, new HashSet<string>());
+            ForeignNullableGenericCrossing.Check(operation, "event-boundary");
+            var projectedEvent = (ICirExpression)ReadCirNode(operation);
+            using var physicalEvent = JsonDocument.Parse(JsonSerializer.Serialize(projectedEvent, AttributeJson.Options));
+            var value = physicalEvent.RootElement;
+            if (value.GetProperty("accessor").GetString() != accessor
+                || value.GetProperty("dispatch").GetString() != (local ? "callvirt" : "call")
+                || value.GetProperty("handlerExact").GetBoolean() != true
+                || (local ? value.GetProperty("sig").GetArrayLength() != 1
+                    : value.GetProperty("memberRef").GetProperty("name").GetString() != accessor))
+                throw new InvalidOperationException("Event projection lost its exact physical accessor or handler");
+            foreach (var fact in new[] { "event", "delegateType", DeclarationIdentityBinding.Key, "memberVisibility" })
+                if (value.TryGetProperty(fact, out _))
+                    throw new InvalidOperationException("Event binding source facts reached physical CIR");
+        }
         foreach (var result in new[] { "System.Text.StringBuilder", "System.Single" })
         {
             var generic = result == "System.Text.StringBuilder";

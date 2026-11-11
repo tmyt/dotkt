@@ -1336,8 +1336,8 @@ class V:
                             self.err(f, path, f"{kind} localAccessor must carry an fqn accessorOwner")
                         if not isinstance(o.get("accessor"), str) or not o["accessor"]:
                             self.err(f, path, f"{kind} localAccessor must carry a non-empty accessor name")
-                        if not isinstance(o.get("delegateType"), dict) or "t" not in o["delegateType"]:
-                            self.err(f, path, f"{kind} localAccessor must carry its delegateType")
+                        # The physical accessor signature owns its exact delegate parameter;
+                        # delegateType is a consumed bir2cir binding fact, not a second CIR type slot.
                         if not isinstance(o.get("sig"), list) or len(o["sig"]) != 1:
                             self.err(f, path, f"{kind} localAccessor must carry its one-parameter declaration sig")
                         if o.get("dispatch") not in ("call", "callvirt", "constrained"):
