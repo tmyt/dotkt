@@ -54,9 +54,9 @@ internal fun BirEmitter.localFunctionRef(
 	val ownParams = localFunctionOwnParams(fn)
 	val bound = localFunctionBoundArguments(node, fn)
 	val resolvedTypeArgs = if (local.typeParams.isEmpty()) null else localFunctionTypeArgs(local, fn, node.typeArguments)
-	val callTypeArgs = resolvedTypeArgs?.joinToString(",", ",\"typeArgs\":[", "]") { it.toJson() }.orEmpty()
 	if (local.captures.isEmpty() && bound.isEmpty())
 		return kotc.bir.BirLocalFunctionReference(local.id, funcType, resolvedTypeArgs).toJson()
+	val callTypeArgs = resolvedTypeArgs?.joinToString(",", ",\"typeArgs\":[", "]") { it.toJson() }.orEmpty()
 
 	val frame = localFunctionReferenceFrame(node, fn, local)
 	val closureTypeArgs = liftedTypeArgsJson(frame.typeParams)
