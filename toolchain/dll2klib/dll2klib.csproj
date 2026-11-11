@@ -17,6 +17,7 @@
     <Compile Include="../bir-common/SourceMetadata.MessagePack.Generated.cs" Link="SourceMetadata.MessagePack.Generated.cs" />
     <Compile Include="../bir-common/BirCarrier.MessagePack.cs" Link="BirCarrier.MessagePack.cs" />
     <Compile Include="../bir-common/IrMessagePack.cs" Link="IrMessagePack.cs" />
+    <Compile Include="../bir-common/LiteralText.cs" Link="LiteralText.cs" />
     <Compile Include="../bir-common/FunctionPointerVocabulary.cs" Link="FunctionPointerVocabulary.cs" />
     <Compile Include="../bir-common/NullableRepresentationFrame.cs" Link="NullableRepresentationFrame.cs" />
     <Compile Include="../bir-common/BirJson.cs" Link="BirJson.cs" />

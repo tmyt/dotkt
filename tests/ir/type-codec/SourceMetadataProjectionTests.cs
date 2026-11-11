@@ -7,6 +7,18 @@ using KValue = projection::DotKt.Klib.Metadata.Annotation.Types.Argument.Types.V
 
 internal static class SourceMetadataProjectionTests
 {
+    internal static void CheckUtf16(string json, string expected)
+    {
+        var source = P.BirCarrier.DecodeBody(P.BirCarrier.JsonV1, Encoding.UTF8.GetBytes(json), P.SourceMetadataJson.Read);
+        if (((P.SourceAnnotationValue.StringValue)source.Annotations.Single().Arguments.Single().Value).Value != expected)
+            throw new Exception("dll2klib JSON codec changed source UTF-16 units");
+        var encoded = P.BirCarrier.EncodeBody(P.BirCarrier.MessagePackV1, source,
+            P.SourceMetadataJson.Write, P.SourceMetadataMessagePack.Write);
+        var restored = P.BirCarrier.DecodeBody(P.BirCarrier.MessagePackV1, encoded,
+            P.SourceMetadataJson.Read, P.SourceMetadataMessagePack.Read);
+        if (((P.SourceAnnotationValue.StringValue)restored.Annotations.Single().Arguments.Single().Value).Value != expected)
+            throw new Exception("dll2klib binary codec changed source UTF-16 units");
+    }
     // Inspect the production DLL-to-KLIB projection and actual protobuf facts. The
     // two tools link separate model copies; the external alias preserves that boundary.
     public static void Run(string json)

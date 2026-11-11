@@ -78,7 +78,10 @@
       "properties": {"unsigned": {"type": "boolean"}},
       "oneOf": [
         {"properties": {"kind": {"enum": ["byte", "char", "short", "int", "long", "boolean"]}, "value": {"type": "integer", "x-dotkt-kotlin-type": "Long", "x-dotkt-csharp-type": "long"}}, "required": ["value"]},
-        {"properties": {"kind": {"const": "string"}, "value": {"type": "string"}}, "required": ["value"]},
+        {"properties": {"kind": {"const": "string"}, "value": {
+          "oneOf": [{"type": "string"}, {"$ref": "bir-cir.schema.json#/$defs/utf16Literal"}],
+          "x-dotkt-kotlin-type": "String", "x-dotkt-csharp-type": "string", "x-dotkt-codec": "literalText"
+        }}, "required": ["value"]},
         {"properties": {"kind": {"enum": ["float", "double"]}, "bits": {"type": "integer", "x-dotkt-kotlin-type": "Long", "x-dotkt-csharp-type": "long"}}, "required": ["bits"]},
         {"properties": {"kind": {"const": "class"}, "classifier": {"$ref": "#/$defs/classifier"}, "arrayDimensions": {"type": "integer", "minimum": 0}}, "required": ["classifier", "arrayDimensions"]},
         {"properties": {"kind": {"const": "enum"}, "classifier": {"$ref": "#/$defs/classifier"}, "name": {"type": "string", "minLength": 1}}, "required": ["classifier", "name"]},

@@ -39,6 +39,16 @@ class TypeAliasSchemaTests(unittest.TestCase):
         self.alias["expandedType"]["typo"] = True
         self.assertTrue(self.errors())
 
+    def test_current_text_payload_preserves_only_code_units(self):
+        value = {"kind": "string", "unsigned": False, "value": {"encoding": "utf16", "units": [0, 0xd800, 0xdc00, 65535]}}
+        self.alias["annotations"] = [{"classifier": {"packageName": "sample", "ownerPath": [], "name": "Mark"},
+                                      "arguments": [{"name": "text", "value": value}]}]
+        self.assertEqual(self.errors(), [])
+        for invalid in ([65536], [-1], [True], ["42"]):
+            with self.subTest(invalid=invalid):
+                value["value"]["units"] = invalid
+                self.assertTrue(self.errors())
+
 
 if __name__ == "__main__":
     unittest.main()

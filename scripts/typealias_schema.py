@@ -77,7 +77,16 @@ def validate_aliases(value, path, report):
         elif kind == "array":
             sequence(node["value"], where + "/value", constant)
         elif kind == "string":
-            text(node["value"], where + "/value")
+            value = node["value"]
+            if isinstance(value, str):
+                text(value, where + "/value")
+            elif shape(value, where + "/value", ("encoding", "units")):
+                if value["encoding"] != "utf16":
+                    error(where + "/value/encoding", "invalid current text encoding")
+                def code_unit(unit, p):
+                    if type(unit) is not int or not 0 <= unit <= 65535:
+                        error(p, "expected a UTF-16 code unit")
+                sequence(value["units"], where + "/value/units", code_unit)
         else:
             key = "bits" if kind in ("float", "double") else "value"
             integer(node[key], where + "/" + key)
