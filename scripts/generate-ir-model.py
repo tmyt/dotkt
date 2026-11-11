@@ -60,6 +60,88 @@ def fields(definition, language):
             if name != "t" and field.get(f"x-dotkt-{language}", True)]
 
 
+def type_parameter_models(definitions):
+    """Semantic declaration facts; physical-only extensions have no Kotlin producer."""
+    definition = definitions["typeParam"]
+    name = definition["x-dotkt-model"]["name"]
+    header = "// Generated from docs/bir-cir.schema.json; run scripts/generate-ir-model.py."
+    cs_fields = fields(definition, "csharp")
+    kt_fields = fields(definition, "kotlin")
+    cs = [header, "#nullable enable", "namespace DotKt.Bir;", "",
+          f'public sealed partial record {name}(' + ", ".join(parameter(key, shape, definition, definitions, "csharp")
+                                                       for key, shape in cs_fields) + ");", ""]
+    # The declaration now owns its semantic fields. This adapter remains only at
+    # the frontier to passes whose surrounding declaration graph is still DOM.
+    dom = [header, "#nullable enable", "using System;", "using System.Linq;",
+           "using System.Text.Json.Nodes;", "namespace DotKt.Bir;", "",
+           "// Temporary boundary to not-yet-migrated enclosing declarations.",
+           f"public sealed partial record {name}", "{",
+           f"    public static {name} Read(JsonNode node)", "    {",
+           "        var source = (JsonObject)node;",
+           "        foreach (var field in source)", "            switch (field.Key)", "            {"]
+    dom += [f'                case "{key}": break;' for key, _ in cs_fields]
+    dom += ["                default: throw new FormatException();", "            }",
+            f"        return new {name}("]
+    read_fields = []
+    for key, shape in cs_fields:
+        value = f'source["{key}"]!'
+        if shape.get("type") == "array":
+            item = "TypeNode.Read(item!) ?? throw new FormatException()" if "$ref" in shape["items"] else "item!.GetValue<string>()"
+            read = f"((JsonArray){value}).Select(item => {item}).ToArray()"
+        else:
+            read = f'{value}.GetValue<{model_type(shape, definitions, "csharp")}>()'
+        if key not in definition["required"]:
+            read = f'source.ContainsKey("{key}") ? {read} : null'
+        read_fields.append("            " + read)
+    dom += [",\n".join(read_fields) + ");", "    }", "",
+            "    public JsonObject ToDom()", "    {", "        var result = new JsonObject();"]
+    for key, shape in cs_fields:
+        value = key[0].upper() + key[1:]
+        optional = key not in definition["required"]
+        indent = "            " if optional else "        "
+        if optional:
+            dom += [f"        if ({value} is {{ }} {key})", "        {"]
+            value = key
+        if shape.get("type") == "array":
+            item = "TypeNode.Write(item)" if "$ref" in shape["items"] else "(JsonNode)JsonValue.Create(item)!"
+            write = f"new JsonArray({value}.Select(item => {item}).ToArray())"
+        else:
+            write = value
+        dom += [f'{indent}result["{key}"] = {write};']
+        if optional:
+            dom += ["        }"]
+    dom += ["        return result;", "    }", "}", ""]
+    kt = [header, "package kotc.bir", "", f"data class {name}(",
+          ",\n".join("    " + parameter(key, shape, definition, definitions, "kotlin") for key, shape in kt_fields),
+          ") {", "    fun toJson(): String = buildString {",
+          "        append('{')"]
+    for index, (key, shape) in enumerate(kt_fields):
+        optional = key not in definition["required"]
+        prefix = ("," if index else "") + json.dumps(key) + ":"
+        indent = "            " if optional else "        "
+        value = "child" if optional else key
+        if optional:
+            kt += [f"        {key}?.let {{ child ->"]
+        kt += [f"{indent}append({json.dumps(prefix)})"]
+        if shape.get("type") == "array":
+            kt += [f"{indent}append('[')", f"{indent}{value}.forEachIndexed {{ index, item ->",
+                   f"{indent}    if (index > 0) append(',')"]
+            item = "append(item.toJson())" if "$ref" in shape["items"] else "TypeNodeJson.writeString(item, this)"
+            kt += [f"{indent}    {item}", f"{indent}}}", f"{indent}append(']')"]
+        elif model_type(shape, definitions, "kotlin") == "String":
+            kt += [f"{indent}TypeNodeJson.writeString({value}, this)"]
+        else:
+            kt += [f"{indent}append({value})"]
+        if optional:
+            kt += ["        }"]
+    kt += ["        append('}')", "    }", "}", ""]
+    return {
+        ROOT / "toolchain/bir-common/TypeParameterDeclaration.Model.Generated.cs": "\n".join(cs),
+        ROOT / "toolchain/bir-common/TypeParameterDeclaration.Dom.Generated.cs": "\n".join(dom),
+        ROOT / "toolchain/kotc/src/main/kotlin/kotc/bir/TypeParameterDeclaration.kt": "\n".join(kt),
+    }
+
+
 def parameter(name, field, definition, definitions, language):
     required = name in definition.get("required", [])
     value_type = model_type(field, definitions, language)
@@ -427,10 +509,6 @@ def declaration_models(definitions):
         properties = definition["properties"]
         required = definition.get("required", [])
         projection += [f"    public static {name} Read{name}(JsonNode node)", "    {"]
-        if name == "CirTypeParameter":
-            projection += ["        // Current source/intermediate name-only declarations become one physical record.",
-                           "        // The CIR reader itself accepts only that record, never a name shorthand.",
-                           f"        if (node is JsonValue text) return new {name} {{ Name = text.GetValue<string>() }};"]
         keys = ", ".join(json.dumps(field) for field in properties)
         projection += [f"        CheckFields(node, [{keys}]);", f"        return new {name}", "        {"]
         for field_name, field in properties.items():
@@ -651,6 +729,7 @@ def outputs(schema):
     executable_model, executable_projection = executable_models(definitions)
     return {
         ROOT / "toolchain/cir-common/MessagePack.Generated.cs": cir_messagepack(definitions, model_type, non_null_field, allows_null),
+        **type_parameter_models(definitions),
         ROOT / "toolchain/cir-common/Executable.Model.Generated.cs": executable_model,
         ROOT / "toolchain/bir2cir/CirExecutableProjection.Generated.cs": executable_projection,
         ROOT / "toolchain/cir-common/Declaration.Model.Generated.cs": declaration_model,

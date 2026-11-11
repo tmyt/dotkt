@@ -16,17 +16,17 @@ static class InnerRepresentationFrameTests
         // Declarations use enclosing-first variables; Kotlin inner applications use own-first arguments.
         var root = JsonNode.Parse("""
         {"fileClass":"InnerFrameProbe","types":[
-          {"kind":"class","name":"Box","typeParams":["T"]},
-          {"kind":"class","name":"Outer","typeParams":["O"],
+          {"kind":"class","name":"Box","typeParams":[{"name":"T"}]},
+          {"kind":"class","name":"Outer","typeParams":[{"name":"O"}],
            "fields":[{"name":"outer","type":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}}]},
           {"kind":"class","name":"Outer.Inner","semanticOwner":"Outer","mods":{"inner":true},
-           "outerTypeParamCount":1,"typeParams":["O","I"],
+           "outerTypeParamCount":1,"typeParams":[{"name":"O"},{"name":"I"}],
            "base":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]},
            "fields":[{"name":"captured","type":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}}],
            "methods":[{"name":"read","params":[],"ret":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}},
              "body":[{"k":"return","value":{"k":"field","name":"captured","recv":{"k":"this"},
                "ownerType":{"t":"fqn","name":"Outer.Inner","args":[{"t":"tv","scope":"type","i":1},{"t":"tv","scope":"type","i":0}]},
-               "memberOwnerTypeParams":["O","I"],"memberType":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}}}]}]}]}
+               "memberOwnerTypeParams":[{"name":"O"},{"name":"I"}],"memberType":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}}}]}]}]}
         """)!;
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false);
         var materializedOwner = root["types"]![2]!["methods"]![0]!["body"]![0]!["value"]!["ownerType"]!.ToJsonString();
@@ -44,10 +44,10 @@ static class InnerRepresentationFrameTests
     {
         var root = JsonNode.Parse("""
         {"types":[
-          {"name":"Owner","typeParams":["T"]},
-          {"name":"Owner.Nested","semanticOwner":"Owner","typeParams":["U"]},
-          {"name":"Owner.Inner","semanticOwner":"Owner","mods":{"inner":true},"typeParams":["T","V"],"outerTypeParamCount":1},
-          {"name":"Owner.Helper","semanticOwner":"Owner","generated":true,"typeParams":["T"]},
+          {"name":"Owner","typeParams":[{"name":"T"}]},
+          {"name":"Owner.Nested","semanticOwner":"Owner","typeParams":[{"name":"U"}]},
+          {"name":"Owner.Inner","semanticOwner":"Owner","mods":{"inner":true},"typeParams":[{"name":"T"},{"name":"V"}],"outerTypeParamCount":1},
+          {"name":"Owner.Helper","semanticOwner":"Owner","generated":true,"typeParams":[{"name":"T"}]},
           {"name":"Plain"},
           {"name":"Plain.Nested","semanticOwner":"Plain"}]}
         """)!;
@@ -79,10 +79,10 @@ static class InnerRepresentationFrameTests
                 storageIndices: new[] { 0 });
             var captureFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 0 });
             var owner = JsonNode.Parse("""
-            {"name":"CaptureOwner","kind":"class","typeParams":["O","P"]}
+            {"name":"CaptureOwner","kind":"class","typeParams":[{"name":"O"},{"name":"P"}]}
             """)!.AsObject();
             var synthetic = JsonNode.Parse("""
-            {"name":"CaptureClosure","semanticOwner":"CaptureOwner","typeParams":["M","PM"]}
+            {"name":"CaptureClosure","semanticOwner":"CaptureOwner","typeParams":[{"name":"M"},{"name":"PM"}]}
             """)!.AsObject();
             KotlinSupertypesRecord.Merge(owner, new JsonObject { [NullableRepresentationFrame.MetadataKey] = ownerFrame.ToJson() });
             KotlinSupertypesRecord.Merge(synthetic, new JsonObject { [NullableRepresentationFrame.MetadataKey] = captureFrame.ToJson() });
@@ -115,7 +115,7 @@ static class InnerRepresentationFrameTests
     {
         var root = JsonNode.Parse("""
         {"types":[
-          {"name":"Outer","typeParams":["O","NO"]},
+          {"name":"Outer","typeParams":[{"name":"O"},{"name":"NO"}]},
           {"name":"Outer.Inner","mods":{"inner":true},"outerTypeParamCount":2,"semanticOwner":"Outer"},
           {"name":"Outer.Inner.Leaf","mods":{"inner":true},"outerTypeParamCount":4,"semanticOwner":"Outer.Inner"}],
          "fields":[]}
@@ -176,8 +176,8 @@ static class InnerRepresentationFrameTests
         });
         var root = JsonNode.Parse("""
         {"fileClass":"Sample.File","types":[
-          {"name":"Sample.Outer","typeParams":["O"]},
-          {"name":"Sample.Outer.Inner","nestedIn":"Sample.Outer","typeParams":["I","N"]}],
+          {"name":"Sample.Outer","typeParams":[{"name":"O"}]},
+          {"name":"Sample.Outer.Inner","nestedIn":"Sample.Outer","typeParams":[{"name":"I"},{"name":"N"}]}],
           "fields":[{"name":"slot"}]}
         """)!;
         root["fields"]![0]!["nullableGeneric"] = TypeNode.ToJson(source);

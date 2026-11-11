@@ -201,8 +201,8 @@ sealed class GenericRepresentationPolicy
     {
         var heads = JsonNode.Parse("""
         {"types":[
-          {"kind":"class","name":"SourceHead","typeParams":["T"]},
-          {"kind":"class","name":"GeneratedHead","generated":true,"typeParams":["T"]}]}
+          {"kind":"class","name":"SourceHead","typeParams":[{"name":"T"}]},
+          {"kind":"class","name":"GeneratedHead","generated":true,"typeParams":[{"name":"T"}]}]}
         """)!.AsObject();
         var headPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { heads });
         var headArguments = new TypeNode[] { new TypeNode.Tv("method", 0) };
@@ -215,7 +215,7 @@ sealed class GenericRepresentationPolicy
             throw new InvalidOperationException("Storage heads must use only declaration-owned existential views");
 
         var fieldRoot = JsonNode.Parse("""
-        {"fileClass":"FieldFrames","types":[{"kind":"class","name":"FieldFrame","typeParams":["T"],
+        {"fileClass":"FieldFrames","types":[{"kind":"class","name":"FieldFrame","typeParams":[{"name":"T"}],
           "fields":[{"name":"native","type":{"t":"tv","scope":"type","i":0},
                      "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrField"},"args":[]}]},
                     {"name":"ordinary","type":{"t":"tv","scope":"type","i":0}}],
@@ -224,7 +224,7 @@ sealed class GenericRepresentationPolicy
              "typeArgs":[{"t":"tv","scope":"type","i":0}],"args":[
               {"k":"field","ownerType":{"t":"fqn","name":"FieldFrame","args":[{"t":"tv","scope":"type","i":0}]},
                "recv":{"k":"this"},"name":"native","memberType":{"t":"tv","scope":"type","i":0},
-               "memberOwnerTypeParams":["T"]}]}]}]}]}
+               "memberOwnerTypeParams":[{"name":"T"}]}]}]}]}]}
         """)!.AsObject();
         ((JsonArray)fieldRoot["types"]).Add(JsonNode.Parse("""
         {"kind":"object","name":"FieldSingleton","fields":[
@@ -241,7 +241,7 @@ sealed class GenericRepresentationPolicy
             || ((JsonArray)addressedField["ownerType"]["args"]).Count != 2)
             throw new InvalidOperationException("Native field allocation changed an unrelated field or lost declaration correspondence");
         var importedAddressRoot = JsonNode.Parse("""
-          {"fileClass":"ImportedFieldAddresses","methods":[{"name":"pass","typeParams":["T"],"params":[],"body":[
+          {"fileClass":"ImportedFieldAddresses","methods":[{"name":"pass","typeParams":[{"name":"T"}],"params":[],"body":[
             {"k":"callStatic","shapeTypes":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],"args":[
               {"k":"field","ownerType":{"t":"fqn","name":"System.Runtime.CompilerServices.StrongBox`1","args":[{"t":"tv","scope":"method","i":0}]},
                "name":"Value","recv":{"k":"local","name":"box"},"ret":{"t":"tv","scope":"method","i":0}}]},
@@ -282,7 +282,7 @@ sealed class GenericRepresentationPolicy
                 throw new InvalidOperationException("Native companion storage selection leaked into a sibling field");
         }
         var nullableRead = JsonNode.Parse("""
-        {"types":[{"name":"NativeNullableRead","kind":"class","typeParams":["T"],"fields":[
+        {"types":[{"name":"NativeNullableRead","kind":"class","typeParams":[{"name":"T"}],"fields":[
           {"name":"value","type":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}},
            "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrField"}}]}],"methods":[
           {"name":"read","params":[],"ret":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}},
@@ -307,7 +307,7 @@ sealed class GenericRepresentationPolicy
             throw new InvalidOperationException("Native owner roles must use the selected alias identity, including exact metadata owners");
         var root = JsonNode.Parse("""
         {"fileClass":"BindingRoles","methods":[
-          {"name":"choose","declarationId":"choose","typeParams":["T"],"params":[
+          {"name":"choose","declarationId":"choose","typeParams":[{"name":"T"}],"params":[
             {"name":"array","type":{"t":"array","elem":{"t":"tv","scope":"method","i":0}}},
             {"name":"map","type":{"t":"fqn","name":"kotlin.collections.Map","args":[
               {"t":"fqn","name":"kotlin.String"},{"t":"tv","scope":"method","i":0}]}}],
@@ -333,7 +333,7 @@ sealed class GenericRepresentationPolicy
         var sourceOverride = TypeJson.Write(new TypeNode.Fqn("Outer.Inner", new TypeNode[] { new TypeNode.Tv("type", 0) }));
         var innerRoot = new JsonObject { ["fileClass"] = "InnerRoles", ["types"] = new JsonArray(new JsonObject {
             ["kind"] = "class", ["name"] = "Outer.Inner", ["semanticOwner"] = "Outer",
-            ["typeParams"] = new JsonArray("T", "$storage0"),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "$storage0" }),
             ["outerTypeParamCount"] = 2, ["mods"] = new JsonObject { ["inner"] = true },
             ["methods"] = new JsonArray(new JsonObject { ["overrides"] = new JsonArray(new JsonObject {
                 ["owner"] = sourceOverride.DeepClone(), ["member"] = "run",

@@ -8141,32 +8141,34 @@ sealed partial class ReferenceMetadataIndex
         {
             var index = Build(Array.Empty<string>());
             var source = new TypeNode.Tv("method", 0);
+            JsonArray Frame(params string[] names) => new(names
+                .Select(name => (JsonNode)new TypeParameterDeclaration(name).ToDom()).ToArray());
             index._membersByOwner["InheritedFrame"] = new List<MemberBinding> {
                 new("InheritedFrame", "echo", 1, null, false, false,
                     Suspend: true, MethodArity: 2,
                     ParamTypeNodes: new TypeNode[] { new TypeNode.Tv("method", 1) },
                     NullableGenericParams: new TypeNode[] { source },
                     ReturnTypeNode: new TypeNode.Fqn("System.Object"), SuspendReturnType: source,
-                    MethodTypeParams: new JsonArray("T", "storageT"),
-                    SemanticMethodTypeParams: new JsonArray("T"),
+                    MethodTypeParams: Frame("T", "storageT"),
+                    SemanticMethodTypeParams: Frame("T"),
                     NullableFrame: new NullableRepresentationFrame(1, Array.Empty<int>(),
                         storageIndices: new[] { 0 })),
             };
             if (!index.TrySelectedOverrideDeclaration("InheritedFrame", "echo", null, 1,
-                    new TypeNode[] { source }, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    new TypeNode[] { source }, Array.Empty<TypeNode>(), Frame("T"),
                     Array.Empty<TypeNode>(), true, out var selected, semanticConstraints: true)
                 || selected.Parameters[0] != source
                 || selected.PhysicalParameters[0] != new TypeNode.Tv("method", 1)
                 || index.TrySelectedOverrideDeclaration("InheritedFrame", "echo", null, 1,
-                    new TypeNode[] { source }, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    new TypeNode[] { source }, Array.Empty<TypeNode>(), Frame("T"),
                     Array.Empty<TypeNode>(), true, out _))
                 throw new InvalidOperationException("Inherited slot selection mixed source and physical generic arities");
             if (!index.TrySelectedMethodDeclaration("InheritedFrame", "echo", 1,
-                    new TypeNode[] { source }, source, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    new TypeNode[] { source }, source, Array.Empty<TypeNode>(), Frame("T"),
                     Array.Empty<TypeNode>(), out var inherited)
                 || inherited.PhysicalParameters[0] != new TypeNode.Tv("method", 1)
                 || index.TrySelectedMethodDeclaration("InheritedFrame", "echo", 2,
-                    new TypeNode[] { source }, source, Array.Empty<TypeNode>(), new JsonArray("T"),
+                    new TypeNode[] { source }, source, Array.Empty<TypeNode>(), Frame("T"),
                     Array.Empty<TypeNode>(), out _))
                 throw new InvalidOperationException("Inherited implementation selection lost its source arity or selected physical parameter");
             index._existentialPhysicalBySemanticOwner["Stored"] = "StoredCarrier";

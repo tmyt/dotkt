@@ -43,6 +43,7 @@ static class Bir2Cir
                 PrimitiveOperatorLowering.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
+                ClrEventSubscriptionBinding.SelfTest();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 DefaultBirCarrier.SelfTest();

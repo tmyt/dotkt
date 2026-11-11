@@ -330,25 +330,25 @@ static partial class FBoundStarProjectionErasure
     {
         var root = JsonNode.Parse("""
           {"fileClass":"ProofTests","methods":[
-            {"name":"construct","declarationId":"construct","params":[],"typeParams":["Tag",
+            {"name":"construct","declarationId":"construct","params":[],"typeParams":[{"name":"Tag"},
               {"name":"T","constraints":[{"t":"fqn","name":"Marker","args":[{"t":"tv","scope":"method","i":0}]}]}],
              "body":[{"k":"new","type":{"t":"fqn","name":"Owner","args":[
                {"t":"tv","scope":"method","i":0},{"t":"tv","scope":"method","i":1},{"t":"tv","scope":"method","i":1}]}}]},
-            {"name":"pure","declarationId":"pure","params":[],"typeParams":["Tag",
+            {"name":"pure","declarationId":"pure","params":[],"typeParams":[{"name":"Tag"},
               {"name":"T","constraints":[{"t":"fqn","name":"Marker","args":[{"t":"tv","scope":"method","i":0}]}]}],"body":[]}],
            "types":[
-            {"kind":"interface","name":"Marker","typeParams":["Tag"],"interfaces":[{"t":"fqn","name":"System.IDisposable"}]},
-            {"kind":"class","name":"Owner","typeParams":["Tag",
+            {"kind":"interface","name":"Marker","typeParams":[{"name":"Tag"}],"interfaces":[{"t":"fqn","name":"System.IDisposable"}]},
+            {"kind":"class","name":"Owner","typeParams":[{"name":"Tag"},
               {"name":"T","constraints":[{"t":"fqn","name":"Marker","args":[{"t":"tv","scope":"type","i":0}]}]},
               {"name":"Storage","constraints":[{"t":"fqn","name":"Marker","args":[{"t":"star"}]}]}]},
-            {"kind":"class","name":"SelfBase","typeParams":["T"],"base":{"t":"fqn","name":"System.IO.MemoryStream"}},
+            {"kind":"class","name":"SelfBase","typeParams":[{"name":"T"}],"base":{"t":"fqn","name":"System.IO.MemoryStream"}},
             {"kind":"class","name":"SelfOwner","typeParams":[
               {"name":"Self","constraints":[{"t":"fqn","name":"SelfBase","args":[{"t":"tv","scope":"type","i":0}]}]}]},
             {"kind":"class","name":"System.IO.MemoryStream"}]}
           """).AsObject();
         var declaration = root["types"][1].AsObject();
         root["types"].AsArray().Add(JsonNode.Parse("""
-          {"kind":"class","name":"NativeFieldWitness","typeParams":["Native","Other"],"fields":[
+          {"kind":"class","name":"NativeFieldWitness","typeParams":[{"name":"Native"},{"name":"Other"}],"fields":[
             {"name":"value","_nativeLocation":true,"type":{"t":"tv","scope":"type","i":0}}]}
           """));
         KotlinSupertypesRecord.Merge(declaration, new JsonObject {
@@ -389,14 +389,14 @@ static partial class FBoundStarProjectionErasure
                 "args":[{"t":"tv","scope":"type","i":0}]}]}]
               """).AsArray();
             var dependentMethod = new JsonObject { ["typeParams"] = dependentMethods.DeepClone() };
-            var capturedFrame = new JsonObject { ["generated"] = true, ["typeParams"] = new JsonArray("Tag",
+            var capturedFrame = new JsonObject { ["generated"] = true, ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "Tag" },
                 new JsonObject { ["name"] = "R", ["constraints"] = new JsonArray(TypeJson.Write(
                     new TypeNode.Fqn("System.Collections.Generic.IComparer`1", new TypeNode[] { new TypeNode.Tv("type", 0) }))) }) };
             var overrideBound = new TypeNode.Fqn("System.IO.Stream");
             var overridingMethod = new JsonObject { [OwnerConstrainedMethodLowering.OverrideBoundsKey] =
                 new JsonArray(new JsonObject { ["index"] = 0, ["bound"] = TypeJson.Write(overrideBound) }).ToJsonString() };
             var lateLocal = JsonNode.Parse("""
-              {"kind":"class","name":"LateLocal","typeParams":["Tag",
+              {"kind":"class","name":"LateLocal","typeParams":[{"name":"Tag"},
                 {"name":"T","constraints":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable`1",
                   "args":[{"t":"tv","scope":"type","i":0}]}]},
                 {"name":"Storage","constraints":[{"t":"fqn","name":"System.IDisposable"}]}]}

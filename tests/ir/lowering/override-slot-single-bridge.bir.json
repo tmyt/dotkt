@@ -8,7 +8,7 @@
     {
       "name": "Src",
       "kind": "interface",
-      "typeParams": ["T"],
+      "typeParams": [{"name":"T"}],
       "base": null,
       "interfaces": [],
       "fields": [],

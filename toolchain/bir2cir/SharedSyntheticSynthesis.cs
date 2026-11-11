@@ -293,7 +293,7 @@ static class SharedSyntheticSynthesis
             var descriptor = spec.Descriptors[spec.Free[i]];
             var constraints = descriptor["constraints"] as JsonArray;
             if (constraints == null || constraints.Count == 0)
-                typeParams.Add($"T{i}");
+                typeParams.Add(new TypeParameterDeclaration($"T{i}").ToDom());
             else
                 typeParams.Add(new JsonObject
                 {

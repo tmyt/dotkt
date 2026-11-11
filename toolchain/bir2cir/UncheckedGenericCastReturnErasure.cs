@@ -487,7 +487,7 @@ static class UncheckedGenericCastReturnErasure
     {
         JsonObject Root(string owner, string identity) => JsonNode.Parse("""
         {"fileClass":"OWNER","methods":[{"name":"read","declarationId":"IDENTITY","static":true,
-         "typeParams":["T"],"ret":{"t":"tv","scope":"method","i":0},"params":[],"body":[
+         "typeParams":[{"name":"T"}],"ret":{"t":"tv","scope":"method","i":0},"params":[],"body":[
           {"k":"return","value":{"k":"cast","reifiedTypeOperand":false,
            "type":{"t":"tv","scope":"method","i":0},"e":{"k":"local","name":"value",
            "sty":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}}}}]}]}

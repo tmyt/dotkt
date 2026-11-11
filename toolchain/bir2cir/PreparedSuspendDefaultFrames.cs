@@ -25,8 +25,8 @@ static class PreparedSuspendDefaultFrames
             if (node["k"]?.GetValue<string>() == "newSuspendLambda"
                 && node[SuspendLambdaLowering.SplicedDeclarationFrameKey] is JsonArray origins)
             {
-                var names = (JsonArray)node["typeParams"];
-                if (origins.Count != names.Count)
+                var sourceParameters = (JsonArray)node["typeParams"];
+                if (origins.Count != sourceParameters.Count)
                     throw new InvalidOperationException("Prepared suspend default has inconsistent source frame");
                 var owner = new JsonArray();
                 var method = new JsonArray();
@@ -46,13 +46,13 @@ static class PreparedSuspendDefaultFrames
                     ["name"] = "__preparedSuspendDefault$" + serial,
                     [DeclarationIdentityBinding.Key] = DeclarationIdentityBinding.PhysicalOnlyId("prepared-suspend-default", serial.ToString()),
                     ["generated"] = true, ["static"] = true,
-                    ["typeParams"] = (node["typeParamDecls"] ?? names).DeepClone(),
+                    ["typeParams"] = sourceParameters.DeepClone(),
                     ["params"] = new JsonArray(captures.Concat(parameters).Select(p => p.DeepClone()).ToArray()),
                     ["ret"] = node["suspendRet"]?.DeepClone(),
                     ["body"] = node["body"]?.DeepClone(),
                 };
                 InlineSplice.SubstTvIn(declaration, method, method.Count, owner);
-                foreach (var key in new[] { "captures", "params", "suspendRet", "body", "typeParams", "typeParamDecls",
+                foreach (var key in new[] { "captures", "params", "suspendRet", "body", "typeParams",
                     SuspendLambdaLowering.SplicedDeclarationFrameKey }) node.Remove(key);
                 node[DeclarationIdentityBinding.Key] = declaration[DeclarationIdentityBinding.Key].DeepClone();
                 methods.Add(declaration);
@@ -72,9 +72,7 @@ static class PreparedSuspendDefaultFrames
                 node["suspendRet"] = declaration["ret"].DeepClone();
                 node["body"] = declaration["body"].DeepClone();
                 var typeParameters = (JsonArray)declaration["typeParams"];
-                node["typeParamDecls"] = typeParameters.DeepClone();
-                node["typeParams"] = new JsonArray(typeParameters.Select(p => p is JsonObject parameter
-                    ? parameter["name"].DeepClone() : p.DeepClone()).ToArray());
+                node["typeParams"] = typeParameters.DeepClone();
                 node["typeFrame"] = "dense";
                 node[SuspendLambdaLowering.SplicedDeclarationFrameKey] = new JsonArray(
                     Enumerable.Range(0, typeParameters.Count).Select(i => TypeJson.Write(new TypeNode.Tv("method", i))).ToArray());

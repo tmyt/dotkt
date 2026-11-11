@@ -180,10 +180,8 @@ static class NullableGenericOverloadCollision
 
     static (List<string> type, List<string> method) Scopes(List<string> owner, List<string> method) => (owner, method);
 
-    // A `typeParams` entry is either a bare name or a `{name, bound}` object, depending on how far down the pipeline
-    // the declaration is — both spellings reach this point, so both are read.
     static List<string> TypeParamNames(JsonObject decl)
-        => (decl["typeParams"] as JsonArray)?.Select(t => Str(t) ?? Str((t as JsonObject)?["name"]) ?? "?").ToList()
+        => (decl["typeParams"] as JsonArray)?.Select(t => t["name"].GetValue<string>()).ToList()
            ?? new List<string>();
 
     // The SOURCE signature, recovered from the pre-erasure record where one was kept — the whole point of the

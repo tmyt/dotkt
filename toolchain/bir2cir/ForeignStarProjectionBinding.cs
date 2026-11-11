@@ -579,7 +579,7 @@ static class ForeignStarProjectionBinding
         };
         if (typeArguments.Count > 0)
             synthClass["typeParams"] = new JsonArray(typeArguments.Select((_, index) =>
-                (JsonNode)JsonValue.Create("T" + index)).ToArray());
+                (JsonNode)new TypeParameterDeclaration("T" + index).ToDom()).ToArray());
         var closure = new JsonObject
         {
             ["k"] = "newClosure", ["closureType"] = owner, ["captures"] = new JsonArray { value.DeepClone() },

@@ -243,9 +243,9 @@ static class PhysicalValueCoercion
         NumericOperandsSelfTest();
         var root = JsonNode.Parse("""
         {"fileClass":"ValueEdges","methods":[
-          {"name":"nativeSlot","typeParams":["T"],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+          {"name":"nativeSlot","typeParams":[{"name":"T"}],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
            "ret":{"t":"tv","scope":"method","i":0},"body":[]},
-          {"name":"read","typeParams":["T","P"],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+          {"name":"read","typeParams":[{"name":"T"},{"name":"P"}],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
            "ret":{"t":"tv","scope":"method","i":1},"body":[{"k":"return","value":{
              "k":"callStatic","owner":{"t":"fqn","name":"ValueEdges"},"method":"nativeSlot",
              "sig":[{"t":"tv","scope":"method","i":0}],"typeArgs":[{"t":"tv","scope":"method","i":0}],
@@ -260,14 +260,14 @@ static class PhysicalValueCoercion
         root["methods"].AsArray().Add(carrierView);
         root["types"] = new JsonArray(new JsonObject { ["name"] = "PlainOwner", ["kind"] = "class" });
         root["types"].AsArray().Add(new JsonObject {
-            ["name"] = "GenericOwner", ["kind"] = "class", ["typeParams"] = new JsonArray("T"),
+            ["name"] = "GenericOwner", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             ["interfaces"] = new JsonArray(TypeJson.Fqn("Carrier")),
         });
         root["types"].AsArray().Add(new JsonObject {
-            ["name"] = "UnrelatedOwner", ["kind"] = "class", ["typeParams"] = new JsonArray("T"),
+            ["name"] = "UnrelatedOwner", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
         });
         root["types"].AsArray().Add(new JsonObject {
-            ["name"] = "InterfaceOwner", ["kind"] = "interface", ["typeParams"] = new JsonArray("T"),
+            ["name"] = "InterfaceOwner", ["kind"] = "interface", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             ["interfaces"] = new JsonArray(TypeJson.Fqn("Carrier")),
         });
         root["types"].AsArray().Add(new JsonObject {
@@ -276,7 +276,7 @@ static class PhysicalValueCoercion
         });
         var exactLocalView = carrierView.DeepClone().AsObject();
         exactLocalView["name"] = "exactLocalView";
-        exactLocalView["typeParams"] = new JsonArray("T");
+        exactLocalView["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" });
         exactLocalView["ret"] = TypeJson.Write(new TypeNode.Fqn("GenericOwner", new TypeNode[] { new TypeNode.Tv("method", 0) }));
         root["methods"].AsArray().Add(exactLocalView);
         var interfaceView = exactLocalView.DeepClone().AsObject();
@@ -304,7 +304,7 @@ static class PhysicalValueCoercion
         referencedView["ret"] = TypeJson.Fqn("ReferencedOwner");
         root["methods"].AsArray().Add(referencedView);
         var localReceiver = JsonNode.Parse("""
-          {"name":"localReceiver","typeParams":["P"],
+          {"name":"localReceiver","typeParams":[{"name":"P"}],
            "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
            "ret":{"t":"fqn","name":"System.Int32"},"body":[{"k":"return","value":{
              "k":"constrainedCall","iface":{"t":"fqn","name":"PlainOwner"},
@@ -314,11 +314,11 @@ static class PhysicalValueCoercion
           """).AsObject();
         root["methods"].AsArray().Add(localReceiver);
         root["types"].AsArray().Add(JsonNode.Parse("""
-          {"name":"CapturedValue","kind":"class","typeParams":["T"],
+          {"name":"CapturedValue","kind":"class","typeParams":[{"name":"T"}],
            "ctors":[{"params":[{"name":"value","type":{"t":"tv","scope":"type","i":0}}],"body":[]}]}
           """));
         var closureCapture = JsonNode.Parse("""
-          {"name":"closureCapture","typeParams":["T","P"],
+          {"name":"closureCapture","typeParams":[{"name":"T"},{"name":"P"}],
            "params":[{"name":"value","type":{"t":"tv","scope":"method","i":1}}],
            "ret":{"t":"fqn","name":"void"},"body":[
              {"k":"expr","e":{"k":"newClosure","closureType":{"t":"fqn","name":"CapturedValue"},
@@ -351,8 +351,8 @@ static class PhysicalValueCoercion
                 throw new InvalidOperationException("Opaque reference projection lost an exact local/native result contract");
         var genericResults = JsonNode.Parse("""
           {"fileClass":"GenericResults","methods":[
-            {"name":"read","typeParams":["T"],"params":[],"ret":{"t":"tv","scope":"method","i":0},"body":[]},
-            {"name":"probe","typeParams":["T"],"params":[],"ret":{"t":"fqn","name":"void"},"body":[
+            {"name":"read","typeParams":[{"name":"T"}],"params":[],"ret":{"t":"tv","scope":"method","i":0},"body":[]},
+            {"name":"probe","typeParams":[{"name":"T"}],"params":[],"ret":{"t":"fqn","name":"void"},"body":[
               {"k":"var","name":"value","type":{"t":"fqn","name":"object"},"init":
                 {"k":"callStatic","owner":{"t":"fqn","name":"GenericResults"},"method":"read",
                  "typeArgs":[{"t":"tv","scope":"method","i":0}],"sig":[],"args":[],"ret":{"t":"fqn","name":"object"}}}]}]}

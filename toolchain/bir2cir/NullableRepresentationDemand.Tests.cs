@@ -136,12 +136,12 @@ static partial class NullableRepresentationDemand
             ["t"] = "fqn", ["name"] = name, ["args"] = new JsonArray(argument),
         };
         static JsonObject Owner(string name, JsonNode field) => new() {
-            ["kind"] = "class", ["name"] = name, ["typeParams"] = new JsonArray("T"),
+            ["kind"] = "class", ["name"] = name, ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             ["fields"] = new JsonArray(new JsonObject { ["name"] = "value", ["vis"] = "private", ["type"] = field }),
         };
         static JsonObject Method(string id, JsonNode result, JsonArray body) => new() {
             ["name"] = id, [DeclarationIdentityBinding.Key] = id,
-            ["typeParams"] = new JsonArray("U"), ["params"] = new JsonArray(), ["ret"] = result, ["body"] = body,
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "U" }), ["params"] = new JsonArray(), ["ret"] = result, ["body"] = body,
         };
 
         var box = Owner("Box", Tv());
@@ -254,7 +254,7 @@ static partial class NullableRepresentationDemand
         {"kind":"class","name":"ConstraintUser","inheritedDefaultMethods":[{
           "member":"use","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},
           "implementation":{"owner":{"t":"fqn","name":"Foreign"},"member":"use","arity":2,
-            "typeParams":["T",{"name":"U","constraints":[
+            "typeParams":[{"name":"T"},{"name":"U","constraints":[
               {"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]},
               {"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":4}}]}
             ]}]}}]}
@@ -273,14 +273,14 @@ static partial class NullableRepresentationDemand
     {
         var root = JsonNode.Parse("""
         {"fileClass":"ValueDemand","methods":[
-          {"name":"make","typeParams":["T"],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+          {"name":"make","typeParams":[{"name":"T"}],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
            "ret":{"t":"fqn","name":"ValueOwner","args":[{"t":"tv","scope":"method","i":0}]},"body":[]},
-          {"name":"identity","typeParams":["T"],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
+          {"name":"identity","typeParams":[{"name":"T"}],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
            "ret":{"t":"tv","scope":"method","i":0},"body":[]}],
          "types":[
-          {"kind":"class","name":"ValueOwner","typeParams":["T"],"fields":[
+          {"kind":"class","name":"ValueOwner","typeParams":[{"name":"T"}],"fields":[
             {"name":"value","vis":"private","type":{"t":"tv","scope":"type","i":0}}]},
-          {"kind":"class","name":"ForeignOwner","typeParams":["T"],"fields":[
+          {"kind":"class","name":"ForeignOwner","typeParams":[{"name":"T"}],"fields":[
             {"name":"value","type":{"t":"tv","scope":"type","i":0}}]}]}
         """)!.AsObject();
         var policy = new GenericRepresentationPolicy(new Dictionary<string, string> {
@@ -329,28 +329,28 @@ static partial class NullableRepresentationDemand
         var methods = new Dictionary<string, NullableRepresentationFrame> { ["storage-source"] = importedFrame };
         var root = JsonNode.Parse("""
         {"fileClass":"StorageCalls","methods":[
-          {"name":"virtualUse","declarationId":"virtual-use","virtual":true,"typeParams":["T"],"params":[],
+          {"name":"virtualUse","declarationId":"virtual-use","virtual":true,"typeParams":[{"name":"T"}],"params":[],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
             {"k":"callStatic","declarationId":"forward","typeArgs":[{"t":"tv","scope":"method","i":0}]}]},
-          {"name":"forward","declarationId":"forward","typeParams":["T"],"params":[],
+          {"name":"forward","declarationId":"forward","typeParams":[{"name":"T"}],"params":[],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
             {"k":"callStatic","declarationId":"leaf","typeArgs":[{"t":"tv","scope":"method","i":0}]}]},
-          {"name":"leaf","declarationId":"leaf","typeParams":["T"],"params":[],
+          {"name":"leaf","declarationId":"leaf","typeParams":[{"name":"T"}],"params":[],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
             {"k":"callStatic","declarationId":"storage-source","typeArgs":[{"t":"tv","scope":"method","i":0}]}]},
-          {"name":"nullableForward","typeParams":["T"],"params":[],
+          {"name":"nullableForward","typeParams":[{"name":"T"}],"params":[],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
             {"k":"callStatic","declarationId":"storage-source","typeArgs":[
               {"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]}]}],
          "types":[
-          {"kind":"class","name":"StorageOuter","typeParams":["T"],"fields":[
+          {"kind":"class","name":"StorageOuter","typeParams":[{"name":"T"}],"fields":[
             {"name":"value","type":{"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"type","i":0}]}}],
-           "types":[{"kind":"class","name":"StorageNested","typeParams":["U","T"],
+           "types":[{"kind":"class","name":"StorageNested","typeParams":[{"name":"U"},{"name":"T"}],
              "semanticOwner":"StorageOuter","outerTypeParamCount":1,"outerTypeParamOffset":1}]},
-          {"kind":"class","name":"StorageIndirect","typeParams":["T"],"fields":[
+          {"kind":"class","name":"StorageIndirect","typeParams":[{"name":"T"}],"fields":[
             {"name":"value","type":{"t":"fqn","name":"StorageOuter","args":[{"t":"tv","scope":"type","i":0}]}}]},
-          {"kind":"class","name":"StorageScope","typeParams":["T"],"methods":[
-            {"name":"both","typeParams":["T"],"params":[{"name":"owner","type":
+          {"kind":"class","name":"StorageScope","typeParams":[{"name":"T"}],"methods":[
+            {"name":"both","typeParams":[{"name":"T"}],"params":[{"name":"owner","type":
               {"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"type","i":0}]}}],
              "ret":{"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"method","i":0}]},"body":[]}]}]}
         """)!.AsObject();
@@ -386,9 +386,9 @@ static partial class NullableRepresentationDemand
             "method and owner source index zero remain independent");
         Check(root.ToJsonString() == original, "role analysis does not rewrite declarations");
         var localRoot = JsonNode.Parse("""
-        {"fileClass":"LocalStorage","methods":[{"name":"entry","typeParams":["U"],"params":[],
+        {"fileClass":"LocalStorage","methods":[{"name":"entry","typeParams":[{"name":"U"}],"params":[],
           "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
-            {"k":"localFun","id":"local-storage","decl":{"name":"local","typeParams":["T"],
+            {"k":"localFun","id":"local-storage","decl":{"name":"local","typeParams":[{"name":"T"}],
               "_syntheticTypeArgs":[{"t":"tv","scope":"method","i":0}],"params":[],
               "ret":{"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"method","i":0}]},"body":[]}},
             {"k":"callLocal","id":"local-storage","typeArgs":[{"t":"tv","scope":"method","i":0}],"args":[]}]}]}
@@ -407,7 +407,7 @@ static partial class NullableRepresentationDemand
     {
         var frame = new NullableRepresentationFrame(1, new[] { 0 });
         var owner = new JsonObject {
-            ["kind"] = "class", ["name"] = "FrameOwner", ["typeParams"] = new JsonArray("T", "N"),
+            ["kind"] = "class", ["name"] = "FrameOwner", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "N" }),
         };
         KotlinSupertypesRecord.Merge(owner, new JsonObject { [NullableRepresentationFrame.MetadataKey] = frame.ToJson() });
         KotlinSupertypesRecord.Merge(owner, new JsonObject {
@@ -416,7 +416,7 @@ static partial class NullableRepresentationDemand
         var sourceResult = new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Nullable(new TypeNode.Tv("method", 0)) });
         var method = new JsonObject {
             ["name"] = "physical", [DeclarationIdentityBinding.Key] = "frame-test-method", ["declarationSourceName"] = "source",
-            ["typeParams"] = new JsonArray("T", "N"), ["params"] = new JsonArray(),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "N" }), ["params"] = new JsonArray(),
             ["ret"] = TypeJson.Write(new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("method", 1) })),
             [DeclarationIdentityBinding.SemanticSignatureKey] = new JsonObject {
                 ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(sourceResult),

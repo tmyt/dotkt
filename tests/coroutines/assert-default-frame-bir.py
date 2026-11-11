@@ -28,7 +28,7 @@ assert closure["typeArgs"] == [
     {"t": "tv", "scope": "type", "i": 0},
 ], closure
 parameters = closure["synthClass"]["typeParams"]
-assert len(parameters) == 2 and parameters[1] == "T", parameters
+assert len(parameters) == 2 and parameters[1] == {"name": "T"}, parameters
 assert parameters[0] == forward["typeParams"][0], (parameters, forward["typeParams"])
 bound = parameters[0]["constraints"][0]
 assert bound["name"].endswith("LocalDefaultBound"), bound

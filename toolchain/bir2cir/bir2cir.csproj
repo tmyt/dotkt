@@ -16,6 +16,8 @@
     <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
     <Compile Include="../bir-common/TypeNode.Model.Generated.cs" Link="TypeNode.Model.Generated.cs" />
     <Compile Include="../bir-common/TypeNode.Json.Generated.cs" Link="TypeNode.Json.Generated.cs" />
+    <Compile Include="../bir-common/TypeParameterDeclaration.Model.Generated.cs" Link="TypeParameterDeclaration.Model.Generated.cs" />
+    <Compile Include="../bir-common/TypeParameterDeclaration.Dom.Generated.cs" Link="TypeParameterDeclaration.Dom.Generated.cs" />
     <Compile Include="../bir-common/SourceMetadata.Model.Generated.cs" Link="SourceMetadata.Model.Generated.cs" />
     <Compile Include="../bir-common/SourceMetadata.Json.Generated.cs" Link="SourceMetadata.Json.Generated.cs" />
     <Compile Include="../bir-common/SourceMetadata.MessagePack.Generated.cs" Link="SourceMetadata.MessagePack.Generated.cs" />

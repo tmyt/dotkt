@@ -798,7 +798,7 @@ static partial class SuspendColdLowering
             ["kind"] = "class",
             ["abstract"] = false,
             ["vis"] = "internal",
-            ["typeParams"] = new JsonArray("T"),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             ["base"] = null,
             ["interfaces"] = new JsonArray(Tw(new TypeNode.Fqn(
                 "kotlin.coroutines.Continuation", new TypeNode[] { tv }))),
@@ -928,7 +928,7 @@ static partial class SuspendColdLowering
     public static JsonObject BuildLambdaSm(string smName, int arity,
         List<(string name, TypeNode type)> captures, string capturedOuterName,
         List<JsonObject> lambdaParams, JsonArray body,
-        TypeNode resultType, List<string> typeParams, JsonArray typeParamDecls, int ownerTypeParamCount,
+        TypeNode resultType, IReadOnlyList<TypeParameterDeclaration> typeParameters, int ownerTypeParamCount,
         bool baseIsLocal,
         IReadOnlyDictionary<string, TypeNode> calleeRet = null, bool restricted = false,
         ReferenceMetadataIndex refs = null)
@@ -939,7 +939,7 @@ static partial class SuspendColdLowering
         if (refs != null) _refs = refs;
         var gen = new FunGen(smName, arity, captures ?? new List<(string, TypeNode)>(), capturedOuterName,
             lambdaParams, body,
-            resultType, typeParams, typeParamDecls, ownerTypeParamCount,
+            resultType, typeParameters, ownerTypeParamCount,
             calleeRet as Dictionary<string, TypeNode> ??
                 (calleeRet != null ? new Dictionary<string, TypeNode>(calleeRet, StringComparer.Ordinal)
                                    : new Dictionary<string, TypeNode>(StringComparer.Ordinal)),
@@ -1482,15 +1482,14 @@ static partial class SuspendColdLowering
         // parts. Captures become ctor params + fields; the lambda's own params become fields set by create().
         public FunGen(string smName, int arity, List<(string name, TypeNode type)> captures,
             string capturedOuterName,
-            List<JsonObject> lambdaParams, JsonArray body, TypeNode resultType, List<string> typeParams,
-            JsonArray typeParamDecls, int ownerTypeParamCount, Dictionary<string, TypeNode> calleeRet,
+            List<JsonObject> lambdaParams, JsonArray body, TypeNode resultType,
+            IReadOnlyList<TypeParameterDeclaration> typeParameters, int ownerTypeParamCount, Dictionary<string, TypeNode> calleeRet,
             bool baseIsLocal, bool restricted = false)
         {
             _isLambda = true;
             _restrictedBase = restricted;
-            var allTypeParamDecls = typeParamDecls?.DeepClone() as JsonArray
-                ?? new JsonArray((typeParams ?? new List<string>())
-                    .Select(n => (JsonNode)JsonValue.Create(n)).ToArray());
+            var allTypeParamDecls = new JsonArray(typeParameters
+                .Select(parameter => (JsonNode)parameter.ToDom()).ToArray());
             if (ownerTypeParamCount < 0 || ownerTypeParamCount > allTypeParamDecls.Count)
                 throw new InvalidOperationException(
                     $"suspend lambda '{smName}' declares {allTypeParamDecls.Count} generic slot(s) but " +
@@ -1537,8 +1536,7 @@ static partial class SuspendColdLowering
             var names = new List<string>();
             if (tps is JsonArray a)
                 foreach (var t in a)
-                    if (t is JsonValue v && v.TryGetValue<string>(out var s)) names.Add(s);
-                    else if (t is JsonObject o && Str(o["name"]) is string n) names.Add(n);
+                    names.Add(t["name"].GetValue<string>());
             return names;
         }
 
