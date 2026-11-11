@@ -11,7 +11,7 @@ using DotKt.Cir;
 // EmitAssembly passes 1-6 (DefineType/bases/signatures/bodies/.cctor/entry/bake), bridges, and Save.
 sealed partial class Emitter
 {
-    public void EmitAssembly(List<JsonElement> files)
+    public void EmitAssembly(List<CirFileDeclaration> files)
     {
         // #84 Phase 4: run the in-process CIR SANITY gate at the CIR boundary, BEFORE any emit — malformed CIR
         // (undeclared local, dangling goto, missing owner) fails LOUD with a precise `sanity: <invariant>` message
@@ -99,206 +99,96 @@ sealed partial class Emitter
         // nullable metadata attributes resolve from the target BCL and are never redefined in user assemblies.
 
         // Pass 1: DefineType for every file-static-class and every user class.
-        var pendingTypes = files
-            .Where(file => file.TryGetProperty("types", out _))
-            .SelectMany(file => file.GetProperty("types").EnumerateArray())
-            .ToList();
-        var nestedOwners = pendingTypes.Where(type => type.TryGetProperty("nestedIn", out _))
-            .Select(type => type.GetProperty("nestedIn").GetString()).ToHashSet(StringComparer.Ordinal);
+        var pendingTypes = files.SelectMany(file => file.Types).ToList();
+        var nestedOwners = pendingTypes.Where(type => type.NestedIn.HasValue)
+            .Select(type => type.NestedIn.Value).ToHashSet(StringComparer.Ordinal);
         foreach (var file in files)
         {
-            var fileClass = file.GetProperty("fileClass").GetString();
-            // Create the file class if it has methods OR top-level static fields — a file that only declares
-            // top-level `val`/`var`s (no functions) still needs its class so OTHER files can reference those
-            // fields (`StateKt.counter`); otherwise cross-file top-level property access fails (item 11).
-            // A facade that owns nested CIR declarations is also a physical parent, even with no members of its own.
-            if (file.GetProperty("methods").GetArrayLength() > 0 ||
-                (file.TryGetProperty("fields", out var ffl) && ffl.GetArrayLength() > 0) ||
-                nestedOwners.Contains(fileClass))
-                _types[fileClass] = new TypeInfo
-                {
-                    TB = _mod.DefineType(fileClass, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract),
-                    Def = file, IsFileClass = true, FileElem = file,
+            if (file.Methods.Length > 0 || file.Fields.Length > 0 || nestedOwners.Contains(file.FileClass))
+                _types[file.FileClass] = new TypeInfo {
+                    TB = _mod.DefineType(file.FileClass, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract),
+                    Def = file, IsFileClass = true,
                 };
         }
 
-        // CIR nesting is declarative: a child may precede its enclosing declaration (for example when kotc emits a
-        // rich-enum companion before the rich enum class). Define enclosing builders first so `nestedIn` is honored
-        // independently of source/file order instead of silently degrading the child to a dotted top-level type.
+        // CIR states the enclosing declaration explicitly; a child may precede that declaration in its input file.
         while (pendingTypes.Count > 0)
         {
             var progressed = false;
-            foreach (var t in pendingTypes.ToArray())
+            foreach (var type in pendingTypes.ToArray())
             {
-                if (t.TryGetProperty("nestedIn", out var pendingParent) &&
-                    !_types.ContainsKey(pendingParent.GetString()))
-                    continue;
-                pendingTypes.Remove(t);
+                if (type.NestedIn.HasValue && !_types.ContainsKey(type.NestedIn.Value)) continue;
+                pendingTypes.Remove(type);
                 progressed = true;
-                    var name = t.GetProperty("name").GetString();
-                    var kind = t.GetProperty("kind").GetString();
-                    // #68: `generated:true` is the STRUCTURAL compiler-generated flag (a #37-freeze win over the retired
-                    // `name.StartsWith("dotkt$")` string-sniff). kotc/bir2cir stamp it on every synthetic type def
-                    // (closures, ref cells, CharSequence, ClrH helpers, lifted anon/local/property-reference classes).
-                    var generated = t.TryGetProperty("generated", out var genEl) && genEl.GetBoolean();
-                    // Shared synthetic types (`dotkt$CharSequence`/…) are emitted
-                    // identically by EVERY file that uses them; in a multi-file assembly they'd redefine the same name
-                    // and collide in `_types` (orphaning a TypeBuilder -> Save crash). They're structurally identical,
-                    // so the first definition serves all references — skip the duplicates. (Per-file-DISTINCT synthetics
-                    // — closures, ref cells, seq SMs — are uniquely named by BirEmitter, so they never land here.)
-                    if (generated && _types.ContainsKey(name)) continue;
-                    // Canonicalization: a shared synthetic ALREADY defined (public) by a REFERENCED assembly (the rt
-                    // stdlib dll) is REFERENCED, not re-emitted here — else the app's copy is a DISTINCT CLR type from
-                    // the rt dll's, so a value crossing the app<->rt boundary (a stdlib CharSequence-extension receiving
-                    // an app value) fails interface dispatch (EntryPointNotFound). Skipping the local definition routes
-                    // every `@dotkt$X` reference through MapType/FindMethod/AddInterfaceImplementation -> ResolveType,
-                    // which resolves it as the external canonical type in the --ref'd assembly. Scoped to the
-                    // verified-safe set (CharSequence); the other shared synthetics (Result/KProperty) still
-                    // re-emit per-assembly until each is verified cross-assembly. Self-correcting:
-                    // only skips when the type ACTUALLY resolves externally, so a --no-stdlib build (or the stdlib's own
-                    // ref/rt build, which passes ilemit no --ref) still emits the canonical copy locally.
-                    if (ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(name) && ResolvesExternally(name)) continue;
-                    if (kind == "delegate")
+                var name = type.Name;
+                var generated = type.Generated.OrDefault();
+                if (generated && _types.ContainsKey(name)) continue;
+                if (ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(name) && ResolvesExternally(name)) continue;
+
+                if (type.Kind == CirTypeKind.Delegate)
+                {
+                    var builder = _mod.DefineType(name, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class,
+                        Bcl("System.MulticastDelegate"));
+                    if (generated) StampCompilerGenerated(builder);
+                    var declaration = new TypeInfo { TB = builder, Def = type, IsDelegate = true };
+                    var parameters = type.TypeParams.OrEmpty();
+                    if (parameters.Length > 0)
+                        declaration.TypeParams.AddRange(builder.DefineGenericParameters(parameters.Select(p => p.Name).ToArray()));
+                    _types[name] = declaration;
+                    continue;
+                }
+
+                var visibility = type.Vis.OrDefault("public");
+                TypeInfo parent = null;
+                var nested = type.NestedIn.HasValue && _types.TryGetValue(type.NestedIn.Value, out parent);
+                var simpleName = nested && name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
+                if (type.Kind == CirTypeKind.Enum)
+                {
+                    // Spell the target ECMA enum shape without host Reflection.Emit enum classification.
+                    var builder = nested
+                        ? parent.TB.DefineNestedType(simpleName, TypeAccess(visibility, true) | TypeAttributes.Sealed, Bcl("System.Enum"))
+                        : _mod.DefineType(name, TypeAccess(visibility, false) | TypeAttributes.Sealed, Bcl("System.Enum"));
+                    var declaration = new TypeInfo { TB = builder, Def = type, IsEnum = true };
+                    var underlying = type.Underlying.HasValue ? MapType(type.Underlying.Value) : Bcl("System.Int32");
+                    declaration.Fields["value__"] = builder.DefineField("value__", underlying,
+                        FieldAttributes.Public | FieldAttributes.SpecialName | FieldAttributes.RTSpecialName);
+                    foreach (var literalEntry in type.Entries.OrEmpty())
                     {
-                        // A CIR delegate declaration already carries its exact metadata name (including `arity),
-                        // generic parameters/variance, Invoke parameters and return. Realize that CLR shape directly;
-                        // no family/range/name decision is made in this layer.
-                        var delegateTb = _mod.DefineType(name,
-                            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class,
-                            Bcl("System.MulticastDelegate"));
-                        if (generated) StampCompilerGenerated(delegateTb);
-                        var dti = new TypeInfo { TB = delegateTb, Def = t, IsDelegate = true };
-                        if (t.TryGetProperty("typeParams", out var dtps) && dtps.GetArrayLength() > 0)
-                        {
-                            var names = TpNames(dtps);
-                            var gps = delegateTb.DefineGenericParameters(names);
-                            dti.TypeParams.AddRange(gps);
-                        }
-                        _types[name] = dti;
-                        continue;
+                        var field = builder.DefineField(literalEntry.Name, builder,
+                            FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal);
+                        field.SetConstant(literalEntry.PhysicalValue.HasValue && literalEntry.Underlying.HasValue
+                            ? EnumConstantValue(literalEntry.Underlying.Value, literalEntry.PhysicalValue.Value) : literalEntry.Ordinal.Value);
+                        StampMemberAttrs(field.SetCustomAttribute, literalEntry.Attrs);
+                        declaration.Fields[literalEntry.Name] = field;
                     }
-                    if (kind == "enum")
-                    {
-                        // A real .NET enum: each entry is a literal field of the int-backed enum.
-                        // DefineEnum asks host Reflection helpers to classify its underlying Type. A target-MLC
-                        // System.Int32 is metadata-only, so that helper misclassifies it and PAB synthesizes an illegal
-                        // enum .ctor. Spell the ECMA enum shape directly from target types: sealed : System.Enum, one
-                        // special instance value__ field, and static literal fields. No semantic decision is involved.
-                        var enumVisibility = t.TryGetProperty("vis", out var enumVis)
-                            ? enumVis.GetString()
-                            : "public";
-                        TypeInfo enumParent = null;
-                        var nestedEnum = t.TryGetProperty("nestedIn", out var enumParentName) &&
-                            _types.TryGetValue(enumParentName.GetString(), out enumParent);
-                        var enumAccess = nestedEnum
-                            ? enumVisibility switch
-                            {
-                                "internal" => TypeAttributes.NestedAssembly,
-                                "protected" => TypeAttributes.NestedFamily,
-                                "protectedInternal" => TypeAttributes.NestedFamORAssem,
-                                "private" => TypeAttributes.NestedPrivate,
-                                _ => TypeAttributes.NestedPublic,
-                            }
-                            : (enumVisibility == "public" ? TypeAttributes.Public : TypeAttributes.NotPublic);
-                        var enumSimpleName = nestedEnum && name.Contains('.')
-                            ? name[(name.LastIndexOf('.') + 1)..]
-                            : name;
-                        var enumTb = nestedEnum
-                            ? enumParent.TB.DefineNestedType(enumSimpleName,
-                                enumAccess | TypeAttributes.Sealed, Bcl("System.Enum"))
-                            : _mod.DefineType(name, enumAccess | TypeAttributes.Sealed, Bcl("System.Enum"));
-                        var eti = new TypeInfo { TB = enumTb, Def = t, IsEnum = true };
-                        var underlying = t.TryGetProperty("underlying", out var enumUnderlying)
-                            ? NativeType(enumUnderlying)
-                            : Bcl("System.Int32");
-                        eti.Fields["value__"] = enumTb.DefineField("value__", underlying,
-                            FieldAttributes.Public | FieldAttributes.SpecialName | FieldAttributes.RTSpecialName);
-                        foreach (var en in t.GetProperty("entries").EnumerateArray())
-                        {
-                            var entryName = en.GetProperty("name").GetString();
-                            var field = enumTb.DefineField(entryName, enumTb,
-                                FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal);
-                            field.SetConstant(en.TryGetProperty("physicalValue", out var physicalValue)
-                                && en.TryGetProperty("underlying", out var physicalUnderlying)
-                                    ? EnumConstantValue(physicalUnderlying.GetString(), physicalValue.GetString())
-                                    : en.GetProperty("ordinal").GetInt32());
-                            StampMemberAttrs(field.SetCustomAttribute, en);
-                            eti.Fields[entryName] = field;
-                        }
-                        _types[name] = eti;
-                        continue;
-                    }
-                    var isIface = kind == "interface";
-                    var visStr = t.TryGetProperty("vis", out var tv) ? tv.GetString() : "public";
-                    // A nested type (`nestedIn`) is defined on the enclosing type's builder with Nested* access, so it
-                    // keeps CLR access to the enclosing type's private members; otherwise a top-level Public/NotPublic.
-                    var nested = t.TryGetProperty("nestedIn", out var niEl) && _types.TryGetValue(niEl.GetString(), out var parentTi);
-                    var typeAccess = nested
-                        ? visStr switch
-                        {
-                            "internal" => TypeAttributes.NestedAssembly,
-                            "protected" => TypeAttributes.NestedFamily,
-                            "protectedInternal" => TypeAttributes.NestedFamORAssem,
-                            "private" => TypeAttributes.NestedPrivate,
-                            _ => TypeAttributes.NestedPublic,
-                        }
-                        : (visStr == "public" ? TypeAttributes.Public : TypeAttributes.NotPublic);
-                    var attrs = isIface
-                        ? typeAccess | TypeAttributes.Interface | TypeAttributes.Abstract
-                        : typeAccess | TypeAttributes.Class;
-                    // An `abstract`/`sealed`(Kotlin) class -> a CLR abstract class (cannot be instantiated; may hold
-                    // abstract members). Kotlin `sealed` is also abstract at the CLR level.
-                    if (!isIface && t.TryGetProperty("abstract", out var clsAbs) && clsAbs.GetBoolean()) attrs |= TypeAttributes.Abstract;
-                    // `final:true` -> TypeAttributes.Sealed (CLR-final, not Kotlin `sealed`). bir2cir sets it on the
-                    // round-trip attribute-class defs (#71 S2), matching the old embedded `NotPublic | Sealed | Class`.
-                    if (!isIface && t.TryGetProperty("final", out var clsFin) && clsFin.GetBoolean()) attrs |= TypeAttributes.Sealed;
-                    if (t.TryGetProperty("specialName", out var typeSpecialName) && typeSpecialName.GetBoolean())
-                        attrs |= TypeAttributes.SpecialName;
-                    if (t.TryGetProperty("beforeFieldInit", out var beforeFieldInit) && beforeFieldInit.GetBoolean())
-                        attrs |= TypeAttributes.BeforeFieldInit;
-                    // Only SOURCE-declared parameters contribute to the metadata-name suffix. A nested companion can
-                    // carry the enclosing type's flattened CLR generic slots in `capturedTypeParams` without declaring
-                    // Kotlin parameters of its own: `Foo`1+$Companion`, not `...$Companion`1`.
-                    var arity = t.TryGetProperty("typeParams", out var tpArity) ? tpArity.GetArrayLength() : 0;
-                    var simpleName = nested && name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
-                    var metaName = arity > 0 ? simpleName + "`" + arity : simpleName;
-                    var tb = nested ? _types[niEl.GetString()].TB.DefineNestedType(metaName, attrs) : _mod.DefineType(metaName, attrs);
-                    // #68: a `generated:true` type (KProperty/CharSequence/closure/ref-cell/ClrH/lifted-anon) gets
-                    // [CompilerGenerated] — the STANDARD generated signal, read from the structured flag (no `dotkt$`
-                    // name-sniff). dll2klib skips these purely by the attribute; the `dotkt_` name prevents source collision.
-                    if (generated) StampCompilerGenerated(tb);
-                    var nti = new TypeInfo
-                    {
-                        TB = tb,
-                        Def = t,
-                        IsInterface = isIface,
-                        BaseFqn = t.TryGetProperty("base", out var b) && b.ValueKind != JsonValueKind.Null
-                            ? ReadFqn(b) ?? throw new FormatException("CIR base must be an fqn Type node") : null,
-                        BaseName = t.TryGetProperty("base", out var b2) && b2.ValueKind != JsonValueKind.Null
-                            ? SlotName(b2) : null,
-                    };
-                    // A physical nested capture is deliberately distinct from this type's own declared parameters.
-                    // A declaration-form capturedTypeParams entry preserves the outer Kotlin constraints; a bare
-                    // name intentionally declares an unconstrained representation slot (for example a companion
-                    // carrier). ApplyConstraints below emits exactly the CIR-authored distinction.
-                    var capturedNames = t.TryGetProperty("capturedTypeParams", out var capturedTps)
-                        ? TpNames(capturedTps) : [];
-                    var declaredNames = t.TryGetProperty("typeParams", out var tps)
-                        ? TpNames(tps) : [];
-                    var allTypeParamNames = capturedNames.Concat(declaredNames).ToArray();
-                    if (allTypeParamNames.Length > 0)
-                    {
-                        var gps = tb.DefineGenericParameters(allTypeParamNames);
-                        nti.TypeParams.AddRange(gps);
-                    }
-                    _types[name] = nti;
+                    _types[name] = declaration;
+                    continue;
+                }
+
+                var isInterface = type.Kind == CirTypeKind.Interface;
+                var attributes = TypeAccess(visibility, nested) | (isInterface
+                    ? TypeAttributes.Interface | TypeAttributes.Abstract : TypeAttributes.Class);
+                if (!isInterface && type.Abstract.OrDefault()) attributes |= TypeAttributes.Abstract;
+                if (!isInterface && type.Final.OrDefault()) attributes |= TypeAttributes.Sealed;
+                if (type.SpecialName.OrDefault()) attributes |= TypeAttributes.SpecialName;
+                if (type.BeforeFieldInit.OrDefault()) attributes |= TypeAttributes.BeforeFieldInit;
+                // Only the type's own declarations contribute to the metadata-name suffix, not nested captures.
+                var arity = type.TypeParams.OrEmpty().Length;
+                var metadataName = arity > 0 ? simpleName + "`" + arity : simpleName;
+                var typeBuilder = nested ? parent.TB.DefineNestedType(metadataName, attributes) : _mod.DefineType(metadataName, attributes);
+                if (generated) StampCompilerGenerated(typeBuilder);
+                var baseType = type.Base.OrDefault() as DotKt.Bir.TypeNode.Fqn;
+                if (type.Base.HasValue && baseType == null) throw new FormatException("CIR base must be an fqn Type node");
+                var info = new TypeInfo {
+                    TB = typeBuilder, Def = type, IsInterface = isInterface, BaseFqn = baseType, BaseName = baseType?.Name,
+                };
+                var names = type.CapturedTypeParams.OrEmpty().Concat(type.TypeParams.OrEmpty()).Select(p => p.Name).ToArray();
+                if (names.Length > 0) info.TypeParams.AddRange(typeBuilder.DefineGenericParameters(names));
+                _types[name] = info;
             }
             if (!progressed)
-            {
-                var unresolved = string.Join(", ", pendingTypes.Select(t =>
-                    $"{t.GetProperty("name").GetString()} -> {t.GetProperty("nestedIn").GetString()}"));
-                throw new InvalidOperationException($"nested CIR types have missing or cyclic owners: {unresolved}");
-            }
+                throw new InvalidOperationException("Nested CIR types have missing or cyclic owners: "
+                    + string.Join(", ", pendingTypes.Select(type => type.Name + " -> " + type.NestedIn.OrDefault())));
         }
 
         // Bake enums up front: their literals are fully defined in pass 1, and baking now gives a real metadata
@@ -313,11 +203,13 @@ sealed partial class Emitter
             T($"pass2 parent/iface: {ti.TB?.Name}");
             _curTypeParams = EffectiveTps(ti);
             // Bounds may reference any type (now all defined) and the type's own params (now in _curTypeParams).
-            if (ti.IsGeneric && ti.Def.TryGetProperty("capturedTypeParams", out var capturedTps2))
-                ApplyConstraints(capturedTps2, ti.TypeParams, false);
-            if (ti.IsGeneric && ti.Def.TryGetProperty("typeParams", out var tps2))
-                ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface || ti.IsDelegate,
-                    ti.Def.TryGetProperty("capturedTypeParams", out var captured) ? captured.GetArrayLength() : 0);
+            if (ti.IsGeneric && ti.TypeDeclaration is { } genericDeclaration)
+            {
+                var captured = genericDeclaration.CapturedTypeParams.OrEmpty();
+                ApplyConstraints(captured, ti.TypeParams, false);
+                ApplyConstraints(genericDeclaration.TypeParams.OrEmpty(), ti.TypeParams, ti.IsInterface || ti.IsDelegate,
+                    captured.Length);
+            }
             if (ti.BaseName != null)
             {
                 // A constructed base carries its actual type arguments in the structured Fqn. Resolve local
@@ -345,14 +237,14 @@ sealed partial class Emitter
                 // A bare external .NET base is not in `_types`; resolve it from the declared reference universe.
                 else ti.TB.SetParent(ti.ClrBase = ResolveType(bopen));
             }
-            if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
+            if (ti.TypeDeclaration is { } implementingDeclaration)
             {
                 // One InterfaceImpl row per stated interface, in the stated order. The set is complete as it arrives:
                 // every physical face a type owes — including the read-only sibling of a mutable collection face, which
                 // bir2cir's ReadOnlyCollectionViewInterfaces states — is already in this array.
-                foreach (var i in ifs.EnumerateArray())
+                foreach (var i in implementingDeclaration.Interfaces.OrEmpty())
                 {
-                    if (ReadFqn(i) is not DotKt.Bir.TypeNode.Fqn iFqn) continue;
+                    if (i is not DotKt.Bir.TypeNode.Fqn iFqn) continue;
                     // A REFERENCED interface (not in `_types` — a .NET Continuation<int>) is resolved by reflection; an
                     // emitted Kotlin interface (`Container<int>`) comes from `_types` (constructed via ParseOwnerT).
                     Type itype;
@@ -375,94 +267,22 @@ sealed partial class Emitter
                 DefineDelegateMembers(ti);
                 continue;
             }
-            if (ti.IsFileClass)
+            foreach (var field in ti.Def.DeclaredFields)
             {
-                // Top-level `val`/`var` -> static fields of the file class.
-                if (ti.Def.TryGetProperty("fields", out var ffs))
-                    foreach (var f in ffs.EnumerateArray())
-                    {
-                        var tlSlot = MapSignatureSlot(f.GetProperty("type"));
-                        var tlType = tlSlot.Type;
-                        var tlAttrs = (f.TryGetProperty("vis", out var tlVis) ? tlVis.GetString() : "public") switch
-                        {
-                            "private" => FieldAttributes.Private,
-                            "internal" => FieldAttributes.Assembly,
-                            "protected" => FieldAttributes.Family,
-                            "protectedInternal" => FieldAttributes.FamORAssem,
-                            _ => FieldAttributes.Public,
-                        };
-                        tlAttrs |= FieldAttributes.Static;
-                        if (f.TryGetProperty("initOnly", out var tlInitOnly) && tlInitOnly.GetBoolean())
-                            tlAttrs |= FieldAttributes.InitOnly;
-                        var tlLiteral = f.TryGetProperty("constant", out var tlLiteralValue);
-                        if (tlLiteral) tlAttrs |= FieldAttributes.Literal;
-                        // `@kotlin.concurrent.Volatile` on a top-level `var` -> a `modreq(IsVolatile)` static field.
-                        var tlFb = f.TryGetProperty("volatile", out var tlVol) && tlVol.GetBoolean()
-                                ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), tlType, tlAttrs, tlSlot.Required, tlSlot.Optional)
-                                : ti.TB.DefineField(f.GetProperty("name").GetString(), tlType, tlSlot.Required, tlSlot.Optional, tlAttrs);
-                        StampMemberAttrs(tlFb.SetCustomAttribute, f);   // [KotlinReadOnly]/[KotlinSuspendFunctionType]/… (bir2cir-generated)
-                        if (tlLiteral)
-                        {
-                            var constant = LiteralConstant(tlLiteralValue, tlType);
-                            tlFb.SetConstant(constant);
-                        }
-                        ti.Fields[f.GetProperty("name").GetString()] = tlFb;
-                    }
-                foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: true);
-                DeclareProperties(ti);
+                if (ti.IsInterface && !field.Static.OrDefault()) continue;
+                DeclareField(ti, field, ti.IsFileClass);
             }
-            else
+            foreach (var method in ti.Def.DeclaredMethods) DeclareMethod(ti, method, ti.IsFileClass);
+            DeclareProperties(ti);
+            if (!ti.IsFileClass)
             {
-                // A class emits instance + static fields; an INTERFACE carries ONLY hoisted companion STATICS (a CLR
-                // interface may hold static fields but never instance state), so skip any non-static field there (#83).
-                foreach (var f in ti.Def.GetProperty("fields").EnumerateArray())
-                    {
-                        if (ti.IsInterface && !(f.TryGetProperty("static", out var ifst) && ifst.GetBoolean())) continue;
-                        // A property's visibility maps to the field's CLR access. True CLR-private is now correct
-                        // because `inner`/`nested` classes are emitted as real nested types, which retain access to the
-                        // enclosing type's privates. Any lifted cross-class protected access has already been made
-                        // explicit by bir2cir as protectedInternal; this layer maps the CIR visibility 1:1.
-                        var fattrs = (f.TryGetProperty("vis", out var fv) ? fv.GetString() : "public") switch
-                        {
-                            "private" => FieldAttributes.Private,
-                            "internal" => FieldAttributes.Assembly,
-                            "protected" => FieldAttributes.Family,
-                            "protectedInternal" => FieldAttributes.FamORAssem,
-                            _ => FieldAttributes.Public,
-                        };
-                        if (f.TryGetProperty("static", out var st) && st.GetBoolean()) fattrs |= FieldAttributes.Static;
-                        if (f.TryGetProperty("initOnly", out var initOnly) && initOnly.GetBoolean())
-                            fattrs |= FieldAttributes.InitOnly;
-                        var fieldSlot = MapSignatureSlot(f.GetProperty("type"));
-                        var ftype = fieldSlot.Type;
-                        var literal = f.TryGetProperty("constant", out var literalValue);
-                        if (literal) fattrs |= FieldAttributes.Static | FieldAttributes.Literal;
-                        // `@kotlin.concurrent.Volatile` -> a `modreq(IsVolatile)` field (the C# `volatile` encoding).
-                        var fb = f.TryGetProperty("volatile", out var vol) && vol.GetBoolean()
-                            ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), ftype, fattrs, fieldSlot.Required, fieldSlot.Optional)
-                            : ti.TB.DefineField(f.GetProperty("name").GetString(), ftype, fieldSlot.Required, fieldSlot.Optional, fattrs);
-                        StampMemberAttrs(fb.SetCustomAttribute, f);   // [KotlinReadOnly]/[KotlinSuspendFunctionType]/… (bir2cir-generated)
-                        if (literal)
-                        {
-                            var constant = LiteralConstant(literalValue, ftype);
-                            fb.SetConstant(constant);
-                        }
-                        ti.Fields[f.GetProperty("name").GetString()] = fb;
-                    }
-                foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: false);
-                DeclareProperties(ti);
-                // Synthesized field-like .NET events (§4.2, #187): DefineEvent over the already-declared add_/remove_/raise_
-                // accessors, so a C#/reflection consumer sees a real `.event D E`. The accessors ALSO satisfy the interface
-                // add_/remove_ slots (wired by the referenced-interface binding pass below). bir2cir stamped `clrEventDecl`.
-                if (ti.Def.TryGetProperty("clrEvents", out var clrEvs) && clrEvs.ValueKind == JsonValueKind.Array)
-                    foreach (var ev in clrEvs.EnumerateArray())
-                    {
-                        var evName = ev.GetProperty("name").GetString();
-                        var eb = ti.TB.DefineEvent(evName, EventAttributes.None, MapType(ev.GetProperty("delegateType")));
-                        if (ti.Methods.TryGetValue("add_" + evName, out var am)) eb.SetAddOnMethod(am);
-                        if (ti.Methods.TryGetValue("remove_" + evName, out var rm)) eb.SetRemoveOnMethod(rm);
-                        if (ti.Methods.TryGetValue("raise_" + evName, out var rsm)) eb.SetRaiseMethod(rsm);
-                    }
+                foreach (var declaration in ti.TypeDeclaration.ClrEvents.OrEmpty())
+                {
+                    var @event = ti.TB.DefineEvent(declaration.Name, EventAttributes.None, MapType(declaration.DelegateType));
+                    if (ti.Methods.TryGetValue("add_" + declaration.Name, out var add)) @event.SetAddOnMethod(add);
+                    if (ti.Methods.TryGetValue("remove_" + declaration.Name, out var remove)) @event.SetRemoveOnMethod(remove);
+                    if (ti.Methods.TryGetValue("raise_" + declaration.Name, out var raise)) @event.SetRaiseMethod(raise);
+                }
                 EnsureCtorsDefined(ti);
             }
         }
@@ -471,17 +291,14 @@ sealed partial class Emitter
         // implicitly under CLR rules; every mismatch, rename, selected DIM, event/accessor, suspend, or erasure seam
         // arrives as one descriptor on its exact MethodDef body.
         foreach (var (typeKey, ti) in _types)
-            if (!ti.IsFileClass && !ti.IsInterface && ti.Def.TryGetProperty("methods", out var directiveMethods))
+            if (!ti.IsFileClass && !ti.IsInterface)
             {
                 _curTypeParams = EffectiveTps(ti);
                 var ifWork = new Queue<DotKt.Bir.TypeNode.Fqn>();
                 var ifSeen = new HashSet<string>();
-                foreach (var method in directiveMethods.EnumerateArray())
-                    if (method.TryGetProperty("clrInterfaceImpls", out var directives)
-                        && directives.ValueKind == JsonValueKind.Array)
-                        foreach (var directive in directives.EnumerateArray())
-                            if (directive.TryGetProperty("owner", out var ownerNode)
-                                && ReadFqn(ownerNode) is DotKt.Bir.TypeNode.Fqn owner)
+                foreach (var method in ti.Def.DeclaredMethods)
+                        foreach (var directive in method.ClrInterfaceImpls.OrEmpty())
+                            if (directive.Owner is DotKt.Bir.TypeNode.Fqn owner)
                                 ifWork.Enqueue(owner);
                 while (ifWork.Count > 0)
                 {
@@ -534,18 +351,14 @@ sealed partial class Emitter
                     // methods (e.g. MutableMap.remove(K):V vs the JVM remove(K,V):Boolean) each resolve to their own
                     // builder by signature, and to the matching body overload by TYPE-ARG-SUBSTITUTED signature. A miss
                     // when the name is AMBIGUOUS (multiple body overloads) is skipped — wiring the wrong one is the bug.
-                    if (iface.Def.ValueKind == JsonValueKind.Object && iface.Def.TryGetProperty("methods", out var ifMs))
-                    {
-                        foreach (var imDef in ifMs.EnumerateArray())
+                        foreach (var imDef in iface.Def.DeclaredMethods)
                         {
-                            if (!imDef.TryGetProperty("params", out _)) continue;
                             // A private/final explicit MethodImpl BODY declared on an interface is not another
                             // declaration slot. In particular, a derived class must never name it as the declaration
                             // half of its own MethodImpl row: ECMA-335 rejects a final declaration there. bir2cir marks
                             // this physical role explicitly, so excluding it is mechanical CIR consumption rather than
                             // reconstructing the bridge's purpose from visibility, finality, name, or body shape.
-                            if (imDef.TryGetProperty("clrInterfaceSlotBridge", out var interfaceSlotBridge)
-                                && interfaceSlotBridge.GetBoolean())
+                            if (imDef.ClrInterfaceSlotBridge.OrDefault())
                                 continue;
                             var physicalInterfaceName = PhysicalMethodName(imDef);
                             var ifaceBuilder = iface.MethodsBySig.TryGetValue(
@@ -555,15 +368,12 @@ sealed partial class Emitter
                             // the sig-token spelling — matched against the class's own MethodsBySig (a nested value-class
                             // arg like Continuation.resumeWith(Result<T>) substitutes correctly, not just a bare gp).
                             var subSig = SigKey(physicalInterfaceName, DeclaredMethodArity(imDef),
-                                imDef.GetProperty("params").EnumerateArray()
-                                    .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)));
+                                imDef.Params.Select(p => SubstTv(p.Type, specArgs)));
                             var ifaceMethod = constructed != null ? AnchorMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
                             // A bir2cir-resolved exact MethodImpl bridge. The decision and exact slot signature are
                             // already CIR facts; this is mechanical consumption only. In particular, do not also wire
                             // the narrow Kotlin declaration, whose covariant return is not a byte-exact CLR MethodImpl.
-                            var subRet = imDef.TryGetProperty("ret", out var subRetNode)
-                                ? SubstTv(DotKt.Bir.TypeNode.Read(subRetNode), specArgs)
-                                : null;
+                            var subRet = SubstTv(imDef.Ret, specArgs);
                             var explicitBridge = FindExplicitInterfaceBridge(
                                 ti, specFqn, physicalInterfaceName, subSig, subRet, imDef);
                             if (explicitBridge != null)
@@ -575,7 +385,6 @@ sealed partial class Emitter
                             // erased, default, event, suspend, or return-dropping obligation must arrive as a resolved
                             // descriptor and is consumed by the branch above.
                         }
-                    }
                 }
             }
 
@@ -585,21 +394,17 @@ sealed partial class Emitter
         // before CIR reaches ilemit.
         foreach (var (_, ti) in _types)
         {
-            if (!ti.IsInterface || ti.Def.ValueKind != JsonValueKind.Object
-                || !ti.Def.TryGetProperty("methods", out var interfaceMethods)) continue;
+            if (!ti.IsInterface) continue;
             _curTypeParams = EffectiveTps(ti);
             // De-dup across a diamond (`I : A, B` with `A, B : C`): one methodimpl per (baseOwner :: subSig).
-            var dimImplSeen = new HashSet<string>();
+            var dimImplSeen = new HashSet<(string Owner, MethodBuilder Declaration)>();
             var externalBaseSpecs = new List<DotKt.Bir.TypeNode.Fqn>();
             // As with class implementations above, an explicit interface MethodImpl is driven by its resolved CIR
             // owner even when a representation carrier replaced the source-level direct edge. The existing exact
             // descriptor lookup remains the only operation that can select its body.
-            foreach (var method in interfaceMethods.EnumerateArray())
-                if (method.TryGetProperty("clrInterfaceImpls", out var directives)
-                    && directives.ValueKind == JsonValueKind.Array)
-                    foreach (var directive in directives.EnumerateArray())
-                        if (directive.TryGetProperty("owner", out var ownerNode)
-                            && ReadFqn(ownerNode) is DotKt.Bir.TypeNode.Fqn owner)
+            foreach (var method in ti.Def.DeclaredMethods)
+                    foreach (var directive in method.ClrInterfaceImpls.OrEmpty())
+                        if (directive.Owner is DotKt.Bir.TypeNode.Fqn owner)
                             externalBaseSpecs.Add(owner);
             var externalBaseSeen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var ibF in externalBaseSpecs)
@@ -652,13 +457,11 @@ sealed partial class Emitter
         // Mechanical consumption only — the decision and the exact slot signature are already CIR facts.
         foreach (var (_, ti) in _types)
         {
-            if (ti.IsInterface || ti.Def.ValueKind != JsonValueKind.Object
-                || !ti.Def.TryGetProperty("methods", out var baseImplMethods)) continue;
+            if (ti.IsInterface) continue;
             _curTypeParams = EffectiveTps(ti);
-            foreach (var m in baseImplMethods.EnumerateArray())
+            foreach (var m in ti.Def.DeclaredMethods)
             {
-                if (!m.TryGetProperty("clrBaseImpls", out var impls) || impls.ValueKind != JsonValueKind.Array)
-                    continue;
+                if (!m.ClrBaseImpls.HasValue) continue;
                 var bridgeName = PhysicalMethodName(m);
                 if (!ti.MethodsBySig.TryGetValue(DefinitionSigKey(bridgeName, m), out var bridge))
                     throw new InvalidOperationException(
@@ -667,12 +470,10 @@ sealed partial class Emitter
                 // method-scope `tv` in it names one of the bridge's own type parameters. Install that exact method
                 // frame while consuming the descriptor; resolving it against the enclosing type would cross ownership.
                 _curMethodParams = _methodTypeParams.TryGetValue(bridge, out var bridgeTps) ? bridgeTps : null;
-                foreach (var impl in impls.EnumerateArray())
+                foreach (var impl in m.ClrBaseImpls.Value)
                 {
-                    if (!impl.TryGetProperty("owner", out var ownerNode) || ReadFqn(ownerNode) is not { } ownerFqn
-                        || !impl.TryGetProperty("member", out var memberNode)
-                        || !impl.TryGetProperty("params", out var ps)
-                        || !impl.TryGetProperty("ret", out var ret)) continue;
+                    var ownerFqn = impl.Owner as DotKt.Bir.TypeNode.Fqn
+                        ?? throw new InvalidOperationException("Base MethodImpl owner must be an FQN");
                     var (open, constructed) = ParseOwnerT(ownerFqn);
                     // A base class declared in a REFERENCED assembly is resolved through reflection, exactly as the
                     // referenced-INTERFACE wiring resolves its slot: the descriptor states the constructed owner, the
@@ -686,11 +487,11 @@ sealed partial class Emitter
                         // naming the producer, and a concrete virtual one keeps dispatching to the base body — the
                         // override simply never runs. Same contract as the emitted-base miss below.
                         // The slot is a lookup: the reference travelling with this descriptor names it.
-                        var externalSlot = PrimaryFromRef(impl, "memberRef") as MethodInfo;
+                        var externalSlot = PrimaryFromRef(impl.MemberRef.OrDefault()) as MethodInfo;
                         if (externalSlot is null)
                             throw new InvalidOperationException(
                                 $"ilemit: {ti.TB.Name}.{bridgeName}: clrBaseImpls names "
-                                + $"'{memberNode.GetString()}' on the referenced base '{open}', which does not resolve "
+                                + $"'{impl.Member}' on the referenced base '{open}', which does not resolve "
                                 + "to exactly one method of that signature — bir2cir resolved a base-class MethodImpl "
                                 + "this layer cannot link");
                         WireMethodOverride(ti.TB, bridge, externalSlot);
@@ -710,33 +511,24 @@ sealed partial class Emitter
                     // DECLARATION whose own parameters, substituted at this base's type arguments, ARE the descriptor,
                     // then re-anchor its builder onto the constructed base — the same two steps the emitted-interface
                     // wiring takes (`subSig` there, `TypeBuilder.GetMethod` here).
-                    var member = memberNode.GetString();
+                    var member = impl.Member;
                     var describedArity = DescribedArity(impl);
-                    var slotSig = SigKey(member, describedArity,
-                        ps.EnumerateArray().Select(DotKt.Bir.TypeNode.Read));
-                    var describedRet = DotKt.Bir.TypeNode.Read(ret);
+                    var slotSig = SigKey(member, describedArity, impl.Params);
+                    var describedRet = impl.Ret;
                     MethodBuilder slot = null;
-                    if (baseTi.Def.TryGetProperty("methods", out var baseDecls))
-                    {
-                        foreach (var bm in baseDecls.EnumerateArray())
+                        foreach (var bm in baseTi.Def.DeclaredMethods)
                         {
-                            if (!bm.TryGetProperty("name", out var bn)) continue;
-                            var declarationName = bn.GetString();
                             var physicalDeclarationName = PhysicalMethodName(bm);
                             if (physicalDeclarationName != member || DeclaredMethodArity(bm) != describedArity
                                 || !DescriptorTypeParamsMatch(impl, bm, ownerFqn.Args)) continue;
-                            if (!bm.TryGetProperty("params", out var bps)) continue;
                             var declared = DefinitionSigKey(physicalDeclarationName, bm);
                             var substituted = SigKey(member, DeclaredMethodArity(bm),
-                                bps.EnumerateArray()
-                                    .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), ownerFqn.Args)));
+                                bm.Params.Select(p => SubstTv(p.Type, ownerFqn.Args)));
                             if (substituted != slotSig) continue;
-                            if (!bm.TryGetProperty("ret", out var baseRet)
-                                || !SubstTv(DotKt.Bir.TypeNode.Read(baseRet), ownerFqn.Args).Equals(describedRet))
+                            if (!SubstTv(bm.Ret, ownerFqn.Args).Equals(describedRet))
                                 continue;
                             if (baseTi.MethodsBySig.TryGetValue(declared, out var found)) { slot = found; break; }
                         }
-                    }
                     if (slot == null)
                         throw new InvalidOperationException(
                             $"ilemit: {ti.TB.Name}.{bridgeName}: clrBaseImpls names {open}.{slotSig}, "
@@ -758,18 +550,17 @@ sealed partial class Emitter
                 for (int ci = 0; ci < ti.Ctors.Count; ci++) { T($"pass4 ctor body: {ti.TB?.Name}#{ci}"); var cb = ti.Ctors[ci]; var cd = ti.CtorDefs[ci]; GuardBody(() => EmitCtorBody(ti, cb, cd)); }
         foreach (var ti in _types.Values)
             if (!ti.IsEnum && !ti.IsDelegate)
-                foreach (var m in ti.Def.GetProperty("methods").EnumerateArray())
+                foreach (var m in ti.Def.DeclaredMethods)
                 {
                     // A CIR extern is deliberately bodyless (currently caller-side UnsafeAccessor). Its signature and
                     // custom attributes were defined above; the CLR supplies the implementation.
-                    if (m.TryGetProperty("extern", out var externFlag) && externFlag.GetBoolean()) continue;
+                    if (m.Extern.OrDefault()) continue;
                     // Interfaces: the CIR `abstract` fact distinguishes an abstract slot from a default method.
                     // A valid void default implementation may have an empty statement list (`set(value) {}`), so
                     // body presence is not a semantic discriminator. EmitMethodBody will append its required `ret`.
                     if (ti.IsInterface
-                        && !(m.TryGetProperty("static", out var interfaceStatic) && interfaceStatic.GetBoolean())
-                        && m.GetProperty("abstract").GetBoolean()) continue;
-                    T($"pass4 method body: {ti.TB?.Name}.{(m.TryGetProperty("name", out var mn) ? mn.GetString() : "?")}"); GuardBody(() => EmitMethodBody(ti, m));
+                        && !m.Static && m.Abstract.Value) continue;
+                    T($"pass4 method body: {ti.TB?.Name}.{m.Name}"); GuardBody(() => EmitMethodBody(ti, m));
                 }
 
         // User annotations -> .NET custom attributes, applied on the type and its methods (the ctor builder of the
@@ -782,13 +573,14 @@ sealed partial class Emitter
             // entry that bir2cir (RoundtripMetadata) generated. ilemit only STAMPS them dumbly through BuildAttribute; the
             // Kotlin-semantic DECISION (which modifier -> which attribute) lives in bir2cir. A runtime-build CIR carries
             // none (the pass is skipped there), so there is nothing to strip.
-            if (ti.TB != null && ti.Def.TryGetProperty("attrs", out var tattrs))
-                foreach (var a in tattrs.EnumerateArray()) { var encoded = BuildAttribute(AttributeJson.Read(a)); if (encoded != null) ti.TB.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
-            if (ti.Def.TryGetProperty("methods", out var ms))
-                foreach (var m in ms.EnumerateArray())
+            if (ti.TB != null)
+                StampMemberAttrs(ti.TB.SetCustomAttribute, ti.Def.Attrs);
+                foreach (var m in ti.Def.DeclaredMethods)
                 {
-                    bool hasA = m.TryGetProperty("attrs", out var mattrs) && mattrs.ValueKind == JsonValueKind.Array && mattrs.GetArrayLength() > 0;
-                    bool hasR = m.TryGetProperty("retAttrs", out var rattrs) && rattrs.ValueKind == JsonValueKind.Array && rattrs.GetArrayLength() > 0;
+                    var mattrs = m.Attrs.OrEmpty();
+                    var rattrs = m.RetAttrs.OrEmpty();
+                    bool hasA = mattrs.Length > 0;
+                    bool hasR = rattrs.Length > 0;
                     if (!hasA && !hasR) continue;
                     // Resolve the target MethodBuilder by SIGNATURE first (MethodsBySig), name-only second — overloaded
                     // methods (sin(Double)+sin(Float), append(...), println(...)) share a name, so a name-only lookup
@@ -800,12 +592,12 @@ sealed partial class Emitter
                         throw new InvalidOperationException(
                             $"ilemit: attributed MethodDef {ti.TB.FullName}.{SigKey(mname, m)} is absent");
                     if (hasA)
-                        foreach (var a in mattrs.EnumerateArray()) { var encoded = BuildAttribute(AttributeJson.Read(a)); if (encoded != null) mb.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
+                        StampMemberAttrs(mb.SetCustomAttribute, m.Attrs);
                     // Return-position attrs ride the return parameter (position 0), defined once.
                     if (hasR)
                     {
                         var retPb = mb.DefineParameter(0, ParameterAttributes.None, null);
-                        foreach (var a in rattrs.EnumerateArray()) { var encoded = BuildAttribute(AttributeJson.Read(a)); if (encoded != null) retPb.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
+                        StampMemberAttrs(retPb.SetCustomAttribute, m.RetAttrs);
                     }
                 }
         }
@@ -813,13 +605,8 @@ sealed partial class Emitter
         // Pass 4b: static-field initializers -> a type initializer (.cctor). A CLR interface may legally have one.
         foreach (var ti in _types.Values)
         {
-            if (!ti.Def.TryGetProperty("fields", out var fs)) continue;
-            // A `lateinit` (or otherwise initializer-less) static field carries `"init": null` — the key is PRESENT
-            // but its value is JSON null, so a bare TryGetProperty("init", …) sees "has init" and would feed a null
-            // element to EmitStoreCoerced -> EmitExpr (crash). Such a field needs no .cctor store: a static reference
-            // slot defaults to null, and a `lateinit` read goes through the `lateinitGet` not-initialized check. So
-            // only fields with a NON-null init value get a type-initializer store.
-            var inits = fs.EnumerateArray().Where(f => f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null && f.TryGetProperty("static", out var s) && s.GetBoolean()).ToList();
+            // Absent/null initializers both leave the CLR default; only an expression needs a .cctor store.
+            var inits = ti.Def.DeclaredFields.Where(f => f.Init.HasValue && f.Static.OrDefault()).ToList();
             if (inits.Count == 0) continue;
             var initializer = ti.TB.DefineTypeInitializer();
             var il = initializer.GetILGenerator();
@@ -839,13 +626,13 @@ sealed partial class Emitter
             // it, `val X: Any = SomeEnum.ENTRY` stored the raw ordinal (int) into an object field as a null ref.
             // #84: the type initializer emits USER initializer expressions (which may carry full CFG), so guard each
             // field's emit with a `.cctor(<field>)` breadcrumb — a throw here names the failing field like a body throw.
-            _ctxType = ti.TB?.Name; _ctxNode = null; _ctxPos = PosOf(ti.Def);   // #112 P2: type decl's source pos
+            _ctxType = ti.TB?.Name; _ctxNode = null; _ctxPos = PosOf(ti.Def.Pos.OrDefault());
             foreach (var f in inits)
             {
-                var fname = f.GetProperty("name").GetString();
+                var fname = f.Name;
                 _ctxMethod = ".cctor(" + fname + ")";
                 var fb = ti.Fields[fname];
-                GuardBody(() => { PrescanCfgLabels(f.GetProperty("init")); EmitStoreCoerced(f.GetProperty("init"), fb.FieldType); MaybeVolatile(fb); EmitField(_il, OpCodes.Stsfld, fb); });
+                GuardBody(() => { PrescanCfgLabels(f.Init.Value.Element); EmitStoreCoerced(f.Init.Value.Element, fb.FieldType); MaybeVolatile(fb); EmitField(_il, OpCodes.Stsfld, fb); });
             }
             _il.Emit(OpCodes.Ret);
         }
@@ -854,7 +641,7 @@ sealed partial class Emitter
         // Pass 5: synthesize entry point on the file class that has `main`.
         MethodBuilder entry = null;
         foreach (var ti in _types.Values)
-            if (ti.IsFileClass && ti.FileElem.Value.GetProperty("hasMain").GetBoolean() && ti.Methods.ContainsKey("main"))
+            if (ti.Def is CirFileDeclaration { HasMain: true } && ti.Methods.ContainsKey("main"))
             {
                 entry = ti.TB.DefineMethod("Main", MethodAttributes.Public | MethodAttributes.Static, Bcl("System.Void"), new[] { Bcl("System.String").MakeArrayType() });
                 var il = entry.GetILGenerator();
@@ -888,10 +675,9 @@ sealed partial class Emitter
         // those rows until GenerateMetadata assigns the local tokens; external constructors use the ordinary API.
         var localAssemblyAttrs = new List<EncodedAttribute>();
         foreach (var file in files)
-            if (file.TryGetProperty("assemblyAttrs", out var assemblyAttrs))
-                foreach (var attribute in assemblyAttrs.EnumerateArray())
+                foreach (var attribute in file.AssemblyAttrs.OrEmpty())
                 {
-                    var encoded = BuildAttribute(AttributeJson.Read(attribute));
+                    var encoded = BuildAttribute(attribute);
                     if (encoded == null) continue;
                     if (encoded.Constructor is ConstructorBuilder) localAssemblyAttrs.Add(encoded);
                     else ab.SetCustomAttribute(encoded.Constructor, encoded.Blob);
@@ -900,6 +686,15 @@ sealed partial class Emitter
         Save(ab, entry, localAssemblyAttrs);
         T("save: done");
     }
+
+    static TypeAttributes TypeAccess(string visibility, bool nested) => nested ? visibility switch
+    {
+        "private" => TypeAttributes.NestedPrivate,
+        "internal" => TypeAttributes.NestedAssembly,
+        "protected" => TypeAttributes.NestedFamily,
+        "protectedInternal" => TypeAttributes.NestedFamORAssem,
+        _ => TypeAttributes.NestedPublic,
+    } : visibility == "public" ? TypeAttributes.Public : TypeAttributes.NotPublic;
 
     // #84 Phase 1: run one body-emit, re-tagging any failure with the declaration being emitted (CurrentDecl). The
     // breadcrumb (_ctxType/_ctxMethod/_ctxNode) is set at the emit's head, so by the time a resolution throw
@@ -924,17 +719,17 @@ sealed partial class Emitter
             if (ti.BaseName != null && _types.TryGetValue(ti.BaseName, out var b)) Visit(b);
             // A generic interface used as a constructed parent/interface must be created before its implementers
             // (PersistedAssemblyBuilder materializes the instantiation at the implementer's CreateType).
-            if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
-                foreach (var i in ifs.EnumerateArray())
+            if (ti.TypeDeclaration is { } type)
+                foreach (var i in type.Interfaces.OrEmpty())
                 {
-                    if (ReadFqn(i) is DotKt.Bir.TypeNode.Fqn iF && _types.TryGetValue(iF.Name, out var inf)) Visit(inf);
+                    if (i is DotKt.Bir.TypeNode.Fqn iF && _types.TryGetValue(iF.Name, out var inf)) Visit(inf);
                 }
             // A nested type must be CreateType()'d BEFORE its enclosing type (Reflection.Emit bakes children into the
             // parent). `done` already holds `ti` (added at entry), so a child whose base IS `ti` won't recurse forever.
-            var myName = ti.IsFileClass ? null : (ti.Def.TryGetProperty("name", out var nm) ? nm.GetString() : null);
+            var myName = ti.TypeDeclaration?.Name;
             if (myName != null)
                 foreach (var child in _types.Values)
-                    if (!child.IsFileClass && child.Def.TryGetProperty("nestedIn", out var cni) && cni.GetString() == myName)
+                    if (child.TypeDeclaration?.NestedIn.OrDefault() == myName)
                         Visit(child);
             result.Add(ti);
         }
@@ -943,8 +738,8 @@ sealed partial class Emitter
     }
 
     // Kotlin visibility -> CLR method/ctor access flag (default public).
-    static MethodAttributes AccessOf(JsonElement m) =>
-        (m.TryGetProperty("vis", out var v) ? v.GetString() : "public") switch
+    static MethodAttributes AccessOf(OptionalField<string> visibility) =>
+        visibility.OrDefault("public") switch
         {
             "private" => MethodAttributes.Private,
             "internal" => MethodAttributes.Assembly,
@@ -953,35 +748,56 @@ sealed partial class Emitter
             _ => MethodAttributes.Public,
         };
 
+    void DeclareField(TypeInfo owner, CirField field, bool fileStatic)
+    {
+        var slot = MapSignatureSlot(field.Type);
+        var attributes = field.Vis.OrDefault("public") switch
+        {
+            "private" => FieldAttributes.Private,
+            "internal" => FieldAttributes.Assembly,
+            "protected" => FieldAttributes.Family,
+            "protectedInternal" => FieldAttributes.FamORAssem,
+            _ => FieldAttributes.Public,
+        };
+        if (fileStatic || field.Static.OrDefault()) attributes |= FieldAttributes.Static;
+        if (field.InitOnly.OrDefault()) attributes |= FieldAttributes.InitOnly;
+        if (field.Constant.IsPresent) attributes |= FieldAttributes.Static | FieldAttributes.Literal;
+        var builder = field.Volatile.OrDefault()
+            ? DefineVolatileField(owner.TB, field.Name, slot.Type, attributes, slot.Required, slot.Optional)
+            : owner.TB.DefineField(field.Name, slot.Type, slot.Required, slot.Optional, attributes);
+        StampMemberAttrs(builder.SetCustomAttribute, field.Attrs);
+        if (field.Constant.IsPresent) builder.SetConstant(ConstArgValue(field.Constant.Value));
+        owner.Fields[field.Name] = builder;
+    }
+
     // Real CLR properties over already-declared accessor methods. Both ordinary types and file facades use the same
     // CIR declaration record; a top-level delegated property especially needs this explicit link because its physical
     // storage is `<name>$delegate`, not a field from which dll2klib could reconstruct the source property name.
     void DeclareProperties(TypeInfo ti)
     {
-        if (!ti.Def.TryGetProperty("properties", out var props)) return;
-        foreach (var p in props.EnumerateArray())
+        foreach (var p in ti.Def.DeclaredProperties)
         {
             MethodBuilder gm = null;
             MethodBuilder sm = null;
-            if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String)
-                gm = ResolvePropertyAccessor(ti, p, g.GetString(), "get");
-            if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String)
-                sm = ResolvePropertyAccessor(ti, p, s.GetString(), "set");
+            if (p.Get.HasValue)
+                gm = ResolvePropertyAccessor(ti, p.Get.Value, p.GetSig, p.GetRet, p.GetMethodArity.OrDefault());
+            if (p.Set.HasValue)
+                sm = ResolvePropertyAccessor(ti, p.Set.Value, p.SetSig, p.SetRet, p.SetMethodArity.OrDefault());
             // ECMA-335 requires the Property signature to describe the accessor's index parameters. Most Kotlin
             // properties have none, but a context/extension property's getter physically receives those arguments.
             // A setter's final parameter is the value, not an index parameter.
             var propertySlots = gm != null
-                ? p.GetProperty("getSig").EnumerateArray().Select(MapSignatureSlot).ToArray()
-                : sm != null ? p.GetProperty("setSig").EnumerateArray().SkipLast(1).Select(MapSignatureSlot).ToArray()
+                ? p.GetSig.Value.Select(MapSignatureSlot).ToArray()
+                : sm != null ? p.SetSig.Value.SkipLast(1).Select(MapSignatureSlot).ToArray()
                 : Array.Empty<DeclaredSignatureSlot>();
-            var propertyType = MapSignatureSlot(p.GetProperty("type"));
+            var propertyType = MapSignatureSlot(p.Type);
             // The Property signature must carry the same instance/static convention as its linked accessor.
             // Omitting HASTHIS makes an instance override's signature differ from its inherited Property row.
             var convention = (gm ?? sm).IsStatic
                 ? CallingConventions.Standard
                 : CallingConventions.Standard | CallingConventions.HasThis;
             var pb = ti.TB.DefineProperty(
-                p.GetProperty("name").GetString(),
+                p.Name,
                 PropertyAttributes.None, convention,
                 propertyType.Type, propertyType.Required, propertyType.Optional,
                 propertySlots.Select(slot => slot.Type).ToArray(),
@@ -989,21 +805,18 @@ sealed partial class Emitter
                 propertySlots.Select(slot => slot.Optional).ToArray());
             if (gm != null) pb.SetGetMethod(gm);
             if (sm != null) pb.SetSetMethod(sm);
-            StampMemberAttrs(pb.SetCustomAttribute, p);   // [KotlinSuspendFunctionType]/… (bir2cir-generated)
+            StampMemberAttrs(pb.SetCustomAttribute, p.Attrs);   // [KotlinSuspendFunctionType]/… (bir2cir-generated)
         }
     }
 
-    MethodBuilder ResolvePropertyAccessor(TypeInfo ti, JsonElement property, string name, string role)
+    MethodBuilder ResolvePropertyAccessor(TypeInfo ti, string name, OptionalField<DotKt.Bir.TypeNode[]> signature,
+        OptionalField<DotKt.Bir.TypeNode> returnType, int methodArity)
     {
-        if (!property.TryGetProperty(role + "Sig", out var signature))
+        if (!signature.HasValue)
             throw new InvalidOperationException(
-                $"ilemit: Property accessor {ti.TB.FullName}.{name} has no resolved {role}Sig descriptor");
-        var methodArity = property.TryGetProperty(role + "MethodArity", out var arity)
-            ? arity.GetInt32()
-            : 0;
-        var parameterTypes = signature.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
-        var returnType = DotKt.Bir.TypeNode.Read(property.GetProperty(role + "Ret"));
-        if (ti.MethodsBySig.TryGetValue(DefinitionSigKey(name, methodArity, parameterTypes, returnType), out var exact))
+                $"ilemit: Property accessor {ti.TB.FullName}.{name} has no resolved signature descriptor");
+        var parameterTypes = signature.Value;
+        if (ti.MethodsBySig.TryGetValue(DefinitionSigKey(name, methodArity, parameterTypes, returnType.Value), out var exact))
             return exact;
         throw new InvalidOperationException(
             $"ilemit: resolved Property accessor descriptor {ti.TB.FullName}.{DefinitionSigKey(name, methodArity, parameterTypes)} does not link exactly");
@@ -1036,9 +849,9 @@ sealed partial class Emitter
         ti.MethodsBySig[key] = method;
     }
 
-    void DeclareMethod(TypeInfo ti, JsonElement m, bool isStatic)
+    void DeclareMethod(TypeInfo ti, CirMethod m, bool isStatic)
     {
-        var logicalName = m.GetProperty("name").GetString();
+        var logicalName = m.Name;
         var name = PhysicalMethodName(m);
         // bir2cir owns physical method allocation (#395). A duplicate CIR signature is therefore malformed input;
         // ilemit must not invent an order-dependent `$dupN` name that declarations and use sites cannot share.
@@ -1047,31 +860,26 @@ sealed partial class Emitter
             throw new InvalidOperationException(
                 $"ilemit: duplicate physical method signature {ti.TB?.FullName}.{name}; bir2cir must allocate a unique MethodDef name");
         var interfaceAbstract = false;
-        var interfaceSlot = ti.IsInterface
-            && !(isStatic || (m.TryGetProperty("static", out var declaredStatic) && declaredStatic.GetBoolean()));
+        var interfaceSlot = ti.IsInterface && !(isStatic || m.Static);
         if (interfaceSlot)
         {
-            if (!m.TryGetProperty("abstract", out var abstractFact)
-                || abstractFact.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            if (!m.Abstract.HasValue)
                 throw new InvalidOperationException(
                     $"ilemit: interface method '{ti.TB?.FullName}.{name}' has no explicit CIR abstract modality fact");
-            interfaceAbstract = abstractFact.GetBoolean();
+            interfaceAbstract = m.Abstract.Value;
         }
-        var clrInterfaceSlotBridge = ti.IsInterface
-            && m.TryGetProperty("clrInterfaceSlotBridge", out var cis)
-            && cis.GetBoolean();
+        var clrInterfaceSlotBridge = ti.IsInterface && m.ClrInterfaceSlotBridge.OrDefault();
         // Source interface members are public. A bir2cir-authored explicit MethodImpl body retains its stated private
         // visibility and finality; this is direct consumption of the CIR slot instruction.
-        var attrs = ti.IsInterface && !clrInterfaceSlotBridge ? MethodAttributes.Public : AccessOf(m);
+        var attrs = ti.IsInterface && !clrInterfaceSlotBridge ? MethodAttributes.Public : AccessOf(m.Vis);
         // A method's own `static` flag (companion methods are static members of a user class).
-        isStatic = isStatic || m.GetProperty("static").GetBoolean();
-        var objOverride = m.TryGetProperty("objectOverride", out var oo) && oo.GetBoolean();
+        isStatic = isStatic || m.Static;
+        var objOverride = m.ObjectOverride.OrDefault();
         // Overriding a .NET base virtual (e.g. `override val Message`) reuses the base slot, like an object-method.
         // `requiresClrOverride` is the one-to-one CIR instruction to emit a MethodImpl; `clrOverrideRef` is its
         // already-selected operand. Keeping the trigger separate from the operand makes either missing half a
         // malformed document instead of silently changing virtual dispatch.
-        var hasClrOverride = m.TryGetProperty("requiresClrOverride", out var clrOverrideRequired)
-            && clrOverrideRequired.GetBoolean();
+        var hasClrOverride = m.RequiresClrOverride.OrDefault();
         // The frontend-stated abstract modality decides whether an interface member is a CLR abstract slot. A concrete
         // Kotlin DIM may have an empty Unit body, so body length is not a declaration-semantics oracle.
         // A compiler-authored static interface helper takes no slot, so it must NOT be marked Virtual/NewSlot/Abstract
@@ -1087,18 +895,18 @@ sealed partial class Emitter
         }
         else if (ti.IsInterface && isStatic) attrs |= MethodAttributes.Static;
         else if (isStatic) attrs |= MethodAttributes.Static;
-        if (m.TryGetProperty("extern", out var externFlag) && externFlag.GetBoolean())
+        if (m.Extern.OrDefault())
             attrs |= MethodAttributes.HideBySig;
         // `ToString`/`Equals`/`GetHashCode` and .NET base overrides reuse the base slot (Virtual, no NewSlot).
         else if (objOverride || hasClrOverride) attrs |= MethodAttributes.Virtual | MethodAttributes.HideBySig;
-        else if (m.GetProperty("override").GetBoolean()) attrs |= MethodAttributes.Virtual;
-        else if (m.GetProperty("virtual").GetBoolean()) attrs |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
+        else if (m.Override) attrs |= MethodAttributes.Virtual;
+        else if (m.Virtual) attrs |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
         // An `abstract fun` (no body) -> a CLR abstract method: Virtual|Abstract, no IL body (subclasses override).
-        if (m.TryGetProperty("abstract", out var amb) && amb.GetBoolean()) attrs |= MethodAttributes.Abstract | MethodAttributes.Virtual;
-        if (m.TryGetProperty("clrFinal", out var finalSlot) && finalSlot.GetBoolean()) attrs |= MethodAttributes.Final;
+        if (m.Abstract.OrDefault()) attrs |= MethodAttributes.Abstract | MethodAttributes.Virtual;
+        if (m.ClrFinal.OrDefault()) attrs |= MethodAttributes.Final;
         // A synthesized event accessor (add_/remove_/raise_<E>, §4.2) is `specialname` (the ECMA-335 event-accessor
         // convention) so the emitted `.event` is a clean reflectable member. bir2cir stamps the flag on the rewritten accessor.
-        if (m.TryGetProperty("specialName", out var spn) && spn.GetBoolean()) attrs |= MethodAttributes.SpecialName;
+        if (m.SpecialName.OrDefault()) attrs |= MethodAttributes.SpecialName;
 
         // NOTE: a coroutine arrives here as ordinary CIR and nothing on this path knows it is one. The cold-core
         // lowering (bir2cir) has already made the public `Task<T>` bridge its OWN method carrying `suspendBridge:true`
@@ -1107,36 +915,35 @@ sealed partial class Emitter
 
         MethodBuilder mb;
         Type[] ps;
-        var genTps = m.TryGetProperty("typeParams", out var mtp) && mtp.GetArrayLength() > 0 ? (JsonElement?)mtp : null;
-        if (genTps != null)
+        var genTps = m.TypeParams.OrEmpty();
+        if (genTps.Length > 0)
         {
             // Generic method `fun <T> id(x: T): T`: the signature references the method's own type params, so
             // they must be defined before SetParameters/SetReturnType (staged form, not the one-shot DefineMethod).
-            var genNames = TpNames(genTps.Value);
+            var genNames = genTps.Select(p => p.Name).ToArray();
             mb = ti.TB.DefineMethod(name, attrs);
             var gps = mb.DefineGenericParameters(genNames);
             RecordMethodTps(mb, gps);
             _curMethodParams = gps;
-            ApplyConstraints(genTps.Value, gps, false);   // `<T : Comparable<T>>` on the method (variance N/A on methods)
+            ApplyConstraints(genTps, gps, false);   // `<T : Comparable<T>>` on the method (variance N/A on methods)
         }
         else
         {
             mb = ti.TB.DefineMethod(name, attrs);
         }
-        var parameterSlots = m.GetProperty("params").EnumerateArray()
-            .Select(p => MapSignatureSlot(p.GetProperty("type"))).ToArray();
-        var returnSlot = MapSignatureSlot(m.GetProperty("ret"));
+        var parameterSlots = m.Params.Select(p => MapSignatureSlot(p.Type)).ToArray();
+        var returnSlot = MapSignatureSlot(m.Ret);
         ps = parameterSlots.Select(slot => slot.Type).ToArray();
         mb.SetSignature(returnSlot.Type, returnSlot.Required, returnSlot.Optional, ps,
             parameterSlots.Select(slot => slot.Required).ToArray(),
             parameterSlots.Select(slot => slot.Optional).ToArray());
         if (returnSlot.HasModifiers || parameterSlots.Any(slot => slot.HasModifiers))
             _declaredMethodSignatures[mb] = new(returnSlot, parameterSlots);
-        if (genTps != null) _curMethodParams = null;
+        if (genTps.Length > 0) _curMethodParams = null;
         // A kotc-authored lifted method (`newDelegate` target) carries the same structural generated fact as
         // synthesized types. Stamp the standard marker here; dll2klib uses it to keep implementation-only helpers
         // out of the re-imported Kotlin surface. This is a direct CIR flag -> metadata mapping, not name inference.
-        if (m.TryGetProperty("generated", out var generated) && generated.GetBoolean())
+        if (m.Generated.OrDefault())
             StampCompilerGenerated(mb);
         ti.Methods[name] = mb;
         ti.MethodsBySig[DefinitionSigKey(name, m)] = mb;
@@ -1155,7 +962,7 @@ sealed partial class Emitter
         ti.MethodNameCounts[name] = ti.MethodNameCounts.TryGetValue(name, out var nameCount) ? nameCount + 1 : 1;
         _mparams[mb] = ps;   // MethodBuilder.GetParameters() throws pre-bake; record param types for call-site boxing
         DefineParamNames(mb, m);
-        if (m.TryGetProperty("pinvoke", out var pinvoke)) ApplyPInvokeDescriptor(mb, pinvoke);
+        if (m.Pinvoke.HasValue) ApplyPInvokeDescriptor(mb, m.Pinvoke.Value);
         if (objOverride)
         {
             var objM = name switch
@@ -1172,13 +979,13 @@ sealed partial class Emitter
             // Link the override to the EXACT .NET base virtual so virtual dispatch through the base type reaches
             // it (`callvirt System.Exception::get_Message` -> our override). The slot is the one scalar reference
             // bir2cir resolved; the independent boolean above is only the emission instruction, not another identity.
-            WireMethodOverride(ti.TB, mb, RequiredRef<MethodInfo>(m, "clrOverrideRef", $"the override {name}"));
+            WireMethodOverride(ti.TB, mb, RequiredRef<MethodInfo>(m.ClrOverrideRef.OrDefault(), $"the override {name}"));
         }
         // Kotlin's `@kotlin.internal.InlineOnly` says "this fn is meant to be inlined, not called as a method". The direct
         // CLR translation is a [MethodImpl(AggressiveInlining)] hint on the emitted method. kotc reads the annotation and
         // emits `mods.inlineOnly`; ilemit stamps the flag. Pure metadata, no behavior change; the JIT ignores the hint for
         // a too-large method. Skip abstract slots (no body to inline). ilemit adds no Kotlin knowledge — it stamps a flag.
-        if (ModFlag(m, "inlineOnly") && (attrs & MethodAttributes.Abstract) == 0)
+        if (m.Mods.OrDefault()?.InlineOnly.OrDefault() == true && (attrs & MethodAttributes.Abstract) == 0)
             mb.SetImplementationFlags(mb.GetMethodImplementationFlags() | MethodImplAttributes.AggressiveInlining);
     }
 
@@ -1191,19 +998,18 @@ sealed partial class Emitter
     {
         if (ti.CtorsDefined) return;
         ti.CtorsDefined = true;
-        if (ti.IsInterface || ti.IsEnum || ti.IsFileClass || !ti.Def.TryGetProperty("ctors", out var ctors)) return;
+        if (ti.IsInterface || ti.IsEnum || ti.IsFileClass) return;
         var saved = _curTypeParams;
         _curTypeParams = EffectiveTps(ti);   // so a `gp:T` ctor param resolves when pulled early out of pass-3 order
-        foreach (var c in ctors.EnumerateArray())
+        foreach (var c in ti.Def.DeclaredConstructors)
         {
-            var slots = c.GetProperty("params").EnumerateArray()
-                .Select(p => MapSignatureSlot(p.GetProperty("type"))).ToArray();
+            var slots = c.Params.Select(p => MapSignatureSlot(p.Type)).ToArray();
             var ps = slots.Select(slot => slot.Type).ToArray();
-            var cb = ti.TB.DefineConstructor(AccessOf(c), CallingConventions.Standard, ps,
+            var cb = ti.TB.DefineConstructor(AccessOf(c.Vis), CallingConventions.Standard, ps,
                 slots.Select(slot => slot.Required).ToArray(), slots.Select(slot => slot.Optional).ToArray());
             if (slots.Any(slot => slot.HasModifiers)) _declaredConstructorSignatures[cb] = slots;
             DefineParamNames(cb, c);   // ctor param NAMES + [Optional]/DefaultParameterValue (named-arg ctor calls)
-            StampMemberAttrs(cb.SetCustomAttribute, c); // declaration carriers/annotations belong to the ctor row
+            StampMemberAttrs(cb.SetCustomAttribute, c.Attrs); // declaration carriers/annotations belong to the ctor row
             ti.Ctors.Add(cb);
             ti.CtorDefs.Add(c);
         }
@@ -1211,38 +1017,28 @@ sealed partial class Emitter
         _curTypeParams = saved;
     }
 
-    // An ownerType spec is either `Name` (plain) or `Name[arg,...]` (a constructed user generic, e.g. `Box[int]`).
-    // For a constructed generic, members are resolved on the OPEN definition (the Builder) and then wrapped onto
-    // the constructed type via the static `TypeBuilder.GetX` helpers — the MakeGenericType result's own
-    // GetMethod/GetField/GetConstructor throw NotSupportedException on the persisted builder (verified, .NET 10).
-    // A typeParams entry is either a bare name string `"T"` (unconstrained) or `{"name":"T","constraints":[...]}`.
-    static string TpName(JsonElement x) => x.ValueKind == JsonValueKind.String ? x.GetString() : x.GetProperty("name").GetString();
-
-    static string[] TpNames(JsonElement tps) => tps.EnumerateArray().Select(TpName).ToArray();
-
     // Apply generic constraints (`<T : Comparable<T>>` -> `T : IComparable<T>`) to already-defined params. The
     // constraint context map (type or method params) must be current so a `gp:T` inside a bound resolves.
-    void ApplyConstraints(JsonElement tps, IReadOnlyList<GenericTypeParameterBuilder> parameters, bool isInterface,
+    void ApplyConstraints(CirTypeParameter[] tps, IReadOnlyList<GenericTypeParameterBuilder> parameters, bool isInterface,
         int offset = 0)
     {
-        foreach (var x in tps.EnumerateArray())
+        foreach (var x in tps)
         {
             var gp = parameters[offset++];
-            if (x.ValueKind != JsonValueKind.Object) continue;
             var parameterAttributes = GenericParameterAttributes.None;
             // bir2cir has resolved the physical flags over signatures and inheritance. Emit that CIR fact directly.
-            if (isInterface && x.TryGetProperty("variance", out var v))
+            if (isInterface && x.Variance.HasValue)
             {
-                var vs = v.GetString();
+                var vs = x.Variance.Value;
                 var attr = vs == "out" ? GenericParameterAttributes.Covariant
                          : vs == "in" ? GenericParameterAttributes.Contravariant
                          : GenericParameterAttributes.None;
                 parameterAttributes |= attr;
             }
-            if (x.TryGetProperty("specialConstraints", out var specials))
+            if (x.SpecialConstraints.HasValue)
             {
-                foreach (var special in specials.EnumerateArray())
-                    parameterAttributes |= special.GetString() switch
+                foreach (var special in x.SpecialConstraints.Value)
+                    parameterAttributes |= special switch
                     {
                         "class" => GenericParameterAttributes.ReferenceTypeConstraint,
                         "struct" => GenericParameterAttributes.NotNullableValueTypeConstraint,
@@ -1254,9 +1050,9 @@ sealed partial class Emitter
             }
             if (parameterAttributes != GenericParameterAttributes.None)
                 gp.SetGenericParameterAttributes(parameterAttributes);
-            if (x.TryGetProperty("constraints", out var cs))
+            if (x.Constraints.HasValue)
             {
-                var types = cs.EnumerateArray().Select(c => MapType(c)).ToList();
+                var types = x.Constraints.Value.Select(MapType).ToList();
                 var baseT = types.FirstOrDefault(t => !t.IsGenericParameter && !IsInterfaceType(t));
                 // Reflection.Emit stores additional constraint rows through this API, including type parameters.
                 // A parameter constraint is not an interface, but must not disappear behind a nominal base bound.

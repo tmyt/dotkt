@@ -5,6 +5,7 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using DotKt.Cir;
 
 // MethodDef identity includes generic arity, parameter types and return type. A null Return is a partial
 // call-side alias, retained only while it identifies a single declaration.
@@ -19,9 +20,9 @@ readonly record struct MethodSigKey(string Name, int GenericArity, string Parame
 sealed class TypeInfo
 {
     public TypeBuilder TB;
-    public JsonElement Def;
+    public ICirContainer Def;
+    public CirTypeDeclaration TypeDeclaration => Def as CirTypeDeclaration;
     public bool IsFileClass;
-    public JsonElement? FileElem; // for file classes: the whole file (for hasMain)
     public string BaseName;                 // the base's bare FQN name (for _types lookup / chain-walk)
     public DotKt.Bir.TypeNode.Fqn BaseFqn;  // the base as a structured Fqn (with args), for constructing a generic base
     public Type ClrBase;   // set when the base is a REFERENCED .NET type; resolved by reflection, not in _types
@@ -37,9 +38,9 @@ sealed class TypeInfo
     // the only thing that picks the right one.
     public readonly Dictionary<string, int> MethodNameCounts = new();
     public ConstructorBuilder Ctor;       // primary ctor (Ctors[0]) — convenience for the common single-ctor path
-    public JsonElement CtorDef;
+    public CirConstructor CtorDef;
     public readonly List<ConstructorBuilder> Ctors = new();   // all ctors (primary + secondary)
-    public readonly List<JsonElement> CtorDefs = new();
+    public readonly List<CirConstructor> CtorDefs = new();
     public bool CtorsDefined;              // guards EnsureCtorsDefined (may run early from BuildAttribute, then again in pass 3)
     public bool IsInterface;
     public bool IsDelegate;

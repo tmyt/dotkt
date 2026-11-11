@@ -85,8 +85,10 @@ sealed partial class Emitter
     }
 
     DeclaredSignatureSlot MapSignatureSlot(JsonElement slot)
+        => MapSignatureSlot(DotKt.Bir.TypeNode.Read(slot));
+
+    DeclaredSignatureSlot MapSignatureSlot(DotKt.Bir.TypeNode type)
     {
-        var type = DotKt.Bir.TypeNode.Read(slot);
         var required = new List<Type>();
         var optional = new List<Type>();
         while (type is DotKt.Bir.TypeNode.Mod modifier)

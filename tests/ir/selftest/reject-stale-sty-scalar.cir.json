@@ -1,5 +1,8 @@
 {
   "fileClass": "SelftestKt",
+  "hasMain": false,
+  "methods": [],
+  "fields": [],
   "types": [
     {
       "name": "Holder",
@@ -7,6 +10,9 @@
       "methods": [
         {
           "name": "retypedResultKeptItsStamp",
+          "static": false,
+          "override": false,
+          "virtual": false,
           "params": [],
           "ret": { "t": "fqn", "name": "string" },
           "body": [

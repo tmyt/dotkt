@@ -1,8 +1,14 @@
 {
   "fileClass": "SelftestKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
   "methods": [
     {
       "name": "twoNullablesOfDifferentTypes",
+      "static": false,
+      "override": false,
+      "virtual": false,
       "params": [],
       "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
       "body": [

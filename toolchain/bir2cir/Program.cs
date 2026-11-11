@@ -25,6 +25,7 @@ static class Bir2Cir
                 MemberRefNodeSelfTest.Run();
                 DotKt.Cir.AttributeSelfTest.Run(JsonOptions.Indented);
                 AttributeProjection.SelfTest();
+                DotKt.Cir.DeclarationSelfTest.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
@@ -1686,7 +1687,8 @@ sealed class Pipeline
 
         AttributeProjection.ApplyAll(pendingOutput.Select(file => file.Root).ToList());
         foreach (var file in pendingOutput)
-            files.Add(new CirFile(file.OutputName, file.Root.ToJsonString(JsonOptions.Indented)));
+            files.Add(new CirFile(file.OutputName, DotKt.Cir.DeclarationJson.Write(
+                CirDeclarationProjection.ReadCirFileDeclaration(file.Root), indented: true)));
         return files;
     }
 

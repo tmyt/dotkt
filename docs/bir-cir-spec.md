@@ -248,12 +248,30 @@ same physical constant vocabulary; BIR defaults remain Kotlin expressions. Inlin
 contents are opaque bytes here, not recursively lowered executable children.
 
 The schema generates `DotKt.Cir.AttributeApplication`, `NamedAttributeArgument` and the sealed
-`AttributeArgument` hierarchy. `AttributeJson` reads/writes these at the JSON boundary. Until the
-enclosing declaration containers migrate, bir2cir embeds typed values in their output DOM and ilemit
-deserializes each metadata application from its document span. These temporary container adapters
-do not serialize typed values back to text between passes and must disappear with the container
-migration. Other declarations, executable nodes and binary transport are not yet migrated by this
-metadata step. No older metadata shape is supported by the CIR consumer.
+`AttributeArgument` hierarchy. `AttributeJson` reads/writes these at the JSON boundary. Metadata values
+are ordinary typed children of CIR declaration records, not separately reparsed document fragments.
+Field `constant` values use this same physical vocabulary, including an explicit `null` value.
+
+### Physical CIR declarations
+
+The schema's `cirFile`, `cirTypeDeclaration`, `cirMethod`, `cirConstructor`, `cirParameter`, `cirField`,
+`cirProperty` and related definitions generate the concrete `DotKt.Cir` declaration records.
+`DeclarationJson` reads/writes these directly. ilemit merges typed file containers and consumes typed
+signatures, constraints, attributes, exact MethodImpl descriptors and accessor associations.
+The physical method flags `static`, `override` and `virtual` are explicit; generic declarations are
+records containing `name` and their optional variance/constraint facts. Optional fields retain
+absence, explicit null and a value separately. Opaque `inlineBir` contents remain bytes, not trees.
+Implementation and reference emission reuse the declarations without dropping signature metadata.
+
+This is an incremental migration, not the completed typed-IR/binary-transport design. bir2cir's
+owning passes still construct a DOM, and an explicitly temporary, schema-generated projection
+constructs typed physical declarations at their output boundary. Current BIR name-only generic
+declarations become physical records there; the CIR reader has no shorthand/legacy-format path.
+Executable bodies, constructor operands and field initializers alone retain named
+`TemporaryCirStatements`/`TemporaryCirExpressions`/`TemporaryCirExpression` adapters. No arbitrary
+declaration/root/extension fields can hide in those adapters. They must disappear when the owning
+passes and executable consumers migrate. The typed sanity entry passes declaration/scope facts to
+the shared invariants directly, without serializing declarations back into a DOM.
 
 ## 2. Node kinds — the `{"k":…}` expression/statement/decl vocabulary
 

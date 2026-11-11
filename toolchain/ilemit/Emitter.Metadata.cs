@@ -47,33 +47,6 @@ sealed partial class Emitter
         if (isVolatile) _il.Emit(OpCodes.Volatile);
     }
 
-    object LiteralConstant(JsonElement value, Type type)
-    {
-        if (value.ValueKind == JsonValueKind.Null) return null;
-        if (type == Bcl("System.String")) return DotKt.Bir.LiteralText.Read(value);
-        if (type == Bcl("System.Boolean")) return value.GetBoolean();
-        if (type == Bcl("System.Char")) return (char)value.GetUInt16();
-        if (type == Bcl("System.SByte")) return (sbyte)value.GetInt32();
-        if (type == Bcl("System.Byte")) return (byte)value.GetInt32();
-        if (type == Bcl("System.Int16")) return (short)value.GetInt32();
-        if (type == Bcl("System.UInt16")) return (ushort)value.GetInt32();
-        if (type == Bcl("System.Int32")) return value.GetInt32();
-        if (type == Bcl("System.UInt32")) return unchecked((uint)value.GetInt32());
-        if (type == Bcl("System.Int64")) return value.GetInt64();
-        if (type == Bcl("System.UInt64")) return unchecked((ulong)value.GetInt64());
-        if (type == Bcl("System.Single")) return value.ValueKind == JsonValueKind.String
-            ? float.Parse(value.GetString(), System.Globalization.CultureInfo.InvariantCulture) : value.GetSingle();
-        if (type == Bcl("System.Double")) return value.ValueKind == JsonValueKind.String
-            ? double.Parse(value.GetString(), System.Globalization.CultureInfo.InvariantCulture) : value.GetDouble();
-        throw new InvalidOperationException($"unsupported literal field type '{type}'");
-    }
-
-    // Structured declaration-modifier lookup (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).
-    // Replaces the scattered top-level boolean fields (isFun/isSealed/inline/infix/operator/suspend/vararg…).
-    internal static bool ModFlag(JsonElement decl, string key)
-        => decl.TryGetProperty("mods", out var mo) && mo.ValueKind == JsonValueKind.Object
-           && mo.TryGetProperty(key, out var f) && f.ValueKind == JsonValueKind.True;
-
     // Returns null when the CLR custom-attribute encoder cannot represent this annotation's shape (so the caller
     // skips it). kotc emits EVERY annotation verbatim (it is just metadata to the frontend); the CLR layer decides
     // what is encodable. The blob is encoded here instead of through CustomAttributeBuilder: CAB validates target-MLC
@@ -104,10 +77,10 @@ sealed partial class Emitter
         var hits = new List<(ConstructorInfo ctor, Type[] parameterTypes)>();
         for (int i = 0; i < ti.Ctors.Count; i++)
         {
-            var ps = ti.CtorDefs[i].GetProperty("params");
-            if (ps.GetArrayLength() != declaredArgTypes.Length) continue;
-            var parameterNodes = ps.EnumerateArray().Select(p => p.GetProperty("type")).ToArray();
-            if (!parameterNodes.Select(t => SigCanon(TypeNode.Read(t))).SequenceEqual(declaredArgTypes)) continue;
+            var ps = ti.CtorDefs[i].Params;
+            if (ps.Length != declaredArgTypes.Length) continue;
+            var parameterNodes = ps.Select(p => p.Type).ToArray();
+            if (!parameterNodes.Select(SigCanon).SequenceEqual(declaredArgTypes)) continue;
             hits.Add((ti.Ctors[i], parameterNodes.Select(MapType).ToArray()));
         }
         if (hits.Count == 0)
@@ -122,15 +95,13 @@ sealed partial class Emitter
     // emitted in this assembly (BuildAttribute would KeyNotFound) — the CLR layer decides what is encodable. bir2cir (RoundtripMetadata)
     // folds the round-trip metadata ([KotlinReadOnly]/[KotlinSuspendFunctionType]/[Nullable]/…) into these arrays;
     // ilemit only STAMPS. `set` is FieldBuilder/PropertyBuilder/ParameterBuilder.SetCustomAttribute.
-    void StampMemberAttrs(Action<ConstructorInfo, byte[]> set, JsonElement decl)
+    void StampMemberAttrs(Action<ConstructorInfo, byte[]> set, OptionalField<AttributeApplication[]> attributes)
     {
-        if (!decl.TryGetProperty("attrs", out var attrs) || attrs.ValueKind != JsonValueKind.Array) return;
-        foreach (var a in attrs.EnumerateArray())
+        foreach (var a in attributes.OrEmpty())
         {
-            var an = SlotName(a.GetProperty("attr"));   // structured `{t:fqn}` identity node (#48)
-            var anExternal = a.TryGetProperty("attrExternal", out var anExt) && anExt.GetBoolean();
-            if (!anExternal && !_types.ContainsKey(an)) continue;
-            var encoded = BuildAttribute(AttributeJson.Read(a)); if (encoded != null) set(encoded.Constructor, encoded.Blob);
+            var an = (a.Attr as TypeNode.Fqn)?.Name;
+            if (a.AttrExternal != true && !_types.ContainsKey(an)) continue;
+            var encoded = BuildAttribute(a); if (encoded != null) set(encoded.Constructor, encoded.Blob);
         }
     }
 
@@ -157,14 +128,14 @@ sealed partial class Emitter
     // PinvokeImpl/PreserveSig flags plus an ImplMap row and does not retain a CustomAttribute row. bir2cir has already
     // normalized every Kotlin/source choice into the CIR descriptor, including defaults; this method only maps each
     // stated physical field to the equivalent metadata API input.
-    void ApplyPInvokeDescriptor(MethodBuilder method, JsonElement descriptor)
+    void ApplyPInvokeDescriptor(MethodBuilder method, CirPInvoke descriptor)
     {
-        var ctor = RequiredRef<ConstructorInfo>(descriptor, "attributeCtorRef", "a P/Invoke descriptor");
+        var ctor = RequiredRef<ConstructorInfo>(descriptor.AttributeCtorRef, "a P/Invoke descriptor");
         var stringType = Bcl("System.String");
         var booleanType = Bcl("System.Boolean");
-        var callingConventionType = ClrRef(descriptor.GetProperty("callingConventionType"));
-        var charSetType = ClrRef(descriptor.GetProperty("charSetType"));
-        var callingConvention = descriptor.GetProperty("callingConvention").GetString() switch
+        var callingConventionType = MapType(descriptor.CallingConventionType);
+        var charSetType = MapType(descriptor.CharSetType);
+        var callingConvention = descriptor.CallingConvention switch
         {
             "winapi" => 1,
             "cdecl" => 2,
@@ -173,7 +144,7 @@ sealed partial class Emitter
             "fastcall" => 5,
             var value => throw new InvalidOperationException($"ilemit: malformed P/Invoke calling convention '{value}'"),
         };
-        var charSet = descriptor.GetProperty("charSet").GetString() switch
+        var charSet = descriptor.CharSet switch
         {
             "none" => 1,
             "ansi" => 2,
@@ -181,23 +152,23 @@ sealed partial class Emitter
             "auto" => 4,
             var value => throw new InvalidOperationException($"ilemit: malformed P/Invoke character set '{value}'"),
         };
-        var preserveSig = descriptor.GetProperty("preserveSig").GetBoolean();
+        var preserveSig = descriptor.PreserveSig;
         var named = new List<NamedAttributeArg>();
-        foreach (var field in descriptor.GetProperty("pseudoFields").EnumerateArray())
-            named.Add(field.GetString() switch
+        foreach (var field in descriptor.PseudoFields)
+            named.Add(field switch
             {
-                "EntryPoint" => new(true, "EntryPoint", stringType, descriptor.GetProperty("entryPoint").GetString()!),
+                "EntryPoint" => new(true, "EntryPoint", stringType, descriptor.EntryPoint),
                 "CallingConvention" => new(true, "CallingConvention", callingConventionType, callingConvention),
                 "CharSet" => new(true, "CharSet", charSetType, charSet),
-                "ExactSpelling" => new(true, "ExactSpelling", booleanType, descriptor.GetProperty("exactSpelling").GetBoolean()),
-                "SetLastError" => new(true, "SetLastError", booleanType, descriptor.GetProperty("setLastError").GetBoolean()),
+                "ExactSpelling" => new(true, "ExactSpelling", booleanType, descriptor.ExactSpelling),
+                "SetLastError" => new(true, "SetLastError", booleanType, descriptor.SetLastError),
                 "PreserveSig" => new(true, "PreserveSig", booleanType, preserveSig),
-                "BestFitMapping" => new(true, "BestFitMapping", booleanType, descriptor.GetProperty("bestFitMapping").GetBoolean()),
-                "ThrowOnUnmappableChar" => new(true, "ThrowOnUnmappableChar", booleanType, descriptor.GetProperty("throwOnUnmappableChar").GetBoolean()),
+                "BestFitMapping" => new(true, "BestFitMapping", booleanType, descriptor.BestFitMapping),
+                "ThrowOnUnmappableChar" => new(true, "ThrowOnUnmappableChar", booleanType, descriptor.ThrowOnUnmappableChar),
                 var value => throw new InvalidOperationException($"ilemit: malformed P/Invoke named field '{value}'"),
             });
         method.SetCustomAttribute(ctor, EncodeAttributeBlob(
-            new[] { stringType }, new object[] { descriptor.GetProperty("module").GetString()! }, named.ToArray()));
+            new[] { stringType }, new object[] { descriptor.Module }, named.ToArray()));
 
         // Keep PreserveSig exact even if Reflection.Emit's pseudo-attribute implementation changes its default.
         var implementationFlags = method.GetMethodImplementationFlags();
@@ -380,23 +351,22 @@ sealed partial class Emitter
     // Emit parameter NAMES into the metadata (DefineParameter is 1-based; 0 = return). ilemit otherwise defines
     // methods by type only, so the names are lost — and dll2klib falls back to arg0/arg1, which blocks named-argument
     // calls across an assembly boundary. The names come straight from the BIR params.
-    void DefineParamNames(MethodBuilder mb, JsonElement m) => DefineParamNames(mb.DefineParameter, m);
-    void DefineParamNames(ConstructorBuilder cb, JsonElement m) => DefineParamNames(cb.DefineParameter, m);
-    void DefineParamNames(Func<int, ParameterAttributes, string, ParameterBuilder> defineParam, JsonElement m)
+    void DefineParamNames(MethodBuilder mb, ICirCallable m) => DefineParamNames(mb.DefineParameter, m.Params);
+    void DefineParamNames(ConstructorBuilder cb, ICirCallable m) => DefineParamNames(cb.DefineParameter, m.Params);
+    void DefineParamNames(Func<int, ParameterAttributes, string, ParameterBuilder> defineParam, CirParameter[] parameters)
     {
-        if (!m.TryGetProperty("params", out var ps)) return;
         int i = 1;
-        foreach (var p in ps.EnumerateArray())
+        foreach (var p in parameters)
         {
-            var name = (p.TryGetProperty("name", out var nn) ? nn.GetString() : null) ?? "";
-            bool vararg = ModFlag(p, "vararg");
-            bool hasDefault = p.TryGetProperty("default", out var dflt);
+            var name = p.Name.OrDefault() ?? "";
+            bool vararg = p.Mods.OrDefault()?.Vararg.OrDefault() == true;
+            bool hasDefault = p.Default.IsPresent;
             // PARAMETER-level custom attributes — the generic BuildAttribute path. bir2cir (RoundtripMetadata) folds the
             // round-trip metadata into this array too ([Nullable] for a nullable-reference param, [KotlinSuspendFunctionType]
             // for a suspend fn-type param), so the parameter builder must be forced whenever attrs are present even if the
             // param otherwise carries no name/vararg/default. ilemit only STAMPS — no Kotlin-semantic decision here.
-            JsonElement pattrs = default;
-            bool hasAttrs = p.TryGetProperty("attrs", out pattrs) && pattrs.GetArrayLength() > 0;
+            var pattrs = p.Attrs.OrEmpty();
+            bool hasAttrs = pattrs.Length > 0;
             if (name.Length == 0 && !vararg && !hasDefault && !hasAttrs) { i++; continue; }
             // A constant default -> [Optional] + DefaultParameterValue, so a cross-module caller can omit the arg.
             var attrs = hasDefault ? ParameterAttributes.Optional | ParameterAttributes.HasDefault : ParameterAttributes.None;
@@ -405,17 +375,16 @@ sealed partial class Emitter
             if (vararg) SetAttribute(pb.SetCustomAttribute,
                 // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 Bcl("System.ParamArrayAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
-            if (hasDefault) pb.SetConstant(ConstArgValue(AttributeJson.ReadArgument(dflt)));
+            if (hasDefault) pb.SetConstant(ConstArgValue(p.Default.Value));
             // Apply each param attribute whose type this assembly can encode (an in-assembly emitted type, or an
             // `attrExternal`-flagged referenced type); an attr referencing a type not in `_types` is skipped (BuildAttribute
             // would KeyNotFound) — the same "the CLR layer decides what is encodable" policy the method-level path uses.
             if (hasAttrs)
-                foreach (var a in pattrs.EnumerateArray())
+                foreach (var a in pattrs)
                 {
-                    var an = SlotName(a.GetProperty("attr"));   // structured `{t:fqn}` identity node (#48)
-                    var anExternal = a.TryGetProperty("attrExternal", out var anExt) && anExt.GetBoolean();
-                    if (!anExternal && !_types.ContainsKey(an)) continue;
-                    var encoded = BuildAttribute(AttributeJson.Read(a)); if (encoded != null) pb.SetCustomAttribute(encoded.Constructor, encoded.Blob);
+                    var an = (a.Attr as TypeNode.Fqn)?.Name;
+                    if (a.AttrExternal != true && !_types.ContainsKey(an)) continue;
+                    var encoded = BuildAttribute(a); if (encoded != null) pb.SetCustomAttribute(encoded.Constructor, encoded.Blob);
                 }
             i++;
         }

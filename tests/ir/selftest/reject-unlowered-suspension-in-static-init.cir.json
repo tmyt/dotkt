@@ -1,5 +1,8 @@
 {
   "fileClass": "SelftestKt",
+  "hasMain": false,
+  "methods": [],
+  "fields": [],
   "types": [
     {
       "name": "SelftestHolder",
@@ -9,7 +12,6 @@
         {
           "name": "escaped",
           "static": true,
-          "ownerType": { "t": "fqn", "name": "SelftestHolder" },
           "type": { "t": "fqn", "name": "kotlin.Int" },
           "init": {
             "k": "callStatic",

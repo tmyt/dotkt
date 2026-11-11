@@ -67,7 +67,7 @@ public enum IrSanityChecks
     StyStampsOnly,
 }
 
-public static class IrSanity
+public static partial class IrSanity
 {
     // Run the sanity invariants over every method/ctor/static-field-initializer in the document, attributing each
     // violation to its declaration. Every check is intra-declaration and needs no codegen state.
@@ -97,10 +97,12 @@ public static class IrSanity
     static void CheckCollectionViewFaces(string owner, JsonElement type)
     {
         if (!type.TryGetProperty("interfaces", out var ifaces) || ifaces.ValueKind != JsonValueKind.Array) return;
-        var stated = new List<TypeNode.Fqn>();
-        foreach (var i in ifaces.EnumerateArray())
-            if (TypeNode.Read(i) is TypeNode.Fqn f)
-                stated.Add(f);
+        CheckCollectionViewFaces(owner, ifaces.EnumerateArray().Select(TypeNode.Read));
+    }
+
+    static void CheckCollectionViewFaces(string owner, IEnumerable<TypeNode> interfaces)
+    {
+        var stated = interfaces.OfType<TypeNode.Fqn>().ToList();
         foreach (var face in stated)
         {
             var sibling = CollectionViewFaces.ReadOnlySibling(face);
@@ -139,11 +141,7 @@ public static class IrSanity
         // modifier just as a concrete one does. `mods.suspend` is Kotlin frontend vocabulary that bir2cir consumes
         // (cold lowering + the [KotlinFunction(Suspend)] metadata stamp); CIR is a physical CLR graph, so a survivor
         // means the cold lowering did not run on this declaration and ilemit would emit its un-lowered Kotlin body.
-        if (which != IrSanityChecks.StyStampsOnly && IsSuspendDecl(m))
-            throw new IrSanityException(PosPrefix(m) + owner + "." + name,
-                "declaration still carries 'mods.suspend': the Kotlin suspend modifier is consumed by bir2cir's "
-                + "cold-core lowering and must not reach CIR (every suspend declaration becomes a state machine, a "
-                + "cold entry and a Task bridge; one the stdlib self-build retains keeps only its physical stub body)");
+        if (which != IrSanityChecks.StyStampsOnly) CheckSuspendDecl(PosPrefix(m) + owner + "." + name, IsSuspendDecl(m));
         if (which != IrSanityChecks.StyStampsOnly) CheckPInvokeDecl(owner, name, m);
         // Abstract / bodiless methods (interface members, abstract decls) emit no IL — nothing to check.
         if (m.TryGetProperty("abstract", out var ab) && ab.ValueKind == JsonValueKind.True) return;
@@ -173,8 +171,11 @@ public static class IrSanity
     // is the CONTAINING TYPE), and the exemption itself is gone with the flag it keyed on.
     static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, JsonElement decl,
                            IrSanityChecks which)
+        => CheckScope(declLabel, paramNames, roots, PosPrefix(decl), which);
+
+    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, string pos,
+                           IrSanityChecks which)
     {
-        var pos = PosPrefix(decl);
         // Check 7 is NODE-LOCAL — it compares two slots of one node — so the `StyStampsOnly` traversal needs neither
         // the declared-name set nor the label set, and skips collecting them.
         if (which == IrSanityChecks.StyStampsOnly)
@@ -204,6 +205,27 @@ public static class IrSanity
         && decl.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object
         && mods.TryGetProperty("suspend", out var s) && s.ValueKind == JsonValueKind.True;
 
+    static void CheckSuspendDecl(string label, bool suspend)
+    {
+        if (suspend) throw new IrSanityException(label,
+            "declaration still carries 'mods.suspend': the Kotlin suspend modifier is consumed by bir2cir's "
+            + "cold-core lowering and must not reach CIR (every suspend declaration becomes a state machine, a "
+            + "cold entry and a Task bridge; one the stdlib self-build retains keeps only its physical stub body)");
+    }
+
+    static void CheckPInvokeOwner(string label, bool malformed)
+    {
+        if (malformed) throw new IrSanityException(label,
+            "a CIR 'pinvoke' descriptor requires extern:true, static:true, no type parameters, an empty body, " +
+            "and no surviving mods.external source fact");
+    }
+
+    static void CheckPInvokeComplete(string label, bool complete)
+    {
+        if (!complete) throw new IrSanityException(label,
+            "a CIR 'pinvoke' descriptor must state the complete normalized MethodImport instruction");
+    }
+
     static void CheckPInvokeDecl(string owner, string name, JsonElement method)
     {
         if (!method.TryGetProperty("pinvoke", out var descriptor) || descriptor.ValueKind != JsonValueKind.Object)
@@ -217,10 +239,7 @@ public static class IrSanity
                 body.GetArrayLength() != 0 ||
             method.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object &&
                 mods.TryGetProperty("external", out var sourceExternal) && sourceExternal.ValueKind == JsonValueKind.True;
-        if (malformed)
-            throw new IrSanityException(PosPrefix(method) + owner + "." + name,
-                "a CIR 'pinvoke' descriptor requires extern:true, static:true, no type parameters, an empty body, " +
-                "and no surviving mods.external source fact");
+        CheckPInvokeOwner(PosPrefix(method) + owner + "." + name, malformed);
 
         static bool String(JsonElement value, string key, bool nonEmpty = false) =>
             value.TryGetProperty(key, out var item) && item.ValueKind == JsonValueKind.String &&
@@ -243,23 +262,29 @@ public static class IrSanity
             hasPseudoFields &&
             descriptor.TryGetProperty("attributeCtorRef", out var attributeCtorRef) &&
                 attributeCtorRef.ValueKind == JsonValueKind.Object;
-        if (!complete)
-            throw new IrSanityException(PosPrefix(method) + owner + "." + name,
-                "a CIR 'pinvoke' descriptor must state the complete normalized MethodImport instruction");
+        CheckPInvokeComplete(PosPrefix(method) + owner + "." + name, complete);
 
         var fields = pseudoFields.EnumerateArray()
             .Where(field => field.ValueKind == JsonValueKind.String)
             .Select(field => field.GetString()).ToHashSet(StringComparer.Ordinal);
-        var entryPoint = descriptor.GetProperty("entryPoint").GetString();
-        var charSet = descriptor.GetProperty("charSet").GetString();
+        CheckPInvokeFields(PosPrefix(method) + owner + "." + name, name, fields,
+            descriptor.GetProperty("entryPoint").GetString(), descriptor.GetProperty("charSet").GetString(),
+            descriptor.GetProperty("exactSpelling").GetBoolean(), descriptor.GetProperty("setLastError").GetBoolean(),
+            descriptor.GetProperty("preserveSig").GetBoolean(), descriptor.GetProperty("bestFitMapping").GetBoolean(),
+            descriptor.GetProperty("throwOnUnmappableChar").GetBoolean());
+    }
+
+    static void CheckPInvokeFields(string label, string name, HashSet<string> fields, string entryPoint, string charSet,
+        bool exactSpelling, bool setLastError, bool preserveSig, bool bestFitMapping, bool throwOnUnmappableChar)
+    {
         if (!fields.Contains("CallingConvention") || entryPoint != name && !fields.Contains("EntryPoint") ||
             charSet != "none" && !fields.Contains("CharSet") ||
-            descriptor.GetProperty("exactSpelling").GetBoolean() && !fields.Contains("ExactSpelling") ||
-            descriptor.GetProperty("setLastError").GetBoolean() && !fields.Contains("SetLastError") ||
-            !descriptor.GetProperty("preserveSig").GetBoolean() && !fields.Contains("PreserveSig") ||
-            descriptor.GetProperty("bestFitMapping").GetBoolean() && !fields.Contains("BestFitMapping") ||
-            descriptor.GetProperty("throwOnUnmappableChar").GetBoolean() && !fields.Contains("ThrowOnUnmappableChar"))
-            throw new IrSanityException(PosPrefix(method) + owner + "." + name,
+            exactSpelling && !fields.Contains("ExactSpelling") ||
+            setLastError && !fields.Contains("SetLastError") ||
+            !preserveSig && !fields.Contains("PreserveSig") ||
+            bestFitMapping && !fields.Contains("BestFitMapping") ||
+            throwOnUnmappableChar && !fields.Contains("ThrowOnUnmappableChar"))
+            throw new IrSanityException(label,
                 "a CIR 'pinvoke' descriptor has normalized values not represented by its pseudoFields instruction");
     }
 

@@ -19,7 +19,7 @@ if (args[0] == "generate")
         });
         var generic = original.DeepClone();
         generic["name"] = "GenericSelect";
-        generic["typeParams"] = new JsonArray("T");
+        generic["typeParams"] = TypeParameters("T");
         var variable = new JsonObject { ["t"] = "tv", ["scope"] = "method", ["i"] = 0 };
         generic["params"]![0]!["type"]!["m"] = new JsonObject {
             ["t"] = "fqn", ["name"] = i == 0 ? "System.Action" : "System.Func",
@@ -56,7 +56,7 @@ if (args[0] == "generate")
         });
     var combined = ownerGenericMethods[0]!.DeepClone();
     combined["name"] = "Echo";
-    combined["typeParams"] = new JsonArray("U");
+    combined["typeParams"] = TypeParameters("U");
     var methodVariable = new JsonObject { ["t"] = "tv", ["scope"] = "method", ["i"] = 0 };
     combined["params"]![0]!["type"]!["m"]!["args"]![0] = methodVariable.DeepClone();
     combined["params"]!.AsArray().Add(new JsonObject { ["name"] = "value", ["type"] = methodVariable.DeepClone() });
@@ -77,7 +77,7 @@ if (args[0] == "generate")
         ["ctors"] = constructorRows, ["fields"] = new JsonArray(), ["methods"] = new JsonArray(), ["interfaces"] = new JsonArray()
     });
     root["types"]!.AsArray().Add(new JsonObject {
-        ["name"] = "GenericMethods", ["kind"] = "class", ["vis"] = "public", ["typeParams"] = new JsonArray("T"),
+        ["name"] = "GenericMethods", ["kind"] = "class", ["vis"] = "public", ["typeParams"] = TypeParameters("T"),
         ["base"] = Named("System.Object"), ["ctors"] = new JsonArray(), ["fields"] = new JsonArray(),
         ["methods"] = ownerGenericMethods, ["interfaces"] = new JsonArray()
     });
@@ -106,7 +106,7 @@ if (args[0] == "generate")
         });
     }
     root["types"]!.AsArray().Add(new JsonObject {
-        ["name"] = "GenericConstructors", ["kind"] = "class", ["vis"] = "public", ["typeParams"] = new JsonArray("T"),
+        ["name"] = "GenericConstructors", ["kind"] = "class", ["vis"] = "public", ["typeParams"] = TypeParameters("T"),
         ["base"] = Named("System.Object"), ["ctors"] = genericConstructors, ["methods"] = new JsonArray(), ["interfaces"] = new JsonArray(),
         ["fields"] = new JsonArray(new JsonObject { ["name"] = "Tag", ["vis"] = "public", ["type"] = Named("System.Int32") })
     });
@@ -136,11 +136,11 @@ if (args[0] == "generate")
         implementationMethods.Add(implementation);
     }
     root["types"]!.AsArray().Add(new JsonObject {
-        ["name"] = "ModifierContract", ["kind"] = "interface", ["vis"] = "public", ["typeParams"] = new JsonArray("T"),
+        ["name"] = "ModifierContract", ["kind"] = "interface", ["vis"] = "public", ["typeParams"] = TypeParameters("T"),
         ["ctors"] = new JsonArray(), ["fields"] = new JsonArray(), ["methods"] = contractMethods, ["interfaces"] = new JsonArray()
     });
     root["types"]!.AsArray().Add(new JsonObject {
-        ["name"] = "ModifiedImplementation", ["kind"] = "class", ["vis"] = "public", ["typeParams"] = new JsonArray("Ignored", "T"),
+        ["name"] = "ModifiedImplementation", ["kind"] = "class", ["vis"] = "public", ["typeParams"] = TypeParameters("Ignored", "T"),
         ["base"] = Named("System.Object"), ["fields"] = new JsonArray(), ["methods"] = implementationMethods,
         ["interfaces"] = new JsonArray(contractEdge.DeepClone()),
         ["ctors"] = new JsonArray(new JsonObject {
@@ -149,11 +149,53 @@ if (args[0] == "generate")
         })
     });
     FunctionPointerSignatures.Add(root.AsObject());
+    // Distinct same-owner interface declarations must retain distinct MethodImpl rows before tokens are assigned.
+    var slots = new JsonArray();
+    var slotBodies = new JsonArray();
+    for (var i = 0; i < 2; i++)
+    {
+        var slot = new JsonObject {
+            ["name"] = "Slot" + i, ["static"] = false, ["override"] = false, ["virtual"] = true,
+            ["abstract"] = true, ["params"] = new JsonArray(), ["ret"] = Named("System.Int32"), ["body"] = new JsonArray()
+        };
+        slots.Add(slot);
+        var body = slot.DeepClone();
+        body["name"] = "Body" + i;
+        body["abstract"] = false;
+        body["vis"] = "private";
+        body["clrInterfaceSlotBridge"] = true;
+        body["clrInterfaceImpls"] = new JsonArray(new JsonObject {
+            ["owner"] = Named("DeclarationSlots"), ["member"] = "Slot" + i, ["arity"] = 0,
+            ["params"] = new JsonArray(), ["ret"] = Named("System.Int32"), ["typeParams"] = new JsonArray()
+        });
+        body["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = new JsonObject {
+            ["k"] = "const", ["type"] = Named("System.Int32"), ["value"] = i + 11
+        } });
+        slotBodies.Add(body);
+    }
+    root["types"]!.AsArray().Add(new JsonObject {
+        ["name"] = "DeclarationSlots", ["kind"] = "interface", ["methods"] = slots
+    });
+    root["types"]!.AsArray().Add(new JsonObject {
+        ["name"] = "FilledSlots", ["kind"] = "interface", ["methods"] = slotBodies,
+        ["interfaces"] = new JsonArray(Named("DeclarationSlots"))
+    });
+    root["types"]!.AsArray().Add(new JsonObject {
+        ["name"] = "SlotConsumer", ["kind"] = "class", ["base"] = Named("System.Object"),
+        ["interfaces"] = new JsonArray(Named("FilledSlots")),
+        ["ctors"] = new JsonArray(new JsonObject { ["params"] = new JsonArray(), ["body"] = new JsonArray(),
+            ["baseCtorRef"] = source["wellKnownRefs"]!["Object.ctor"]!.DeepClone() })
+    });
     File.WriteAllText(args[2], root.ToJsonString());
     return;
 }
 var emitted = Assembly.LoadFrom(Path.GetFullPath(args[1])).GetType("ModifiedMethods")!;
 FunctionPointerSignatures.Verify(emitted.Assembly);
+var slotContract = emitted.Assembly.GetType("DeclarationSlots")!;
+var slotConsumer = Activator.CreateInstance(emitted.Assembly.GetType("SlotConsumer")!);
+for (var i = 0; i < 2; i++)
+    if ((int)slotContract.GetMethod("Slot" + i)!.Invoke(slotConsumer, null)! != i + 11)
+        throw new Exception("Distinct interface declaration lost its MethodImpl before metadata token assignment");
 if ((int)emitted.GetMethod("CallInt")!.Invoke(null, null)! != 1
     || (int)emitted.GetMethod("CallText")!.Invoke(null, null)! != 2)
     throw new Exception("CIR modifier-selected call bound to the wrong overload body");
@@ -213,6 +255,8 @@ if (contract.GetMethods().Sum(method => (int)method.Invoke(instance, [null])!) !
 Console.WriteLine("PASS: method/constructor/property/field modifiers, generic frames, exact calls and independent bodies");
 
 static JsonObject Named(string name) => new() { ["t"] = "fqn", ["name"] = name };
+static JsonArray TypeParameters(params string[] names) => new(names.Select(name =>
+    (JsonNode)new JsonObject { ["name"] = name }).ToArray());
 static JsonObject Call(string name, JsonNode owner, JsonNode method, JsonArray? typeArguments = null)
 {
     var call = new JsonObject {

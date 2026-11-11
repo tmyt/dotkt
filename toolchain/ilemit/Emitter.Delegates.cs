@@ -166,9 +166,8 @@ sealed partial class Emitter
 
     void DefineDelegateMembers(TypeInfo ti)
     {
-        var invokeParams = ti.Def.GetProperty("params").EnumerateArray()
-            .Select(p => MapType(p.GetProperty("type"))).ToArray();
-        var invokeRet = MapType(ti.Def.GetProperty("ret"));
+        var invokeParams = ti.TypeDeclaration.Params.Value.Select(p => MapType(p.Type)).ToArray();
+        var invokeRet = MapType(ti.TypeDeclaration.Ret.Value);
         var ctor = ti.TB.DefineConstructor(
             MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.RTSpecialName | MethodAttributes.SpecialName,
             CallingConventions.Standard,

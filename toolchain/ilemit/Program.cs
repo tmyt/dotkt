@@ -120,21 +120,25 @@ static class IlEmit
                     throw new InvalidOperationException("Portable PDB must have a distinct output path.");
             }
             using var target = new TargetReferenceUniverse(compileRefs, runtimeRefs, targetRid, ridGraphPath);
-            var files = bir.Select(LoadInputDocument).ToList();
-            var assemblyOptions = assemblyOptionsPath == null ? null : SdkAssemblyOptions.Read(assemblyOptionsPath);
-            var versions = assemblyOptions?.Versions();
-            var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions);
-            var declarations = MergeByFileClass(files);
-            new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
-                nativeResources, versions, jitDebugging, portablePdbPath: portablePdbPath,
-                deterministic: assemblyOptions?.Deterministic ?? false)
-                .EmitAssembly(declarations);
-            // Use the same CLR declarations and Kotlin metadata, not the stdlib binding representation.
-            // The reference image stubs executable bodies, adds the reference marker and omits runtime-only data.
-            if (referenceAssemblyPath != null)
+            var files = new List<DotKt.Cir.CirFileDeclaration>();
+            try
+            {
+                foreach (var path in bir) files.Add(DotKt.Cir.DeclarationJson.ReadFile(path));
+                var assemblyOptions = assemblyOptionsPath == null ? null : SdkAssemblyOptions.Read(assemblyOptionsPath);
+                var versions = assemblyOptions?.Versions();
+                var nativeResources = assemblyOptions == null ? null : SdkNativeResources.Create(assemblyOptions);
+                var declarations = MergeByFileClass(files);
                 new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
-                    versions: versions, referenceAssemblyPath: referenceAssemblyPath,
-                    deterministic: assemblyOptions?.Deterministic ?? false).EmitAssembly(declarations);
+                    nativeResources, versions, jitDebugging, portablePdbPath: portablePdbPath,
+                    deterministic: assemblyOptions?.Deterministic ?? false)
+                    .EmitAssembly(declarations);
+                // Reuse declaration signatures/metadata for the reference image; keep body adapters alive for both.
+                if (referenceAssemblyPath != null)
+                    new Emitter(outDir, asmName, target, mode, targetFrameworkMoniker, targetPlatform, supportedOsPlatform,
+                        versions: versions, referenceAssemblyPath: referenceAssemblyPath,
+                        deterministic: assemblyOptions?.Deterministic ?? false).EmitAssembly(declarations);
+            }
+            finally { foreach (var file in files) file.Dispose(); }
             return 0;
         }
         catch (Exception ex)
@@ -152,71 +156,33 @@ static class IlEmit
     // Emitting them as separate files made the 2nd `DefineType` collide, silently dropping one file's methods (the
     // platform's inline primitive overloads `maxOf(int,int)` etc.). Merge same-file-class inputs into ONE so every
     // overload lands in the single emitted type. (Inline funcs are normal callable methods on CLR; metadata is stripped.)
-    static readonly List<JsonDocument> _mergedDocs = new();
-    static List<JsonElement> MergeByFileClass(List<JsonDocument> docs)
+    static List<DotKt.Cir.CirFileDeclaration> MergeByFileClass(List<DotKt.Cir.CirFileDeclaration> files)
     {
-        // Most physical containers already have distinct file classes. Keep those immutable documents
-        // intact instead of reparsing and serializing their complete bodies through a mutable DOM.
-        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var document in docs)
-            if (document.RootElement.TryGetProperty("fileClass", out var fileClass)
-                && fileClass.GetString() is { Length: > 0 } name)
-                counts[name] = counts.GetValueOrDefault(name) + 1;
-        if (counts.Values.All(count => count == 1)) return docs.Select(document => document.RootElement).ToList();
-        var byFc = new Dictionary<string, System.Text.Json.Nodes.JsonObject>();
-        var order = new List<string>();
-        var synthetic = 0;
-        foreach (var d in docs)
+        var indices = new Dictionary<string, int>(StringComparer.Ordinal);
+        var result = new List<DotKt.Cir.CirFileDeclaration>();
+        foreach (var file in files)
         {
-            var node = System.Text.Json.Nodes.JsonNode.Parse(d.RootElement.GetRawText(), documentOptions: DotKt.Bir.BirJson.DocOptions).AsObject();
-            var fc = node["fileClass"]?.GetValue<string>() ?? "";
-            if (fc.Length > 0 && byFc.TryGetValue(fc, out var acc))
+            if (file.FileClass.Length > 0 && indices.TryGetValue(file.FileClass, out var index))
             {
-                foreach (var key in new[] { "methods", "fields", "properties", "types", "assemblyAttrs" })
-                    if (node[key] is System.Text.Json.Nodes.JsonArray src && src.Count > 0)
-                    {
-                        if (acc[key] is System.Text.Json.Nodes.JsonArray dst)
-                            foreach (var it in src.ToList()) dst.Add(it.DeepClone());
-                        else acc[key] = src.DeepClone();
-                    }
-                if (node["hasMain"]?.GetValue<bool>() == true) acc["hasMain"] = true;
+                var first = result[index];
+                result[index] = first with {
+                    Methods = [.. first.Methods, .. file.Methods], Fields = [.. first.Fields, .. file.Fields],
+                    Properties = Append(first.Properties, file.Properties), Types = [.. first.Types, .. file.Types],
+                    AssemblyAttrs = Append(first.AssemblyAttrs, file.AssemblyAttrs), HasMain = first.HasMain || file.HasMain,
+                };
             }
             else
             {
-                // A synthetic CIR file intentionally has no file class. Multiple such files are independent physical
-                // declaration containers (round-trip attribute defs, canonical delegate defs); merging them by the
-                // empty string would overwrite all but the last. Give each an internal-only unique bucket key.
-                var key = fc.Length == 0 ? "\0synthetic-" + synthetic++ : fc;
-                byFc[key] = node;
-                order.Add(key);
+                if (file.FileClass.Length > 0) indices.Add(file.FileClass, result.Count);
+                result.Add(file); // Empty-name synthetic containers are independent and retain input order.
             }
-        }
-        _mergedDocs.Clear();
-        var result = new List<JsonElement>();
-        foreach (var fc in order)
-        {
-            var doc = JsonDocument.Parse(byFc[fc].ToJsonString(DotKt.Bir.BirJson.Writer), DotKt.Bir.BirJson.DocOptions);
-            _mergedDocs.Add(doc);
-            result.Add(doc.RootElement);
         }
         return result;
     }
 
-    static JsonDocument LoadInputDocument(string path)
-    {
-        var json = File.ReadAllText(path);
-        using var doc = JsonDocument.Parse(json, DotKt.Bir.BirJson.DocOptions);
-        var root = doc.RootElement;
-        if (!root.TryGetProperty("cirVersion", out _))
-            return JsonDocument.Parse(json, DotKt.Bir.BirJson.DocOptions);
-
-        if (root.TryGetProperty("cirDraft", out var draft) &&
-            draft.TryGetProperty("executableCir", out var executable))
-            return JsonDocument.Parse(executable.GetRawText(), DotKt.Bir.BirJson.DocOptions);
-
-        throw new InvalidOperationException(
-            $"native CIR input '{path}' does not contain cirDraft.executableCir");   // #84: Main adds the `ilemit: ` prefix
-    }
+    static DotKt.Cir.OptionalField<T[]> Append<T>(DotKt.Cir.OptionalField<T[]> first, DotKt.Cir.OptionalField<T[]> next)
+        => !next.HasValue || next.Value.Length == 0 ? first
+            : DotKt.Cir.OptionalField<T[]>.Of(first.HasValue ? [.. first.Value, .. next.Value] : next.Value);
 }
 
 
@@ -282,6 +248,10 @@ sealed partial class Emitter
             return file + ":" + line;
         return file;
     }
+
+    static string PosOf(DotKt.Cir.CirSourcePosition position)
+        => position == null ? null : Path.GetFileName(position.F)
+            + (position.L.HasValue && position.L.Value >= 0 ? ":" + position.L.Value : "");
 
     // per-method context
     ILGenerator _il;

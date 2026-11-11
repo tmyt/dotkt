@@ -28,15 +28,6 @@ public static class AttributeJson
         return options;
     }
 
-    // Temporary input adapters for ilemit's not-yet-migrated declaration containers. Deserialize reads
-    // the existing element's UTF-8 span; it does not stringify the IR or pass JSON text between passes.
-    // Delete these adapters when the enclosing CIR declaration reader calls the streaming codec directly.
-    public static AttributeApplication Read(JsonElement element)
-        => element.Deserialize<AttributeApplication>(Options) ?? throw new JsonException();
-
-    public static AttributeArgument ReadArgument(JsonElement element)
-        => element.Deserialize<AttributeArgument>(Options) ?? throw new JsonException();
-
     public static AttributeApplication Read(ref Utf8JsonReader reader)
     {
         if (reader.TokenType != JsonTokenType.StartObject) throw new JsonException();
