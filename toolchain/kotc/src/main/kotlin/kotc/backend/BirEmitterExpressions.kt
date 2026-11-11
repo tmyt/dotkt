@@ -324,7 +324,7 @@ private fun BirEmitter.castExpression(node: IrTypeOperatorCall, requireNonNullIn
 	val original = if (nested != null) styStamped(nested, castExpression(nested, requireNonNullInput = true))
 		else expr(node.argument)
 	val operand = if (checked && nested == null)
-		wrapNonNullValue(original, node.argument.type, str("null cannot be cast to a non-null type"))
+		wrapNonNullValue(original, node.argument.type, "null cannot be cast to a non-null type")
 	else original
 	return nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
 		"""{"k":"nullableValue","elem":${elem.toJson()},"e":$operand}"""
@@ -633,9 +633,9 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	// (so the merge keeps only the live branch's type, exactly like a throwExpr/returnExpr branch). Reuses existing
 	// ilemit nodes only (goto/break/throwExpr) — no new backend vocabulary.
 	is IrBreak -> breakContinueExpr(cfgLoopStack.lastOrNull { it.first === node.loop }
-		?.let { BirGoto(it.third).toJson() } ?: BirBreak(node.label).toJson())
+		?.let { BirGoto(it.third) } ?: BirBreak(node.label))
 	is IrContinue -> breakContinueExpr(cfgLoopStack.lastOrNull { it.first === node.loop }
-		?.let { BirGoto(it.second).toJson() } ?: BirContinue(node.label).toJson())
+		?.let { BirGoto(it.second) } ?: BirContinue(node.label))
 	is IrCall -> call(node)
 	// A callable reference to a property (`::x`/`obj::p`/`Type::p`) -> a lifted class implementing the real
 	// stdlib KProperty0/KMutableProperty0/KProperty1/KMutableProperty1 interface (#70); see `propertyRef`. The

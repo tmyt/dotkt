@@ -1,6 +1,9 @@
 package kotc.backend
 
 import kotc.bir.TypeNode
+import kotc.bir.BirNew
+import kotc.bir.BirConstant
+import kotc.bir.BirLiteral
 import kotc.bir.BirSourcePoint
 import kotc.bir.BirSourceSpan
 import org.jetbrains.kotlin.backend.common.collectTailRecursionCalls
@@ -1214,11 +1217,15 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	 *  IllegalArgumentException(msg)`, and bir2cir's MemberCallSubstitution.TransformNew resolves the @ClrTypeAlias
 	 *  owner off the ref.dll to the BCL exception (`kotlin.IllegalArgumentException` -> `System.ArgumentException`).
 	 *  This is the same code path a user throw already takes, so the emitted IL is identical.
-	 *  (exception-map-to-clrtypealias, USER 2026-07-01.) `msgJson` is an already-quoted JSON string, or
-	 *  null for the no-arg ctor. */
-	internal fun newExc(type: String, msgJson: String?): String =
-		if (msgJson != null) """{"k":"new","type":${fqnJson(type)},"argTypes":[{"t":"nullable","of":${fqnJson("kotlin.String")}}],"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":$msgJson}]}"""
-		else """{"k":"new","type":${fqnJson(type)},"argTypes":[],"args":[]}"""
+	 *  A null [message] selects the no-arg constructor, not a null string argument. */
+	internal fun newExc(type: String, message: String?): BirNew {
+		val stringType = TypeNode.Fqn("kotlin.String")
+		return BirNew(
+			type = TypeNode.Fqn(type),
+			argTypes = if (message == null) emptyList() else listOf(TypeNode.Nullable(stringType)),
+			args = if (message == null) emptyList() else listOf(BirConstant(stringType, BirLiteral.TextLiteral(message))),
+		)
+	}
 
 	internal fun throwExpr(exc: String): String = """{"k":"throwExpr","value":$exc}"""
 

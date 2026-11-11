@@ -100,10 +100,13 @@ internal fun BirEmitter.loopBody(body: IrExpression?): String = when (body) {
 internal fun BirEmitter.breakContinueExpr(xfer: String): String =
 	valueBlockJson(type = null, stmts = xfer, result = unreachableResultJson())
 
+internal fun BirEmitter.breakContinueExpr(xfer: kotc.bir.BirStatement): String =
+	sourceValueBlock(listOf(xfer), kotc.bir.BirThrowExpression(nullConstant())).toJson()
+
 /** The result of a valueBlock that never falls through (a control transfer already left it): `throw null`, dead code
  *  the surrounding merge must not take a type from. The throw, rather than its null operand, never returns. */
 private fun BirEmitter.unreachableResultJson(): String =
-	"""{"k":"throwExpr","value":${nullConstJson()}}"""
+	kotc.bir.BirThrowExpression(nullConstant()).toJson()
 
 /** The standard tail-call optimization: a self-tail-call in a `tailrec` fn becomes a back-jump to the method's
  *  entry after reassigning the parameters to the call's arguments (Kotlin/JVM's own `tailrec` lowering, which our

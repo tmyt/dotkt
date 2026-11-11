@@ -40,6 +40,115 @@ data class BirExpressionStatement(
     }
 }
 
+data class BirThrowExpression(
+    val value: BirExpression
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"throwExpr\"")
+        output.append(",\"value\":")
+        value.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirUnaryOperation(
+    val op: String,
+    val e: BirExpression
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"unaryOp\"")
+        output.append(",\"op\":")
+        TypeNodeJson.writeString(op, output)
+        output.append(",\"e\":")
+        e.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirConditional(
+    val cond: BirExpression,
+    val thenValue: BirExpression,
+    val elseValue: BirExpression,
+    val joinNullBranch: Boolean? = null,
+    val type: TypeNode? = null
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"cond\"")
+        joinNullBranch?.let { value ->
+            output.append(",\"joinNullBranch\":")
+            output.append(value)
+        }
+        type?.let { value ->
+            output.append(",\"type\":")
+            value.writeJson(output)
+        }
+        output.append(",\"cond\":")
+        cond.writeJson(output)
+        output.append(",\"then\":")
+        thenValue.writeJson(output)
+        output.append(",\"else\":")
+        elseValue.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirNullableHasValue(
+    val elem: TypeNode,
+    val e: BirExpression
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"nullableHasValue\"")
+        output.append(",\"elem\":")
+        elem.writeJson(output)
+        output.append(",\"e\":")
+        e.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirNullableValue(
+    val elem: TypeNode,
+    val e: BirExpression
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"nullableValue\"")
+        output.append(",\"elem\":")
+        elem.writeJson(output)
+        output.append(",\"e\":")
+        e.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirValueBlock(
+    val stmts: List<BirStatement>,
+    val result: BirExpression,
+    val joinNullBranch: Boolean? = null,
+    val type: TypeNode? = null
+) : BirExpression {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"valueBlock\"")
+        joinNullBranch?.let { value ->
+            output.append(",\"joinNullBranch\":")
+            output.append(value)
+        }
+        type?.let { value ->
+            output.append(",\"type\":")
+            value.writeJson(output)
+        }
+        output.append(",\"stmts\":")
+        output.append('[')
+        stmts.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        output.append(",\"result\":")
+        result.writeJson(output)
+        output.append('}')
+    }
+}
+
 data class BirNew(
     val type: TypeNode,
     val args: List<BirExpression>,
