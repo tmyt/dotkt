@@ -10,5 +10,5 @@ sealed interface BirNode : BirValue {
 }
 
 sealed interface BirStatement : BirNode
-sealed interface BirExpression : BirStatement
+sealed interface BirExpression : BirNode
 sealed interface BirBranch : BirValue

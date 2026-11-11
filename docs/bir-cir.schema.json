@@ -29,7 +29,7 @@
     "birStatementNode": {
       "x-dotkt-model": { "name": "BirStatement" },
       "oneOf": [
-        { "$ref": "#/$defs/birExpressionNode" }, { "$ref": "#/$defs/birSourcePoint" },
+        { "$ref": "#/$defs/birExpressionStatement" }, { "$ref": "#/$defs/birSourcePoint" },
         { "$ref": "#/$defs/birBreak" }, { "$ref": "#/$defs/birContinue" },
         { "$ref": "#/$defs/birGoto" }, { "$ref": "#/$defs/birLabel" },
         { "$ref": "#/$defs/birThrow" }, { "$ref": "#/$defs/birIf" },
@@ -49,6 +49,11 @@
       "type": "object", "x-dotkt-model": { "name": "BirObjectEquals", "domain": "birCore", "role": "expression" },
       "properties": { "k": { "const": "objEq" }, "lhs": { "$ref": "#/$defs/birExpressionNode" }, "rhs": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "lhs", "rhs"], "additionalProperties": false
+    },
+    "birExpressionStatement": {
+      "type": "object", "x-dotkt-model": { "name": "BirExpressionStatement", "domain": "birCore", "role": "statement" },
+      "properties": { "k": { "const": "exprStmt" }, "expr": { "$ref": "#/$defs/birExpressionNode" } },
+      "required": ["k", "expr"], "additionalProperties": false
     },
     "birNew": {
       "type": "object", "x-dotkt-model": { "name": "BirNew", "domain": "birCore", "role": "expression" },

@@ -29,6 +29,17 @@ data class BirObjectEquals(
     }
 }
 
+data class BirExpressionStatement(
+    val expr: BirExpression
+) : BirStatement {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"exprStmt\"")
+        output.append(",\"expr\":")
+        expr.writeJson(output)
+        output.append('}')
+    }
+}
+
 data class BirNew(
     val type: TypeNode,
     val args: List<BirExpression>,
