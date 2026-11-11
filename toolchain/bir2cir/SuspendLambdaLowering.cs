@@ -14,7 +14,7 @@
 //     "captures":[{"name","type","outer"?}],     // captured vars -> SM ctor params + fields; outer:true identifies enclosing this
 //     "params":  [{"name","type"}],              // the lambda's own params (create() sets them on the fresh SM)
 //     "suspendRet":"kotlin.X",                   // the lambda's result type ("void"/"kotlin.Unit" -> Unit)
-//     "typeParams":[<tp-name>,...],              // enclosing generic type-param NAME decls (open SM instantiation)
+//     "typeParams":[<declaration>,...],          // complete generic declaration frame
 //     "body":[ ...structured, suspendCall-tagged... ],
 //     "funcType":{t:"fn",suspend:true,recv?:T,...} } // canonical Kotlin function type; recv is not in params
 //
@@ -196,11 +196,13 @@ static class SuspendLambdaLowering
         JsonArray methodParameters = null)
     {
         var ownerTypeParamCount = NormalizeOwnerCapturePrefix(node, owner, methodParameters);
+        var typeParameters = (node["typeParams"] as JsonArray ?? new JsonArray())
+            .Select(TypeParameterDeclaration.Read).ToArray();
         // Bottom-up: lower any nested suspend lambdas inside THIS lambda's body first (their SMs + `new`
         // replacements land before this lambda's SM is built over the already-lowered body).
         var body = node["body"] as JsonArray ?? new JsonArray();
-        var lambdaParameters = node["typeParams"] is JsonArray declarations
-            ? new JsonArray(declarations.Skip(ownerTypeParamCount).Select(p => p?.DeepClone()).ToArray()) : null;
+        var lambdaParameters = new JsonArray(typeParameters.Skip(ownerTypeParamCount)
+            .Select(parameter => (JsonNode)parameter.ToDom()).ToArray());
         Walk(body, ctx, owner, newTypes, counter, baseIsLocal, outerSelf, lambdaParameters);
 
         var arity = IntOf(node["arity"]);
@@ -215,8 +217,6 @@ static class SuspendLambdaLowering
         var lambdaParams = (node["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
         var resultType = TypeJson.Read(node["suspendRet"]);
         var funcType = TypeJson.Read(node["funcType"]) as TypeNode.Fn;
-        var typeArgs = ReadStrings(node["typeParams"]);
-        var typeParamDecls = node["typeParams"] as JsonArray;
         var ctorTypeArgs = node["typeArgs"] as JsonArray;
         var smName = ctx + "_lambda" + (++counter[0]) + "$sm";
 
@@ -228,7 +228,7 @@ static class SuspendLambdaLowering
         var effBaseIsLocal = restricted ? _restrictedBaseIsLocal : baseIsLocal;
 
         var sm = SuspendColdLowering.BuildLambdaSm(
-            smName, arity, captures, outerCaptureName, lambdaParams, body, resultType, typeArgs, typeParamDecls,
+            smName, arity, captures, outerCaptureName, lambdaParams, body, resultType, typeParameters,
             ownerTypeParamCount, effBaseIsLocal,
             _calleeRet, restricted, _refs);
         if (sm == null) return node;   // arity < 0 (never) -> keep the node; arbitrary N is now expressible
@@ -238,16 +238,16 @@ static class SuspendLambdaLowering
 
         // CONSTRUCTION type args (#75 Batch B, 2A): a materialized suspend carrier renumbers its enclosing tvs to a
         // dense 0-based SM param space and carries the ORIGINAL enclosing tvs (any scope/index) on `typeArgs` — the
-        // construction channel, distinct from `typeParams` (the SM's own name declarations). Instantiate the open SM
+        // construction channel, distinct from `typeParams` (the SM's declaration frame). Instantiate the open SM
         // with THOSE originals. Every generic producer must state this construction edge; reconstructing it from the
         // state machine's parameter positions would confuse an enclosing method frame with an enclosing type frame.
         TypeNode smInst;
-        if (ctorTypeArgs != null && ctorTypeArgs.Count != typeArgs.Count)
+        if (ctorTypeArgs != null && ctorTypeArgs.Count != typeParameters.Length)
             throw new NotSupportedException(
                 $"bir2cir: suspend-lambda lowering: `{smName}` carries {ctorTypeArgs.Count} construction type "
-                + $"argument(s) for {typeArgs.Count} state-machine type parameter(s) — an earlier lowering "
+                + $"argument(s) for {typeParameters.Length} state-machine type parameter(s) — an earlier lowering "
                 + "dropped or added a construction type argument.");
-        if (typeArgs.Count == 0)
+        if (typeParameters.Length == 0)
             smInst = new TypeNode.Fqn(smName);
         else if (ctorTypeArgs == null)
             throw new NotSupportedException(
@@ -539,12 +539,4 @@ static class SuspendLambdaLowering
         TypeJson.Read(node) ?? throw new NotSupportedException(
             $"bir2cir: suspend-lambda lowering: the {slot} carries no type — an earlier lowering dropped it.");
 
-    static List<string> ReadStrings(JsonNode arr)
-    {
-        var list = new List<string>();
-        if (arr is JsonArray a)
-            foreach (var it in a)
-                list.Add(it["name"].GetValue<string>());
-        return list;
-    }
 }

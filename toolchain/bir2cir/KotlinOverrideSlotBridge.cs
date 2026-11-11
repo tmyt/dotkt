@@ -2232,7 +2232,7 @@ static class KotlinOverrideSlotBridge
             throw new InvalidOperationException("Override representation seam lost declaration-owned source identity");
         var permutedMethod = new JsonObject {
             ["typeParams"] = new JsonArray(Enumerable.Range(0, frame.PhysicalArity)
-                .Select(index => (JsonNode)JsonValue.Create("P" + index)).ToArray()),
+                .Select(index => (JsonNode)new TypeParameterDeclaration("P" + index).ToDom()).ToArray()),
             [NullableRepresentationTypes.MethodFrameKey] = frame.ToJson().ToJsonString(),
             [NullableGenericErasure.MethodTypeParameterBoundsPre] =
                 "{\"bounds\":{\"0\":[{\"t\":\"fqn\",\"name\":\"FirstBound\"}],\"1\":[{\"t\":\"fqn\",\"name\":\"SecondBound\"}]}}",
@@ -2526,9 +2526,7 @@ static class KotlinOverrideSlotBridge
         {
             var sourceIndex = int.Parse(pair.Key);
             var index = frame?.SourcePosition(sourceIndex) ?? sourceIndex;
-            var parameter = parameters[index] as JsonObject
-                ?? new JsonObject { ["name"] = parameters[index].GetValue<string>() };
-            if (parameters[index] is not JsonObject) parameters[index] = parameter;
+            var parameter = (JsonObject)parameters[index];
             parameter["constraints"] = pair.Value.DeepClone();
         }
         return parameters;

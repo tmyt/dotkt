@@ -398,7 +398,8 @@ static class MapVarianceRealign
         JsonObject Declaration(string id, TypeNode parameter) => new()
         {
             ["name"] = "sameName", [DeclarationIdentityBinding.Key] = id,
-            ["typeParams"] = new JsonArray(new JsonObject(), new JsonObject(), new JsonObject(), new JsonObject()),
+            ["typeParams"] = new JsonArray(Enumerable.Range(0, 4)
+                .Select(index => (JsonNode)new TypeParameterDeclaration("T" + index).ToDom()).ToArray()),
             ["params"] = new JsonArray(new JsonObject { ["name"] = "map", ["type"] = TypeJson.Write(parameter) }),
         };
         var formals = new TypeNode[] { M(0), M(1), M(2), M(3) };

@@ -504,9 +504,7 @@ static class CompanionExtensionBinding
         for (var index = 0; index < receiverTypeParams.Count; index++)
         {
             var source = receiverTypeParams[index];
-            var descriptor = source is JsonObject obj
-                ? (JsonObject)obj.DeepClone()
-                : new JsonObject { ["name"] = Str(source) ?? "T" + index };
+            var descriptor = TypeParameterDeclaration.Read(source).ToDom();
             var name = "dotkt$receiver$" + index;
             while (!usedNames.Add(name)) name += "$";
             descriptor["name"] = name;
@@ -529,9 +527,7 @@ static class CompanionExtensionBinding
         for (var index = 0; index < receiverTypeParams.Count; index++)
         {
             var source = receiverTypeParams[index];
-            var descriptor = source is JsonObject obj
-                ? (JsonObject)obj.DeepClone()
-                : new JsonObject { ["name"] = Str(source) ?? "T" + index };
+            var descriptor = TypeParameterDeclaration.Read(source).ToDom();
             descriptor["name"] = "dotkt$receiver$" + index;
             descriptor.Remove("variance");
             result.Add(descriptor);

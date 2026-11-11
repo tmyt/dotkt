@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.ir.symbols.impl.IrTypeParameterSymbolImpl
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.types.Variance
+import org.jetbrains.kotlin.ir.types.defaultType
 
 class TypeParameterDeclarationTest {
     @OptIn(UnsafeDuringIrConstructionAPI::class)
@@ -23,12 +24,14 @@ class TypeParameterDeclarationTest {
             }
         val parameters = listOf(parameter("T", 0, Variance.INVARIANT, false),
             parameter("R", 1, Variance.OUT_VARIANCE, true))
+        parameters[1].superTypes = listOf(parameters[0].defaultType)
         val emitter = BirEmitter()
+        emitter.typeArgSubst[parameters[0]] = TypeNode.Tv("method", 0)
         assertEquals(listOf(TypeParameterDeclaration("T"),
-            TypeParameterDeclaration("R", reified = true, variance = "out")),
+            TypeParameterDeclaration("R", reified = true, variance = "out", constraints = listOf(TypeNode.Tv("method", 0)))),
             emitter.typeParameterDeclarations(parameters))
         val json = emitter.typeParamDeclarationsJson(parameters)
-        assertEquals("""[{"name":"T"},{"name":"R","reified":true,"variance":"out"}]""", json)
+        assertEquals("""[{"name":"T"},{"name":"R","reified":true,"variance":"out","constraints":[{"t":"tv","scope":"method","i":0}]}]""", json)
         println("IR_TYPE_PARAMETER_SAMPLE $json")
     }
 

@@ -216,7 +216,7 @@ static partial class OwnerConstrainedMethodLowering
             ["typeParams"] = new JsonArray(new JsonObject {
                 ["name"] = "T", ["constraints"] = new JsonArray(TypeJson.Fqn("kotlin.Enum"),
                     TypeJson.Write(new TypeNode.Tv("method", 1))),
-            }, JsonValue.Create("N")),
+            }, new TypeParameterDeclaration("N").ToDom()),
             ["body"] = new JsonArray(new JsonObject {
                 ["k"] = "new", ["type"] = TypeJson.Write(new TypeNode.Fqn("Shared",
                     new TypeNode[] { new TypeNode.Tv("method", 0) })),
@@ -498,11 +498,7 @@ static partial class OwnerConstrainedMethodLowering
                                 });
                             if (!complete || !Rebind(originalConstraints).Select(TypeJson.Read).ToHashSet()
                                 .SetEquals(declaredConstraints.Select(TypeJson.Read))) continue;
-                            var parameter = targetParameters[i] as JsonObject;
-                            if (parameter == null)
-                                targetParameters[i] = parameter = new JsonObject {
-                                    ["name"] = targetParameters[i]?.DeepClone(),
-                                };
+                            var parameter = (JsonObject)targetParameters[i];
                             var constraints = Rebind(sourceConstraints);
                             var dispatch = Rebind(erased ?? new JsonArray());
                             if (JsonNode.DeepEquals(parameter["constraints"], constraints)

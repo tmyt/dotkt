@@ -369,19 +369,16 @@ static class NullableRepresentationMaterialization
                 // the ordinary slot, including constrained dispatch on a mutable struct.
                 var ordinary = frame.Variable(new TypeNode.Tv(scope, sourceIndex),
                     NullableRepresentationFrame.Role.Ordinary);
-                var parameter = expanded[ordinary.I] as JsonObject;
-                if (parameter == null)
-                    expanded[ordinary.I] = parameter = new JsonObject { ["name"] = expanded[ordinary.I].DeepClone() };
-                if (parameter["constraints"] is not JsonArray constraints)
-                    parameter["constraints"] = constraints = new JsonArray();
-                foreach (var bound in projected)
-                    if (!constraints.Select(TypeJson.Read).Contains(bound)) constraints.Add(TypeJson.Write(bound));
+                var parameter = TypeParameterDeclaration.Read(expanded[ordinary.I]);
+                var constraints = parameter.Constraints ?? Array.Empty<TypeNode>();
+                expanded[ordinary.I] = (parameter with {
+                    Constraints = constraints.Concat(projected.Except(constraints)).ToArray(),
+                }).ToDom();
             }
-            expanded[variable.I] = new JsonObject {
-                ["name"] = expanded[variable.I].DeepClone(),
-                [publishedSlot ? "constraints" : FBoundStarProjectionErasure.ErasedInnerConstraintKey] =
-                    new JsonArray(projected.Select(TypeJson.Write).ToArray()),
-            };
+            var storageParameter = TypeParameterDeclaration.Read(expanded[variable.I]);
+            expanded[variable.I] = (publishedSlot
+                ? storageParameter with { Constraints = projected.ToArray() }
+                : storageParameter with { ErasedInnerConstraints = projected.ToArray() }).ToDom();
         }
         declaration["typeParams"] = expanded;
     }
@@ -850,6 +847,8 @@ static class NullableRepresentationMaterialization
         AppendParameters(privateBoundMethod, boundFrame, policy: boundPolicy);
         AppendParameters(erasedBoundMethod, boundFrame, policy: boundPolicy);
         AppendParameters(boundOwner, boundFrame, "type", policy: boundPolicy);
+        foreach (var parameter in boundOwner["typeParams"].AsArray())
+            TypeParameterDeclaration.Read(parameter);
         var carrierBound = new TypeNode.Fqn("ValueBound", new TypeNode[] { new TypeNode.Star() });
         if (TypeJson.Read(boundMethod["typeParams"][0]["constraints"][0]) != carrierBound
             || boundMethod["typeParams"][0]["constraints"].AsArray().Count != 2

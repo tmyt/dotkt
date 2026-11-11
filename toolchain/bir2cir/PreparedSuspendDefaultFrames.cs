@@ -25,8 +25,8 @@ static class PreparedSuspendDefaultFrames
             if (node["k"]?.GetValue<string>() == "newSuspendLambda"
                 && node[SuspendLambdaLowering.SplicedDeclarationFrameKey] is JsonArray origins)
             {
-                var names = (JsonArray)node["typeParams"];
-                if (origins.Count != names.Count)
+                var sourceParameters = (JsonArray)node["typeParams"];
+                if (origins.Count != sourceParameters.Count)
                     throw new InvalidOperationException("Prepared suspend default has inconsistent source frame");
                 var owner = new JsonArray();
                 var method = new JsonArray();
@@ -46,7 +46,7 @@ static class PreparedSuspendDefaultFrames
                     ["name"] = "__preparedSuspendDefault$" + serial,
                     [DeclarationIdentityBinding.Key] = DeclarationIdentityBinding.PhysicalOnlyId("prepared-suspend-default", serial.ToString()),
                     ["generated"] = true, ["static"] = true,
-                    ["typeParams"] = names.DeepClone(),
+                    ["typeParams"] = sourceParameters.DeepClone(),
                     ["params"] = new JsonArray(captures.Concat(parameters).Select(p => p.DeepClone()).ToArray()),
                     ["ret"] = node["suspendRet"]?.DeepClone(),
                     ["body"] = node["body"]?.DeepClone(),

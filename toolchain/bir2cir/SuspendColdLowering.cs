@@ -928,7 +928,7 @@ static partial class SuspendColdLowering
     public static JsonObject BuildLambdaSm(string smName, int arity,
         List<(string name, TypeNode type)> captures, string capturedOuterName,
         List<JsonObject> lambdaParams, JsonArray body,
-        TypeNode resultType, List<string> typeParams, JsonArray typeParamDecls, int ownerTypeParamCount,
+        TypeNode resultType, IReadOnlyList<TypeParameterDeclaration> typeParameters, int ownerTypeParamCount,
         bool baseIsLocal,
         IReadOnlyDictionary<string, TypeNode> calleeRet = null, bool restricted = false,
         ReferenceMetadataIndex refs = null)
@@ -939,7 +939,7 @@ static partial class SuspendColdLowering
         if (refs != null) _refs = refs;
         var gen = new FunGen(smName, arity, captures ?? new List<(string, TypeNode)>(), capturedOuterName,
             lambdaParams, body,
-            resultType, typeParams, typeParamDecls, ownerTypeParamCount,
+            resultType, typeParameters, ownerTypeParamCount,
             calleeRet as Dictionary<string, TypeNode> ??
                 (calleeRet != null ? new Dictionary<string, TypeNode>(calleeRet, StringComparer.Ordinal)
                                    : new Dictionary<string, TypeNode>(StringComparer.Ordinal)),
@@ -1482,13 +1482,14 @@ static partial class SuspendColdLowering
         // parts. Captures become ctor params + fields; the lambda's own params become fields set by create().
         public FunGen(string smName, int arity, List<(string name, TypeNode type)> captures,
             string capturedOuterName,
-            List<JsonObject> lambdaParams, JsonArray body, TypeNode resultType, List<string> typeParams,
-            JsonArray typeParamDecls, int ownerTypeParamCount, Dictionary<string, TypeNode> calleeRet,
+            List<JsonObject> lambdaParams, JsonArray body, TypeNode resultType,
+            IReadOnlyList<TypeParameterDeclaration> typeParameters, int ownerTypeParamCount, Dictionary<string, TypeNode> calleeRet,
             bool baseIsLocal, bool restricted = false)
         {
             _isLambda = true;
             _restrictedBase = restricted;
-            var allTypeParamDecls = typeParamDecls?.DeepClone() as JsonArray ?? new JsonArray();
+            var allTypeParamDecls = new JsonArray(typeParameters
+                .Select(parameter => (JsonNode)parameter.ToDom()).ToArray());
             if (ownerTypeParamCount < 0 || ownerTypeParamCount > allTypeParamDecls.Count)
                 throw new InvalidOperationException(
                     $"suspend lambda '{smName}' declares {allTypeParamDecls.Count} generic slot(s) but " +

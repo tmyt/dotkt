@@ -257,7 +257,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	val paramsJson = lambdaParamsJson(ownParams)
 	val resultType = birType(fn.returnType)
 	// Enclosing generic type params referenced by the SM (captures/params/return/body operands) -> open SM
-	// instantiation. BARE names: bir2cir prepends `gp:`.
+	// instantiation. Declaration facts and construction arguments remain distinct frames.
 	val freeTps = freeTypeParams(captures.map { it.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 		.sortedWith(compareBy<IrTypeParameter>(
 			{ if (tvOf(it).scope == "type") 0 else 1 },

@@ -168,8 +168,8 @@ internal fun BirEmitter.memberVisibilityStamped(
 	val (ownerTypeParams, methodTypeParams, declarationFact) = inMemberDeclarationFrame(member) {
 		val ownerTypeParams = memberOwnerTypeParamsJson(member)
 		val methodTypeParams = (member as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.let {
-			typeParamsJson(it.typeParameters)
-				.replaceFirst(",\"typeParams\":", ",\"memberMethodTypeParams\":")
+			if (it.typeParameters.isEmpty()) "" else
+				""","memberMethodTypeParams":${typeParamDeclarationsJson(it.typeParameters)}"""
 		}.orEmpty()
 		val declarationFact = when (member) {
 			is org.jetbrains.kotlin.ir.declarations.IrConstructor -> {
@@ -241,7 +241,7 @@ private fun BirEmitter.memberOwnerTypeParamsJson(
 ): String {
 	val owner = target.parent as? org.jetbrains.kotlin.ir.declarations.IrClass ?: return ""
 	val params = (innerEnclosingTypeParams(owner) + owner.typeParameters + liftedTypeArgParams[owner].orEmpty()).distinct()
-	return typeParamsJson(params).replaceFirst(",\"typeParams\":", ",\"memberOwnerTypeParams\":")
+	return if (params.isEmpty()) "" else ""","memberOwnerTypeParams":${typeParamDeclarationsJson(params)}"""
 }
 
 /** Preserve the declaration type as well as visibility: a write value can be a subtype and is not a field signature. */

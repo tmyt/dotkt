@@ -8,7 +8,7 @@ using DotKt.Bir;
 // captured by ordinary add/remove callback closures. H is the complete handler shape; subscribe and close
 // are ordinary stdlib calls, so stored, returned, captured and cross-module handles use the same path.
 // Only this layer resolves the Kotlin event declaration into its concrete CLR accessors.
-static class ClrEventSubscriptionBinding
+static partial class ClrEventSubscriptionBinding
 {
     sealed class Binder
     {
@@ -66,9 +66,20 @@ static class ClrEventSubscriptionBinding
             {
                 if (_scopes.TryGetValue(obj, out var scope))
                     (typeParams, methodParams) = scope;
+                var denseSuspend = Str(obj["k"]) == "newSuspendLambda" && Str(obj["typeFrame"]) == "dense";
+                var suspendDeclarations = obj["typeParams"] as JsonArray ?? _empty;
                 var copy = new JsonObject();
                 foreach (var kv in obj)
-                    copy[kv.Key] = kv.Value == null ? null : Walk(kv.Value, typeParams, methodParams);
+                {
+                    if (kv.Value == null) { copy[kv.Key] = null; continue; }
+                    if (denseSuspend
+                        && kv.Key is "body" or "params" or "captures" or "suspendRet" or "typeParams")
+                        // Both source TV scopes index a dense carrier's single owned declaration frame.
+                        copy[kv.Key] = Walk(kv.Value, suspendDeclarations, suspendDeclarations);
+                    else if (kv.Key == "synthClass" && ClosureSynthesis.HasPreboundFrame(kv.Value))
+                        copy[kv.Key] = Walk(kv.Value, TypeParameterFrame.CloneDeclarations((JsonObject)kv.Value), _empty);
+                    else copy[kv.Key] = Walk(kv.Value, typeParams, methodParams);
+                }
                 return Transform(copy, typeParams, methodParams) ?? copy;
             }
             if (node is JsonArray arr)
@@ -217,11 +228,8 @@ static class ClrEventSubscriptionBinding
             JsonArray methodParams)
         {
             var name = $"T{index}";
-            if (SourceTypeParameter(item, typeParams, methodParams) is not JsonObject descriptor)
-                return JsonValue.Create(name);
-            var clone = descriptor.DeepClone() as JsonObject;
-            clone["name"] = name;
-            return clone;
+            var declaration = TypeParameterDeclaration.Read(SourceTypeParameter(item, typeParams, methodParams));
+            return (declaration with { Name = name }).ToDom();
         }
 
         // A handle on a Kotlin delegating class names that Kotlin receiver in `type`; the CLR event itself belongs to
