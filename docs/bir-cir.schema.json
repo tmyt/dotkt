@@ -603,7 +603,7 @@
       "required": ["k"], "additionalProperties": false
     },
     "cirVar": {
-      "type": "object", "x-dotkt-model": { "name": "CirVariable", "domain": "cirExecutable", "roles": ["statement"], "sourceConsumed": ["_callEvalTemporary", "role", "suspendFnType"] },
+      "type": "object", "x-dotkt-model": { "name": "CirVariable", "domain": "cirExecutable", "roles": ["statement"], "sourceConsumed": ["_callEvalTemporary", "role"] },
       "properties": { "k": { "const": "var" }, "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "init": { "oneOf": [{ "$ref": "#/$defs/cirExpressionNode" }, { "type": "null" }] } },
       "required": ["k", "name", "type"], "additionalProperties": false
     },
@@ -730,7 +730,7 @@
       "required": ["k", "to", "e"], "additionalProperties": false
     },
     "cirCastNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirCast", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["suspendFnType"] },
+      "type": "object", "x-dotkt-model": { "name": "CirCast", "domain": "cirExecutable", "roles": ["expression"] },
       "properties": { "k": { "const": "cast" }, "type": { "$ref": "#/$defs/type" }, "e": { "$ref": "#/$defs/cirExpressionNode" } },
       "required": ["k", "type", "e"], "additionalProperties": false
     },
@@ -882,7 +882,7 @@
       }, "required": ["k", "method", "args"], "additionalProperties": false
     },
     "cirCallInstanceNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirCallInstance", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["clrOwnerResolved", "retNothing", "retSuspendFnType", "super"] },
+      "type": "object", "x-dotkt-model": { "name": "CirCallInstance", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["clrOwnerResolved", "super"] },
       "properties": {
         "k": { "const": "callInstance" }, "method": { "type": "string" }, "ownerType": { "$ref": "#/$defs/type" },
         "calleeRet": { "$ref": "#/$defs/type" }, "calleeParams": { "type": "array", "items": { "$ref": "#/$defs/type" } },

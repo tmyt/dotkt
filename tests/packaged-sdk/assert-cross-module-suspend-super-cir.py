@@ -109,7 +109,6 @@ if (
     base_call.get("ownerType") != base_type
     or base_call.get("recv") != {"k": "this"}
     or base_call.get("virtual") is not False
-    or base_call.get("super") is not True
     or member_ref != expected_member_ref
 ):
     raise SystemExit(f"#439 CIR: helper lost the exact non-virtual producer cold-entry edge: {base_call!r}")

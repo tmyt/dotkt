@@ -20,7 +20,7 @@ try
             // The actual bir2cir pre-lowering checkpoint still owns current BIR stamps.
             // Never pass a source tree through the physical CIR decoder.
             using var source = JsonDocument.Parse(File.ReadAllBytes(file), BirJson.DocOptions);
-            IrSanity.Check(new[] { source.RootElement }, IrSanityChecks.StyStampsOnly);
+            IrSanity.CheckSourceStamps(new[] { source.RootElement });
         }
         else
         {

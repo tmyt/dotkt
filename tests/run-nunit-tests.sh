@@ -139,7 +139,12 @@ for proj in "${PROJECTS[@]}"; do
 
 	# Build against the already restored local SDK. A build failure is a red gate.
 	if ! nunit_build_project "$ROOT" "$CONFIGURATION" "$proj"; then
-		echo "  BUILD FAIL — see build/nunit-$name.build.log"; tail -25 "$ROOT/build/nunit-$name.build.log"; rc=1; continue
+		echo "  BUILD FAIL — see build/nunit-$name.build.log"
+		# MSBuild's warning summary can push the actual compiler failure out of the tail.
+		rg 'bir2cir:|ilemit:' "$ROOT/build/nunit-$name.build.log" | tail -20 || true
+		tail -25 "$ROOT/build/nunit-$name.build.log"
+		rc=1
+		continue
 	fi
 	case "$proj" in
 		"tests/basic") inherited_lane=basic ;;

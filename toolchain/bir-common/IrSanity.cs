@@ -21,8 +21,6 @@
 //   3. STRUCTURAL — `binOp` has both `lhs`+`rhs`; `cond` has `cond`+`then`+`else`.
 //   4. OWNER PRESENCE — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 //   5. `for` `cmp` ∈ {<=, <, >=} — an unknown cmp silently miscompiles to an infinite loop.
-//   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries `suspendCall:true`. No exemption: every
-//      body in a CIR document is one ilemit emits (see CheckScope).
 //   7. STAMP AGREEMENT — a node's `sty` must not name a DIFFERENT TYPE than the `ret`/`dynRet` beside it (spec §2.7:
 //      a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`). See CheckStampAgreement for the
 //      accepted-equivalence set and why it is what it is.
@@ -37,8 +35,8 @@
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
 // in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
-// scope across ALL of a type's static inits. Collection is a full generic JSON recursion (over-collecting can only
-// WEAKEN a check → never a false reject) and stays intra-declaration.
+// scope across ALL of a type's static inits. Physical CIR walks only typed executable children. The temporary
+// DOM-backed BIR source-stamp checkpoint traverses source roots until the owning passes use typed BIR.
 using System.Text.Json;
 
 namespace DotKt.Bir;
@@ -51,39 +49,22 @@ public sealed class IrSanityException : Exception
     public IrSanityException(string decl, string message) : base(message) { Decl = decl; }
 }
 
-// WHICH invariants one traversal runs. The declaration walk, the scope units and the message attribution are the
-// same either way — only the per-node predicate set differs, so the two entry points share one definition of "what
-// counts as a declaration" rather than growing a second walker that could disagree with this one.
-public enum IrSanityChecks
-{
-    /// <summary>Checks 1-9 — the POST-LOWERING CIR gate (bir2cir on its CIR output; ilemit at EmitAssembly).</summary>
-    All,
-    /// <summary>
-    /// Check 7 alone — the spec §2.7 `sty` chokepoint, run by bir2cir on the fully-passed BIR while the stamp still
-    /// exists (BirTypeLowering strips it on the way to CIR). The others are CIR invariants and several of them do not
-    /// hold of a pre-lowering tree — `mods.suspend` and `suspendCall` are exactly what BIR is supposed to carry — so
-    /// this mode runs the one check that is meaningful there and nothing else.
-    /// </summary>
-    StyStampsOnly,
-}
-
 public static partial class IrSanity
 {
     // Run the sanity invariants over every method/ctor/static-field-initializer in the document, attributing each
     // violation to its declaration. Every check is intra-declaration and needs no codegen state.
-    public static void Check(IEnumerable<JsonElement> files, IrSanityChecks which = IrSanityChecks.All)
+    public static void CheckSourceStamps(IEnumerable<JsonElement> files)
     {
         foreach (var file in files)
         {
             var fileClass = file.TryGetProperty("fileClass", out var fc) && fc.ValueKind == JsonValueKind.String ? fc.GetString() : "?";
-            CheckContainer(fileClass, file, isInterface: false, which);
+            CheckContainer(fileClass, file, isInterface: false);
             if (file.TryGetProperty("types", out var ts) && ts.ValueKind == JsonValueKind.Array)
                 foreach (var t in ts.EnumerateArray())
                 {
                     var tn = t.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
                     var iface = t.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String && k.GetString() == "interface";
-                    if (which == IrSanityChecks.All) CheckCollectionViewFaces(tn, t);
-                    CheckContainer(tn, t, iface, which);
+                    CheckContainer(tn, t, iface);
                 }
         }
     }
@@ -94,11 +75,6 @@ public static partial class IrSanity
     // type declares that face. bir2cir states it; a document arriving without it would emit a type whose read-only
     // view exists in Kotlin and not on the CLR, and the failure would surface as an InvalidCastException in an
     // unrelated caller. Refuse it at the boundary instead.
-    static void CheckCollectionViewFaces(string owner, JsonElement type)
-    {
-        if (!type.TryGetProperty("interfaces", out var ifaces) || ifaces.ValueKind != JsonValueKind.Array) return;
-        CheckCollectionViewFaces(owner, ifaces.EnumerateArray().Select(TypeNode.Read));
-    }
 
     static void CheckCollectionViewFaces(string owner, IEnumerable<TypeNode> interfaces)
     {
@@ -115,12 +91,12 @@ public static partial class IrSanity
     }
 
     // A file class OR a user type: its methods, its ctors, and its static-field-initializer group (one .cctor scope).
-    static void CheckContainer(string owner, JsonElement c, bool isInterface, IrSanityChecks which)
+    static void CheckContainer(string owner, JsonElement c, bool isInterface)
     {
         if (c.TryGetProperty("methods", out var ms) && ms.ValueKind == JsonValueKind.Array)
-            foreach (var m in ms.EnumerateArray()) CheckMethodDecl(owner, m, which);
+            foreach (var m in ms.EnumerateArray()) CheckMethodDecl(owner, m);
         if (c.TryGetProperty("ctors", out var cs) && cs.ValueKind == JsonValueKind.Array)
-            foreach (var ct in cs.EnumerateArray()) CheckCtorDecl(owner, ct, which);
+            foreach (var ct in cs.EnumerateArray()) CheckCtorDecl(owner, ct);
         // Static field initializers share ONE .cctor `_locals` scope (a temp declared in field A's init is
         // resolvable from field B's) — check them as a single scope over the UNION of the inits.
         if (!isInterface && c.TryGetProperty("fields", out var fs) && fs.ValueKind == JsonValueKind.Array)
@@ -130,26 +106,20 @@ public static partial class IrSanity
                 if (f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null
                     && f.TryGetProperty("static", out var st) && st.ValueKind == JsonValueKind.True)
                     inits.Add(iv);
-            if (inits.Count > 0) CheckScope(owner + "..cctor", null, inits, decl: c, which);
+            if (inits.Count > 0) CheckSourceScope(owner + "..cctor", inits, c);
         }
     }
 
-    static void CheckMethodDecl(string owner, JsonElement m, IrSanityChecks which)
+    static void CheckMethodDecl(string owner, JsonElement m)
     {
         var name = m.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
-        // 9. SUSPEND MODIFIER CONSUMED — checked BEFORE the bodiless early-outs, because an abstract slot carries the
-        // modifier just as a concrete one does. `mods.suspend` is Kotlin frontend vocabulary that bir2cir consumes
-        // (cold lowering + the [KotlinFunction(Suspend)] metadata stamp); CIR is a physical CLR graph, so a survivor
-        // means the cold lowering did not run on this declaration and ilemit would emit its un-lowered Kotlin body.
-        if (which != IrSanityChecks.StyStampsOnly) CheckSuspendDecl(PosPrefix(m) + owner + "." + name, IsSuspendDecl(m));
-        if (which != IrSanityChecks.StyStampsOnly) CheckPInvokeDecl(owner, name, m);
         // Abstract / bodiless methods (interface members, abstract decls) emit no IL — nothing to check.
         if (m.TryGetProperty("abstract", out var ab) && ab.ValueKind == JsonValueKind.True) return;
         if (!m.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
-        CheckScope(owner + "." + name, ParamNames(m), new List<JsonElement> { body }, decl: m, which);
+        CheckSourceScope(owner + "." + name, [body], m);
     }
 
-    static void CheckCtorDecl(string owner, JsonElement c, IrSanityChecks which)
+    static void CheckCtorDecl(string owner, JsonElement c)
     {
         if (!c.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
         var roots = new List<JsonElement> { body };
@@ -159,51 +129,14 @@ public static partial class IrSanity
         if (c.TryGetProperty("preStmts", out var pre) && pre.ValueKind == JsonValueKind.Array) roots.Add(pre);
         if (c.TryGetProperty("thisArgs", out var ta) && ta.ValueKind == JsonValueKind.Array) roots.Add(ta);
         if (c.TryGetProperty("baseArgs", out var ba) && ba.ValueKind == JsonValueKind.Array) roots.Add(ba);
-        CheckScope(owner + "..ctor", ParamNames(c), roots, decl: c, which);
+        CheckSourceScope(owner + "..ctor", roots, c);
     }
 
-    // Validate one `_locals`/`_cfgLabels` scope: collect its declared local names + label ids across all root trees,
-    // then check every reference against them. `decl` supplies the #112 Phase-2 source position for the message.
-    //
-    // Every scope this reaches is a body ilemit emits, so check 6 applies to all of them alike — a method, a
-    // constructor and a static-initializer group are the same question. An earlier version let the CALLER exempt a
-    // scope whose declaration carried `mods.suspend`; deriving that from `decl` was a bug (the .cctor scope's `decl`
-    // is the CONTAINING TYPE), and the exemption itself is gone with the flag it keyed on.
-    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, JsonElement decl,
-                           IrSanityChecks which)
-        => CheckScope(declLabel, paramNames, roots, PosPrefix(decl), which);
-
-    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, string pos,
-                           IrSanityChecks which)
+    // BIR source stamps are checked before physical type lowering consumes them.
+    static void CheckSourceScope(string label, List<JsonElement> roots, JsonElement declaration)
     {
-        // Check 7 is NODE-LOCAL — it compares two slots of one node — so the `StyStampsOnly` traversal needs neither
-        // the declared-name set nor the label set, and skips collecting them.
-        if (which == IrSanityChecks.StyStampsOnly)
-        {
-            foreach (var r in roots) CheckRefs(pos + declLabel, r, null, null, which);
-            return;
-        }
-        var declared = paramNames != null ? new HashSet<string>(paramNames) : new HashSet<string>();
-        var labels = new HashSet<int>();
-        foreach (var r in roots) { CollectDeclared(r, declared); CollectSanityLabels(r, labels); }
-        // Check 6 has NO exemption: every body in a CIR document is one ilemit turns into IL, so a `suspendCall` in
-        // any of them is a suspension with no resume point. The declarations that used to be exempt were those still
-        // carrying `mods.suspend` — the stdlib surface the cold lowering deliberately does not lower — and bir2cir now
-        // states their physical body as an explicit call-time throw (SuspendResidueLowering) and drops the modifier,
-        // so neither the flag nor an un-lowered suspension reaches CIR at all (check 9).
-        foreach (var r in roots)
-        {
-            CheckNoDupLabels(pos + declLabel, r);
-            CheckRefs(pos + declLabel, r, declared, labels, which);
-        }
+        foreach (var root in roots) CheckSourceNode(PosPrefix(declaration) + label, root);
     }
-
-    // Does this declaration still carry `mods.suspend` (check 9)? §2.1 makes `mods` the single source (a redundant
-    // top-level `suspend` field was removed), so this reads the structured slot only.
-    static bool IsSuspendDecl(JsonElement decl) =>
-        decl.ValueKind == JsonValueKind.Object
-        && decl.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object
-        && mods.TryGetProperty("suspend", out var s) && s.ValueKind == JsonValueKind.True;
 
     static void CheckSuspendDecl(string label, bool suspend)
     {
@@ -226,53 +159,6 @@ public static partial class IrSanity
             "a CIR 'pinvoke' descriptor must state the complete normalized MethodImport instruction");
     }
 
-    static void CheckPInvokeDecl(string owner, string name, JsonElement method)
-    {
-        if (!method.TryGetProperty("pinvoke", out var descriptor) || descriptor.ValueKind != JsonValueKind.Object)
-            return;
-        var malformed =
-            !method.TryGetProperty("extern", out var external) || external.ValueKind != JsonValueKind.True ||
-            !method.TryGetProperty("static", out var isStatic) || isStatic.ValueKind != JsonValueKind.True ||
-            method.TryGetProperty("typeParams", out var typeParameters) &&
-                (typeParameters.ValueKind != JsonValueKind.Array || typeParameters.GetArrayLength() != 0) ||
-            !method.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array ||
-                body.GetArrayLength() != 0 ||
-            method.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object &&
-                mods.TryGetProperty("external", out var sourceExternal) && sourceExternal.ValueKind == JsonValueKind.True;
-        CheckPInvokeOwner(PosPrefix(method) + owner + "." + name, malformed);
-
-        static bool String(JsonElement value, string key, bool nonEmpty = false) =>
-            value.TryGetProperty(key, out var item) && item.ValueKind == JsonValueKind.String &&
-            (!nonEmpty || !string.IsNullOrEmpty(item.GetString()));
-        static bool Boolean(JsonElement value, string key) =>
-            value.TryGetProperty(key, out var item) && item.ValueKind is JsonValueKind.True or JsonValueKind.False;
-        var hasPseudoFields = descriptor.TryGetProperty("pseudoFields", out var pseudoFields) &&
-            pseudoFields.ValueKind == JsonValueKind.Array;
-        var complete =
-            String(descriptor, "module", nonEmpty: true) && String(descriptor, "entryPoint") &&
-            String(descriptor, "callingConvention", nonEmpty: true) &&
-            descriptor.TryGetProperty("callingConventionType", out var callingConventionType) &&
-                callingConventionType.ValueKind == JsonValueKind.Object &&
-            String(descriptor, "charSet", nonEmpty: true) &&
-            descriptor.TryGetProperty("charSetType", out var charSetType) &&
-                charSetType.ValueKind == JsonValueKind.Object &&
-            Boolean(descriptor, "exactSpelling") && Boolean(descriptor, "setLastError") &&
-            Boolean(descriptor, "preserveSig") && Boolean(descriptor, "bestFitMapping") &&
-            Boolean(descriptor, "throwOnUnmappableChar") &&
-            hasPseudoFields &&
-            descriptor.TryGetProperty("attributeCtorRef", out var attributeCtorRef) &&
-                attributeCtorRef.ValueKind == JsonValueKind.Object;
-        CheckPInvokeComplete(PosPrefix(method) + owner + "." + name, complete);
-
-        var fields = pseudoFields.EnumerateArray()
-            .Where(field => field.ValueKind == JsonValueKind.String)
-            .Select(field => field.GetString()).ToHashSet(StringComparer.Ordinal);
-        CheckPInvokeFields(PosPrefix(method) + owner + "." + name, name, fields,
-            descriptor.GetProperty("entryPoint").GetString(), descriptor.GetProperty("charSet").GetString(),
-            descriptor.GetProperty("exactSpelling").GetBoolean(), descriptor.GetProperty("setLastError").GetBoolean(),
-            descriptor.GetProperty("preserveSig").GetBoolean(), descriptor.GetProperty("bestFitMapping").GetBoolean(),
-            descriptor.GetProperty("throwOnUnmappableChar").GetBoolean());
-    }
 
     static void CheckPInvokeFields(string label, string name, HashSet<string> fields, string entryPoint, string charSet,
         bool exactSpelling, bool setLastError, bool preserveSig, bool bestFitMapping, bool throwOnUnmappableChar)
@@ -301,60 +187,6 @@ public static partial class IrSanity
         return file + ": ";
     }
 
-    // Every name a `local`/`setLocal`/`byref` can resolve to: the `var` STATEMENT's `name`, and the STRING `var`
-    // property carried by loop nodes (for/forArray/forRange/forEachInline/repeatInline) and `try` catch bindings.
-    static void CollectDeclared(JsonElement node, HashSet<string> into)
-    {
-        if (node.ValueKind == JsonValueKind.Object)
-        {
-            if (node.TryGetProperty("k", out var k) && k.ValueKind == JsonValueKind.String && k.GetString() == "var"
-                && node.TryGetProperty("name", out var nn) && nn.ValueKind == JsonValueKind.String)
-                into.Add(nn.GetString());
-            if (node.TryGetProperty("var", out var v) && v.ValueKind == JsonValueKind.String)
-                into.Add(v.GetString());
-            foreach (var p in node.EnumerateObject()) CollectDeclared(p.Value, into);
-        }
-        else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var x in node.EnumerateArray()) CollectDeclared(x, into);
-    }
-
-    // Collect every `label` node's id. Fully ValueKind-GUARDED (a non-string `k` / missing-or-non-int `id` is not a
-    // valid label here and is skipped — a shape concern, owned by the schema validator).
-    static void CollectSanityLabels(JsonElement node, HashSet<int> into)
-    {
-        if (node.ValueKind == JsonValueKind.Object)
-        {
-            if (node.TryGetProperty("k", out var k) && k.ValueKind == JsonValueKind.String && k.GetString() == "label"
-                && node.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt32(out var id))
-                into.Add(id);
-            foreach (var p in node.EnumerateObject()) CollectSanityLabels(p.Value, into);
-        }
-        else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var x in node.EnumerateArray()) CollectSanityLabels(x, into);
-    }
-
-    // A `label` id declared twice in one body -> the second MarkLabel throws ArgumentException at emit. Scoped per
-    // single tree (label lifetimes are).
-    static void CheckNoDupLabels(string decl, JsonElement node)
-    {
-        var seen = new HashSet<int>();
-        void Walk(JsonElement e)
-        {
-            if (e.ValueKind == JsonValueKind.Object)
-            {
-                if (e.TryGetProperty("k", out var k) && k.ValueKind == JsonValueKind.String && k.GetString() == "label"
-                    && e.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt32(out var id))
-                    CheckDuplicateLabel(decl, id, seen);
-                foreach (var p in e.EnumerateObject()) Walk(p.Value);
-            }
-            else if (e.ValueKind == JsonValueKind.Array)
-                foreach (var x in e.EnumerateArray()) Walk(x);
-        }
-        Walk(node);
-    }
-
-    static bool HasNonNull(JsonElement e, string prop) => e.TryGetProperty(prop, out var v) && v.ValueKind != JsonValueKind.Null;
-
     static void CheckDuplicateLabel(string declaration, int id, HashSet<int> seen)
     {
         if (!seen.Add(id)) throw new IrSanityException(declaration, $"duplicate CFG label id {id} in the same body");
@@ -378,109 +210,16 @@ public static partial class IrSanity
             throw new IrSanityException(declaration, $"'for' loop has unsupported 'cmp' operator '{comparison}' (expected '<=', '<', or '>=')");
     }
 
-    // Walk the tree, checking each node's MEANING invariant. Unmatched kinds (and type nodes, whose `k` vocabulary is
-    // disjoint from these) just recurse.
-    static void CheckRefs(string decl, JsonElement node, HashSet<string> declared, HashSet<int> labels,
-                          IrSanityChecks which)
+    static void CheckSourceNode(string declaration, JsonElement node)
     {
         if (node.ValueKind == JsonValueKind.Object)
         {
-            if (node.TryGetProperty("k", out var kEl) && kEl.ValueKind == JsonValueKind.String)
-            {
-                // 7. STAMP AGREEMENT — runs in BOTH modes and in EVERY scope this walk reaches: unlike check 6, its
-                // subject is not what ilemit emits. `sty` is consumed by bir2cir's own type derivers, which walk every
-                // body whatever its modifiers say, so no scope is exempt. (Which scopes the walk REACHES is a
-                // separate, narrower question — see the LIMITS note on CheckStampAgreement.)
-                CheckStampAgreement(decl, node, kEl.GetString());
-                if (which == IrSanityChecks.StyStampsOnly)
-                {
-                    foreach (var p0 in node.EnumerateObject()) CheckRefs(decl, p0.Value, declared, labels, which);
-                    return;
-                }
-                // 6. SUSPENSION LOWERED. `suspendCall:true` is kotc's FRONTEND FACT that this call site suspends;
-                // bir2cir's SuspendColdLowering is its only consumer, rewriting every suspending call into its cold
-                // shape — a resume label plus a call to the callee's `$dotkt_suspend` cold entry, or the awaiter
-                // sequence for a `.await()` CLR bridge — out of FRESH nodes that carry no tag. So a survivor in a
-                // body that ilemit EMITS is a suspension that
-                // ESCAPED the lowering, and ilemit, which has no notion of one, emits it as an ordinary invocation:
-                // the caller reads the raw `Task`/COROUTINE_SUSPENDED sentinel where the awaited value belongs, and
-                // the state machine never gets a resume point. Loud here beats an InvalidCastException at runtime.
-                //
-                // Unconditional: the StyStampsOnly (BIR) traversal has already returned above, and every body a CIR
-                // document declares is one ilemit emits.
-                if (node.TryGetProperty("suspendCall", out var scEl) && scEl.ValueKind == JsonValueKind.True)
-                    throw new IrSanityException(decl, $"'{kEl.GetString()}' still carries 'suspendCall': a suspension escaped the cold lowering (every suspending call must be rewritten into its cold Continuation shape before CIR)");
-                switch (kEl.GetString())
-                {
-                    case "local":
-                    case "setLocal":
-                        if (node.TryGetProperty("name", out var nEl) && nEl.ValueKind == JsonValueKind.String)
-                            CheckKnownLocal(decl, kEl.GetString(), nEl.GetString(), declared);
-                        break;
-                    case "byrefLoad":
-                    case "byrefStore":
-                        if (node.TryGetProperty("local", out var blEl) && blEl.ValueKind == JsonValueKind.String)
-                            CheckKnownLocal(decl, kEl.GetString(), blEl.GetString(), declared);
-                        break;
-                    case "goto":
-                    case "brIf":
-                        if (node.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt32(out var gid))
-                            CheckKnownLabel(decl, kEl.GetString(), gid, labels);
-                        break;
-                    case "binOp":
-                        if (!HasNonNull(node, "lhs") || !HasNonNull(node, "rhs"))
-                            throw new IrSanityException(decl, "'binOp' is missing an operand (requires both 'lhs' and 'rhs')");
-                        break;
-                    case "cond":
-                        if (!HasNonNull(node, "cond") || !HasNonNull(node, "then") || !HasNonNull(node, "else"))
-                            throw new IrSanityException(decl, "'cond' is missing 'cond'/'then'/'else'");
-                        break;
-                    case "field":
-                    case "staticField":
-                    case "setField":
-                    case "setFieldExpr":
-                        if (!HasNonNull(node, "ownerType"))
-                            throw new IrSanityException(decl, $"'{kEl.GetString()}' is missing a non-null 'ownerType'");
-                        break;
-                    case "lateinitGet":
-                        // A lateinitGet addresses the field itself and needs its owner — UNLESS the field content is
-                        // already supplied as 'value', which is what an accessor-routed read leaves behind: there is
-                        // no field access left in the node to name an owner for.
-                        if (!HasNonNull(node, "value") && !HasNonNull(node, "ownerType"))
-                            throw new IrSanityException(decl, "'lateinitGet' is missing a non-null 'ownerType'");
-                        break;
-                    case "callStatic":
-                        if (node.TryGetProperty("owner", out var callOwner) && callOwner.ValueKind == JsonValueKind.Null
-                            && !HasNonNull(node, "calleeOwner"))
-                            throw new IrSanityException(decl, "'callStatic' with owner:null is missing required 'calleeOwner'");
-                        break;
-                    case "newDelegate":
-                    case "newBoundDelegate":
-                        if (!HasNonNull(node, "calleeOwner"))
-                            throw new IrSanityException(decl, $"'{kEl.GetString()}' is missing required 'calleeOwner'");
-                        break;
-                    case "for":
-                        if (node.TryGetProperty("cmp", out var cmpEl) && cmpEl.ValueKind == JsonValueKind.String)
-                        {
-                            CheckLoopComparison(decl, cmpEl.GetString());
-                        }
-                        break;
-                }
-            }
-            foreach (var p in node.EnumerateObject()) CheckRefs(decl, p.Value, declared, labels, which);
+            if (node.TryGetProperty("k", out var kind) && kind.ValueKind == JsonValueKind.String)
+                CheckStampAgreement(declaration, node, kind.GetString());
+            foreach (var property in node.EnumerateObject()) CheckSourceNode(declaration, property.Value);
         }
         else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var x in node.EnumerateArray()) CheckRefs(decl, x, declared, labels, which);
-    }
-
-    static HashSet<string> ParamNames(JsonElement m)
-    {
-        var s = new HashSet<string>();
-        if (m.TryGetProperty("params", out var ps) && ps.ValueKind == JsonValueKind.Array)
-            foreach (var p in ps.EnumerateArray())
-                if (p.TryGetProperty("name", out var pn) && pn.ValueKind == JsonValueKind.String && pn.GetString().Length > 0)
-                    s.Add(pn.GetString());
-        return s;
+            foreach (var item in node.EnumerateArray()) CheckSourceNode(declaration, item);
     }
 
     // ==== CHECK 7 — `sty` vs `ret`/`dynRet` STAMP AGREEMENT (spec §2.7) ===========================================

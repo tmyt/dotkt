@@ -125,8 +125,8 @@ static partial class CirDeclarationProjection
         CheckFields(node, ["cond", "else", "body"]);
         return new CirConditionalBranch
         {
-            Cond = ReadOptional(node, "cond", value => ReadExpressionNode(value)),
-            Else = ReadOptional(node, "else", value => value.GetValue<bool>()),
+            Cond = ReadOptional(node, "cond", value => ReadExpressionNode(value), allowNull: false),
+            Else = ReadOptional(node, "else", value => value.GetValue<bool>(), allowNull: false),
             Body = ((JsonArray)node["body"]!).Select(item => ReadStatementNode(item!)).ToArray(),
         };
     }
@@ -137,7 +137,7 @@ static partial class CirDeclarationProjection
         return new CirCatchClause
         {
             ExcType = TypeJson.Read(node["excType"]!),
-            Var = ReadOptional(node, "var", value => value.GetValue<string>()),
+            Var = ReadOptional(node, "var", value => value.GetValue<string>(), allowNull: false),
             Body = ((JsonArray)node["body"]!).Select(item => ReadStatementNode(item!)).ToArray(),
         };
     }
@@ -168,13 +168,13 @@ static partial class CirDeclarationProjection
         CheckFields(node, ["k", "span"]);
         return new CirSourcePoint
         {
-            Span = ReadOptional(node, "span", value => ReadCirSourceSpan(value)),
+            Span = ReadOptional(node, "span", value => ReadCirSourceSpan(value), allowNull: false),
         };
     }
 
     static CirVariable ReadCirVariable(JsonNode node)
     {
-        CheckFields(node, ["k", "name", "type", "init", "_callEvalTemporary", "role", "suspendFnType"]);
+        CheckFields(node, ["k", "name", "type", "init", "_callEvalTemporary", "role"]);
         return new CirVariable
         {
             Name = node["name"]!.GetValue<string>(),
@@ -198,7 +198,7 @@ static partial class CirDeclarationProjection
         CheckFields(node, ["k", "value"]);
         return new CirReturn
         {
-            Value = ReadOptional(node, "value", value => ReadExpressionNode(value)),
+            Value = ReadOptional(node, "value", value => ReadExpressionNode(value), allowNull: false),
         };
     }
 
@@ -218,8 +218,8 @@ static partial class CirDeclarationProjection
         {
             Body = ((JsonArray)node["body"]!).Select(item => ReadStatementNode(item!)).ToArray(),
             Catches = ((JsonArray)node["catches"]!).Select(item => ReadCirCatchClause(item!)).ToArray(),
-            Finally = ReadOptional(node, "finally", value => ((JsonArray)value).Select(item => ReadStatementNode(item!)).ToArray()),
-            Type = ReadOptional(node, "type", value => TypeJson.Read(value)),
+            Finally = ReadOptional(node, "finally", value => ((JsonArray)value).Select(item => ReadStatementNode(item!)).ToArray(), allowNull: false),
+            Type = ReadOptional(node, "type", value => TypeJson.Read(value), allowNull: false),
         };
     }
 
@@ -418,7 +418,7 @@ static partial class CirDeclarationProjection
 
     static CirCast ReadCirCast(JsonNode node)
     {
-        CheckFields(node, ["k", "type", "e", "suspendFnType"]);
+        CheckFields(node, ["k", "type", "e"]);
         return new CirCast
         {
             Type = TypeJson.Read(node["type"]!),
@@ -442,7 +442,7 @@ static partial class CirDeclarationProjection
         {
             Stmts = ((JsonArray)node["stmts"]!).Select(item => ReadStatementNode(item!)).ToArray(),
             Result = ReadExpressionNode(node["result"]!),
-            Type = ReadOptional(node, "type", value => TypeJson.Read(value)),
+            Type = ReadOptional(node, "type", value => TypeJson.Read(value), allowNull: false),
         };
     }
 
@@ -451,7 +451,7 @@ static partial class CirDeclarationProjection
         CheckFields(node, ["k", "value"]);
         return new CirReturnExpression
         {
-            Value = ReadOptional(node, "value", value => ReadExpressionNode(value)),
+            Value = ReadOptional(node, "value", value => ReadExpressionNode(value), allowNull: false),
         };
     }
 
@@ -493,7 +493,7 @@ static partial class CirDeclarationProjection
             Size = ReadExpressionNode(node["size"]!),
             Init = ReadExpressionNode(node["init"]!),
             InvokeRef = MemberRefNode.Read(node["invokeRef"]!),
-            FuncType = ReadOptional(node, "funcType", value => TypeJson.Read(value)),
+            FuncType = ReadOptional(node, "funcType", value => TypeJson.Read(value), allowNull: false),
         };
     }
 
@@ -606,8 +606,8 @@ static partial class CirDeclarationProjection
         {
             E = ReadExpressionNode(node["e"]!),
             Type = TypeJson.Read(node["type"]!),
-            NullMatches = ReadOptional(node, "nullMatches", value => value.GetValue<bool>()),
-            NullWitness = ReadOptional(node, "nullWitness", value => ReadExpressionNode(value)),
+            NullMatches = ReadOptional(node, "nullMatches", value => value.GetValue<bool>(), allowNull: false),
+            NullWitness = ReadOptional(node, "nullWitness", value => ReadExpressionNode(value), allowNull: false),
         };
     }
 
@@ -656,7 +656,7 @@ static partial class CirDeclarationProjection
             Cond = ReadExpressionNode(node["cond"]!),
             Then = ReadExpressionNode(node["then"]!),
             Else = ReadExpressionNode(node["else"]!),
-            Type = ReadOptional(node, "type", value => TypeJson.Read(value)),
+            Type = ReadOptional(node, "type", value => TypeJson.Read(value), allowNull: false),
         };
     }
 
@@ -677,9 +677,9 @@ static partial class CirDeclarationProjection
         {
             Type = TypeJson.Read(node["type"]!),
             Args = ((JsonArray)node["args"]!).Select(item => ReadExpressionNode(item!)).ToArray(),
-            ArgTypes = ReadOptional(node, "argTypes", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            LocalCtorIndex = ReadOptional(node, "localCtorIndex", value => value.GetValue<int>()),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
+            ArgTypes = ReadOptional(node, "argTypes", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            LocalCtorIndex = ReadOptional(node, "localCtorIndex", value => value.GetValue<int>(), allowNull: false),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
         };
     }
 
@@ -701,32 +701,32 @@ static partial class CirDeclarationProjection
         {
             Method = node["method"]!.GetValue<string>(),
             Owner = ReadOptional(node, "owner", value => TypeJson.Read(value)),
-            CalleeOwner = ReadOptional(node, "calleeOwner", value => TypeJson.Read(value)),
-            CalleeRet = ReadOptional(node, "calleeRet", value => TypeJson.Read(value)),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value)),
+            CalleeOwner = ReadOptional(node, "calleeOwner", value => TypeJson.Read(value), allowNull: false),
+            CalleeRet = ReadOptional(node, "calleeRet", value => TypeJson.Read(value), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value), allowNull: false),
             Args = ((JsonArray)node["args"]!).Select(item => ReadExpressionNode(item!)).ToArray(),
         };
     }
 
     static CirCallInstance ReadCirCallInstance(JsonNode node)
     {
-        CheckFields(node, ["k", "method", "ownerType", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "dynRet", "virtual", "recv", "args", "clrOwnerResolved", "retNothing", "retSuspendFnType", "super"]);
+        CheckFields(node, ["k", "method", "ownerType", "calleeRet", "calleeParams", "sig", "typeArgs", "memberRef", "ret", "dynRet", "virtual", "recv", "args", "clrOwnerResolved", "super"]);
         return new CirCallInstance
         {
             Method = node["method"]!.GetValue<string>(),
             OwnerType = TypeJson.Read(node["ownerType"]!),
-            CalleeRet = ReadOptional(node, "calleeRet", value => TypeJson.Read(value)),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value)),
-            DynRet = ReadOptional(node, "dynRet", value => TypeJson.Read(value)),
-            Virtual = ReadOptional(node, "virtual", value => value.GetValue<bool>()),
+            CalleeRet = ReadOptional(node, "calleeRet", value => TypeJson.Read(value), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value), allowNull: false),
+            DynRet = ReadOptional(node, "dynRet", value => TypeJson.Read(value), allowNull: false),
+            Virtual = ReadOptional(node, "virtual", value => value.GetValue<bool>(), allowNull: false),
             Recv = ReadExpressionNode(node["recv"]!),
             Args = ((JsonArray)node["args"]!).Select(item => ReadExpressionNode(item!)).ToArray(),
         };
@@ -740,12 +740,12 @@ static partial class CirDeclarationProjection
             Method = node["method"]!.GetValue<string>(),
             Iface = TypeJson.Read(node["iface"]!),
             RecvType = TypeJson.Read(node["recvType"]!),
-            CalleeRet = ReadOptional(node, "calleeRet", value => TypeJson.Read(value)),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value)),
+            CalleeRet = ReadOptional(node, "calleeRet", value => TypeJson.Read(value), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value), allowNull: false),
             Recv = ReadExpressionNode(node["recv"]!),
             Args = ((JsonArray)node["args"]!).Select(item => ReadExpressionNode(item!)).ToArray(),
         };
@@ -787,8 +787,8 @@ static partial class CirDeclarationProjection
         {
             OwnerType = TypeJson.Read(node["ownerType"]!),
             Name = node["name"]!.GetValue<string>(),
-            FieldRef = ReadOptional(node, "fieldRef", value => MemberRefNode.Read(value)),
-            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>()),
+            FieldRef = ReadOptional(node, "fieldRef", value => MemberRefNode.Read(value), allowNull: false),
+            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>(), allowNull: false),
         };
     }
 
@@ -808,9 +808,9 @@ static partial class CirDeclarationProjection
         {
             OwnerType = TypeJson.Read(node["ownerType"]!),
             Name = node["name"]!.GetValue<string>(),
-            FieldRef = ReadOptional(node, "fieldRef", value => MemberRefNode.Read(value)),
+            FieldRef = ReadOptional(node, "fieldRef", value => MemberRefNode.Read(value), allowNull: false),
             Value = ReadExpressionNode(node["value"]!),
-            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>()),
+            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>(), allowNull: false),
         };
     }
 
@@ -822,17 +822,17 @@ static partial class CirDeclarationProjection
             OwnerType = TypeJson.Read(node["ownerType"]!),
             Name = node["name"]!.GetValue<string>(),
             Recv = ReadExpressionNode(node["recv"]!),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>()),
-            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value)),
-            Member = ReadOptional(node, "member", value => value.GetValue<string>()),
-            Accessor = ReadOptional(node, "accessor", value => value.GetValue<string>()),
-            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>()),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Type = ReadOptional(node, "type", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>(), allowNull: false),
+            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value), allowNull: false),
+            Member = ReadOptional(node, "member", value => value.GetValue<string>(), allowNull: false),
+            Accessor = ReadOptional(node, "accessor", value => value.GetValue<string>(), allowNull: false),
+            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>(), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Type = ReadOptional(node, "type", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -845,16 +845,16 @@ static partial class CirDeclarationProjection
             Name = node["name"]!.GetValue<string>(),
             Recv = ReadExpressionNode(node["recv"]!),
             Value = ReadExpressionNode(node["value"]!),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>()),
-            Member = ReadOptional(node, "member", value => value.GetValue<string>()),
-            Accessor = ReadOptional(node, "accessor", value => value.GetValue<string>()),
-            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>()),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Type = ReadOptional(node, "type", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>(), allowNull: false),
+            Member = ReadOptional(node, "member", value => value.GetValue<string>(), allowNull: false),
+            Accessor = ReadOptional(node, "accessor", value => value.GetValue<string>(), allowNull: false),
+            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>(), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Type = ReadOptional(node, "type", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -867,16 +867,16 @@ static partial class CirDeclarationProjection
             Name = node["name"]!.GetValue<string>(),
             Recv = ReadExpressionNode(node["recv"]!),
             Value = ReadExpressionNode(node["value"]!),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>()),
-            Member = ReadOptional(node, "member", value => value.GetValue<string>()),
-            Accessor = ReadOptional(node, "accessor", value => value.GetValue<string>()),
-            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>()),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Type = ReadOptional(node, "type", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>(), allowNull: false),
+            Member = ReadOptional(node, "member", value => value.GetValue<string>(), allowNull: false),
+            Accessor = ReadOptional(node, "accessor", value => value.GetValue<string>(), allowNull: false),
+            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>(), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Type = ReadOptional(node, "type", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -885,14 +885,14 @@ static partial class CirDeclarationProjection
         CheckFields(node, ["k", "value", "exception", "ownerType", "name", "fieldRef", "static", "recv", "volatile"]);
         return new CirLateinitGet
         {
-            Value = ReadOptional(node, "value", value => ReadExpressionNode(value)),
+            Value = ReadOptional(node, "value", value => ReadExpressionNode(value), allowNull: false),
             Exception = ReadExpressionNode(node["exception"]!),
-            OwnerType = ReadOptional(node, "ownerType", value => TypeJson.Read(value)),
-            Name = ReadOptional(node, "name", value => value.GetValue<string>()),
-            FieldRef = ReadOptional(node, "fieldRef", value => MemberRefNode.Read(value)),
-            Static = ReadOptional(node, "static", value => value.GetValue<bool>()),
-            Recv = ReadOptional(node, "recv", value => ReadExpressionNode(value)),
-            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>()),
+            OwnerType = ReadOptional(node, "ownerType", value => TypeJson.Read(value), allowNull: false),
+            Name = ReadOptional(node, "name", value => value.GetValue<string>(), allowNull: false),
+            FieldRef = ReadOptional(node, "fieldRef", value => MemberRefNode.Read(value), allowNull: false),
+            Static = ReadOptional(node, "static", value => value.GetValue<bool>(), allowNull: false),
+            Recv = ReadOptional(node, "recv", value => ReadExpressionNode(value), allowNull: false),
+            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>(), allowNull: false),
         };
     }
 
@@ -902,9 +902,9 @@ static partial class CirDeclarationProjection
         return new CirByRefLoad
         {
             Elem = TypeJson.Read(node["elem"]!),
-            Ptr = ReadOptional(node, "ptr", value => ReadExpressionNode(value)),
-            Local = ReadOptional(node, "local", value => value.GetValue<string>()),
-            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>()),
+            Ptr = ReadOptional(node, "ptr", value => ReadExpressionNode(value), allowNull: false),
+            Local = ReadOptional(node, "local", value => value.GetValue<string>(), allowNull: false),
+            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>(), allowNull: false),
         };
     }
 
@@ -923,10 +923,10 @@ static partial class CirDeclarationProjection
         return new CirByRefStore
         {
             Elem = TypeJson.Read(node["elem"]!),
-            Ptr = ReadOptional(node, "ptr", value => ReadExpressionNode(value)),
-            Local = ReadOptional(node, "local", value => value.GetValue<string>()),
+            Ptr = ReadOptional(node, "ptr", value => ReadExpressionNode(value), allowNull: false),
+            Local = ReadOptional(node, "local", value => value.GetValue<string>(), allowNull: false),
             Value = ReadExpressionNode(node["value"]!),
-            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>()),
+            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>(), allowNull: false),
         };
     }
 
@@ -939,10 +939,10 @@ static partial class CirDeclarationProjection
             Name = node["name"]!.GetValue<string>(),
             DelegateType = TypeJson.Read(node["delegateType"]!),
             Static = node["static"]!.GetValue<bool>(),
-            InvokeRef = ReadOptional(node, "invokeRef", value => MemberRefNode.Read(value)),
-            CombineRef = ReadOptional(node, "combineRef", value => MemberRefNode.Read(value)),
-            RemoveRef = ReadOptional(node, "removeRef", value => MemberRefNode.Read(value)),
-            CompareExchangeRef = ReadOptional(node, "compareExchangeRef", value => MemberRefNode.Read(value)),
+            InvokeRef = ReadOptional(node, "invokeRef", value => MemberRefNode.Read(value), allowNull: false),
+            CombineRef = ReadOptional(node, "combineRef", value => MemberRefNode.Read(value), allowNull: false),
+            RemoveRef = ReadOptional(node, "removeRef", value => MemberRefNode.Read(value), allowNull: false),
+            CompareExchangeRef = ReadOptional(node, "compareExchangeRef", value => MemberRefNode.Read(value), allowNull: false),
         };
     }
 
@@ -954,15 +954,15 @@ static partial class CirDeclarationProjection
             Type = TypeJson.Read(node["type"]!),
             Static = node["static"]!.GetValue<bool>(),
             Accessor = node["accessor"]!.GetValue<string>(),
-            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>()),
-            Recv = ReadOptional(node, "recv", value => ReadExpressionNode(value)),
+            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>(), allowNull: false),
+            Recv = ReadOptional(node, "recv", value => ReadExpressionNode(value), allowNull: false),
             Handler = ReadExpressionNode(node["handler"]!),
             HandlerExact = node["handlerExact"]!.GetValue<bool>(),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -974,15 +974,15 @@ static partial class CirDeclarationProjection
             Type = TypeJson.Read(node["type"]!),
             Static = node["static"]!.GetValue<bool>(),
             Accessor = node["accessor"]!.GetValue<string>(),
-            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>()),
-            Recv = ReadOptional(node, "recv", value => ReadExpressionNode(value)),
+            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>(), allowNull: false),
+            Recv = ReadOptional(node, "recv", value => ReadExpressionNode(value), allowNull: false),
             Handler = ReadExpressionNode(node["handler"]!),
             HandlerExact = node["handlerExact"]!.GetValue<bool>(),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -997,13 +997,13 @@ static partial class CirDeclarationProjection
             Recv = ReadExpressionNode(node["recv"]!),
             Args = ((JsonArray)node["args"]!).Select(item => ReadExpressionNode(item!)).ToArray(),
             Dispatch = node["dispatch"]!.GetValue<string>(),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value)),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value), allowNull: false),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -1016,13 +1016,13 @@ static partial class CirDeclarationProjection
             Type = TypeJson.Read(node["type"]!),
             Method = node["method"]!.GetValue<string>(),
             Args = ((JsonArray)node["args"]!).Select(item => ReadExpressionNode(item!)).ToArray(),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value)),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            Ret = ReadOptional(node, "ret", value => TypeJson.Read(value), allowNull: false),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -1034,15 +1034,15 @@ static partial class CirDeclarationProjection
             Type = TypeJson.Read(node["type"]!),
             Static = node["static"]!.GetValue<bool>(),
             Member = node["member"]!.GetValue<string>(),
-            Accessor = ReadOptional(node, "accessor", value => value.GetValue<string>()),
-            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>()),
-            Recv = ReadOptional(node, "recv", value => ReadExpressionNode(value)),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>()),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            Accessor = ReadOptional(node, "accessor", value => value.GetValue<string>(), allowNull: false),
+            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>(), allowNull: false),
+            Recv = ReadOptional(node, "recv", value => ReadExpressionNode(value), allowNull: false),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>(), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -1054,16 +1054,16 @@ static partial class CirDeclarationProjection
             Type = TypeJson.Read(node["type"]!),
             Static = node["static"]!.GetValue<bool>(),
             Member = node["member"]!.GetValue<string>(),
-            Accessor = ReadOptional(node, "accessor", value => value.GetValue<string>()),
-            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>()),
-            Recv = ReadOptional(node, "recv", value => ReadExpressionNode(value)),
+            Accessor = ReadOptional(node, "accessor", value => value.GetValue<string>(), allowNull: false),
+            Dispatch = ReadOptional(node, "dispatch", value => value.GetValue<string>(), allowNull: false),
+            Recv = ReadOptional(node, "recv", value => ReadExpressionNode(value), allowNull: false),
             Value = ReadExpressionNode(node["value"]!),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>()),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            Volatile = ReadOptional(node, "volatile", value => value.GetValue<bool>(), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -1105,8 +1105,8 @@ static partial class CirDeclarationProjection
         return new CirEnumOrdinal
         {
             E = ReadExpressionNode(node["e"]!),
-            Type = ReadOptional(node, "type", value => TypeJson.Read(value)),
-            Values = ReadOptional(node, "values", value => ((JsonArray)value).Select(item => ReadCirPhysicalEnumValue(item!)).ToArray()),
+            Type = ReadOptional(node, "type", value => TypeJson.Read(value), allowNull: false),
+            Values = ReadOptional(node, "values", value => ((JsonArray)value).Select(item => ReadCirPhysicalEnumValue(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -1126,9 +1126,9 @@ static partial class CirDeclarationProjection
         return new CirEnumValue
         {
             Type = TypeJson.Read(node["type"]!),
-            Ordinal = ReadOptional(node, "ordinal", value => value.GetValue<int>()),
-            Underlying = ReadOptional(node, "underlying", value => value.GetValue<string>()),
-            PhysicalValue = ReadOptional(node, "physicalValue", value => value.GetValue<string>()),
+            Ordinal = ReadOptional(node, "ordinal", value => value.GetValue<int>(), allowNull: false),
+            Underlying = ReadOptional(node, "underlying", value => value.GetValue<string>(), allowNull: false),
+            PhysicalValue = ReadOptional(node, "physicalValue", value => value.GetValue<string>(), allowNull: false),
         };
     }
 
@@ -1138,7 +1138,7 @@ static partial class CirDeclarationProjection
         return new CirEnumValues
         {
             Type = TypeJson.Read(node["type"]!),
-            Values = ReadOptional(node, "values", value => ((JsonArray)value).Select(item => ReadCirPhysicalEnumValue(item!)).ToArray()),
+            Values = ReadOptional(node, "values", value => ((JsonArray)value).Select(item => ReadCirPhysicalEnumValue(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -1169,15 +1169,15 @@ static partial class CirDeclarationProjection
             ClrType = TypeJson.Read(node["clrType"]!),
             Method = node["method"]!.GetValue<string>(),
             Recv = ReadExpressionNode(node["recv"]!),
-            Virtual = ReadOptional(node, "virtual", value => value.GetValue<bool>()),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            Virtual = ReadOptional(node, "virtual", value => value.GetValue<bool>(), allowNull: false),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
             DelegateCtorRef = MemberRefNode.Read(node["delegateCtorRef"]!),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Type = ReadOptional(node, "type", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Type = ReadOptional(node, "type", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -1191,13 +1191,13 @@ static partial class CirDeclarationProjection
             CalleeOwner = TypeJson.Read(node["calleeOwner"]!),
             Method = node["method"]!.GetValue<string>(),
             Recv = ReadExpressionNode(node["recv"]!),
-            Virtual = ReadOptional(node, "virtual", value => value.GetValue<bool>()),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            Virtual = ReadOptional(node, "virtual", value => value.GetValue<bool>(), allowNull: false),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
             DelegateCtorRef = MemberRefNode.Read(node["delegateCtorRef"]!),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            CalleeRet = ReadOptional(node, "calleeRet", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            CalleeRet = ReadOptional(node, "calleeRet", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -1209,7 +1209,7 @@ static partial class CirDeclarationProjection
             FuncType = TypeJson.Read(node["funcType"]!),
             ClosureType = TypeJson.Read(node["closureType"]!),
             Method = node["method"]!.GetValue<string>(),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
             Captures = ((JsonArray)node["captures"]!).Select(item => ReadExpressionNode(item!)).ToArray(),
             DelegateCtorRef = MemberRefNode.Read(node["delegateCtorRef"]!),
         };
@@ -1223,14 +1223,14 @@ static partial class CirDeclarationProjection
             FuncType = TypeJson.Read(node["funcType"]!),
             ClrType = TypeJson.Read(node["clrType"]!),
             Method = node["method"]!.GetValue<string>(),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
             DelegateCtorRef = MemberRefNode.Read(node["delegateCtorRef"]!),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>()),
-            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value)),
-            Type = ReadOptional(node, "type", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            LocalAccessor = ReadOptional(node, "localAccessor", value => value.GetValue<bool>(), allowNull: false),
+            AccessorOwner = ReadOptional(node, "accessorOwner", value => TypeJson.Read(value), allowNull: false),
+            Type = ReadOptional(node, "type", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -1242,12 +1242,12 @@ static partial class CirDeclarationProjection
             FuncType = TypeJson.Read(node["funcType"]!),
             CalleeOwner = TypeJson.Read(node["calleeOwner"]!),
             Method = node["method"]!.GetValue<string>(),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
             DelegateCtorRef = MemberRefNode.Read(node["delegateCtorRef"]!),
-            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value)),
-            CalleeRet = ReadOptional(node, "calleeRet", value => TypeJson.Read(value)),
-            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
-            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            MemberRef = ReadOptional(node, "memberRef", value => MemberRefNode.Read(value), allowNull: false),
+            CalleeRet = ReadOptional(node, "calleeRet", value => TypeJson.Read(value), allowNull: false),
+            Sig = ReadOptional(node, "sig", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
+            CalleeParams = ReadOptional(node, "calleeParams", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
         };
     }
 
@@ -1257,7 +1257,7 @@ static partial class CirDeclarationProjection
         return new CirSam
         {
             SamType = TypeJson.Read(node["samType"]!),
-            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray()),
+            TypeArgs = ReadOptional(node, "typeArgs", value => ((JsonArray)value).Select(item => TypeJson.Read(item!)).ToArray(), allowNull: false),
             Captures = ((JsonArray)node["captures"]!).Select(item => ReadExpressionNode(item!)).ToArray(),
         };
     }
@@ -1269,7 +1269,7 @@ static partial class CirDeclarationProjection
         {
             Method = node["method"]!.GetValue<string>(),
             Recv = ReadExpressionNode(node["recv"]!),
-            Arg = ReadOptional(node, "arg", value => ReadExpressionNode(value)),
+            Arg = ReadOptional(node, "arg", value => ReadExpressionNode(value), allowNull: false),
         };
     }
 

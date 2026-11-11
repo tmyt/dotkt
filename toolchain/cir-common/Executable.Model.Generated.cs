@@ -129,9 +129,9 @@ public sealed partial record CirSourceSpan : ICirChildren
 
 public sealed partial record CirConditionalBranch : ICirChildren
 {
-    [JsonPropertyName("cond"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("cond"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Cond { get; init; }
-    [JsonPropertyName("else"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("else"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Else { get; init; }
     [JsonPropertyName("body"), JsonRequired]
     public required ICirStatement[] Body { get; init; }
@@ -156,7 +156,7 @@ public sealed partial record CirCatchClause : ICirChildren
 {
     [JsonPropertyName("excType"), JsonRequired]
     public required TypeNode ExcType { get; init; }
-    [JsonPropertyName("var"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("var"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Var { get; init; }
     [JsonPropertyName("body"), JsonRequired]
     public required ICirStatement[] Body { get; init; }
@@ -209,7 +209,7 @@ public sealed partial record CirPhysicalEnumValue : ICirChildren
 public sealed partial record CirSourcePoint : CirNode, ICirStatement
 {
     [JsonIgnore] public override string Tag => "sourcePoint";
-    [JsonPropertyName("span"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("span"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirSourceSpan> Span { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -262,7 +262,7 @@ public sealed partial record CirSetLocal : CirNode, ICirStatement
 public sealed partial record CirReturn : CirNode, ICirStatement
 {
     [JsonIgnore] public override string Tag => "return";
-    [JsonPropertyName("value"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("value"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Value { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -299,9 +299,9 @@ public sealed partial record CirTry : CirNode, ICirStatement
     public required ICirStatement[] Body { get; init; }
     [JsonPropertyName("catches"), JsonRequired]
     public required CirCatchClause[] Catches { get; init; }
-    [JsonPropertyName("finally"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("finally"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirStatement[]> Finally { get; init; }
-    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Type { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -711,7 +711,7 @@ public sealed partial record CirValueBlock : CirNode, ICirExpression
     public required ICirStatement[] Stmts { get; init; }
     [JsonPropertyName("result"), JsonRequired]
     public required ICirExpression Result { get; init; }
-    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Type { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -730,7 +730,7 @@ public sealed partial record CirValueBlock : CirNode, ICirExpression
 public sealed partial record CirReturnExpression : CirNode, ICirExpression
 {
     [JsonIgnore] public override string Tag => "returnExpr";
-    [JsonPropertyName("value"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("value"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Value { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -808,7 +808,7 @@ public sealed partial record CirNewArrayInitialized : CirNode, ICirExpression
     public required ICirExpression Init { get; init; }
     [JsonPropertyName("invokeRef"), JsonRequired]
     public required MemberRefNode InvokeRef { get; init; }
-    [JsonPropertyName("funcType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("funcType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> FuncType { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1013,9 +1013,9 @@ public sealed partial record CirIsInstance : CirNode, ICirExpression
     public required ICirExpression E { get; init; }
     [JsonPropertyName("type"), JsonRequired]
     public required TypeNode Type { get; init; }
-    [JsonPropertyName("nullMatches"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("nullMatches"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> NullMatches { get; init; }
-    [JsonPropertyName("nullWitness"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("nullWitness"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> NullWitness { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1100,7 +1100,7 @@ public sealed partial record CirConditional : CirNode, ICirExpression
     public required ICirExpression Then { get; init; }
     [JsonPropertyName("else"), JsonRequired]
     public required ICirExpression Else { get; init; }
-    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Type { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1139,11 +1139,11 @@ public sealed partial record CirNew : CirNode, ICirExpression
     public required TypeNode Type { get; init; }
     [JsonPropertyName("args"), JsonRequired]
     public required ICirExpression[] Args { get; init; }
-    [JsonPropertyName("argTypes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("argTypes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> ArgTypes { get; init; }
-    [JsonPropertyName("localCtorIndex"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localCtorIndex"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> LocalCtorIndex { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1187,19 +1187,19 @@ public sealed partial record CirCallStatic : CirNode, ICirExpression
     public required string Method { get; init; }
     [JsonPropertyName("owner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public OptionalField<TypeNode> Owner { get; init; }
-    [JsonPropertyName("calleeOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> CalleeOwner { get; init; }
-    [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> CalleeRet { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Ret { get; init; }
     [JsonPropertyName("args"), JsonRequired]
     public required ICirExpression[] Args { get; init; }
@@ -1223,21 +1223,21 @@ public sealed partial record CirCallInstance : CirNode, ICirExpression
     public required string Method { get; init; }
     [JsonPropertyName("ownerType"), JsonRequired]
     public required TypeNode OwnerType { get; init; }
-    [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> CalleeRet { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Ret { get; init; }
-    [JsonPropertyName("dynRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("dynRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> DynRet { get; init; }
-    [JsonPropertyName("virtual"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("virtual"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Virtual { get; init; }
     [JsonPropertyName("recv"), JsonRequired]
     public required ICirExpression Recv { get; init; }
@@ -1266,17 +1266,17 @@ public sealed partial record CirConstrainedCall : CirNode, ICirExpression
     public required TypeNode Iface { get; init; }
     [JsonPropertyName("recvType"), JsonRequired]
     public required TypeNode RecvType { get; init; }
-    [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> CalleeRet { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Ret { get; init; }
     [JsonPropertyName("recv"), JsonRequired]
     public required ICirExpression Recv { get; init; }
@@ -1362,9 +1362,9 @@ public sealed partial record CirStaticField : CirNode, ICirExpression
     public required TypeNode OwnerType { get; init; }
     [JsonPropertyName("name"), JsonRequired]
     public required string Name { get; init; }
-    [JsonPropertyName("fieldRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("fieldRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> FieldRef { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1396,11 +1396,11 @@ public sealed partial record CirStaticFieldSet : CirNode, ICirExpression
     public required TypeNode OwnerType { get; init; }
     [JsonPropertyName("name"), JsonRequired]
     public required string Name { get; init; }
-    [JsonPropertyName("fieldRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("fieldRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> FieldRef { get; init; }
     [JsonPropertyName("value"), JsonRequired]
     public required ICirExpression Value { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1421,27 +1421,27 @@ public sealed partial record CirFieldRead : CirNode, ICirExpression
     public required string Name { get; init; }
     [JsonPropertyName("recv"), JsonRequired]
     public required ICirExpression Recv { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
-    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Ret { get; init; }
-    [JsonPropertyName("member"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("member"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Member { get; init; }
-    [JsonPropertyName("accessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Accessor { get; init; }
-    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Dispatch { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Type { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1464,25 +1464,25 @@ public sealed partial record CirFieldStore : CirNode, ICirStatement
     public required ICirExpression Recv { get; init; }
     [JsonPropertyName("value"), JsonRequired]
     public required ICirExpression Value { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
-    [JsonPropertyName("member"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("member"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Member { get; init; }
-    [JsonPropertyName("accessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Accessor { get; init; }
-    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Dispatch { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Type { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1506,25 +1506,25 @@ public sealed partial record CirFieldStoreExpression : CirNode, ICirExpression
     public required ICirExpression Recv { get; init; }
     [JsonPropertyName("value"), JsonRequired]
     public required ICirExpression Value { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
-    [JsonPropertyName("member"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("member"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Member { get; init; }
-    [JsonPropertyName("accessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Accessor { get; init; }
-    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Dispatch { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Type { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1540,21 +1540,21 @@ public sealed partial record CirFieldStoreExpression : CirNode, ICirExpression
 public sealed partial record CirLateinitGet : CirNode, ICirExpression
 {
     [JsonIgnore] public override string Tag => "lateinitGet";
-    [JsonPropertyName("value"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("value"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Value { get; init; }
     [JsonPropertyName("exception"), JsonRequired]
     public required ICirExpression Exception { get; init; }
-    [JsonPropertyName("ownerType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ownerType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> OwnerType { get; init; }
-    [JsonPropertyName("name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("name"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Name { get; init; }
-    [JsonPropertyName("fieldRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("fieldRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> FieldRef { get; init; }
-    [JsonPropertyName("static"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("static"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Static { get; init; }
-    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Recv { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1579,11 +1579,11 @@ public sealed partial record CirByRefLoad : CirNode, ICirExpression
     [JsonIgnore] public override string Tag => "byrefLoad";
     [JsonPropertyName("elem"), JsonRequired]
     public required TypeNode Elem { get; init; }
-    [JsonPropertyName("ptr"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ptr"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Ptr { get; init; }
-    [JsonPropertyName("local"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("local"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Local { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1618,13 +1618,13 @@ public sealed partial record CirByRefStore : CirNode, ICirExpression
     [JsonIgnore] public override string Tag => "byrefStore";
     [JsonPropertyName("elem"), JsonRequired]
     public required TypeNode Elem { get; init; }
-    [JsonPropertyName("ptr"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ptr"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Ptr { get; init; }
-    [JsonPropertyName("local"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("local"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Local { get; init; }
     [JsonPropertyName("value"), JsonRequired]
     public required ICirExpression Value { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1651,13 +1651,13 @@ public sealed partial record CirEventAccessorBody : CirNode, ICirStatement
     public required TypeNode DelegateType { get; init; }
     [JsonPropertyName("static"), JsonRequired]
     public required bool Static { get; init; }
-    [JsonPropertyName("invokeRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("invokeRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> InvokeRef { get; init; }
-    [JsonPropertyName("combineRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("combineRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> CombineRef { get; init; }
-    [JsonPropertyName("removeRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("removeRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> RemoveRef { get; init; }
-    [JsonPropertyName("compareExchangeRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("compareExchangeRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> CompareExchangeRef { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1677,23 +1677,23 @@ public sealed partial record CirEventAdd : CirNode, ICirExpression
     public required bool Static { get; init; }
     [JsonPropertyName("accessor"), JsonRequired]
     public required string Accessor { get; init; }
-    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Dispatch { get; init; }
-    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Recv { get; init; }
     [JsonPropertyName("handler"), JsonRequired]
     public required ICirExpression Handler { get; init; }
     [JsonPropertyName("handlerExact"), JsonRequired]
     public required bool HandlerExact { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1718,23 +1718,23 @@ public sealed partial record CirEventRemove : CirNode, ICirExpression
     public required bool Static { get; init; }
     [JsonPropertyName("accessor"), JsonRequired]
     public required string Accessor { get; init; }
-    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Dispatch { get; init; }
-    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Recv { get; init; }
     [JsonPropertyName("handler"), JsonRequired]
     public required ICirExpression Handler { get; init; }
     [JsonPropertyName("handlerExact"), JsonRequired]
     public required bool HandlerExact { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1763,19 +1763,19 @@ public sealed partial record CirNativeInstance : CirNode, ICirExpression
     public required ICirExpression[] Args { get; init; }
     [JsonPropertyName("dispatch"), JsonRequired]
     public required string Dispatch { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Ret { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1800,19 +1800,19 @@ public sealed partial record CirNativeStatic : CirNode, ICirExpression
     public required string Method { get; init; }
     [JsonPropertyName("args"), JsonRequired]
     public required ICirExpression[] Args { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ret"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Ret { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1836,23 +1836,23 @@ public sealed partial record CirPropertyGet : CirNode, ICirExpression
     public required bool Static { get; init; }
     [JsonPropertyName("member"), JsonRequired]
     public required string Member { get; init; }
-    [JsonPropertyName("accessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Accessor { get; init; }
-    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Dispatch { get; init; }
-    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Recv { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1876,25 +1876,25 @@ public sealed partial record CirPropertySet : CirNode, ICirExpression
     public required bool Static { get; init; }
     [JsonPropertyName("member"), JsonRequired]
     public required string Member { get; init; }
-    [JsonPropertyName("accessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Accessor { get; init; }
-    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("dispatch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Dispatch { get; init; }
-    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("recv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Recv { get; init; }
     [JsonPropertyName("value"), JsonRequired]
     public required ICirExpression Value { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("volatile"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Volatile { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -1977,9 +1977,9 @@ public sealed partial record CirEnumOrdinal : CirNode, ICirExpression
     [JsonIgnore] public override string Tag => "enumOrdinal";
     [JsonPropertyName("e"), JsonRequired]
     public required ICirExpression E { get; init; }
-    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Type { get; init; }
-    [JsonPropertyName("values"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("values"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirPhysicalEnumValue[]> Values { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -2013,11 +2013,11 @@ public sealed partial record CirEnumValue : CirNode, ICirExpression
     [JsonIgnore] public override string Tag => "enumValue";
     [JsonPropertyName("type"), JsonRequired]
     public required TypeNode Type { get; init; }
-    [JsonPropertyName("ordinal"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("ordinal"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> Ordinal { get; init; }
-    [JsonPropertyName("underlying"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("underlying"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> Underlying { get; init; }
-    [JsonPropertyName("physicalValue"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("physicalValue"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<string> PhysicalValue { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -2033,7 +2033,7 @@ public sealed partial record CirEnumValues : CirNode, ICirExpression
     [JsonIgnore] public override string Tag => "enumValues";
     [JsonPropertyName("type"), JsonRequired]
     public required TypeNode Type { get; init; }
-    [JsonPropertyName("values"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("values"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<CirPhysicalEnumValue[]> Values { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -2092,23 +2092,23 @@ public sealed partial record CirBoundClrDelegate : CirNode, ICirExpression
     public required string Method { get; init; }
     [JsonPropertyName("recv"), JsonRequired]
     public required ICirExpression Recv { get; init; }
-    [JsonPropertyName("virtual"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("virtual"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Virtual { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
     [JsonPropertyName("delegateCtorRef"), JsonRequired]
     public required MemberRefNode DelegateCtorRef { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Type { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -2133,19 +2133,19 @@ public sealed partial record CirBoundDelegate : CirNode, ICirExpression
     public required string Method { get; init; }
     [JsonPropertyName("recv"), JsonRequired]
     public required ICirExpression Recv { get; init; }
-    [JsonPropertyName("virtual"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("virtual"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> Virtual { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
     [JsonPropertyName("delegateCtorRef"), JsonRequired]
     public required MemberRefNode DelegateCtorRef { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> CalleeRet { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -2166,7 +2166,7 @@ public sealed partial record CirClosure : CirNode, ICirExpression
     public required TypeNode ClosureType { get; init; }
     [JsonPropertyName("method"), JsonRequired]
     public required string Method { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
     [JsonPropertyName("captures"), JsonRequired]
     public required ICirExpression[] Captures { get; init; }
@@ -2194,21 +2194,21 @@ public sealed partial record CirClrStaticDelegate : CirNode, ICirExpression
     public required TypeNode ClrType { get; init; }
     [JsonPropertyName("method"), JsonRequired]
     public required string Method { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
     [JsonPropertyName("delegateCtorRef"), JsonRequired]
     public required MemberRefNode DelegateCtorRef { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("localAccessor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<bool> LocalAccessor { get; init; }
-    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("accessorOwner"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> AccessorOwner { get; init; }
-    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("type"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> Type { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -2228,17 +2228,17 @@ public sealed partial record CirDelegate : CirNode, ICirExpression
     public required TypeNode CalleeOwner { get; init; }
     [JsonPropertyName("method"), JsonRequired]
     public required string Method { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
     [JsonPropertyName("delegateCtorRef"), JsonRequired]
     public required MemberRefNode DelegateCtorRef { get; init; }
-    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
-    [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode> CalleeRet { get; init; }
-    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("sig"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> Sig { get; init; }
-    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("calleeParams"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {
@@ -2254,7 +2254,7 @@ public sealed partial record CirSam : CirNode, ICirExpression
     [JsonIgnore] public override string Tag => "newSam";
     [JsonPropertyName("samType"), JsonRequired]
     public required TypeNode SamType { get; init; }
-    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
     [JsonPropertyName("captures"), JsonRequired]
     public required ICirExpression[] Captures { get; init; }
@@ -2278,7 +2278,7 @@ public sealed partial record CirObjectMethod : CirNode, ICirExpression
     public required string Method { get; init; }
     [JsonPropertyName("recv"), JsonRequired]
     public required ICirExpression Recv { get; init; }
-    [JsonPropertyName("arg"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [JsonPropertyName("arg"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<ICirExpression> Arg { get; init; }
     [JsonIgnore] public override IEnumerable<ICirNode> Children
     {

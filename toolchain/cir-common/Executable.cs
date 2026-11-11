@@ -26,6 +26,7 @@ public interface ICirExpression : ICirNode;
 // expression/statement role; no field name or arbitrary object shape selects it.
 public sealed class CirStatementJsonConverter : JsonConverter<ICirStatement>
 {
+    public override bool HandleNull => true;
     public override ICirStatement Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
         => JsonSerializer.Deserialize<CirNode>(ref reader, options) as ICirStatement ?? throw new JsonException();
     public override void Write(Utf8JsonWriter writer, ICirStatement value, JsonSerializerOptions options)
@@ -34,10 +35,48 @@ public sealed class CirStatementJsonConverter : JsonConverter<ICirStatement>
 
 public sealed class CirExpressionJsonConverter : JsonConverter<ICirExpression>
 {
+    public override bool HandleNull => true;
     public override ICirExpression Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
         => JsonSerializer.Deserialize<CirNode>(ref reader, options) as ICirExpression ?? throw new JsonException();
     public override void Write(Utf8JsonWriter writer, ICirExpression value, JsonSerializerOptions options)
         => JsonSerializer.Serialize(writer, (CirNode)value, options);
+}
+
+// Executable child slots never contain null elements. NullableAnnotations does
+// not enforce collection elements, so enforce that same schema rule here.
+public sealed class CirChildrenArrayJsonConverterFactory : JsonConverterFactory
+{
+    public override bool CanConvert(Type type) => type.IsArray
+        && typeof(ICirChildren).IsAssignableFrom(type.GetElementType());
+    public override JsonConverter CreateConverter(Type type, JsonSerializerOptions options)
+        => (JsonConverter)Activator.CreateInstance(typeof(CirChildrenArrayJsonConverter<>).MakeGenericType(type.GetElementType()!))!;
+}
+
+public sealed class CirChildrenArrayJsonConverter<T> : JsonConverter<T[]> where T : ICirChildren
+{
+    public override T[] Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.StartArray) throw new JsonException();
+        var items = new List<T>();
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            var item = JsonSerializer.Deserialize<T>(ref reader, options);
+            if (item is null) throw new JsonException();
+            items.Add(item);
+        }
+        if (reader.TokenType != JsonTokenType.EndArray) throw new JsonException();
+        return items.ToArray();
+    }
+    public override void Write(Utf8JsonWriter writer, T[] value, JsonSerializerOptions options)
+    {
+        writer.WriteStartArray();
+        foreach (var item in value)
+        {
+            if (item is null) throw new JsonException();
+            JsonSerializer.Serialize(writer, item, options);
+        }
+        writer.WriteEndArray();
+    }
 }
 
 public static class CirExecutableWalk

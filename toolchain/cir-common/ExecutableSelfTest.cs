@@ -65,7 +65,10 @@ public static class ExecutableSelfTest
             """{"k":"const","type":{"t":"fqn","name":"System.Single"},"value":{"a":"f32"}}""",
             """{"k":"const","type":{"t":"fqn","name":"System.Single"},"value":{"a":"f32","bits":2147483648}}""",
             """{"k":"var","name":"n","type":{"t":"fqn","name":"System.Int32"}}""",
-            """{"k":"local","name":"n","extra":1}"""
+            """{"k":"local","name":"n","extra":1}""",
+            """{"k":"callInstance","method":"Read","ownerType":{"t":"fqn","name":"Probe"},"recv":{"k":"this"},"args":[],"virtual":null}""",
+            """{"k":"callStatic","method":"Read","args":[null]}""",
+            """{"k":"valueBlock","stmts":[{"k":"try","body":[],"catches":[null]}],"result":{"k":"this"}}"""
         })
         {
             try { JsonSerializer.Deserialize<ICirExpression>(malformed, AttributeJson.Options); }

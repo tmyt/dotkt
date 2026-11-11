@@ -6,15 +6,15 @@ namespace DotKt.Bir;
 // suspension/stamp fields cannot inhabit this graph; the source checker owns them.
 public static partial class IrSanity
 {
-    public static void Check(IEnumerable<CirFileDeclaration> files, IrSanityChecks which = IrSanityChecks.All)
+    public static void Check(IEnumerable<CirFileDeclaration> files)
     {
         foreach (var file in files)
         {
-            CheckCirContainer(file.FileClass, file, false, which);
+            CheckCirContainer(file.FileClass, file, false);
             foreach (var type in file.Types)
             {
-                if (which == IrSanityChecks.All) CheckCollectionViewFaces(type.Name, type.Interfaces.OrEmpty());
-                CheckCirContainer(type.Name, type, type.Kind == CirTypeKind.Interface, which);
+                CheckCollectionViewFaces(type.Name, type.Interfaces.OrEmpty());
+                CheckCirContainer(type.Name, type, type.Kind == CirTypeKind.Interface);
             }
         }
     }
@@ -29,18 +29,15 @@ public static partial class IrSanity
     static HashSet<string> ParamNames(CirParameter[] parameters) => parameters.Select(p => p.Name.OrDefault())
         .Where(name => !string.IsNullOrEmpty(name)).ToHashSet(StringComparer.Ordinal);
 
-    static void CheckCirContainer(string owner, ICirContainer container, bool isInterface, IrSanityChecks which)
+    static void CheckCirContainer(string owner, ICirContainer container, bool isInterface)
     {
         foreach (var method in container.DeclaredMethods)
         {
             var label = PosPrefix(method.Pos) + owner + "." + method.Name;
-            if (which != IrSanityChecks.StyStampsOnly)
-            {
-                CheckSuspendDecl(label, method.Mods.OrDefault()?.Suspend.OrDefault() == true);
-                if (method.Pinvoke.HasValue) CheckCirPInvoke(method, label);
-            }
+            CheckSuspendDecl(label, method.Mods.OrDefault()?.Suspend.OrDefault() == true);
+            if (method.Pinvoke.HasValue) CheckCirPInvoke(method, label);
             if (method.Abstract.OrDefault() || !method.Body.HasValue) continue;
-            CheckCirScope(owner + "." + method.Name, ParamNames(method.Params), [method.Body.Value], PosPrefix(method.Pos), which);
+            CheckCirScope(owner + "." + method.Name, ParamNames(method.Params), [method.Body.Value], PosPrefix(method.Pos));
         }
         foreach (var ctor in container.DeclaredConstructors)
         {
@@ -48,20 +45,19 @@ public static partial class IrSanity
             if (ctor.PreStmts.HasValue) roots.Add(ctor.PreStmts.Value);
             if (ctor.ThisArgs.HasValue) roots.Add(ctor.ThisArgs.Value);
             if (ctor.BaseArgs.HasValue) roots.Add(ctor.BaseArgs.Value);
-            CheckCirScope(owner + "..ctor", ParamNames(ctor.Params), roots, PosPrefix(ctor.Pos), which);
+            CheckCirScope(owner + "..ctor", ParamNames(ctor.Params), roots, PosPrefix(ctor.Pos));
         }
         if (!isInterface)
         {
             var inits = container.DeclaredFields.Where(field => field.Static.OrDefault() && field.Init.HasValue)
                 .Select(field => new ICirNode[] { field.Init.Value }).ToList();
-            if (inits.Count > 0) CheckCirScope(owner + "..cctor", null, inits, PosPrefix(container.Pos), which);
+            if (inits.Count > 0) CheckCirScope(owner + "..cctor", null, inits, PosPrefix(container.Pos));
         }
     }
 
     static void CheckCirScope(string declaration, HashSet<string> parameters, List<ICirNode[]> roots,
-        string position, IrSanityChecks which)
+        string position)
     {
-        if (which == IrSanityChecks.StyStampsOnly) return;
         var label = position + declaration;
         var declared = parameters != null ? new HashSet<string>(parameters) : new HashSet<string>();
         var labels = new HashSet<int>();

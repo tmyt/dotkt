@@ -17,4 +17,4 @@
 # The defect this document exists to catch: keeping the call site's SUBSTITUTED return. That is what the call said
 # before the referenced declaration was consulted, and it is not what the producer's member returns — at a value
 # instantiation the two are unrelated CLR types and the mismatch is a memory-corrupting unbox, not a mistype.
--"method":"prop_get\u003Cfirst\u003E","sig":[],"ret":{"t":"nullable"
+?(any(.[] | .. | objects; ir_matches({"method":"prop_get<first>","sig":[],"ret":{"t":"nullable"}})) | not)

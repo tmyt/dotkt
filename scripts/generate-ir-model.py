@@ -592,8 +592,11 @@ def executable_models(definitions):
                                   ': throw new FormatException()')
             else:
                 annotations += ["JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)"]
+                if not allows_null(field, definitions):
+                    annotations += ["JsonConverter(typeof(NonNullOptionalFieldConverterFactory))"]
                 declaration = f"OptionalField<{value_type}>"
-                expression = f'ReadOptional(node, "{field_name}", value => {read(field, "value")})'
+                null_option = "" if allows_null(field, definitions) else ", allowNull: false"
+                expression = f'ReadOptional(node, "{field_name}", value => {read(field, "value")}{null_option})'
             model += ["    [" + ", ".join(annotations) + "]", f"    public {declaration} {cs_name} {{ get; init; }}"]
             projection += [f"            {cs_name} = {expression},"]
             if shape := child_shape(field):

@@ -13,7 +13,7 @@
 ?any(.[] | .. | objects; ir_matches({"else":{"k":"callStatic","owner":{"t":"fqn","name":"kotlin.LibraryKt"},"method":"toString","sig":[{"t":"fqn","name":"object"}],"ret":{"t":"fqn","name":"System.String"},"args":[{"k":"local","name":"__cssnapshot$1"}]}}))
 
 # In particular, the original nullable value is not supplied directly to the null-stringifying helper.
--"method":"toString","sig":[{"t":"fqn","name":"object"}],"args":[{"k":"local","name":"value"}]
+?(any(.[] | .. | objects; ir_matches({"method":"toString","sig":[{"t":"fqn","name":"object"}],"args":[{"k":"local","name":"value"}]})) | not)
 
 # The three other independently implemented boundaries also preserve null while lowering their physical slots.
 +"name":"nullableSink","static":true,"override":false,"virtual":false,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"System.String"}

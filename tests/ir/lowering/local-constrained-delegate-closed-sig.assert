@@ -12,4 +12,4 @@
 ?any(.[] | .. | objects; ir_matches({"funcType":{"t":"fqn","name":"System.Func","args":[{"t":"fqn","name":"object"},{"t":"fqn","name":"object"}]},"typeArgs":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"object"}]}))
 +"declaringType":{"t":"fqn","name":"System.Func\u00602","args":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.String"}]}
 +"declaringType":{"t":"fqn","name":"System.Func\u00602","args":[{"t":"fqn","name":"object"},{"t":"fqn","name":"object"}]}
--"iface":{"t":"fqn","name":"LocalClosedCallback","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Apply","sig":[{"t":"tv","scope":"type","i":0}
+?(any(.[] | .. | objects; ir_matches({"iface":{"t":"fqn","name":"LocalClosedCallback","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Apply","sig":{"$prefix":[{"t":"tv","scope":"type","i":0}]}})) | not)

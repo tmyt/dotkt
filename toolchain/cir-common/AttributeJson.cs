@@ -38,6 +38,7 @@ public static class AttributeJson
             TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
         };
         options.Converters.Add(new TypeNodeMetadataConverter());
+        options.Converters.Add(new CirChildrenArrayJsonConverterFactory());
         return options;
     }
 
