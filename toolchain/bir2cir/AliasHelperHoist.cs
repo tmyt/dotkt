@@ -438,7 +438,7 @@ static class AliasHelperHoist
         var method = new JsonObject { ["name"] = "Read",
             [DeclarationIdentityBinding.Key] = "dotkt-declaration-v1:alias-selftest",
             ["declarationSourceName"] = "Read",
-            ["typeParams"] = new JsonArray("R"),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "R" }),
             ["params"] = new JsonArray(new JsonObject { ["name"] = "callback",
                 ["type"] = callback.DeepClone(), [FunctionSignatureIdentity.Key] = callback.DeepClone() }),
             ["ret"] = TypeJson.Write(new TypeNode.Tv("type", 1)), ["body"] = new JsonArray() };
@@ -451,7 +451,8 @@ static class AliasHelperHoist
             ["memberSignature"] = new JsonArray(slot.DeepClone()),
             ["args"] = new JsonArray(new JsonObject { ["k"] = "this" }),
         });
-        var hoisted = HoistMethod(method, new JsonArray("S0", "T0", "S1", "T1", "N0", "NS0"), receiver);
+        var hoisted = HoistMethod(method, new JsonArray(new[] { "S0", "T0", "S1", "T1", "N0", "NS0" }
+            .Select(name => (JsonNode)new TypeParameterDeclaration(name).ToDom()).ToArray()), receiver);
         if (TypeJson.Read(hoisted["params"][0]["type"]) is not TypeNode.Fqn { Args: { } hoistedArgs }
             || hoistedArgs.Any(type => type is not TypeNode.Tv { Scope: "method" })
             || TypeJson.Read(hoisted["ret"]) != new TypeNode.Tv("method", 1))

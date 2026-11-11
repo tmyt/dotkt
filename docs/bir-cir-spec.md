@@ -275,8 +275,8 @@ Implementation and reference emission reuse the declarations without dropping si
 
 This is an incremental migration, not the completed typed-IR/binary-transport design. bir2cir's
 owning passes still construct a DOM, and an explicitly temporary, schema-generated projection
-constructs typed physical declarations at their output boundary. Current BIR name-only generic
-declarations become physical records there; the CIR reader has no shorthand/legacy-format path.
+constructs typed physical declarations at their output boundary. Generic parameter declarations
+are records in both BIR and CIR, including unconstrained slots.
 Executable bodies, constructor operands and field initializers use concrete generated `CirNode`
 records with explicit statement/expression roles. ilemit consumes these records directly; executable
 child traversal follows their generated child edges, not JSON key names. Constants use the closed
@@ -1175,8 +1175,8 @@ freshly-emitted BIR + CIR and reddens the gate on any drift.
   MAY carry a bare string (`STR_OK` — the format vocabulary `k`/`t`, object-language `name` payloads, enum
   entry/underlying/physical-value payloads, the enum keys `scope`/`op`/`vis`/`variance`/`kind`, and the documented
   owner/member NAME islands §2.2.1 plus an external attribute's exact `attrAssembly` metadata scope) is
-  fixed; a bare string at ANY other key is a type-token leak and reds. Array string elements red too, except the
-  `typeParams`/`capturedTypeParams` name-declaration shorthand (`STRARR_OK`). The
+  fixed; a bare string at ANY other key is a type-token leak and reds. Array string elements are allowed only for
+  documented role and flag lists (`STRARR_OK`); generic declarations carry records. The
   `kotlinCompanion.owner`/`.visibility` exception is path-scoped to that declaration fact; it does not re-admit a
   bare `owner` type slot elsewhere. This fails closed across the whole tree — a future
   string type token anywhere reddens without the validator having to enumerate every type slot.
@@ -1207,9 +1207,8 @@ bare-FQN strings the wire format forbids):
 - `to` is deliberately shared: under `k:"conv"` it is a structured target type; under `k:"for"`/`k:"forRange"` it
   is a range endpoint expression. The parent `k`, never the child's value shape or global key uniqueness, owns the role.
 - Synthetic `<>dotkt_KProperty` interface refs (kotc `synthDelegate`/`kPropertyDefs`) — `str(iface)`/literal → `fqnJson`.
-- `newSuspendLambda`'s free-type-param list — a type-param NAME-declaration list, not a type-usage slot: renamed
-  `typeArgs` → `typeParams` (the name-shorthand, consistent with the other lambda paths; kotc emit + bir2cir
-  `SuspendLambdaLowering` read). A DISTINCT `typeArgs` (a type-USAGE list) is the SM **construction channel** (#75
+- `newSuspendLambda`'s `typeParams` is one complete declaration frame (name, variance, reification and bounds),
+  not a type-usage slot or a second name-only view. A DISTINCT `typeArgs` (a type-USAGE list) is the SM **construction channel** (#75
   Batch B, 2A): each generic `newSuspendLambda` carries the ORIGINAL enclosing type for every dense SM parameter, so
   `SuspendLambdaLowering` instantiates `new smName<typeArgs…>(…)` without interpreting a declaration position in the
   enclosing generic frame. Omission on a generic node is malformed internal ABI; only a non-generic node may omit the

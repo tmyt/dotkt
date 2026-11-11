@@ -12,7 +12,7 @@ static partial class FBoundStarProjectionErasure
         var physical = new TypeNode.Fqn("Physical");
         var owners = new Dictionary<string, Owner> {
             ["Logical"] = new Owner { Name = "Logical", ErasedName = "Physical", Needed = true,
-                Def = JsonNode.Parse("""{"kind":"class","typeParams":["T"]}""").AsObject() },
+                Def = JsonNode.Parse("""{"kind":"class","typeParams":[{"name":"T"}]}""").AsObject() },
         };
         var defs = new Dictionary<string, JsonObject>();
         var carriers = new HashSet<string>(StringComparer.Ordinal) { "Physical" };

@@ -19,7 +19,7 @@
     }
   ],
   "types": [{
-    "name": "LocalGenericStaticIntrinsicProbe", "kind": "class", "typeParams": ["T"],
+    "name": "LocalGenericStaticIntrinsicProbe", "kind": "class", "typeParams": [{"name":"T"}],
     "base": null, "interfaces": [], "fields": [], "ctors": [],
     "methods": [{
       "name": "sqrt", "static": true, "kotlinStatic": true, "override": false, "virtual": false,

@@ -555,7 +555,7 @@ static class ReverseEnumeratorBridgeSynthesis
             ["beforeFieldInit"] = true,
             // Module-private: nothing outside this assembly can name the type, because no signature mentions it.
             ["vis"] = "internal",
-            ["typeParams"] = new JsonArray("T"),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             ["base"] = null,
             ["interfaces"] = new JsonArray(
                 TypeJson.Write(Constructed(IEnumeratorT, targetElement)),

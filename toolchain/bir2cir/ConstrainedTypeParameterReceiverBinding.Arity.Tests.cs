@@ -8,8 +8,8 @@ static partial class ConstrainedTypeParameterReceiverBinding
     internal static void AritySnapshotSelfTest()
     {
         var root = JsonNode.Parse("""
-          {"types":[{"name":"Plain","types":[{"name":"Nested","typeParams":["T"]}]},
-                    {"name":"Duplicate","typeParams":["T"]},
+          {"types":[{"name":"Plain","types":[{"name":"Nested","typeParams":[{"name":"T"}]}]},
+                    {"name":"Duplicate","typeParams":[{"name":"T"}]},
                     {"name":"Duplicate","typeParams":[]},
                     {"name":"Receiver","typeParams":[{"name":"T","constraints":[
                       {"t":"fqn","name":"Nested","args":[{"t":"fqn","name":"Plain"}]}]}],
@@ -44,10 +44,10 @@ static partial class ConstrainedTypeParameterReceiverBinding
         var declarations = root["types"].AsArray();
         var nested = declarations[0]["types"][0].AsObject();
         nested["name"] = "Renamed";
-        nested["typeParams"].AsArray().Add("U");
-        nested["capturedTypeParams"] = new JsonArray("Outer");
+        nested["typeParams"].AsArray().Add(new TypeParameterDeclaration("U").ToDom());
+        nested["capturedTypeParams"] = new JsonArray(new JsonObject { ["name"] = "Outer" });
         declarations.RemoveAt(2);
-        declarations.Add(new JsonObject { ["name"] = "Added", ["typeParams"] = new JsonArray("A") });
+        declarations.Add(new JsonObject { ["name"] = "Added", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "A" }) });
         var rebuilt = CollectTypeArity(roots);
         if (snapshot.ContainsKey("Renamed") || snapshot.ContainsKey("Added") || snapshot["Nested"] != 1
             || rebuilt.ContainsKey("Nested") || rebuilt["Renamed"] != 3 || rebuilt["Added"] != 1

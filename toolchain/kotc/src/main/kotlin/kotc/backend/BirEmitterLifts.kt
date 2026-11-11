@@ -257,17 +257,15 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	val paramsJson = lambdaParamsJson(ownParams)
 	val resultType = birType(fn.returnType)
 	// Enclosing generic type params referenced by the SM (captures/params/return/body operands) -> open SM
-	// instantiation. BARE names: bir2cir prepends `gp:`.
+	// instantiation. Declaration facts and construction arguments remain distinct frames.
 	val freeTps = freeTypeParams(captures.map { it.type } + fn.parameters.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
 		.sortedWith(compareBy<IrTypeParameter>(
 			{ if (tvOf(it).scope == "type") 0 else 1 },
 			{ tvOf(it).i },
 		))
-	// The SM's own generic-parameter NAME declarations (the enclosing free type params the state machine is
-	// generic over) — a type-param DECLARATION list (bir2cir names the SM's params + instantiates `!i`), NOT a
-	// type-USAGE slot, so it rides as the `typeParams` name shorthand (§2.5), consistent with the other lambda paths.
-	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
-	val typeParamDecls = typeParamsJson(freeTps).replaceFirst(",\"typeParams\":", ",\"typeParamDecls\":")
+	// One declaration frame carries names, variance, reification and bounds together.
+	// The construction's typeArgs below belongs to the enclosing use-site frame.
+	val typeParameters = typeParamDeclarationsJson(freeTps)
 	val typeArgsJson = liftedTypeArgsJson(freeTps)
 	val extensionReceiver = extensionReceiverParam(fn)
 	// (B) body shadow: emit the SM body with each captured decl bound to its DESCRIPTOR name `{k:local,name:D}` in
@@ -312,7 +310,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	}
 	shadowCap.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
 	shadowCapLocalName.forEach { (d, prev) -> if (prev != null) captureLocalName[d] = prev else captureLocalName.remove(d) }
-	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson]$capValuesJson,"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare]$typeParamDecls$typeArgsJson,"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
+	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson]$capValuesJson,"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":$typeParameters$typeArgsJson,"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 }
 
 /** Every emitted lambda/adapter body is a distinct BIR declaration projection, even when the frontend reuses the
@@ -1202,8 +1200,7 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 			{ if (tvOf(it).scope == "type") 0 else 1 },
 			{ tvOf(it).i },
 		))
-	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
-	val typeParamDecls = typeParamsJson(freeTps).replaceFirst(",\"typeParams\":", ",\"typeParamDecls\":")
+	val typeParameters = typeParamDeclarationsJson(freeTps)
 	val typeArgsJson = liftedTypeArgsJson(freeTps)
 	val externalCompanionOwnerTag = companionClass?.let { clrExternalOwner(it) }
 		?.let { ""","externalCompanionOwner":${str(it)}""" } ?: ""
@@ -1211,7 +1208,7 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 		?: companionClass?.takeIf { clrExternalOwner(it) == null }?.let { typeName(it) }
 	val localCompanionCaptureTag = localCompanionCaptureOwner
 		?.let { ""","companionCaptureOwner":${str(it)}""" } ?: ""
-	return """{"k":"newSuspendLambda","arity":${physicalParamTypes.size},"captures":[$captures]$capValuesJson,"params":[$paramsJson],"suspendRet":${ret.toJson()},"typeParams":[$typeParamsBare]$typeParamDecls$typeArgsJson,"body":[$body],"funcType":${fnType.toJson()}$externalCompanionOwnerTag$localCompanionCaptureTag}"""
+	return """{"k":"newSuspendLambda","arity":${physicalParamTypes.size},"captures":[$captures]$capValuesJson,"params":[$paramsJson],"suspendRet":${ret.toJson()},"typeParams":$typeParameters$typeArgsJson,"body":[$body],"funcType":${fnType.toJson()}$externalCompanionOwnerTag$localCompanionCaptureTag}"""
 }
 
 /**

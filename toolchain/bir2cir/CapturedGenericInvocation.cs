@@ -451,11 +451,8 @@ static class CapturedGenericInvocation
     }
     internal static JsonObject CloneParameter(JsonNode parameter, Func<TypeNode, TypeNode> map)
     {
-        var clone = parameter is JsonObject definition ? (JsonObject)definition.DeepClone()
-            : new JsonObject { ["name"] = Str(parameter) ?? throw new InvalidOperationException("Captured invocation has a malformed generic parameter") };
-        if (clone["constraints"] is JsonArray constraints)
-            clone["constraints"] = new JsonArray(constraints.Select(type => TypeJson.Write(map(TypeJson.Read(type)))).ToArray());
-        return clone;
+        var declaration = TypeParameterDeclaration.Read(parameter);
+        return (declaration with { Constraints = declaration.Constraints?.Select(map).ToArray() }).ToDom();
     }
     internal static TypeNode Map(TypeNode type, Func<TypeNode.Tv, TypeNode> tv) => type switch
     {

@@ -369,19 +369,16 @@ static class NullableRepresentationMaterialization
                 // the ordinary slot, including constrained dispatch on a mutable struct.
                 var ordinary = frame.Variable(new TypeNode.Tv(scope, sourceIndex),
                     NullableRepresentationFrame.Role.Ordinary);
-                var parameter = expanded[ordinary.I] as JsonObject;
-                if (parameter == null)
-                    expanded[ordinary.I] = parameter = new JsonObject { ["name"] = expanded[ordinary.I].DeepClone() };
-                if (parameter["constraints"] is not JsonArray constraints)
-                    parameter["constraints"] = constraints = new JsonArray();
-                foreach (var bound in projected)
-                    if (!constraints.Select(TypeJson.Read).Contains(bound)) constraints.Add(TypeJson.Write(bound));
+                var parameter = TypeParameterDeclaration.Read(expanded[ordinary.I]);
+                var constraints = parameter.Constraints ?? Array.Empty<TypeNode>();
+                expanded[ordinary.I] = (parameter with {
+                    Constraints = constraints.Concat(projected.Except(constraints)).ToArray(),
+                }).ToDom();
             }
-            expanded[variable.I] = new JsonObject {
-                ["name"] = expanded[variable.I].DeepClone(),
-                [publishedSlot ? "constraints" : FBoundStarProjectionErasure.ErasedInnerConstraintKey] =
-                    new JsonArray(projected.Select(TypeJson.Write).ToArray()),
-            };
+            var storageParameter = TypeParameterDeclaration.Read(expanded[variable.I]);
+            expanded[variable.I] = (publishedSlot
+                ? storageParameter with { Constraints = projected.ToArray() }
+                : storageParameter with { ErasedInnerConstraints = projected.ToArray() }).ToDom();
         }
         declaration["typeParams"] = expanded;
     }
@@ -395,16 +392,13 @@ static class NullableRepresentationMaterialization
             // Source bounds apply to the ordinary/root parameter. A companion's CLR representation does not
             // necessarily implement the source bound, so do not copy those constraints onto it.
             if (slot.Representation != NullableRepresentationFrame.Role.Ordinary)
-                return (JsonNode)JsonValue.Create("$" + slot.Representation.ToString().ToLowerInvariant() + slot.SourceIndex);
-            var parameter = source[slot.SourceIndex]?.DeepClone();
-            if (!frame.NullableIndices.Contains(slot.SourceIndex)) return parameter;
-            var declaration = parameter as JsonObject ?? new JsonObject { ["name"] = parameter };
-            var constraints = declaration["constraints"] as JsonArray;
-            if (constraints == null) declaration["constraints"] = constraints = new JsonArray();
+                return (JsonNode)new TypeParameterDeclaration("$" + slot.Representation.ToString().ToLowerInvariant() + slot.SourceIndex).ToDom();
+            var declaration = TypeParameterDeclaration.Read(source[slot.SourceIndex]);
+            if (!frame.NullableIndices.Contains(slot.SourceIndex)) return declaration.ToDom();
             // Nullable generic arguments use the same reference type or boxed object, not Nullable<V>.
             // The CLR frame must state this physical widening relation for calls with Kotlin T <: T?.
-            constraints.Add(TypeJson.Write(frame.NullableVariable(new TypeNode.Tv(scope, slot.SourceIndex))));
-            return declaration;
+            return (declaration with { Constraints = (declaration.Constraints ?? Array.Empty<TypeNode>())
+                .Append(frame.NullableVariable(new TypeNode.Tv(scope, slot.SourceIndex))).ToArray() }).ToDom();
         }).ToArray());
     }
 
@@ -541,9 +535,7 @@ static class NullableRepresentationMaterialization
                     capturedFrame = captureFrame;
                     // These are the synthetic declaration's bounds, not stronger bounds of an
                     // arbitrary caller that happens to instantiate the same generated type.
-                    // Suspend payloads keep bare capture names separately from their bound declarations.
-                    capturedStorageBounds = CaptureStorageBounds(kind == "newSuspendLambda"
-                        ? obj["typeParamDecls"] as JsonArray : captureParameters, captures, captureFrame, mapping);
+                    capturedStorageBounds = CaptureStorageBounds(captureParameters, captures, captureFrame, mapping);
                     if (kind is "newSam" or "newClosure")
                         PreserveCompanionSourceBounds(synthetic, captureFrame, owner: true);
                     closedArguments = new JsonArray(mapping.CloseMethod(captureFrame, captures).Select(TypeJson.Write).ToArray());
@@ -551,9 +543,7 @@ static class NullableRepresentationMaterialization
                     {
                         var variable = (TypeNode.Tv)captures[slot.SourceIndex];
                         var name = "$" + slot.Representation.ToString().ToLowerInvariant() + "Capture" + variable.Scope + variable.I;
-                        captureParameters.Add(name);
-                        if (kind == "newSuspendLambda" && obj["typeParamDecls"] is JsonArray declarations)
-                            declarations.Add(name);
+                        captureParameters.Add(new TypeParameterDeclaration(name).ToDom());
                     }
                     if (kind is "newSam" or "newClosure")
                     {
@@ -641,23 +631,16 @@ static class NullableRepresentationMaterialization
             {
                 // The payload still uses lexical variables until closure/suspend synthesis binds its
                 // explicit capture arguments. Add already-materialized bounds after the lexical rewrite.
-                var declarations = kind == "newSuspendLambda"
-                    ? obj["typeParamDecls"] as JsonArray : synthetic["typeParams"] as JsonArray;
+                var declarations = synthetic["typeParams"] as JsonArray;
                 if (declarations != null && capturedStorageBounds != null)
                     foreach (var (index, bounds) in capturedStorageBounds)
                     {
-                        declarations[index] = new JsonObject {
-                            ["name"] = declarations[index]?.DeepClone(),
-                            ["constraints"] = new JsonArray(bounds.Select(TypeJson.Write).ToArray()),
-                        };
+                        var companionDeclaration = TypeParameterDeclaration.Read(declarations[index]);
+                        declarations[index] = (companionDeclaration with { Constraints = bounds.ToArray() }).ToDom();
                         var ordinary = capturedFrame.SourcePosition(capturedFrame.PhysicalSlot(index).SourceIndex);
-                        var declaration = declarations[ordinary] as JsonObject;
-                        if (declaration == null)
-                            declarations[ordinary] = declaration = new JsonObject { ["name"] = declarations[ordinary]?.DeepClone() };
-                        if (declaration["constraints"] is not JsonArray constraints)
-                            declaration["constraints"] = constraints = new JsonArray();
-                        foreach (var bound in bounds)
-                            if (!constraints.Select(TypeJson.Read).Contains(bound)) constraints.Add(TypeJson.Write(bound));
+                        var declaration = TypeParameterDeclaration.Read(declarations[ordinary]);
+                        declarations[ordinary] = (declaration with { Constraints =
+                            (declaration.Constraints ?? Array.Empty<TypeNode>()).Concat(bounds).Distinct().ToArray() }).ToDom();
                     }
                 if (declarations != null)
                     foreach (var sourceIndex in capturedFrame.NullableIndices)
@@ -665,14 +648,9 @@ static class NullableRepresentationMaterialization
                         var ordinary = capturedFrame.Variable(new TypeNode.Tv("type", sourceIndex),
                             NullableRepresentationFrame.Role.Ordinary).I;
                         var companion = capturedFrame.NullableVariable(new TypeNode.Tv("type", sourceIndex)).I;
-                        var declaration = declarations[ordinary] as JsonObject;
-                        if (declaration == null)
-                            declarations[ordinary] = declaration = new JsonObject {
-                                ["name"] = declarations[ordinary]?.DeepClone(),
-                            };
-                        if (declaration["constraints"] is not JsonArray constraints)
-                            declaration["constraints"] = constraints = new JsonArray();
-                        constraints.Add(closedArguments[companion].DeepClone());
+                        var declaration = TypeParameterDeclaration.Read(declarations[ordinary]);
+                        declarations[ordinary] = (declaration with { Constraints =
+                            (declaration.Constraints ?? Array.Empty<TypeNode>()).Append(TypeJson.Read(closedArguments[companion])).ToArray() }).ToDom();
                     }
             }
             if (closureReturn != null) obj["synthClass"]["ret"] = TypeJson.Write(closureReturn);
@@ -766,15 +744,15 @@ static class NullableRepresentationMaterialization
         var inheritedStorage = JsonNode.Parse("""
           {"types":[
             {"kind":"class","name":"StorageBody","methods":[
-              {"name":"identity","typeParams":["T"],
+              {"name":"identity","typeParams":[{"name":"T"}],
                "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
                "ret":{"t":"tv","scope":"method","i":0}}]},
             {"kind":"class","name":"StorageUser","inheritedClassMethods":[
-              {"member":"identity","typeParams":["T"],
+              {"member":"identity","typeParams":[{"name":"T"}],
                "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
                "ret":{"t":"tv","scope":"method","i":0},
                "inheritedImplementation":{"owner":{"t":"fqn","name":"StorageBody"},
-                 "member":"identity","kind":"method","arity":1,"typeParams":["T"]}}]}]}
+                 "member":"identity","kind":"method","arity":1,"typeParams":[{"name":"T"}]}}]}]}
           """).AsObject();
         var erasedStorage = inheritedStorage.DeepClone().AsObject();
         var erasedPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { erasedStorage });
@@ -795,13 +773,13 @@ static class NullableRepresentationMaterialization
             throw new InvalidOperationException("Inherited implementation lost its Kotlin value-storage signature frame");
         var nativeOwnerRoot = JsonNode.Parse("""
         {"fileClass":"NativeOwnerSlots","types":[
-          {"kind":"class","name":"ValueStore","typeParams":["T"],"fields":[
+          {"kind":"class","name":"ValueStore","typeParams":[{"name":"T"}],"fields":[
             {"name":"value","vis":"private","type":{"t":"tv","scope":"type","i":0}}]},
-          {"kind":"class","name":"NativeAlias","typeParams":["T"],"methods":[
+          {"kind":"class","name":"NativeAlias","typeParams":[{"name":"T"}],"methods":[
             {"name":"store","params":[{"name":"value","type":{"t":"tv","scope":"type","i":0}}],
              "ret":{"t":"fqn","name":"ValueStore","args":[{"t":"tv","scope":"type","i":0}]},
              "body":[{"k":"var","name":"nativeValue","type":{"t":"tv","scope":"type","i":0}}]},
-            {"name":"ownMethod","typeParams":["U"],
+            {"name":"ownMethod","typeParams":[{"name":"U"}],
              "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
              "ret":{"t":"fqn","name":"ValueStore","args":[{"t":"tv","scope":"method","i":0}]},"body":[]}]}]}
         """)!.AsObject();
@@ -826,7 +804,7 @@ static class NullableRepresentationMaterialization
         if (physicalParameters.Count != 4
             || !JsonNode.DeepEquals(physicalParameters[0]?["constraints"]?[0], boundedSource[0]?["constraints"]?[0])
             || TypeJson.Read(physicalParameters[0]?["constraints"]?[1]) != new TypeNode.Tv("method", 1)
-            || physicalParameters.Skip(1).Any(parameter => parameter is not JsonValue))
+            || physicalParameters.Skip(1).Any(parameter => parameter["constraints"] != null))
             throw new InvalidOperationException("Representation companion inherited unsupported source constraints");
         var constraintFrame = new NullableRepresentationFrame(2, new[] { 0 },
             physicalOrder: new[] { 3, 1, 2, 0 }, storageIndices: new[] { 0 });
@@ -848,7 +826,7 @@ static class NullableRepresentationMaterialization
         var boundPolicy = new GenericRepresentationPolicy(new Dictionary<string, string> {
             ["NativeBound"] = "NativeBound",
         }, roots: new[] { JsonNode.Parse("""
-          {"types":[{"kind":"interface","name":"ValueBound","typeParams":["T"]}]}
+          {"types":[{"kind":"interface","name":"ValueBound","typeParams":[{"name":"T"}]}]}
           """) });
         var boundMethod = JsonNode.Parse("""
           {"typeParams":[{"name":"R","constraints":[
@@ -869,6 +847,8 @@ static class NullableRepresentationMaterialization
         AppendParameters(privateBoundMethod, boundFrame, policy: boundPolicy);
         AppendParameters(erasedBoundMethod, boundFrame, policy: boundPolicy);
         AppendParameters(boundOwner, boundFrame, "type", policy: boundPolicy);
+        foreach (var parameter in boundOwner["typeParams"].AsArray())
+            TypeParameterDeclaration.Read(parameter);
         var carrierBound = new TypeNode.Fqn("ValueBound", new TypeNode[] { new TypeNode.Star() });
         if (TypeJson.Read(boundMethod["typeParams"][0]["constraints"][0]) != carrierBound
             || boundMethod["typeParams"][0]["constraints"].AsArray().Count != 2
@@ -914,10 +894,10 @@ static class NullableRepresentationMaterialization
             || ownerBoundHelper["typeParams"][1]["constraints"] != null
             || TypeJson.Read(ownerBoundHelper["typeParams"][1][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0]) != scalarBound)
             throw new InvalidOperationException("Transitive owner bound lost its declaration frame or constrained an object-only helper");
-        var ownerParameters = ExpandParameters(new JsonArray("T"), reordered, "type");
+        var ownerParameters = ExpandParameters(new JsonArray(new TypeParameterDeclaration("T").ToDom()), reordered, "type");
         if (TypeJson.Read(ownerParameters[1]?["constraints"]?[0]) != new TypeNode.Tv("type", 0))
             throw new InvalidOperationException("Nullable companion constraint lost its physical owner frame");
-        var unboundedMethod = JsonNode.Parse("""{"typeParams":["T"]}""").AsObject();
+        var unboundedMethod = JsonNode.Parse("""{"typeParams":[{"name":"T"}]}""").AsObject();
         PreserveCompanionSourceBounds(unboundedMethod, roleFrame, owner: false);
         AppendParameters(unboundedMethod, roleFrame);
         var unboundedSource = JsonNode.Parse(Text(unboundedMethod[NullableGenericErasure.MethodTypeParameterBoundsPre]));
@@ -948,12 +928,12 @@ static class NullableRepresentationMaterialization
             new TypeNode[] { new TypeNode.Tv("method", 0) }, roleFrame, declaredCaptureMapping);
         if (declaredCaptureBounds.Count != 1 || !declaredCaptureBounds[2].SequenceEqual(new[] { scalarBound }))
             throw new InvalidOperationException("Captured storage companion lost its own declaration's classifier bound");
-        if (CaptureStorageBounds(new JsonArray("T"), new TypeNode[] { new TypeNode.Tv("method", 0) },
+        if (CaptureStorageBounds(new JsonArray(new TypeParameterDeclaration("T").ToDom()), new TypeNode[] { new TypeNode.Tv("method", 0) },
             roleFrame, declaredCaptureMapping).Count != 0)
             throw new InvalidOperationException("Unbounded capture acquired constraints from its caller");
         var dispatchFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), new[] { 1, 0 }, storageIndices: new[] { 0 });
         var specializedSam = new JsonObject {
-            ["name"] = "SpecializedSam", ["typeParams"] = new JsonArray("P", "T"),
+            ["name"] = "SpecializedSam", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "P" }, new JsonObject { ["name"] = "T" }),
         };
         KotlinSupertypesRecord.Merge(specializedSam, new JsonObject {
             [NullableRepresentationFrame.MetadataKey] = dispatchFrame.ToJson(),
@@ -972,7 +952,7 @@ static class NullableRepresentationMaterialization
                 new TypeNode[] { new TypeNode.Fqn("kotlin.String") }))
             throw new InvalidOperationException("Closed synthetic specialization retained a frame or substituted a storage role into source facts");
         var dispatchSource = JsonNode.Parse("""
-        {"name":"run","declarationId":"storage-dispatch","typeParams":["T"],"params":[],
+        {"name":"run","declarationId":"storage-dispatch","typeParams":[{"name":"T"}],"params":[],
          "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[],"virtual":true}
         """)!.AsObject();
         var dispatchEntry = (JsonObject)dispatchSource.DeepClone();
@@ -997,12 +977,12 @@ static class NullableRepresentationMaterialization
         };
         var inheritedDescriptor = JsonNode.Parse("""
         {"fileClass":"InheritedDescriptor","types":[
-          {"kind":"class","name":"DescriptorBox","typeParams":["T"]},
-          {"kind":"class","name":"DescriptorBase","typeParams":["T"],"methods":[
+          {"kind":"class","name":"DescriptorBox","typeParams":[{"name":"T"}]},
+          {"kind":"class","name":"DescriptorBase","typeParams":[{"name":"T"}],"methods":[
             {"name":"accept","declarationId":"descriptor-base-accept","params":[{"name":"value","type":
               {"t":"fqn","name":"DescriptorBox","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}}],
              "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[]}]},
-          {"kind":"class","name":"DescriptorDerived","typeParams":["U","V"],
+          {"kind":"class","name":"DescriptorDerived","typeParams":[{"name":"U"},{"name":"V"}],
            "base":{"t":"fqn","name":"DescriptorBase","args":[{"t":"tv","scope":"type","i":1}]},
            "methods":[{"name":"forward","params":[{"name":"value","type":
              {"t":"fqn","name":"DescriptorBox","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]}}],
@@ -1010,7 +990,7 @@ static class NullableRepresentationMaterialization
               {"k":"callInstance","method":"accept","declarationId":"descriptor-base-accept",
                "ownerType":{"t":"fqn","name":"DescriptorDerived","args":[
                  {"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]},
-               "memberOwnerTypeParams":["U","V"],"memberSignature":[
+               "memberOwnerTypeParams":[{"name":"U"},{"name":"V"}],"memberSignature":[
                  {"t":"fqn","name":"DescriptorBox","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]}],
                "recv":{"k":"this"},"args":[{"k":"local","name":"value"}],"ret":{"t":"fqn","name":"kotlin.Unit"}}]}]}]}
         """)!.AsObject();
@@ -1048,8 +1028,8 @@ static class NullableRepresentationMaterialization
         {"fileClass":"CarrierProbe","methods":[{"name":"use","params":[{"name":"value","type":
           {"t":"fqn","name":"CarrierStore","args":[{"t":"fqn","name":"kotlin.Int"}]}}],
           "ret":{"t":"fqn","name":"CarrierStore","args":[{"t":"fqn","name":"kotlin.Int"}]},"body":[]}],
-         "types":[{"kind":"class","name":"CarrierBox","typeParams":["T"]},
-          {"kind":"class","name":"CarrierStore","typeParams":["T"],"fields":[{"name":"value","type":
+         "types":[{"kind":"class","name":"CarrierBox","typeParams":[{"name":"T"}]},
+          {"kind":"class","name":"CarrierStore","typeParams":[{"name":"T"}],"fields":[{"name":"value","type":
            {"t":"fqn","name":"CarrierBox","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}}]}]}
         """);
         var sourceCarrierType = carrierRoot["methods"][0]["ret"].ToJsonString();
@@ -1059,8 +1039,8 @@ static class NullableRepresentationMaterialization
             || Text(carrierRoot["methods"][0]["params"][0]["nullableGeneric"]) != sourceCarrierType)
             throw new InvalidOperationException("A physical companion argument replaced a Kotlin source slot carrier");
         var boundRoot = JsonNode.Parse("""
-        {"fileClass":"BoundProbe","types":[{"kind":"class","name":"Bound","typeParams":["A","B"]}],
-         "methods":[{"name":"keep","declarationId":"bound-probe","typeParams":["T",
+        {"fileClass":"BoundProbe","types":[{"kind":"class","name":"Bound","typeParams":[{"name":"A"},{"name":"B"}]}],
+         "methods":[{"name":"keep","declarationId":"bound-probe","typeParams":[{"name":"T"},
           {"name":"U","constraints":[{"t":"fqn","name":"Bound","args":[
            {"t":"nullable","of":{"t":"tv","scope":"method","i":0}},
            {"t":"nullable","of":{"t":"fqn","name":"kotlin.Int"}}]}]}],
@@ -1076,7 +1056,7 @@ static class NullableRepresentationMaterialization
         if (!JsonNode.DeepEquals(recordedBounds["bounds"]["1"], sourceBounds))
             throw new InvalidOperationException("A physical companion index replaced a Kotlin method-bound carrier");
         var classBoundRoot = JsonNode.Parse("""
-        {"types":[{"kind":"class","name":"Cell","typeParams":["T"]},
+        {"types":[{"kind":"class","name":"Cell","typeParams":[{"name":"T"}]},
          {"kind":"class","name":"Node","typeParams":[{"name":"N","constraints":[
           {"t":"fqn","name":"Node","args":[{"t":"tv","scope":"type","i":0}]}]}],
           "fields":[{"name":"previous","type":{"t":"fqn","name":"Cell","args":[
@@ -1093,12 +1073,12 @@ static class NullableRepresentationMaterialization
         var descriptorOwners = JsonNode.Parse("""
         {"fileClass":"DescriptorOwners","properties":[
           {"name":"extensionValue","propertyAssociation":"p","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]}}],
-         "methods":[{"name":"extensionValue","propertyAssociation":"p","propertyAccessor":"get","typeParams":["T"],
+         "methods":[{"name":"extensionValue","propertyAssociation":"p","propertyAccessor":"get","typeParams":[{"name":"T"}],
            "params":[],"ret":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]},"body":[]},
           {"name":"awaitUse","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"body":[
             {"k":"callInstance","method":"await","ownerType":{"t":"fqn","name":"ForeignTask","args":[{"t":"fqn","name":"kotlin.Int"}]},
              "clrAwaitBridge":true,"awaitResult":{"t":"tv","scope":"type","i":0},"args":[]}]}],
-         "types":[{"kind":"class","name":"Base","typeParams":["T"],"fields":[
+         "types":[{"kind":"class","name":"Base","typeParams":[{"name":"T"}],"fields":[
            {"name":"value","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}}]},
           {"kind":"class","name":"Child","base":{"t":"fqn","name":"Base","args":[{"t":"fqn","name":"kotlin.String"}]},
            "ctors":[{"params":[],"baseArgs":[],"delegationSig":[{"t":"tv","scope":"type","i":0}],"body":[]}]}]}
@@ -1121,18 +1101,18 @@ static class NullableRepresentationMaterialization
             throw new InvalidOperationException("Inline dispatch application lost its owner's nullable companion");
         var root = JsonNode.Parse("""
         {"fileClass":"FrameTest","methods":[
-          {"name":"pass","declarationId":"pass","typeParams":["T"],
+          {"name":"pass","declarationId":"pass","typeParams":[{"name":"T"}],
            "params":[{"name":"x","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]}}],
            "ret":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]},
            "body":[{"k":"return","value":{"k":"local","name":"x"}}]},
           {"name":"caller","declarationId":"caller","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},
            "body":[{"k":"callStatic","declarationId":"pass","typeArgs":[{"t":"fqn","name":"kotlin.String"}]}]}],
-         "types":[{"kind":"class","name":"Box","typeParams":["T"],"fields":[{"name":"value","vis":"private","type":{"t":"tv","scope":"type","i":0}}]},
-          {"kind":"class","name":"Store","typeParams":["T"],"fields":[{"name":"box","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}}]},
+         "types":[{"kind":"class","name":"Box","typeParams":[{"name":"T"}],"fields":[{"name":"value","vis":"private","type":{"t":"tv","scope":"type","i":0}}]},
+          {"kind":"class","name":"Store","typeParams":[{"name":"T"}],"fields":[{"name":"box","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}}]},
           {"kind":"class","name":"Derived","base":{"t":"fqn","name":"Store","args":[{"t":"fqn","name":"kotlin.String"}]}}]}
         """);
         var constructorOwner = JsonNode.Parse("""
-        {"kind":"class","name":"ConstructorOwner","typeParams":["T"],"ctors":[
+        {"kind":"class","name":"ConstructorOwner","typeParams":[{"name":"T"}],"ctors":[
           {"params":[{"name":"value","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}}],"body":[]}]}
         """);
         ((JsonArray)root["types"]).Add(constructorOwner);
@@ -1143,7 +1123,7 @@ static class NullableRepresentationMaterialization
         """);
         ((JsonArray)root["methods"][1]["body"]).Add(construction);
         var genericCall = (JsonObject)root["methods"][1]["body"][0];
-        genericCall["memberMethodTypeParams"] = new JsonArray("T");
+        genericCall["memberMethodTypeParams"] = new JsonArray(new JsonObject { ["name"] = "T" });
         genericCall["ownerType"] = TypeJson.Fqn("FrameTest");
         genericCall["memberSignature"] = new JsonArray(root["methods"][0]["params"][0]["type"].DeepClone());
         genericCall["memberReturnType"] = root["methods"][0]["ret"].DeepClone();
@@ -1151,7 +1131,7 @@ static class NullableRepresentationMaterialization
         genericCall["ret"] = genericCall["memberReturnType"].DeepClone();
         var nested = JsonNode.Parse("""
         {"kind":"class","name":"NestedStore","semanticOwner":"Store","outerTypeParamOffset":1,
-         "outerTypeParamCount":1,"typeParams":["Own","T"],"fields":[
+         "outerTypeParamCount":1,"typeParams":[{"name":"Own"},{"name":"T"}],"fields":[
          {"name":"own","vis":"private","type":{"t":"tv","scope":"type","i":0}},
          {"name":"captured","type":{"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":1}}]}}]}
         """);
@@ -1166,7 +1146,7 @@ static class NullableRepresentationMaterialization
             ["ret"] = defaultMember["ret"].DeepClone(),
             ["implementation"] = new JsonObject {
                 ["owner"] = TypeJson.Fqn("DefaultSource"), ["member"] = "pass", ["kind"] = "method",
-                ["arity"] = 1, ["typeParams"] = new JsonArray("T"),
+                ["arity"] = 1, ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             },
         };
         ((JsonArray)root["types"]).Add(new JsonObject {
@@ -1174,7 +1154,7 @@ static class NullableRepresentationMaterialization
             [KotlinPropertyAccessors.InheritedDefaultMethodsKey] = new JsonArray(inherited),
         });
         var refCell = new JsonObject {
-            ["name"] = "Cell", ["typeParams"] = new JsonArray("S"),
+            ["name"] = "Cell", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "S" }),
             ["elem"] = TypeJson.Write(new TypeNode.Fqn("Box", new TypeNode[] {
                 new TypeNode.Nullable(new TypeNode.Tv("type", 0)) })),
         };
@@ -1182,7 +1162,7 @@ static class NullableRepresentationMaterialization
         var rawSam = new JsonObject {
             ["k"] = "newSam", ["typeArgs"] = new JsonArray(TypeJson.Write(new TypeNode.Tv("method", 0))),
             ["synthClass"] = new JsonObject {
-                ["name"] = "CapturedSam", ["typeParams"] = new JsonArray("T"),
+                ["name"] = "CapturedSam", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
                 ["interfaces"] = new JsonArray(TypeJson.Write(new TypeNode.Fqn("Comparator", new TypeNode[] {
                     new TypeNode.Nullable(new TypeNode.Tv("method", 0)) }))),
             },
@@ -1208,13 +1188,13 @@ static class NullableRepresentationMaterialization
             if (!stampFirst) closedCall["sty"] = callerResult.DeepClone();
             ((JsonArray)root["methods"]).Add(new JsonObject {
                 ["name"] = "closedCaller" + stampFirst, ["static"] = true,
-                ["typeParams"] = new JsonArray("A", "B"), ["params"] = new JsonArray(),
+                ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "A" }, new JsonObject { ["name"] = "B" }), ["params"] = new JsonArray(),
                 ["ret"] = callerResult.DeepClone(), ["body"] = new JsonArray(closedCall),
             });
             closedCalls.Add(closedCall);
         }
         var boundedCell = JsonNode.Parse("""
-        {"name":"BoundedCell","typeParams":["T",{"name":"U","constraints":[
+        {"name":"BoundedCell","typeParams":[{"name":"T"},{"name":"U","constraints":[
           {"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}]}]}],
          "elem":{"t":"tv","scope":"type","i":1}}
         """);
@@ -1228,7 +1208,7 @@ static class NullableRepresentationMaterialization
                 new TypeNode.Tv("method", 1), new TypeNode.Tv("method", 0) }));
             if (!descriptorFirst) capture["sharedCellTypeParams"] = boundedCell["typeParams"].DeepClone();
             ((JsonArray)root["methods"]).Add(new JsonObject {
-                ["name"] = "captureCell" + descriptorFirst, ["typeParams"] = new JsonArray("A", "B"),
+                ["name"] = "captureCell" + descriptorFirst, ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "A" }, new JsonObject { ["name"] = "B" }),
                 ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("kotlin.Unit"),
                 ["body"] = new JsonArray(new JsonObject {
                     ["k"] = "inlineLambda", ["params"] = new JsonArray(),
@@ -1296,7 +1276,7 @@ static class NullableRepresentationMaterialization
             || Text(method["nullableGenericRet"]) == null)
             throw new InvalidOperationException("Nullable frame materialization self-test failed");
         var bodyOnly = JsonNode.Parse("""
-        {"kind":"class","name":"FixedEntry","methods":[{"name":"entry","static":false,"virtual":true,"typeParams":["T"],
+        {"kind":"class","name":"FixedEntry","methods":[{"name":"entry","static":false,"virtual":true,"typeParams":[{"name":"T"}],
          "params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},
          "body":[{"k":"newArraySized","elem":{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}}]}]}
         """);

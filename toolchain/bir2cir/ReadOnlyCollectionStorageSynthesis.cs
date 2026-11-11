@@ -135,7 +135,7 @@ static class ReadOnlyCollectionStorageSynthesis
         };
         return new JsonObject {
             ["name"] = CarrierName, ["kind"] = "interface", ["vis"] = "internal", ["generated"] = true,
-            ["typeParams"] = new JsonArray("T"),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             ["base"] = null, ["fields"] = new JsonArray(), ["ctors"] = new JsonArray(),
             ["interfaces"] = new JsonArray(TypeJson.Write(Face(CollectionViewFaces.ICollection, Element)),
                 TypeJson.Write(Face(CollectionViewFaces.IReadOnlyCollection, Element))),
@@ -188,7 +188,7 @@ static class ReadOnlyCollectionStorageSynthesis
         };
         return new JsonObject {
             ["name"] = ListCarrierName, ["kind"] = "interface", ["vis"] = "internal", ["generated"] = true,
-            ["typeParams"] = new JsonArray("T"),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             ["base"] = null, ["fields"] = new JsonArray(), ["ctors"] = new JsonArray(),
             ["interfaces"] = new JsonArray(TypeJson.Write(Face(CarrierName, Element)),
                 TypeJson.Write(Face(face, Element)), TypeJson.Write(Face(readOnly, Element))),

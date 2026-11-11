@@ -2232,7 +2232,7 @@ static class KotlinOverrideSlotBridge
             throw new InvalidOperationException("Override representation seam lost declaration-owned source identity");
         var permutedMethod = new JsonObject {
             ["typeParams"] = new JsonArray(Enumerable.Range(0, frame.PhysicalArity)
-                .Select(index => (JsonNode)JsonValue.Create("P" + index)).ToArray()),
+                .Select(index => (JsonNode)new TypeParameterDeclaration("P" + index).ToDom()).ToArray()),
             [NullableRepresentationTypes.MethodFrameKey] = frame.ToJson().ToJsonString(),
             [NullableGenericErasure.MethodTypeParameterBoundsPre] =
                 "{\"bounds\":{\"0\":[{\"t\":\"fqn\",\"name\":\"FirstBound\"}],\"1\":[{\"t\":\"fqn\",\"name\":\"SecondBound\"}]}}",
@@ -2269,7 +2269,7 @@ static class KotlinOverrideSlotBridge
                 type => type.Name == "System.Int32", false))
             throw new InvalidOperationException("Nullable bridge confused reference annotations with CLR nullable values");
         var slotMethod = JsonNode.Parse("""
-          {"typeParams":[{"name":"R","constraints":[{"t":"tv","scope":"type","i":0}]},"P"]}
+          {"typeParams":[{"name":"R","constraints":[{"t":"tv","scope":"type","i":0}]},{"name":"P"}]}
           """).AsObject();
         var implementation = JsonNode.Parse("""
           {"typeParams":[{"name":"R","constraints":[{"t":"fqn","name":"Animal"}]},
@@ -2286,7 +2286,7 @@ static class KotlinOverrideSlotBridge
             || implementation["typeParams"][1]["constraints"].AsArray().Count != 1)
             throw new InvalidOperationException("Override source selection consumed or mutated a physical companion constraint");
         OwnerConstrainedMethodLowering.RecordOverride(implementation, slotMethod["typeParams"].AsArray(),
-            ownerArguments, new JsonArray("T"));
+            ownerArguments, new JsonArray(new TypeParameterDeclaration("T").ToDom()));
         var overrideBounds = JsonNode.Parse(implementation[OwnerConstrainedMethodLowering.OverrideBoundsKey].GetValue<string>()).AsArray();
         if (overrideBounds.Count != 2
             || !overrideBounds.OfType<JsonObject>().Select(row => row["index"].GetValue<int>()).SequenceEqual(new[] { 0, 1 }))
@@ -2526,9 +2526,7 @@ static class KotlinOverrideSlotBridge
         {
             var sourceIndex = int.Parse(pair.Key);
             var index = frame?.SourcePosition(sourceIndex) ?? sourceIndex;
-            var parameter = parameters[index] as JsonObject
-                ?? new JsonObject { ["name"] = parameters[index].GetValue<string>() };
-            if (parameters[index] is not JsonObject) parameters[index] = parameter;
+            var parameter = (JsonObject)parameters[index];
             parameter["constraints"] = pair.Value.DeepClone();
         }
         return parameters;

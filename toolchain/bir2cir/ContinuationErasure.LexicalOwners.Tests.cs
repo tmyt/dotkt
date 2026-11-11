@@ -17,7 +17,7 @@ static partial class ContinuationErasure
             var erased = new TypeNode.Fqn(selected, AnyArg);
             JsonNode Type(TypeNode type) => TypeJson.Write(type);
             var root = JsonNode.Parse("""
-              {"fileClass":"LexicalAbiProbe","types":[{"kind":"class","name":"REPLACED","typeParams":["T"],
+              {"fileClass":"LexicalAbiProbe","types":[{"kind":"class","name":"REPLACED","typeParams":[{"name":"T"}],
                 "fields":[],"ctors":[{"params":[],"body":[]}],
                 "methods":[{"name":"use","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},"body":[]}]}]}
               """)!;
@@ -39,7 +39,7 @@ static partial class ContinuationErasure
                 ["body"] = new JsonArray(new JsonObject { ["k"] = "callInstance", ["ownerType"] = Type(exact),
                     ["recv"] = new JsonObject { ["k"] = "this" }, [FBoundStarProjectionErasure.ExactBridgeOwnerCallKey] = true }) };
             declaration["methods"].AsArray().Add(forwarding);
-            var child = new JsonObject { ["kind"] = "class", ["name"] = "Child", ["typeParams"] = new JsonArray("T"),
+            var child = new JsonObject { ["kind"] = "class", ["name"] = "Child", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
                 ["interfaces"] = new JsonArray(Type(exact)), ["methods"] = new JsonArray(new JsonObject {
                     ["name"] = "inherited", ["params"] = new JsonArray(), ["clrInterfaceImpls"] = new JsonArray(
                         new JsonObject { ["owner"] = Type(exact), ["params"] = new JsonArray(Type(exact)), ["ret"] = Type(exact) }),
@@ -82,7 +82,7 @@ static partial class ContinuationErasure
         var nested = new TypeNode.Fqn("probe.Frame", new TypeNode[] { captured });
         var outerKey = FBoundStarProjectionErasure.ExactOuterKey;
         var root = new JsonObject { ["types"] = new JsonArray(new JsonObject {
-            ["kind"] = "class", ["name"] = "Capture", ["typeParams"] = new JsonArray("Outer", "Actual"),
+            ["kind"] = "class", ["name"] = "Capture", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "Outer" }, new JsonObject { ["name"] = "Actual" }),
             ["fields"] = new JsonArray(new JsonObject { ["name"] = "receiver", ["type"] = TypeJson.Write(nested), [outerKey] = true }),
             ["ctors"] = new JsonArray(new JsonObject { ["params"] = new JsonArray(new JsonObject {
                 ["name"] = "receiver", ["type"] = TypeJson.Write(nested), [outerKey] = true }) }),

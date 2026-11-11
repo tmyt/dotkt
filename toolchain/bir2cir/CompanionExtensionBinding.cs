@@ -498,16 +498,13 @@ static class CompanionExtensionBinding
     static JsonArray WrapperBlockTypeParameters(JsonArray receiverTypeParams, JsonArray ownTypeParams)
     {
         var usedNames = new HashSet<string>(
-            (ownTypeParams ?? new JsonArray()).Select(parameter => parameter is JsonObject obj
-                ? Str(obj["name"]) : Str(parameter)).Where(name => name is not null),
+            (ownTypeParams ?? new JsonArray()).Select(parameter => parameter["name"].GetValue<string>()),
             StringComparer.Ordinal);
         var result = new JsonArray();
         for (var index = 0; index < receiverTypeParams.Count; index++)
         {
             var source = receiverTypeParams[index];
-            var descriptor = source is JsonObject obj
-                ? (JsonObject)obj.DeepClone()
-                : new JsonObject { ["name"] = Str(source) ?? "T" + index };
+            var descriptor = TypeParameterDeclaration.Read(source).ToDom();
             var name = "dotkt$receiver$" + index;
             while (!usedNames.Add(name)) name += "$";
             descriptor["name"] = name;
@@ -530,9 +527,7 @@ static class CompanionExtensionBinding
         for (var index = 0; index < receiverTypeParams.Count; index++)
         {
             var source = receiverTypeParams[index];
-            var descriptor = source is JsonObject obj
-                ? (JsonObject)obj.DeepClone()
-                : new JsonObject { ["name"] = Str(source) ?? "T" + index };
+            var descriptor = TypeParameterDeclaration.Read(source).ToDom();
             descriptor["name"] = "dotkt$receiver$" + index;
             descriptor.Remove("variance");
             result.Add(descriptor);
@@ -565,9 +560,7 @@ static class CompanionExtensionBinding
         if (ownTypeParams != null)
             foreach (var parameter in ownTypeParams)
             {
-                var shifted = parameter is JsonObject obj
-                    ? (JsonObject)obj.DeepClone()
-                    : new JsonObject { ["name"] = Str(parameter) };
+                var shifted = (JsonObject)parameter.DeepClone();
                 if (shifted["constraints"] is JsonArray constraints)
                     shifted["constraints"] = new JsonArray(constraints.Select(constraint =>
                         constraint == null ? null : TypeJson.Write(

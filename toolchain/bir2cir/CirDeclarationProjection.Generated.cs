@@ -128,9 +128,6 @@ static partial class CirDeclarationProjection
 
     public static CirTypeParameter ReadCirTypeParameter(JsonNode node)
     {
-        // Current source/intermediate name-only declarations become one physical record.
-        // The CIR reader itself accepts only that record, never a name shorthand.
-        if (node is JsonValue text) return new CirTypeParameter { Name = text.GetValue<string>() };
         CheckFields(node, ["name", "variance", "constraints", "specialConstraints"]);
         return new CirTypeParameter
         {

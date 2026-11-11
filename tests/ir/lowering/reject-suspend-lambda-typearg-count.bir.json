@@ -8,7 +8,7 @@
     {
       "name": "make",
       "static": true,
-      "typeParams": ["T"],
+      "typeParams": [{"name":"T"}],
       "params": [],
       "ret": { "t": "fn", "suspend": true, "ret": { "t": "fqn", "name": "kotlin.Unit" }, "params": [] },
       "body": [
@@ -20,7 +20,7 @@
             "captures": [],
             "params": [],
             "suspendRet": { "t": "fqn", "name": "kotlin.Unit" },
-            "typeParams": ["T"],
+            "typeParams": [{"name":"T"}],
             "typeArgs": [],
             "funcType": { "t": "fn", "suspend": true, "ret": { "t": "fqn", "name": "kotlin.Unit" }, "params": [] },
             "body": []

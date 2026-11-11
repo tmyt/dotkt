@@ -15,7 +15,7 @@
     }]
   }],
   "types": [{
-    "name": "OpenGenericStaticOwner", "kind": "class", "typeParams": ["T"],
+    "name": "OpenGenericStaticOwner", "kind": "class", "typeParams": [{"name":"T"}],
     "base": null, "interfaces": [], "ctors": [], "methods": [], "properties": [], "attrs": [],
     "fields": [{
       "name": "perClosedType", "type": { "t": "fqn", "name": "kotlin.Int" },

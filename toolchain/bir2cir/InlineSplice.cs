@@ -203,7 +203,7 @@ static class InlineSplice
                     WalkInFrame(synthetic, depth, here, synthetic["typeParams"] as JsonArray, null);
                 else if (Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense"
                     && (SuspendLambdaOwnFrame.Contains(kv.Key) || kv.Key == "captures"))
-                    WalkInFrame(kv.Value, depth, here, null, o["typeParamDecls"] as JsonArray);
+                    WalkInFrame(kv.Value, depth, here, null, o["typeParams"] as JsonArray);
                 else if (o["methods"] is JsonArray && (o["kind"] != null || o["fileClass"] != null))
                     WalkInFrame(kv.Value, depth, here, o["typeParams"] as JsonArray, null);
                 else Walk(kv.Value, depth, here);
@@ -1423,7 +1423,7 @@ static class InlineSplice
             typeArgs.Add(new JsonObject { ["t"] = "tv", ["scope"] = key.scope, ["i"] = key.i });
             typeParams.Add(captureConstraints.TryGetValue(key, out var bounds)
                 ? new JsonObject { ["name"] = "T" + ni, ["constraints"] = bounds.DeepClone() }
-                : JsonValue.Create("T" + ni));
+                : new TypeParameterDeclaration("T" + ni).ToDom());
         }
         if (remap.Count > 0)
         {
@@ -1698,17 +1698,15 @@ static class InlineSplice
         var captureConstraints = CapturedConstraints(carrier, keys);
         var remap = new Dictionary<(string, int), int>();
         var ctorTypeArgs = new JsonArray();
-        var typeParams = new JsonArray();
         var typeParamDecls = new JsonArray();
         foreach (var key in keys)
         {
             int ni = remap.Count;
             remap[key] = ni;
             ctorTypeArgs.Add(new JsonObject { ["t"] = "tv", ["scope"] = key.scope, ["i"] = key.i });
-            typeParams.Add("Tsm" + ni);
             typeParamDecls.Add(captureConstraints.TryGetValue(key, out var bounds)
                 ? new JsonObject { ["name"] = "Tsm" + ni, ["constraints"] = bounds.DeepClone() }
-                : JsonValue.Create("Tsm" + ni));
+                : new TypeParameterDeclaration("Tsm" + ni).ToDom());
         }
         // A NESTED kotc-emitted `newSuspendLambda` inside this carrier body keeps its OWN `typeParams` and resolves its
         // body tvs POSITIONALLY against them — so CollectTvKeys/RenumberTvs SHIELD its own frame (body/params/suspendRet/
@@ -1740,8 +1738,7 @@ static class InlineSplice
             ["captures"] = captures,
             ["params"] = invParams,
             ["suspendRet"] = invSuspendRet,
-            ["typeParams"] = typeParams,
-            ["typeParamDecls"] = typeParamDecls,
+            ["typeParams"] = typeParamDecls,
             ["body"] = invBody,
             ["funcType"] = ft.DeepClone(),
         };

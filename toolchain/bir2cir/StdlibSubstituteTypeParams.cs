@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // #66 — kotc emits ONE substitute-INDEPENDENT BIR: the stdlib REFERENCE and RUNTIME builds get BIT-IDENTICAL type
 // params (the pure-Kotlin shape, keeping a `kotlin.Comparable` upper bound and `in` declaration-site variance). The
@@ -17,8 +18,6 @@ using System.Text.Json.Nodes;
 //
 // Class and method bounds remain intact: BirTypeLowering projects them to their exact CLR declarations, including
 // IComparable<T>. Removing such a bound after constrained-call selection invalidates that call's verifier proof.
-// After the drops, a name-only type param collapses to the BIR schema's bare-string
-// shorthand; the object and shorthand forms have the same constraint-free CLR meaning.
 static class StdlibSubstituteTypeParams
 {
     public static void Apply(JsonNode node)
@@ -36,26 +35,16 @@ static class StdlibSubstituteTypeParams
     {
         for (int i = 0; i < tps.Count; i++)
         {
-            if (tps[i] is not JsonObject tp) continue;   // already a bare-string param — nothing to drop
-
-            // Interface constraints follow the existing DIM declaration policy. Class/method bounds are not
-            // substitution-incompatible merely because they still use Kotlin names before type lowering.
-            if (runtimeInterface && tp["constraints"] is JsonArray cs)
-            {
-                cs.Clear();
-                if (cs.Count == 0) tp.Remove("constraints");
-            }
-
-            // (2) drop `in` declaration-site variance (keep `out`).
-            if (Str(tp["variance"]) == "in") tp.Remove("variance");
-
-            // Normalize a now name-only declaration to the BIR schema's bare-string shorthand.
-            bool hasConstraints = tp["constraints"] is JsonArray rem && rem.Count > 0;
-            bool hasVariance = tp["variance"] != null;
-            if (!hasConstraints && !hasVariance && Str(tp["name"]) is string name)
-                tps[i] = JsonValue.Create(name);
+            var declaration = TypeParameterDeclaration.Read(tps[i]);
+            tps[i] = Rewrite(declaration, runtimeInterface).ToDom();
         }
     }
+
+    internal static TypeParameterDeclaration Rewrite(TypeParameterDeclaration declaration, bool runtimeInterface) =>
+        declaration with {
+            Constraints = runtimeInterface ? null : declaration.Constraints,
+            Variance = declaration.Variance == "in" ? null : declaration.Variance,
+        };
 
     internal static void SelfTest()
     {
@@ -69,6 +58,20 @@ static class StdlibSubstituteTypeParams
         Apply(root);
         if (!JsonNode.DeepEquals(root, expected))
             throw new System.InvalidOperationException("Runtime substitution removed a class or method bound required by constrained dispatch");
+        var parameter = new TypeParameterDeclaration("T", Reified: true, Variance: "in",
+            Constraints: [new TypeNode.Fqn("kotlin.Any")],
+            ErasedInnerConstraints: [new TypeNode.Tv("type", 0)], SpecialConstraints: ["class"]);
+        var physical = Rewrite(parameter, runtimeInterface: true);
+        if (physical.Constraints != null || physical.Variance != null || physical.Reified != true
+            || physical.ErasedInnerConstraints != parameter.ErasedInnerConstraints
+            || physical.SpecialConstraints != parameter.SpecialConstraints)
+            throw new System.InvalidOperationException("Runtime interface projection changed unrelated generic declaration facts");
+        var decoded = TypeParameterDeclaration.Read(parameter.ToDom());
+        if (decoded.Name != parameter.Name || decoded.Reified != true || decoded.Variance != "in"
+            || decoded.Constraints?.Single() != parameter.Constraints.Single()
+            || decoded.ErasedInnerConstraints?.Single() != parameter.ErasedInnerConstraints.Single()
+            || decoded.SpecialConstraints?.Single() != "class")
+            throw new System.InvalidOperationException("Generic declaration boundary changed current declaration facts");
         System.Console.WriteLine("[runtime generic bounds] self-test OK (class and method CLR constraint proof retained)");
     }
 

@@ -113,7 +113,7 @@ static partial class OwnerConstrainedMethodLowering
             if (!HasConstructedDependency(new TypeNode.Array(new TypeNode.Tv("method", other)), "method", 2, frame))
                 throw new InvalidOperationException("Different source parameter lost its constructed dependency");
         var parameter = new JsonObject { ["name"] = "T", ["constraints"] = new JsonArray(TypeJson.Write(bound)) };
-        var parameters = new JsonArray(parameter, JsonValue.Create("$storage0"));
+        var parameters = new JsonArray(parameter, new TypeParameterDeclaration("$storage0").ToDom());
         RewriteConstraints(new JsonObject(), new JsonObject(), parameters, _ => false, type => type);
         if (parameter["constraints"].AsArray().Count != 1
             || TypeJson.Read(parameter["constraints"][0]) != bound)
@@ -131,10 +131,10 @@ static partial class OwnerConstrainedMethodLowering
           [{"name":"B","constraints":[{"t":"fqn","name":"Value"}]}]
           """).AsArray();
         var selectedParameters = JsonNode.Parse("""
-          [{"name":"X","constraints":[{"t":"tv","scope":"type","i":0}]},"Y"]
+          [{"name":"X","constraints":[{"t":"tv","scope":"type","i":0}]},{"name":"Y"}]
           """).AsArray();
         RecordOverride(inheritedMethod, selectedParameters, new TypeNode[] { new TypeNode.Tv("type", 0) },
-            new JsonArray("T"), inheritedOwnerParameters, type => type, sourceParameters: true);
+            new JsonArray(new TypeParameterDeclaration("T").ToDom()), inheritedOwnerParameters, type => type, sourceParameters: true);
         var previousReferences = References;
         try
         {
@@ -150,7 +150,7 @@ static partial class OwnerConstrainedMethodLowering
                 != new TypeNode.Tv("type", 0))
             throw new InvalidOperationException("Selected slot lost its transitive bound plan or weakened an unrelated parameter");
         var materializedMethod = JsonNode.Parse("""
-          {"typeParams":["T",{"name":"P","constraints":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}}]}],
+          {"typeParams":[{"name":"T"},{"name":"P","constraints":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}}]}],
            "methodTypeParameterBoundsPre":"{\"bounds\":{\"0\":[]}}"}
           """).AsObject();
         materializedMethod[NullableRepresentationTypes.MethodFrameKey] =
@@ -165,10 +165,10 @@ static partial class OwnerConstrainedMethodLowering
         }
         finally { Methods.Remove((materializedMethod, materializedOwner)); }
         var captured = JsonNode.Parse("""
-          {"name":"Capture","generated":true,"typeParams":["P","T"]}
+          {"name":"Capture","generated":true,"typeParams":[{"name":"P"},{"name":"T"}]}
           """).AsObject();
         var method = JsonNode.Parse("""
-          {"typeParams":["T",{"name":"P","constraints":[]}],"body":[
+          {"typeParams":[{"name":"T"},{"name":"P","constraints":[]}],"body":[
             {"k":"newClosure","closureType":{"t":"fqn","name":"Capture"},"typeArgs":[
               {"t":"tv","scope":"method","i":1},{"t":"tv","scope":"method","i":0}]}]}
           """).AsObject();
@@ -210,13 +210,13 @@ static partial class OwnerConstrainedMethodLowering
         }
         finally { Methods.Remove(entry); }
         var shared = new JsonObject {
-            ["name"] = "Shared", ["generated"] = true, ["typeParams"] = new JsonArray("T"),
+            ["name"] = "Shared", ["generated"] = true, ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
         };
         var constrainedCaller = new JsonObject {
             ["typeParams"] = new JsonArray(new JsonObject {
                 ["name"] = "T", ["constraints"] = new JsonArray(TypeJson.Fqn("kotlin.Enum"),
                     TypeJson.Write(new TypeNode.Tv("method", 1))),
-            }, JsonValue.Create("N")),
+            }, new TypeParameterDeclaration("N").ToDom()),
             ["body"] = new JsonArray(new JsonObject {
                 ["k"] = "new", ["type"] = TypeJson.Write(new TypeNode.Fqn("Shared",
                     new TypeNode[] { new TypeNode.Tv("method", 0) })),
@@ -231,14 +231,14 @@ static partial class OwnerConstrainedMethodLowering
                 if (!carriesUncapturedVariable) constrainedCaller["typeParams"][0]["constraints"].AsArray().RemoveAt(1);
                 PropagateCapturedBounds(new Dictionary<string, JsonObject> { ["Shared"] = shared },
                     _ => false, type => type);
-                if (shared["typeParams"][0] is not JsonValue)
+                if (shared["typeParams"][0]["constraints"] != null)
                     throw new InvalidOperationException("Caller strengthened an unrelated shared generated declaration");
             }
         }
         finally { Methods.Remove(unrelated); }
         var staticCapture = JsonNode.Parse("""
           {"name":"capture","declarationId":"capture-static","generated":true,
-           "typeParams":["T",{"name":"S","constraints":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}}]}],
+           "typeParams":[{"name":"T"},{"name":"S","constraints":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}}]}],
            "body":[]}
           """).AsObject();
         staticCapture[NullableRepresentationTypes.MethodFrameKey] =
@@ -246,7 +246,7 @@ static partial class OwnerConstrainedMethodLowering
         staticCapture[NullableGenericErasure.MethodTypeParameterBoundsPre] = "{\"bounds\":{\"0\":[]}}";
         var staticSourceFacts = staticCapture[NullableGenericErasure.MethodTypeParameterBoundsPre].DeepClone();
         var lexicalOwner = JsonNode.Parse("""
-          {"name":"Lexical","typeParams":["T",{"name":"S","erasedInnerConstraints":[
+          {"name":"Lexical","typeParams":[{"name":"T"},{"name":"S","erasedInnerConstraints":[
             {"t":"array","elem":{"t":"tv","scope":"type","i":0}}]}],
            "methods":[{"name":"use","body":[{"k":"newDelegate","declarationId":"capture-static",
              "typeArgs":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]}]}
@@ -498,11 +498,7 @@ static partial class OwnerConstrainedMethodLowering
                                 });
                             if (!complete || !Rebind(originalConstraints).Select(TypeJson.Read).ToHashSet()
                                 .SetEquals(declaredConstraints.Select(TypeJson.Read))) continue;
-                            var parameter = targetParameters[i] as JsonObject;
-                            if (parameter == null)
-                                targetParameters[i] = parameter = new JsonObject {
-                                    ["name"] = targetParameters[i]?.DeepClone(),
-                                };
+                            var parameter = (JsonObject)targetParameters[i];
                             var constraints = Rebind(sourceConstraints);
                             var dispatch = Rebind(erased ?? new JsonArray());
                             if (JsonNode.DeepEquals(parameter["constraints"], constraints)

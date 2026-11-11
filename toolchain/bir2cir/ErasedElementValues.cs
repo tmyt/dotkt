@@ -413,7 +413,7 @@ static class ErasedElementValues
     internal static void SelfTest()
     {
         var root = JsonNode.Parse("""
-        {"fileClass":"ArrayValueControl","methods":[{"name":"consume","typeParams":["T"],
+        {"fileClass":"ArrayValueControl","methods":[{"name":"consume","typeParams":[{"name":"T"}],
          "params":[{"name":"xs","type":{"t":"array","elem":{"t":"tv","scope":"method","i":0}}}],
          "ret":{"t":"fqn","name":"kotlin.Any"},"body":[
           {"k":"var","name":"value","type":{"t":"tv","scope":"method","i":0},"init":
@@ -428,7 +428,7 @@ static class ErasedElementValues
         enclosingMethod[NullableRepresentationTypes.MethodFrameKey] =
             new NullableRepresentationFrame(1, System.Array.Empty<int>()).ToJson().ToJsonString();
         var nestedLambda = JsonNode.Parse("""
-        {"k":"newSuspendLambda","typeParams":["A","B","C"],"params":[],
+        {"k":"newSuspendLambda","typeParams":[{"name":"A"},{"name":"B"},{"name":"C"}],"params":[],
          "body":[{"k":"var","name":"inner","type":{"t":"tv","scope":"method","i":2},
           "init":{"k":"arrayGet","array":{"k":"local","name":"xs","sty":
            {"t":"array","elem":{"t":"tv","scope":"method","i":2}}},
@@ -513,7 +513,7 @@ static class ErasedElementValues
             "{\"bounds\":{\"0\":[{\"t\":\"fqn\",\"name\":\"Carrier\",\"args\":[{\"t\":\"tv\",\"scope\":\"type\",\"i\":1}]}]}}";
         var nestedOwner = new JsonObject {
             ["name"] = "NestedOwner", ["kind"] = "class",
-            ["typeParams"] = new JsonArray("Outer", "$nullableOuter", "Inner"),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "Outer" }, new JsonObject { ["name"] = "$nullableOuter" }, new JsonObject { ["name"] = "Inner" }),
             ["methods"] = new JsonArray(nestedMethod),
         };
         nestedOwner[KotlinSupertypesRecord.PreKey] =

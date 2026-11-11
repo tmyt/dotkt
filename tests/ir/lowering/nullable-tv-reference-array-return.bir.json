@@ -37,7 +37,7 @@
             "k": "callStatic",
             "owner": null,
             "method": "copyOf",
-            "declarationId": "dotkt-declaration-v1:3a801ad2db882741898de3979875c3fc15aeca10fd4fe273fa9c1dad4d73a8cc",
+            "declarationId": "dotkt-declaration-v1:bae66df69fa9258f55a66141cf284df6397f7b5fa51d0add710fea2cc9c9423c",
             "sig": [
               { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
               { "t": "fqn", "name": "kotlin.Int" }
@@ -68,7 +68,7 @@
             "k": "callStatic",
             "owner": null,
             "method": "copyOf",
-            "declarationId": "dotkt-declaration-v1:3a801ad2db882741898de3979875c3fc15aeca10fd4fe273fa9c1dad4d73a8cc",
+            "declarationId": "dotkt-declaration-v1:bae66df69fa9258f55a66141cf284df6397f7b5fa51d0add710fea2cc9c9423c",
             "sig": [
               { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
               { "t": "fqn", "name": "kotlin.Int" }

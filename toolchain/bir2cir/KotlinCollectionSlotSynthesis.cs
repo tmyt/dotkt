@@ -742,14 +742,14 @@ static class KotlinCollectionSlotSynthesis
         var mapRemove = MapQuery("remove", variable, valueVariable);
         var mapReplace = MapQuery("replace", variable, valueVariable, valueVariable);
         var root = new JsonObject { ["types"] = new JsonArray(
-            new JsonObject { ["name"] = "Generic", ["kind"] = "class", ["typeParams"] = new JsonArray("E"),
+            new JsonObject { ["name"] = "Generic", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "E" }),
                 ["methods"] = new JsonArray(generic, typed) },
             new JsonObject { ["name"] = "Bounded", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject {
                 ["name"] = "E", ["constraints"] = new JsonArray(TypeJson.Fqn("Bound")),
             }), ["methods"] = new JsonArray(bounded, nullableBounded) },
-            new JsonObject { ["name"] = "Native", ["kind"] = "interface", ["typeParams"] = new JsonArray("E"),
+            new JsonObject { ["name"] = "Native", ["kind"] = "interface", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "E" }),
                 ["methods"] = new JsonArray(native) },
-            new JsonObject { ["name"] = "GenericMap", ["kind"] = "class", ["typeParams"] = new JsonArray("K", "V"),
+            new JsonObject { ["name"] = "GenericMap", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "K" }, new JsonObject { ["name"] = "V" }),
                 ["methods"] = new JsonArray(mapKey, mapValue, mapGet, mapDefault, mapRemove, mapReplace) }) };
         EraseGenericQueryParameters(new[] { root }, null, new Dictionary<string, string> { ["Native"] = "System.Native" });
         if (TypeJson.Read(generic["params"][0]["type"]) is not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Any" } }

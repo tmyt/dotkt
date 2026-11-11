@@ -141,13 +141,15 @@ run_fixture() {
 		while IFS= read -r line || [[ -n "$line" ]]; do
 			[[ "$line" =~ ^[[:space:]]*$ || "$line" == '#'* ]] && continue
 			(( ++checks ))
+			# Malformed current compiler input promises failure, not a diagnostic chosen by a particular pass.
+			[[ "$line" == '@nonzero' ]] && continue
 			if [[ "$log" != *"$line"* ]]; then
 				echo "  LOWERING FAIL  $name: the refusal is MISSING $line"
 				bad=1
 			fi
 		done < "$expected"
 		if (( checks == 0 )); then
-			echo "  LOWERING FAIL  $name: no effective diagnostic assertion"
+			echo "  LOWERING FAIL  $name: no effective failure assertion"
 			bad=1
 		fi
 		if (( bad )); then

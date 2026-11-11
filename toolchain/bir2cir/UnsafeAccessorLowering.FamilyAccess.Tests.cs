@@ -10,20 +10,20 @@ static partial class UnsafeAccessorLowering
         var root = JsonNode.Parse("""
           {"fileClass":"FamilyProbe","methods":[],"types":[
             {"name":"Container","kind":"class","vis":"public","methods":[]},
-            {"name":"Base","nestedIn":"Container","kind":"class","vis":"private","typeParams":["T"],
+            {"name":"Base","nestedIn":"Container","kind":"class","vis":"private","typeParams":[{"name":"T"}],
              "fields":[{"name":"slot","vis":"protected","type":{"t":"tv","scope":"type","i":0}}],
              "methods":[{"name":"read","vis":"protected","params":[],"ret":{"t":"tv","scope":"type","i":0}},
                         {"name":"hidden","vis":"private","params":[],"ret":{"t":"tv","scope":"type","i":0}}]},
-            {"name":"Derived","nestedIn":"Container","kind":"class","vis":"private","typeParams":["T"],
+            {"name":"Derived","nestedIn":"Container","kind":"class","vis":"private","typeParams":[{"name":"T"}],
              "base":{"t":"fqn","name":"Base","args":[{"t":"tv","scope":"type","i":0}]},
-             "methods":[{"name":"use","typeParams":["U"],"params":[
+             "methods":[{"name":"use","typeParams":[{"name":"U"}],"params":[
                 {"name":"derived","type":{"t":"fqn","name":"Derived","args":[{"t":"tv","scope":"method","i":0}]}},
                 {"name":"base","type":{"t":"fqn","name":"Base","args":[{"t":"tv","scope":"method","i":0}]}}],"body":[]}]},
-            {"name":"Capture","nestedIn":"Derived","kind":"class","capturedTypeParams":["T"],
+            {"name":"Capture","nestedIn":"Derived","kind":"class","capturedTypeParams":[{"name":"T"}],
              "fields":[{"name":"outer","type":{"t":"fqn","name":"Derived","args":[{"t":"tv","scope":"type","i":0}]}}],
              "methods":[{"name":"invoke","params":[],"body":[]}]},
-            {"name":"Face","kind":"interface","typeParams":["T"],"methods":[]},
-            {"name":"Implementation","kind":"class","typeParams":["T"],"interfaces":[
+            {"name":"Face","kind":"interface","typeParams":[{"name":"T"}],"methods":[]},
+            {"name":"Implementation","kind":"class","typeParams":[{"name":"T"}],"interfaces":[
                 {"t":"fqn","name":"Face","args":[{"t":"tv","scope":"type","i":0}]}],"methods":[]}]}
           """);
         TypeNode.Fqn Owner(string name, string scope) => new(name, new TypeNode[] { new TypeNode.Tv(scope, 0) });
@@ -67,7 +67,7 @@ static partial class UnsafeAccessorLowering
             ["params"] = new JsonArray(new JsonObject { ["name"] = "block", ["type"] = TypeJson.Write(function) }),
             ["ret"] = TypeJson.Write(function) });
         root["types"].AsArray().Add(new JsonObject { ["name"] = "System.Func", ["kind"] = "class", ["vis"] = "public",
-            ["typeParams"] = new JsonArray("T", "R"), ["methods"] = new JsonArray() });
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "R" }), ["methods"] = new JsonArray() });
         var functionCall = Call(new JsonObject { ["k"] = "this" }, "type", "transform");
         functionCall["sig"] = new JsonArray(TypeJson.Write(function));
         functionCall["ret"] = TypeJson.Write(function);

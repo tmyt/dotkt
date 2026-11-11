@@ -175,11 +175,11 @@ static class CollectionHelperBinding
     {
         var root = JsonNode.Parse("""
         {"fileClass":"kotlin.collections.ClrMapDefaultsKt","methods":[
-          {"name":"clrMapKeys","declarationId":"map-keys","static":true,"typeParams":["K","V"],
+          {"name":"clrMapKeys","declarationId":"map-keys","static":true,"typeParams":[{"name":"K"},{"name":"V"}],
            "params":[{"name":"m","type":{"t":"fqn","name":"kotlin.Any"}},
                      {"name":"view","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}}],
            "ret":{"t":"fqn","name":"kotlin.collections.Set","args":[{"t":"tv","scope":"method","i":0}]},"body":[]},
-          {"name":"use","declarationId":"map-use","static":true,"typeParams":["A","B"],"params":[],
+          {"name":"use","declarationId":"map-use","static":true,"typeParams":[{"name":"A"},{"name":"B"}],"params":[],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
             {"k":"callInstance","ownerType":{"t":"fqn","name":"kotlin.collections.Map","args":[
               {"t":"projection","variance":"out","of":{"t":"tv","scope":"method","i":1}},
@@ -216,11 +216,11 @@ static class CollectionHelperBinding
             ["fileClass"] = "kotlin.collections.ClrCollectionDefaultsKt",
             ["methods"] = new JsonArray(
                 new JsonObject { ["name"] = "clrCollToString", ["declarationId"] = "render-collection",
-                    ["static"] = true, ["typeParams"] = new JsonArray("T"),
+                    ["static"] = true, ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
                     ["params"] = new JsonArray(new JsonObject { ["name"] = "value", ["type"] = TypeJson.Write(collection) }),
                     ["ret"] = TypeJson.Fqn("kotlin.String"), ["body"] = new JsonArray() },
                 new JsonObject { ["name"] = "render", ["declarationId"] = "render-caller", ["static"] = true,
-                    ["typeParams"] = new JsonArray("T"), ["params"] = new JsonArray(),
+                    ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }), ["params"] = new JsonArray(),
                     ["ret"] = TypeJson.Fqn("kotlin.String"), ["body"] = body }) };
         var aliases = new Dictionary<string, string> {
             ["kotlin.collections.Collection"] = "System.Collections.Generic.IReadOnlyCollection",
@@ -258,7 +258,7 @@ static class CollectionHelperBinding
         var boolType = new TypeNode.Fqn("kotlin.Boolean");
         JsonObject Helper(string name) => new() {
             ["name"] = name, [DeclarationIdentityBinding.Key] = name, ["static"] = true,
-            ["typeParams"] = new JsonArray("T"),
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
             ["params"] = new JsonArray(MemberCallSubstitution.CollectionHelperSig(helperOwner, name)
                 .Select((type, index) => (JsonNode)new JsonObject { ["name"] = "p" + index, ["type"] = type.DeepClone() }).ToArray()),
             ["ret"] = TypeJson.Write(boolType), ["body"] = new JsonArray(),
@@ -368,7 +368,7 @@ static class CollectionHelperBinding
                 "clrProjectedViewContains", "clrProjectedViewContainsAll", "clrProjectedViewListIterator", "clrProjectedCollAdd" }
             .Select(name => (JsonNode)Helper(name)).ToArray());
         methods.Add(new JsonObject { ["name"] = "use", [DeclarationIdentityBinding.Key] = "use-collections",
-            ["typeParams"] = new JsonArray("T"), ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(boolType), ["body"] = body });
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }), ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(boolType), ["body"] = body });
         var aliases = new Dictionary<string, string> {
             ["kotlin.collections.Collection"] = "System.Collections.Generic.IReadOnlyCollection",
             ["kotlin.collections.List"] = "System.Collections.Generic.IReadOnlyList",
@@ -380,14 +380,14 @@ static class CollectionHelperBinding
         };
         var root = new JsonObject { ["fileClass"] = helperOwner, ["methods"] = methods,
             ["types"] = new JsonArray(aliases.Keys.Select(name => (JsonNode)new JsonObject {
-                ["name"] = name, ["kind"] = "interface", ["typeParams"] = new JsonArray("T"), ["methods"] = new JsonArray(),
+                ["name"] = name, ["kind"] = "interface", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }), ["methods"] = new JsonArray(),
             }).ToArray()) };
         root["types"].AsArray().Add(new JsonObject {
-            ["name"] = "probe.Outer", ["kind"] = "class", ["typeParams"] = new JsonArray("A"),
+            ["name"] = "probe.Outer", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "A" }),
         });
         root["types"].AsArray().Add(new JsonObject {
-            ["name"] = "probe.InnerQuery", ["kind"] = "class", ["typeParams"] = new JsonArray("B"),
-            ["capturedTypeParams"] = new JsonArray("A"), ["outerTypeParamCount"] = 1,
+            ["name"] = "probe.InnerQuery", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "B" }),
+            ["capturedTypeParams"] = new JsonArray(new JsonObject { ["name"] = "A" }), ["outerTypeParamCount"] = 1,
             ["semanticOwner"] = "probe.Outer", ["mods"] = new JsonObject { ["inner"] = true },
         });
         Apply(new[] { root }, null, aliases);

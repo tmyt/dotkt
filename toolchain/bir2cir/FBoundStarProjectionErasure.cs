@@ -167,7 +167,7 @@ static partial class FBoundStarProjectionErasure
                     // Select their projected member owners now, while source constraints are intact.
                     var methodFrame = new JsonArray();
                     var typeFrame = TypeParameterFrame.CloneDeclarations(owner);
-                    var captures = obj["typeParamDecls"] as JsonArray;
+                    var captures = obj["typeParams"] as JsonArray;
                     var frameArguments = obj[SuspendLambdaLowering.SplicedDeclarationFrameKey] as JsonArray
                         ?? obj["typeArgs"] as JsonArray;
                     var dense = Str(obj["typeFrame"]) == "dense";
@@ -1040,21 +1040,21 @@ static partial class FBoundStarProjectionErasure
         var owners = new Dictionary<string, Owner> {
             ["Owner.Item"] = new Owner { Name = "Owner.Item", ErasedName = "InnerView", Needed = true,
                 Def = JsonNode.Parse("""
-                {"kind":"class","mods":{"inner":true},"outerTypeParamCount":1,"typeParams":["T"]}
+                {"kind":"class","mods":{"inner":true},"outerTypeParamCount":1,"typeParams":[{"name":"T"}]}
                 """)!.AsObject() },
             ["Bound"] = new Owner { Name = "Bound", ErasedName = "BoundView", Needed = true,
-                Def = JsonNode.Parse("""{"kind":"class","typeParams":["T"]}""")!.AsObject() },
+                Def = JsonNode.Parse("""{"kind":"class","typeParams":[{"name":"T"}]}""")!.AsObject() },
         };
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
         _valueSlots = new GenericRepresentationPolicy(refs.Aliases, refs, new[] { JsonNode.Parse("""
-          {"types":[{"kind":"class","name":"Owner.Item","typeParams":["T"]},
-                    {"kind":"class","name":"Bound","typeParams":["T"]},
-                    {"kind":"class","name":"Construction","typeParams":["T"]},
-                    {"kind":"class","name":"Variant","typeParams":["T"]}]}
+          {"types":[{"kind":"class","name":"Owner.Item","typeParams":[{"name":"T"}]},
+                    {"kind":"class","name":"Bound","typeParams":[{"name":"T"}]},
+                    {"kind":"class","name":"Construction","typeParams":[{"name":"T"}]},
+                    {"kind":"class","name":"Variant","typeParams":[{"name":"T"}]}]}
           """) });
         OwnerConstrainedMethodLowering.Reset(refs, bound => PhysicalBoundClassifier(bound, owners, refs));
         var dependentType = JsonNode.Parse("""
-          {"kind":"class","name":"Dependent","typeParams":["Tag",
+          {"kind":"class","name":"Dependent","typeParams":[{"name":"Tag"},
             {"name":"Self","constraints":[{"t":"fqn","name":"Bound","args":[{"t":"tv","scope":"type","i":1}]}]},
             {"name":"T","constraints":[{"t":"fqn","name":"Bound","args":[{"t":"tv","scope":"type","i":0}]}]}]}
           """).AsObject();
@@ -1068,7 +1068,7 @@ static partial class FBoundStarProjectionErasure
             || PhysicalBoundClassifier(new TypeNode.Fqn("Native", new[] { variable }), owners, refs) != null)
             throw new InvalidOperationException("Dependent class constraints lost their classifier, self-bound or source metadata");
         var dependentMethod = JsonNode.Parse("""
-          {"name":"dependent","params":[],"body":[],"typeParams":["Tag",
+          {"name":"dependent","params":[],"body":[],"typeParams":[{"name":"Tag"},
             {"name":"T","constraints":[{"t":"fqn","name":"Bound","args":[{"t":"tv","scope":"method","i":0}]}]}]}
           """).AsObject();
         var sourceMethodParameters = (JsonArray)dependentMethod["typeParams"].DeepClone();
@@ -1164,7 +1164,7 @@ static partial class FBoundStarProjectionErasure
             || RewriteType(unresolved, owners, refs, boundDeclaration: true) != unresolved)
             throw new InvalidOperationException("Unresolved operation arguments confused Kotlin values with bound descriptors");
         var constructionOwner = JsonNode.Parse("""
-          {"kind":"class","typeParams":["P","T","Q","U"]}
+          {"kind":"class","typeParams":[{"name":"P"},{"name":"T"},{"name":"Q"},{"name":"U"}]}
           """).AsObject();
         var constructionFrame = new NullableRepresentationFrame(2,
             Array.Empty<int>(), new[] { 2, 0, 3, 1 }, storageIndices: new[] { 0, 1 });
@@ -1183,7 +1183,7 @@ static partial class FBoundStarProjectionErasure
         if (RewriteType(construction, owners, refs) != new TypeNode.Fqn("ConstructionView"))
             throw new InvalidOperationException("An ordinary invariant value regained an exact construction head");
         _valueSlots.RegisterLocalDefinitions(new Dictionary<string, JsonObject> {
-            ["LatePhysical"] = JsonNode.Parse("""{"kind":"class","generated":true,"typeParams":["T"]}""").AsObject(),
+            ["LatePhysical"] = JsonNode.Parse("""{"kind":"class","generated":true,"typeParams":[{"name":"T"}]}""").AsObject(),
         }, new Dictionary<string, string>());
         var latePhysical = new TypeNode.Fqn("LatePhysical", new TypeNode[] { variable });
         if (RewriteType(latePhysical, owners, refs) != latePhysical
@@ -1219,12 +1219,12 @@ static partial class FBoundStarProjectionErasure
             || RewriteType(variant, owners, refs, preserveConstructedHead: true) != variant)
             throw new InvalidOperationException("A nested variant witness regained a concrete head or changed its exact constructor");
         var materialized = new JsonObject {
-            ["typeParams"] = new JsonArray("T", new JsonObject {
+            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject {
                 ["name"] = "U", ["constraints"] = new JsonArray(TypeJson.Write(
                     new TypeNode.Fqn("Bound", new TypeNode[] {
                         new TypeNode.Projection("out", new TypeNode.Tv("type", 2)),
                     }))),
-            }, "N"),
+            }, new JsonObject { ["name"] = "N" }),
         };
         KotlinSupertypesRecord.Merge(materialized, new JsonObject {
             [NullableRepresentationFrame.MetadataKey] =
@@ -1242,7 +1242,7 @@ static partial class FBoundStarProjectionErasure
         if (!JsonNode.DeepEquals(methodSource, materialized[NullableGenericErasure.MethodTypeParameterBoundsPre]))
             throw new InvalidOperationException("Physical method companion bound became a Kotlin source fact");
         var materializedInner = JsonNode.Parse("""
-            {"mods":{"inner":true},"outerTypeParamCount":1,"typeParams":["T",
+            {"mods":{"inner":true},"outerTypeParamCount":1,"typeParams":[{"name":"T"},
              {"name":"E","constraints":[{"t":"tv","scope":"type","i":0}]},
              {"name":"storageE","constraints":[{"t":"fqn","name":"Bound","args":[{"t":"tv","scope":"type","i":1}]}]}]}
             """).AsObject();
@@ -1258,7 +1258,7 @@ static partial class FBoundStarProjectionErasure
             || !JsonNode.DeepEquals(innerSource, materializedInner[KotlinSupertypesRecord.PreKey]))
             throw new InvalidOperationException("Physical inner companion bound became a Kotlin source fact");
         var projectedInner = JsonNode.Parse("""
-            {"mods":{"inner":true},"outerTypeParamCount":1,"typeParams":["T",
+            {"mods":{"inner":true},"outerTypeParamCount":1,"typeParams":[{"name":"T"},
              {"name":"E","constraints":[{"t":"fqn","name":"Bound","args":[{"t":"tv","scope":"type","i":0}]},
                {"t":"fqn","name":"Marker"}]}]}
             """).AsObject();
@@ -1318,12 +1318,12 @@ static partial class FBoundStarProjectionErasure
                    {"k":"const","type":{"t":"fqn","name":"kotlin.String"},"value":"System.Collections.Generic.IReadOnlyCollection"}]}],
                  "methods":[]},
                 {"kind":"class","name":"CapturedOnly","mods":{"inner":true},"outerTypeParamCount":1,
-                 "typeParams":["Outer"],"methods":[]},
+                 "typeParams":[{"name":"Outer"}],"methods":[]},
                 {"kind":"class","name":"GeneratedCaptured","generated":true,"mods":{"inner":true},
-                 "outerTypeParamCount":1,"typeParams":["Outer"],"methods":[]},
+                 "outerTypeParamCount":1,"typeParams":[{"name":"Outer"}],"methods":[]},
                 {"kind":"class","name":"AliasHolder","fields":[{"name":"field",
                  "type":{"t":"fqn","name":"SourceAlias","args":[{"t":"fqn","name":"kotlin.String"}]}}],"methods":[]}],
-               "methods":[{"name":"identity","typeParams":["T"],"params":[{"name":"value",
+               "methods":[{"name":"identity","typeParams":[{"name":"T"}],"params":[{"name":"value",
                  "type":{"t":"fqn","name":"SourceAlias","args":[{"t":"tv","scope":"method","i":0}]}}],
                  "ret":{"t":"fqn","name":"SourceAlias","args":[{"t":"tv","scope":"method","i":0}]},"body":[]},
                 {"name":"nested","params":[{"name":"value","type":{"t":"fn","suspend":false,"params":[],
