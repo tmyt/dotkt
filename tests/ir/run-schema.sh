@@ -87,6 +87,19 @@ if ! dotnet run --project tests/ir/type-codec/Probe.csproj --no-launch-profile \
   echo "SCHEMA GATE: RED (cross-language type/source metadata codecs)"; exit 1
 fi
 
+bir_graph_args=()
+if [ $# -eq 0 ]; then
+  if ! bir_corpus="$("$PY" tests/ir/corpus.py bir --literal)"; then exit 2; fi
+  bir_graph_manifest="$ROOT/build/bir-owning-graph-corpus.list"
+  printf '%s\n' "$bir_corpus" > "$bir_graph_manifest"
+  bir_graph_args=("$bir_graph_manifest")
+fi
+if ! dotnet run --project tests/ir/bir-graph/Probe.csproj --no-launch-profile \
+    -p:DotKtBir2CirPath="$ROOT/$BIR2CIR_DLL" -- \
+    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeNodeTest.xml" "${bir_graph_args[@]}"; then
+  echo "SCHEMA GATE: RED (owning BIR graph)"; exit 1
+fi
+
 # SELF-TEST next: the validator checks whatever is on disk, so one that silently stopped checking would look
 # exactly like a clean corpus. Each `reject-*` is a shape the compiler must never emit and the validator must
 # refuse, with the message its `.expected` file names; each `accept-*` is the legitimate shape next door, so a

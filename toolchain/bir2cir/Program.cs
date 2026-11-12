@@ -165,13 +165,16 @@ sealed class Pipeline
         foreach (var input in inputs)
         {
             var path = Path.GetFullPath(input);
-            var (root, aliases) = BirInputJson.Read(File.ReadAllBytes(path));
-            RoundtripMetadata.FreezeTypeAliases(root, aliases);
-            DefaultBirCarrier.FreezeSourceDefaults(root);
+            var source = DefaultBirCarrier.FreezeSourceDefaults(BirInputJson.Read(File.ReadAllBytes(path)));
+            var suspend = SuspendShapeAnalyzer.Analyze(source);
+            // The remaining passes still own DOM graphs. Construct that frontier
+            // directly; never serialize/reparse the typed input between passes.
+            var root = (source with { TypeAliases = default }).ToDom();
+            RoundtripMetadata.FreezeTypeAliases(root, source.TypeAliases.OrDefault() ?? []);
             files.Add(new BirFile(
                 path,
                 root,
-                SuspendShapeAnalyzer.Analyze(root)));
+                suspend));
         }
 
         return files;

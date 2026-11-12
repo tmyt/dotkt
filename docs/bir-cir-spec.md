@@ -8,6 +8,22 @@
 
 ## 0. Envelope & versioning
 
+### In-memory phase graph
+
+The generated C# lowering graph combines the schema's source and physical node
+profiles. Its closed `k` dispatch states each node's executable roles. Fields are
+typed and preserve absence, explicit null, and values while individual passes
+establish their phase-owned facts; it is not a replacement for the kotc output
+profile or the final CIR invariants. `sourceProperties` and `loweringProperties`
+on model annotations specify intermediate facts omitted from final physical or
+source-only profiles. No arbitrary extension-data field bag is part of the IR.
+
+Input construction, suspend declaration inventory, and source-default freezing
+own this graph. Remaining DOM-based passes currently receive a direct one-way
+projection, including a numeric-token leaf adapter. This is an incremental
+migration seam, not completion of #1414; it must disappear as owning passes move
+to the typed graph. No enclosing graph is serialized and reparsed at that seam.
+
 ### CIR files
 
 `bir2cir --cir-format=json` (the default) emits `.cir.json` for inspection.
