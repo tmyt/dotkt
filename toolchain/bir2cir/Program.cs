@@ -42,6 +42,7 @@ static class Bir2Cir
                 FunctionValueRepresentation.SelfTestSourceFacts();
                 BirNodeType.SelfTest();
                 CapturedGenericInvocation.SelfTestSourceFacts();
+                SourceModuleIndex.SelfTest();
                 ClrTypeVariance.SelfTest();
                 PhysicalValueCoercion.SelfTest();
                 StringCharSequenceBridge.SelfTest();
@@ -206,6 +207,7 @@ sealed class Pipeline
         captured = ClrEventImplBinding.PreserveSourceFacts(captured);
         captured = ContinuationErasure.PreserveSourceSupertypes(captured, refs);
         captured = CapturedGenericInvocation.PreserveSourceFacts(captured, refs);
+        var sourceIndex = new SourceModuleIndex(captured, refs.Aliases);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -221,7 +223,7 @@ sealed class Pipeline
                 inputsWithSources[index].Suspend));
         }
 
-        return new LoadedBirModule(files, signatures, valuePolicy);
+        return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex);
     }
 
     // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
@@ -259,13 +261,12 @@ sealed class Pipeline
         var declarationSemanticSignatures = module.Signatures;
         var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild, module.ValuePolicy);
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
-        var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
+        var localDeclarationIds = module.SourceIndex.DeclarationIds;
         // These are new CLR slot bodies for frontend-selected inherited implementations, not source declarations.
         // Materialize before downstream indexing/freezing so references and local bases use the same suspend ABI.
         InheritedClassInterfaceBridge.MaterializeSuspendDeclarations(birRoots, refs);
-        var representationAliases = DeclarationIdentityBinding.CollisionAliases(birRoots, refs.Aliases);
-        var localValueTypeFqns = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var b in birFiles) CollectLocalValueTypes(b.Root, localValueTypeFqns);
+        var representationAliases = module.SourceIndex.CollisionAliases;
+        var localValueTypeFqns = module.SourceIndex.ValueTypes;
         ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
         // Constructor adapters carry Kotlin expressions and signatures. Expand them before collecting
         // representation demands, and preserve that source vocabulary in the reference carrier as well.
@@ -1746,22 +1747,6 @@ sealed class Pipeline
         return files;
     }
 
-    // Collect the FQNs of every LOCAL value type (a `kind:"enum"` real CLR enum, or a `kind:"struct"` value type),
-    // recursively including nested types. Feeds the struct-ness oracle so a nullable local enum/struct keeps its
-    // `System.Nullable<T>` wrapper. A `kind:"class"` (incl. a rich enum lowered to a singleton class) is a reference.
-    static void CollectLocalValueTypes(JsonNode node, HashSet<string> into)
-    {
-        if (node is not JsonObject o || o["types"] is not JsonArray types) return;
-        foreach (var t in types)
-            if (t is JsonObject to)
-            {
-                if ((to["kind"] as JsonValue)?.GetValue<string>() is "enum" or "struct"
-                    && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
-                    into.Add(tn);
-                CollectLocalValueTypes(to, into);
-            }
-    }
-
     // A lowered CIR root that carries no types, no methods and no fields contributes nothing — its file-class would be
     // an empty static type. True once AliasHelperHoist has dropped a file whose sole content was @ClrTypeAlias types.
     static bool IsEmptyCir(JsonNode root)
@@ -1914,7 +1899,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
-    ValueRepresentationSourcePolicy ValuePolicy);
+    ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions
