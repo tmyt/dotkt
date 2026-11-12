@@ -8,11 +8,12 @@ using A = DotKt.Cir.AttributeArgument;
 // construct typed CIR directly. It never walks executable children or saved source payloads.
 static class AttributeProjection
 {
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots)
+    public static void ApplyAll(IReadOnlyList<JsonNode> roots, IEnumerable<string> typedDeclarations = null)
     {
         var emitted = roots.OfType<JsonObject>()
             .SelectMany(file => file["types"] as JsonArray ?? new JsonArray())
             .OfType<JsonObject>().Select(type => Str(type["name"])).Where(name => name != null)
+            .Concat(typedDeclarations ?? Enumerable.Empty<string>())
             .ToHashSet(StringComparer.Ordinal);
         foreach (var file in roots.OfType<JsonObject>())
             Apply(file, emitted);

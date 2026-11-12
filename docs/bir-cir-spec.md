@@ -29,6 +29,12 @@ projection, including a numeric-token leaf adapter. This is an incremental
 migration seam, not completion of #1414; it must disappear as owning passes move
 to the typed graph. No enclosing graph is serialized and reparsed at that seam.
 
+Final physical declaration synthesis (wide delegates and compiler metadata
+attribute classes) constructs typed CIR directly. Reference-only literal
+placeholders are rewritten through schema-generated executable edges in typed
+CIR; declaration signatures and opaque metadata are not executable edges.
+The remaining intermediate DOM projection is still an unfinished migration boundary.
+
 ### CIR files
 
 `bir2cir --cir-format=json` (the default) emits `.cir.json` for inspection.

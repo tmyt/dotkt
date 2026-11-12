@@ -363,7 +363,7 @@ static partial class CirDeclarationProjection
         return new CirConstant
         {
             Type = physicalType,
-            Value = node.AsObject().ContainsKey("value") ? (IScalarValue)AttributeProjection.Literal(node["value"], physicalType) : throw new FormatException(),
+            Value = node.AsObject().ContainsKey("value") ? ProjectExecutableLiteral(node["value"], physicalType) : throw new FormatException(),
         };
     }
 
