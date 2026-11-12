@@ -271,6 +271,15 @@ private fun BirExpression.withFieldDeclaration(
 	else -> this
 }
 
+internal fun BirEmitter.memberFieldVisibilityStamped(field: org.jetbrains.kotlin.ir.declarations.IrField, node: BirSetField): BirSetField {
+	val visibility = visOf(field)
+	if (visibility != "private" && visibility != "protected" && visibility != "internal") return node
+	val (parameters, type) = inMemberDeclarationFrame(field) {
+		memberOwnerTypeParameters(field) to birType(field.type)
+	}
+	return node.copy(memberVisibility = visibility, memberOwnerTypeParams = parameters, memberType = type)
+}
+
 /** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */
 private fun BirEmitter.styStamped(node: IrExpression, s: BirExpression): BirExpression = when (s) {
 	is BirLocal -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
@@ -608,17 +617,17 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 		val spliced = inlineReturnSubst[node.returnTargetSymbol]
 		if (spliced != null) {
 			val (res, end) = spliced
-			val goto = kotc.bir.BirGoto(end).toJson()
+			val goto = BirGoto(end)
 			// Unlike the NON-spliced arm below, the value stored into the splice result-local needs NO return-site
 			// coerceValue/wrapNonNullValue: a `return@lambda <value-type-nullable>` into a bare-value slot is only
 			// well-typed via a smart-cast, which Fir2Ir always materializes as a narrowed IrGetValue or an IMPLICIT_CAST
 			// — both already `nullableValue`-unwrapped by expr()'s leaf arms — so node.value is already the bare `Int`;
 			// and a splice target is always a LAMBDA literal, never a postcondition-registered public fn. Verified a
 			// pure no-op across the value-nullable/smart-cast/generic battery (cases/il-inlineretcoerce).
-			val xfer = if (res != null) """{"k":"setLocal","name":${str(res)},"value":${expr(node.value)}},$goto"""
-				else if (node.value is IrGetObjectValue) goto
+			val xfer = if (res != null) listOf(BirSetLocal(res, expr(node.value)), goto)
+				else if (node.value is IrGetObjectValue) listOf(goto)
 				// Unit splice: evaluate a side-effecting return value for its effect, then jump.
-				else """{"k":"exprStmt","expr":${expr(node.value)}},$goto"""
+				else listOf(BirExpressionStatement(expr(node.value)), goto)
 			breakContinueExpr(xfer)
 		}
 		// A genuine NON-LOCAL return stays a raw returnExpr (bir2cir routes it at splice time). For a Unit-returning
@@ -636,7 +645,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 			kotc.bir.BirReturnExpression(value = v)
 		}
 		else if (node.value is IrGetObjectValue) kotc.bir.BirReturnExpression()
-		else breakContinueExpr("""{"k":"exprStmt","expr":${expr(node.value)}},{"k":"return"}""")
+		else breakContinueExpr(listOf(BirExpressionStatement(expr(node.value)), BirReturn()))
 	}
 	// `break`/`continue` used in expression position (`val end = if (c) x else break`, stdlib CharSequence.windowed's
 	// coercedEnd). Kotlin types them `Nothing`: they transfer control, so no value reaches the surrounding merge. We

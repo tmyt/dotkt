@@ -861,8 +861,8 @@ private fun delegatedOperatorTarget(accessor: IrSimpleFunction): IrSimpleFunctio
 	}.singleOrNull()?.symbol?.owner
 }
 
-private fun BirEmitter.delegatedOperatorSig(accessor: IrSimpleFunction): String =
-	delegatedOperatorTarget(accessor)?.let { overloadSigField(it) } ?: overloadSigField(accessor)
+private fun BirEmitter.delegatedOperatorSignature(accessor: IrSimpleFunction): List<TypeNode>? =
+	overloadSignature(delegatedOperatorTarget(accessor) ?: accessor)
 
 internal fun TypeNode.containsStarProjection(): Boolean = when (this) {
 	TypeNode.Star -> true
@@ -990,10 +990,10 @@ private fun BirEmitter.defaultOwnerType(call: IrCall, defaultOwner: IrFunction):
 	return TypeNode.Fqn(typeName(owner), args)
 }
 
-private fun BirEmitter.eventVisibilityFact(property: IrProperty): String {
+private fun BirEmitter.eventVisibilityFact(property: IrProperty): String? {
 	val visibility = visOf(property)
 	return if (visibility == "private" || visibility == "protected" || visibility == "internal")
-		""","memberVisibility":${str(visibility)}""" else ""
+		visibility else null
 }
 
 private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpression {
@@ -1017,7 +1017,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		val delegate = extensionReceiver(call)
 		if (delegate != null) {
 			val owner = ownerSpec(delegate.type.classifierOrNull?.owner as? IrClass, delegate.type)
-			return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":${expr(delegate)},"method":"value","prop":"get","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, call.type)}}"""
+			return BirCallInstance(ownerType = owner, virtual = true, recv = expr(delegate), method = "value",
+				prop = "get", args = emptyList(), ret = if ((owner as? TypeNode.Fqn)?.args != null) birType(call.type) else null)
 		}
 	}
 	// NOTE: kotlin.text.MatchResult.value is a REAL interface property (realized by ClrMatchResult) — it must route
@@ -1036,17 +1037,17 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// named `stackBuffer` is not mistaken for the intrinsic.
 	if (callee.fqNameWhenAvailable?.asString() == "kotlin.clr.stackBuffer")
 		return emitStackBuffer(call)
-	fun eventOwnerType(p: IrProperty, recv: IrExpression?): String {
+	fun eventOwnerType(p: IrProperty, recv: IrExpression?): TypeNode {
 		val declaration = if (p.isFakeOverride)
 			p.getter?.resolveFakeOverride()?.correspondingPropertySymbol?.owner ?: p
 		else p
 		val declarationOwner = declaration.parent as? IrClass
 			?: error("selected event '${declaration.name}' has no declaring class")
-		if (declaration.getter?.isStaticMethodOfClass == true) return fqnJson(typeName(declarationOwner))
+		if (declaration.getter?.isStaticMethodOfClass == true) return TypeNode.Fqn(typeName(declarationOwner))
 		requireNotNull(recv) { "instance event '${declaration.name}' has no receiver" }
-		return if (anonNames.containsKey(declarationOwner)) ownerSpec(declarationOwner, recv.type).toJson()
+		return if (anonNames.containsKey(declarationOwner)) ownerSpec(declarationOwner, recv.type)
 		else correspondingSupertypeInstantiation(recv.type, declarationOwner, allowCapturedArguments = true)
-			?.let(::birType)?.toJson()
+			?.let(::birType)
 			?: error("selected event '${declaration.name}' has no declaring receiver supertype")
 	}
 	val selectedEventProp = callee.correspondingPropertySymbol?.owner
@@ -1068,8 +1069,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		val isStatic = localEventProp.getter?.isStaticMethodOfClass == true
 		if (eventRecv != null || isStatic) {
 			// A moved default must still address the selected declaration, not an inheriting receiver's class.
-			val receiver = eventRecv?.let { ""","recv":${expr(it)}""" }.orEmpty()
-			return """{"k":"clrEventGet","type":${eventOwnerType(localEventProp, eventRecv)},"name":${str(localEventProp.name.asString())},"static":$isStatic$receiver,"sty":${birType(call.type).toJson()}${eventVisibilityFact(localEventProp)}${overridesJson(callee)}}"""
+			val receiver = eventRecv?.let { BirField.Value(expr(it)) } ?: BirField.Absent
+			return BirEventGet(type = eventOwnerType(localEventProp, eventRecv), name = localEventProp.name.asString(),
+				isStatic = isStatic, recv = receiver, sty = birType(call.type),
+				memberVisibility = eventVisibilityFact(localEventProp), overrides = overrideDeclarations(callee))
 		}
 	}
 	// RAISE: `handle.invoke(sender, args)` / `handle(sender, args)` (both desugar to `ClrEvent.invoke`). The event handle
@@ -1095,8 +1098,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		val rawArgs = regularArgs(call)
 		val argExprs = if (rawArgs.size == 1 && rawArgs[0] is IrVararg)
 			(rawArgs[0] as IrVararg).elements.filterIsInstance<IrExpression>() else rawArgs
-		val receiver = eventRecv?.let { ""","recv":${expr(it)}""" }.orEmpty()
-		return """{"k":"clrEventRaise","type":${eventOwnerType(prop, eventRecv)},"event":${str(prop.name.asString())},"static":$isStatic,"super":${eventAccess.superQualifierSymbol != null}$receiver,"args":[${argExprs.joinToString(",") { expr(it) }}]}"""
+		val receiver = eventRecv?.let { expr(it) }
+		return BirEventRaise(type = eventOwnerType(prop, eventRecv), event = prop.name.asString(),
+			isStatic = isStatic, superCall = eventAccess.superQualifierSymbol != null,
+			recv = receiver, args = argExprs.map { expr(it) })
 	}
 	// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 	((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }
@@ -1122,7 +1127,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	localDelegates[callee]?.let { ldp ->
 		val dvar = ldp.delegate!!
 		val dname = localSlotName(dvar)
-		val dlocal = kotc.bir.BirLocal(dname).toJson()
+		val dlocal = BirLocal(dname)
 		val elem = birType(ldp.getter.returnType)
 		// A `ClrRef<T>` delegate (byref local): getValue/setValue inline to ldobj/stobj through the managed pointer.
 		if (birType(dvar.type) is TypeNode.ByRef)
@@ -1135,29 +1140,33 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		// ilemit resolve the real emitted `kotlin.Lazy::get_value` — no CLR (System.Lazy) knowledge in kotc.
 		if (dvar.type.classFqName?.asString() == "kotlin.Lazy" && callee === ldp.getter) {
 			val owner = ownerSpec(dvar.type.classifierOrNull?.owner as? IrClass, dvar.type)
-			return delegateInlined(call, """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$dlocal,"method":"value","prop":"get","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, ldp.getter.returnType)}}""")
+			return delegateInlined(call, BirCallInstance(ownerType = owner, virtual = true, recv = dlocal,
+				method = "value", prop = "get", args = emptyList(),
+				ret = if ((owner as? TypeNode.Fqn)?.args != null) birType(ldp.getter.returnType) else null))
 		}
 		// A user delegate class -> its concrete type; a stdlib Read(Write)Property-typed delegate (e.g.
 		// `by Delegates.observable(…)`) -> the REAL generic stdlib interface (mirrors `by lazy` on real
 		// `kotlin.Lazy<T>`), binding to the actual emitted stdlib getValue/setValue.
 		val providerOwner = delegatedProviderOwner(dvar.type)
-		val owner = providerOwner?.toJson()
+		val owner = providerOwner
 		val ownerGeneric = (providerOwner as? TypeNode.Fqn)?.args != null
 		if (owner != null) {
 			val kprop = kPropertyStub(ldp.name.asString())
-			val nullRef = nullConstJson()
+			val nullRef = nullConstant()
 			return delegateInlined(call, if (callee === ldp.setter)
-				"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$dlocal,"method":"setValue"${delegatedOperatorSig(callee)},"args":[$nullRef,$kprop,${expr(regularArgs(call).first())}]}"""
-				else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$dlocal,"method":"getValue"${delegatedOperatorSig(callee)},"args":[$nullRef,$kprop]${retHint(ownerGeneric, ldp.getter.returnType)}}""",
+				BirCallInstance(ownerType = owner, virtual = true, recv = dlocal, method = "setValue",
+					sig = delegatedOperatorSignature(callee), args = listOf(nullRef, kprop, expr(regularArgs(call).first())))
+				else BirCallInstance(ownerType = owner, virtual = true, recv = dlocal, method = "getValue",
+					sig = delegatedOperatorSignature(callee), args = listOf(nullRef, kprop),
+					ret = if (ownerGeneric) birType(ldp.getter.returnType) else null),
 				delegatedOperatorTarget(callee))
 		}
 	}
 	val name = callee.name.asString()
 	val companionReceiver = companionReceiverCallType(callee, call)
-	val companionExtensionCallTag = companionReceiver?.let { ""","companionReceiver":${str(it.toJson())}""" }.orEmpty()
 	val declaringClass = callee.parent as? IrClass
-	val flagsOperation = clrFlagsOperationTag(callee)
-	if (flagsOperation.isNotEmpty()) {
+	val flagsOperation = clrFlagsOperation(callee)
+	if (flagsOperation != null) {
 		val receiver = dispatchReceiver(call)
 		if (receiver != null) {
 			val semanticOwner = ownerSpec(declaringClass, receiver.type)
@@ -1166,8 +1175,9 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			} ?: semanticOwner
 			val arguments = regularArgs(call)
 			val argumentTypes = regularParams(callee).take(arguments.size)
-				.joinToString(",") { birType(it.type).toJson() }
-			return """{"k":"callInstance","ownerType":${operationOwner.toJson()},"virtual":false,"recv":${expr(receiver)},"method":${str(name)},"argTypes":[$argumentTypes],"ret":${birType(call.type).toJson()},"args":[${arguments.joinToString(",") { expr(it) }}]$flagsOperation}"""
+				.map { birType(it.type) }
+			return BirCallInstance(ownerType = operationOwner, virtual = false, recv = expr(receiver), method = name,
+				argTypes = argumentTypes, ret = birType(call.type), args = arguments.map { expr(it) }, clrFlagsOperation = flagsOperation)
 		}
 	}
 	// Kotlin 2.4 can replace the property association of a method-generic DLL -> KLIB member-extension access with
@@ -1194,11 +1204,13 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		}
 		val virtual = isVirtualInstanceCall(call, callee)
 		val args = (listOfNotNull(extensionReceiver(call)) + regularArgs(call))
-			.joinToString(",") { expr(it) }
-		val ta = typeArgsJson(call)
+			.map { expr(it) }
+		val ta = typeArguments(call)
 		val ret = if (access.accessorKind == "get")
-			retHintStr(ta.isNotEmpty() || (owner as? TypeNode.Fqn)?.args != null, birType(call.type)) else ""
-		return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":$virtual,"recv":${expr(recvExpr)},"method":${str(access.sourceName)},"prop":${str(access.accessorKind)}${overloadSigField(callee)}$ta$ret,"args":[$args]${overridesJson(callee)}${superTag(call)}}"""
+			birType(call.type).takeIf { ta != null || (owner as? TypeNode.Fqn)?.args != null } else null
+		return BirCallInstance(ownerType = owner, virtual = virtual, recv = expr(recvExpr), method = access.sourceName,
+			prop = access.accessorKind, sig = overloadSignature(callee), typeArgs = ta, ret = ret, args = args,
+			overrides = overrideDeclarations(callee), superCall = true.takeIf { call.superQualifierSymbol != null })
 	}
 	// A top-level fn has no declaringClass; fall back to the callee's OWN package so an external/user top-level
 	// operator (e.g. a restored `operator fun Vec.plus`) isn't mistaken for a kotlin builtin and lowered to a `bin`.
@@ -1235,19 +1247,17 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		}.mapNotNull { p ->
 			(if (p.kind == IrParameterKind.DispatchReceiver) dispatchReceiver(call) else extensionReceiver(call))?.let { expr(it) }
 		}
-		val localSig = (caps.map { str(captureFieldType(it)) } +
-			callee.parameters.filter { it.kind == IrParameterKind.DispatchReceiver }.map { birType(it.type).toJson() } +
-			listOfNotNull(extensionReceiverParam(callee)).map { birType(it.type).toJson() } +
-			callee.parameters.filter { isValueParameter(it) }.map { birValueParameterType(it).toJson() })
-			.joinToString(",")
+		val localSig = caps.map { captureFieldType(it) } +
+			callee.parameters.filter { it.kind == IrParameterKind.DispatchReceiver }.map { birType(it.type) } +
+			listOfNotNull(extensionReceiverParam(callee)).map { birType(it.type) } +
+			callee.parameters.filter { isValueParameter(it) }.map { birValueParameterType(it) }
 		val resolvedTypeArgs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
-		val typeArgs = if (local.typeParams.isEmpty()) "" else ""","typeArgs":[${
-			localFunctionTypeArgs(local, callee, resolvedTypeArgs).joinToString(",") { it.toJson() }
-		}]"""
+		val typeArgs = if (local.typeParams.isEmpty()) null else localFunctionTypeArgs(local, callee, resolvedTypeArgs)
 		// A lift changes only the declaration's location/parameter list; it does not stop being a Kotlin suspend
 		// call. Preserve the same call-site fact as every other suspend call so bir2cir can route it to the lowered
 		// continuation entry. kotc deliberately does not name that CLR entry here.
-		return """{"k":"callLocal","id":${str(local.id)},"sig":[$localSig],"args":[${(capArgs + recvArgs + localRegArgs).joinToString(",")}]$typeArgs${suspendCallTag(callee)}}"""
+		return BirCallLocal(id = local.id, sig = localSig, args = capArgs + recvArgs + localRegArgs,
+			typeArgs = typeArgs, suspendCall = sourceCallSuspension(callee).suspendCall)
 	}
 
 	// Inlining (lambda-param inline funs only; lambda-less inline = JIT's job — see [[clr-not-jvm-discard-jvmisms]]).
@@ -1315,25 +1325,27 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// Do not classify by the fake accessor's parameter kinds: its setter value may occupy the synthetic
 			// dispatch slot. Every non-null expression is a real static accessor argument in source order.
 			val accessorArgs = call.arguments.filterNotNull()
-			val argTypes = accessorArgs.joinToString(",") { birType(it.type).toJson() }
-			val args = accessorArgs.joinToString(",") { expr(it) }
+			val argTypes = accessorArgs.map { birType(it.type) }
+			val args = accessorArgs.map { expr(it) }
 			val propKind = if (isSetter) "set" else "get"
 			val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(call), call.endOffset,
-				staticProperty.name.asString(), propKind)?.let(::birType)?.toJson() ?: fqnJson(typeName(staticOwner))
+				staticProperty.name.asString(), propKind)?.let(::birType) ?: TypeNode.Fqn(typeName(staticOwner))
 			if (!isSetter && isClrEventProperty(staticProperty))
-				return """{"k":"clrEventGet","type":$selectedOwner,"name":${str(staticProperty.name.asString())},"static":true,"sty":${birType(call.type).toJson()}${eventVisibilityFact(staticProperty)}}"""
-			val ret = if (isSetter) "" else ""","ret":${birType(call.type).toJson()}"""
+				return BirEventGet(selectedOwner, staticProperty.name.asString(), true, sty = birType(call.type),
+					memberVisibility = eventVisibilityFact(staticProperty))
+			val ret = if (isSetter) null else birType(call.type)
 			// A property whose storage IS its user-visible member — `const`, `@ClrField` — emits no
 			// accessor at all (the declaration side gates on the same [fieldRoutedProperty] rule), so its access is
 			// the storage itself. Emitting an accessor call here named a `get_`/`set_` slot that does not exist.
 			if (!fieldRoutedProperty(staticProperty)) {
 				val fieldOwner = selectedOwner
-				val fieldName = str(staticProperty.name.asString())
+				val fieldName = staticProperty.name.asString()
 				return if (isSetter)
-					"""{"k":"staticFieldSet","ownerType":$fieldOwner,"name":$fieldName,"value":${accessorArgs.first().let { expr(it) }}}"""
-				else """{"k":"staticField","ownerType":$fieldOwner,"name":$fieldName}"""
+					BirStaticFieldSet(fieldOwner, fieldName, expr(accessorArgs.first()))
+				else BirStaticFieldGet(fieldOwner, fieldName)
 			}
-			return """{"k":"callStatic","ownerType":$selectedOwner,"method":${str(staticProperty.name.asString())},"prop":"$propKind"${overloadSigField(propertyAccessorDeclaration)},"argTypes":[$argTypes]$ret,"args":[$args]}"""
+			return BirCallStatic(ownerType = selectedOwner, method = staticProperty.name.asString(), prop = propKind,
+				sig = overloadSignature(propertyAccessorDeclaration), argTypes = argTypes, ret = ret, args = args)
 		}
 	}
 
@@ -1419,10 +1431,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		val nvLoc = kotc.bir.BirLocal(nv)
 		val throwNpe = kotc.bir.BirThrowExpression(newExc("kotlin.NullPointerException", null))
 		if (velem != null) {
-			return valueBlockJson(
+			return sourceValueBlock(
 				type = null,
-				stmts = kotc.bir.BirVariable(name = nv, type = TypeNode.Nullable(velem), init = kotc.bir.BirField.Value(expr(arg))),
-				result = nonNullResult(nvLoc, throwNpe, velem).toJson(),
+				stmts = listOf(BirVariable(name = nv, type = TypeNode.Nullable(velem), init = BirField.Value(expr(arg)))),
+				result = nonNullResult(nvLoc, throwNpe, velem),
 			)
 		}
 		// reference (or objEq-testable: generic `T?`) operand: bind once, `(t != null) ? t : throw` (value in
@@ -1431,10 +1443,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		// and throws. (Unsigned `UInt?`/`UByte?`/... take the value-type HasValue/Value branch ABOVE: #118 -- they
 		// ARE value types on the CLR (`Nullable<uint>`), so `nullableElem` includes them via `isPrimitiveOrUnsigned`;
 		// a bare pass-through would leave a `Nullable<uint>` STRUCT at the use site, the #56 struct-consumer issue.)
-		return valueBlockJson(
+		return sourceValueBlock(
 			type = null,
-			stmts = kotc.bir.BirVariable(name = nv, type = birType(arg.type), init = kotc.bir.BirField.Value(expr(arg))),
-			result = nonNullResult(nvLoc, throwNpe).toJson(),
+			stmts = listOf(BirVariable(name = nv, type = birType(arg.type), init = BirField.Value(expr(arg)))),
+			result = nonNullResult(nvLoc, throwNpe),
 		)
 	}
 
@@ -1477,7 +1489,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		// structured Type, never the banned `@Name` type-token). bir2cir/ilemit resolve it to the local enum type,
 		// exactly as the reified `enumValues<T>()` path does (EnumIntrinsicLowering re-emits the same node shape).
 		if (name == "values")
-			return kotc.bir.BirEnumValues(enumTypeNode).toJson()
+			return BirEnumValues(enumTypeNode)
 		if (name == "valueOf") return kotc.bir.BirEnumParse(type = enumType, arg = expr(regularArgs(call).first()))
 	}
 	// The top-level reified enum intrinsics `enumValues<T>()` / `enumValueOf<T>(name)` / `enumEntries<T>()`
@@ -1560,15 +1572,17 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			val mt = correspondingSupertypeInstantiation(recv.type, ixOwner, allowCapturedArguments = true)
 				?.let { birType(it) } ?: error("No selected indexer owner for ${callee.name} on ${recv.type}")
 			val (ixArgs, ixArgTypes) = clrCallArgs(call, ixDeclaration)
-			val ixSignature = overloadSigField(ixDeclaration)
-			val ixTypeArgs = typeArgsJson(call)
+			val ixSignature = overloadSignature(ixDeclaration)
+			val ixTypeArgs = typeArguments(call)
 			// Imported Kotlin operators retain their source result, including value-returning set.
 			// A native indexed property's setter already has Unit as its frontend result.
-			val ixRet = birType(call.type).toJson()
+			val ixRet = birType(call.type)
 			// Retain the frontend dispatch fact until bir2cir binds the selected indexer or Kotlin operator.
 			val ixVirtual = isVirtualInstanceCall(call, callee)
 			// The selected operator supplies all indices, followed by the assigned value for set.
-			return """{"k":"callInstance","virtual":$ixVirtual,"ownerType":${str(mt)},"method":${str(name)},"prop":"index-$name"$ixSignature$ixTypeArgs,"argTypes":[$ixArgTypes],"ret":$ixRet,"recv":${expr(recv)},"args":[$ixArgs]${superTag(call)}}"""
+			return BirCallInstance(virtual = ixVirtual, ownerType = mt, method = name, prop = "index-$name",
+				sig = ixSignature, typeArgs = ixTypeArgs, argTypes = ixArgTypes, ret = ixRet, recv = expr(recv), args = ixArgs,
+				superCall = true.takeIf { call.superQualifierSymbol != null })
 		}
 	}
 
@@ -1609,7 +1623,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		// let bir2cir decide whether the referenced owner is actually a CLR static class or an emitted Kotlin object.
 		// Treating every object receiver as CLR static here erased the receiver of cross-module `Dispatchers.Default`.
 		val isExternalCompanion = declaringClass?.isCompanion == true && clrName(declaringClass) != null
-		val companionCallTag = if (isExternalCompanion) ""","companionCall":true""" else ""
+		val companionCall = true.takeIf { isExternalCompanion }
 		val isStatic = recv == null
 		// A NON-static callInstance emitted here is normally reshaped to a `clrInstance` by bir2cir's
 		// NetInteropBinding (which resolves the owner off the .NET refs) — where `virtual` is irrelevant. But a
@@ -1644,9 +1658,9 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		if (callee.typeParameters.isNotEmpty()) {
 			val targs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
 			if (targs.all { it != null }) {
-				val taJson = targs.joinToString(",") { birType(it!!).toJson() }
+				val instantiatedArgs = targs.map { birType(it!!) }
 				val member = name
-				val anySlotTag = if (isAnySlotMethod(callee)) ""","anySlot":true""" else ""
+				val anySlot = true.takeIf { isAnySlotMethod(callee) }
 				// A generic MEMBER extension (`class C { fun <R> T.f() }`): the `__self` receiver is the .NET method's
 				// first param -> prepend its value + declaration type so the descriptor and call operands line up.
 				val gExt = if (!isStatic) extensionReceiver(call) else null
@@ -1654,7 +1668,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 				// kotc emits the DECLARED parameter types as PURE-KOTLIN `birType` identities (`shapeTypes`); bir2cir
 				// hands them to bir2cir as `shapeTypes`; bir2cir alone resolves the physical scalar memberRef. No CLR-shape knowledge here.
 				val shapeTypes = inMemberDeclarationFrame(callee) {
-					shapeParams.joinToString(",") { birType(it).toJson() }
+					shapeParams.map { birType(it) }
 				}
 				// Positional filling, like every other .NET/restored-member call path: building `args` from the
 				// expressions that happen to be present DELETES an omitted default's slot, so a later provided
@@ -1664,17 +1678,23 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 				// FILL FIRST, then read the receiver: under an evaluation plan the fill binds the receiver, and this
 				// read then renders that ONE binding (see [filledExternalArgs]).
 				val gRegArgs = filledExternalArgs(call)
-				val argsJson = (listOfNotNull(gExt?.let { expr(it) }) + gRegArgs).joinToString(",")
+				val args = listOfNotNull(gExt?.let { expr(it) }) + gRegArgs
 				// A `suspend` generic .NET-member callee carries the `"suspendCall":true` FACT for bir2cir's deferred
 				// Task/await lowering, exactly like the non-generic call paths (suspendCallTag) — otherwise a generic
 				// .NET-member suspend call would silently drop out of the suspension lowering. (latent ⑤.)
 				// A2 (#61): a PLAIN call by identity carrying the generic FACTS (typeArgs + declared shapeTypes);
 				// bir2cir's NetInteropBinding resolves the owner off the .NET refs and shapes it to clrGenericStatic/
 				// clrGenericInstance (the `typeArgs` presence is the generic signal).
+				val suspension = sourceCallSuspension(callee)
 				return if (isStatic)
-					"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[$argsJson]${suspendCallTag(callee)}$anySlotTag$companionCallTag}"""
+					BirCallStatic(ownerType = clrType, method = member, typeArgs = instantiatedArgs, shapeTypes = shapeTypes,
+						args = args, suspendCall = suspension.suspendCall, clrAwaitBridge = suspension.clrAwaitBridge,
+						awaitResult = suspension.awaitResult, anySlot = anySlot, companionCall = companionCall)
 				else
-					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"recv":${expr(recv!!)},"args":[$argsJson]${suspendCallTag(callee)}$anySlotTag${superTag(call)}$companionCallTag}"""
+					BirCallInstance(virtual = clrCallVirtual, ownerType = memberType, method = member, typeArgs = instantiatedArgs,
+						shapeTypes = shapeTypes, recv = expr(recv!!), args = args, suspendCall = suspension.suspendCall,
+						clrAwaitBridge = suspension.clrAwaitBridge, awaitResult = suspension.awaitResult, anySlot = anySlot,
+						superCall = true.takeIf { call.superQualifierSymbol != null }, companionCall = companionCall)
 			}
 		}
 		val prop = callee.correspondingPropertySymbol?.owner
@@ -1684,20 +1704,21 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// that explicit storage fact in BIR; bir2cir resolves the physical
 			// field against the selected reference assembly.
 			if (isClrField(prop)) {
-				val fieldName = str(prop.name.asString())
+				val fieldName = prop.name.asString()
 				val fieldOwner = if (isStatic) memberType!! else fieldDeclarationOwner(callee, recv!!.type)
-				val ownerType = fieldOwner.toJson()
 				return if (isStatic) {
 					if (callee === prop.setter)
-						"""{"k":"staticFieldSet","ownerType":$ownerType,"name":$fieldName,"value":${expr(regularArgs(call).first())}$companionCallTag}"""
+						BirStaticFieldSet(fieldOwner, fieldName, expr(regularArgs(call).first()), companionCall = companionCall)
 					else
-						"""{"k":"staticField","ownerType":$ownerType,"name":$fieldName${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
+						BirStaticFieldGet(fieldOwner, fieldName,
+							ret = if ((fieldOwner as? TypeNode.Fqn)?.args != null) birType(call.type) else null, companionCall = companionCall)
 				} else {
 					val receiver = expr(recv!!)
 					if (callee === prop.setter)
-						"""{"k":"setFieldExpr","ownerType":$ownerType,"recv":$receiver,"name":$fieldName,"value":${expr(regularArgs(call).first())}$companionCallTag}"""
+						BirFieldSetExpression(fieldOwner, receiver, fieldName, expr(regularArgs(call).first()), companionCall = companionCall)
 					else
-						"""{"k":"field","ownerType":$ownerType,"recv":$receiver,"name":$fieldName${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
+						BirFieldGet(fieldOwner, receiver, fieldName,
+							ret = if ((fieldOwner as? TypeNode.Fqn)?.args != null) birType(call.type) else null, companionCall = companionCall)
 				}
 			}
 			// A2 step 3: the property's OWN Kotlin name IS the .NET slot identity (dll2klib projects the member under
@@ -1705,7 +1726,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// (`"prop":"get"/"set"`, a frontend fact from correspondingPropertySymbol). bir2cir's NetInteropBinding
 			// resolves the exact CLR Property accessor from reference metadata.
 			val pn = prop.name.asString()
-			val recvJson = if (isStatic) "null" else expr(recv!!)
+			val receiver = if (isStatic) null else expr(recv!!)
 			// A restored MEMBER extension property (`class C { val T.p }`): no .NET property exists — it's a
 			// accessor method on the dispatch type, with the extension receiver as `__self`.
 			// A2 (#61): a PLAIN instance call by identity carrying the accessor KIND; bir2cir's NetInteropBinding
@@ -1714,36 +1735,45 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// positional part carries a restored `context(...)` parameter and, for a setter, the trailing `value`.
 			extensionReceiver(call)?.let { pExt ->
 				val accArgIrs = listOf(pExt) + regularArgs(call)
-				val accArgTypes = accArgIrs.joinToString(",") { birType(it.type).toJson() }
-				val accArgs = accArgIrs.joinToString(",") { expr(it) }
+				val accArgTypes = accArgIrs.map { birType(it.type) }
+				val accArgs = accArgIrs.map { expr(it) }
 				return if (callee === prop.setter)
-					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set"${overloadSigField(callee)},"argTypes":[$accArgTypes],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[$accArgs]${superTag(call)}$companionCallTag}"""
-				else """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get"${overloadSigField(callee)},"argTypes":[$accArgTypes],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[$accArgs]${superTag(call)}$companionCallTag}"""
+					BirCallInstance(virtual = clrCallVirtual, ownerType = memberType, method = pn, prop = "set",
+						sig = overloadSignature(callee), argTypes = accArgTypes, ret = TypeNode.Fqn("kotlin.Unit"),
+						recv = receiver!!, args = accArgs, superCall = true.takeIf { call.superQualifierSymbol != null }, companionCall = companionCall)
+				else BirCallInstance(virtual = clrCallVirtual, ownerType = memberType, method = pn, prop = "get",
+					sig = overloadSignature(callee), argTypes = accArgTypes, ret = birType(callee.returnType),
+					recv = receiver!!, args = accArgs, superCall = true.takeIf { call.superQualifierSymbol != null }, companionCall = companionCall)
 			}
 			// Reading a projected event uses its native identity even when it also fills an ordinary getter slot. bir2cir
 			// materializes a retained handle. Ordinary ClrEvent-valued properties remain ordinary accessor calls.
 			if (callee === prop.getter && isClrEventProperty(prop)) {
-				return """{"k":"clrEventGet","type":${memberType!!.toJson()},"name":${str(pn)},"static":$isStatic,"recv":$recvJson,"sty":${birType(call.type).toJson()}${eventVisibilityFact(prop)}$companionCallTag}"""
+				return BirEventGet(memberType!!, pn, isStatic,
+					recv = receiver?.let { BirField.Value(it) } ?: BirField.Null, sty = birType(call.type),
+					memberVisibility = eventVisibilityFact(prop), companionCall = companionCall)
 			}
-			val propCallKind = if (isStatic) "callStatic" else "callInstance"
-			val propRecvField = if (isStatic) "" else ""","recv":$recvJson"""
 			// A non-static property-accessor callInstance carries `virtual` too (moot once bir2cir reshapes it to
 			// clrPropGet/clrPropSet; consistent with the other .NET-interop callInstance nodes — #139).
-			val propVirtualField = if (isStatic) "" else ""","virtual":$clrCallVirtual"""
 			val plainAccArgIrs = regularArgs(call)
-			val plainAccArgTypes = plainAccArgIrs.joinToString(",") { birType(it.type).toJson() }
-			val plainAccArgs = plainAccArgIrs.joinToString(",") { expr(it) }
-			return if (callee === prop.setter)
-				"""{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set"${overloadSigField(callee)},"argTypes":[$plainAccArgTypes]$propRecvField,"args":[$plainAccArgs]${superTag(call)}$companionCallTag}"""
-			else """{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get"${overloadSigField(callee)},"argTypes":[$plainAccArgTypes],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[$plainAccArgs]${superTag(call)}$companionCallTag}"""
+			val plainAccArgTypes = plainAccArgIrs.map { birType(it.type) }
+			val plainAccArgs = plainAccArgIrs.map { expr(it) }
+			val propKind = if (callee === prop.setter) "set" else "get"
+			val signature = overloadSignature(callee)
+			val resultType = if (callee === prop.setter) null else birType(callee.returnType)
+			return if (isStatic)
+				BirCallStatic(ownerType = memberType, method = pn, prop = propKind, sig = signature,
+					argTypes = plainAccArgTypes, ret = resultType, args = plainAccArgs, companionCall = companionCall)
+			else BirCallInstance(virtual = clrCallVirtual, ownerType = memberType, method = pn, prop = propKind,
+				sig = signature, argTypes = plainAccArgTypes, ret = resultType, recv = receiver!!, args = plainAccArgs,
+				superCall = true.takeIf { call.superQualifierSymbol != null }, companionCall = companionCall)
 		}
 		val member = name
-		val anySlotTag = if (isAnySlotMethod(callee)) ""","anySlot":true""" else ""
-		val argsJson = regularArgs(call).joinToString(",") { expr(it) }
+		val anySlot = true.takeIf { isAnySlotMethod(callee) }
+		regularArgs(call).map { expr(it) }
 		// kotc emits the PLAIN Kotlin return type; a `suspend` callee is marked by `suspendTag` only (the Task/await
 		// lowering is a deferred downstream layer). No coroutine ABI (Task<T>) is baked here.
-		val ret = inMemberDeclarationFrame(callee) { birType(callee.returnType).toJson() }
-		val suspendTag = suspendCallTag(callee)
+		val ret = inMemberDeclarationFrame(callee) { birType(callee.returnType) }
+		val suspension = sourceCallSuspension(callee)
 		// A .NET operator (`Vec2 + Vec2` -> op_Addition) is emitted here as the PLAIN Kotlin operator identity
 		// (`callInstance method="plus" recv:<a> args:[<b>]`); bir2cir's NetInteropBinding resolves the owner off
 		// the .NET refs, confirms the CLR type declares the `op_X` static, and reshapes it to a `clrStatic op_X`
@@ -1753,21 +1783,31 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		val extRecv = extensionReceiver(call)
 		if (isStatic && extRecv != null) {
 			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
-			return """{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag$anySlotTag$companionCallTag}"""
+			return BirCallStatic(ownerType = clrType, method = member, sig = overloadSignature(callee), argTypes = allArgTypes,
+				ret = ret, args = allArgs, suspendCall = suspension.suspendCall, clrAwaitBridge = suspension.clrAwaitBridge,
+				awaitResult = suspension.awaitResult, anySlot = anySlot, companionCall = companionCall)
 		}
 		// A restored MEMBER extension function (`class C { fun T.f() }`): an INSTANCE method on the dispatch receiver
 		// (C) whose first .NET param `__self` is the extension receiver -> dispatch on `recv`, prepend the receiver.
 		if (!isStatic && extRecv != null && recv != null) {
 			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
-			return """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag${superTag(call)}$companionCallTag}"""
+			return BirCallInstance(virtual = clrCallVirtual, ownerType = memberType, method = member,
+				sig = overloadSignature(callee), argTypes = allArgTypes, ret = ret, recv = expr(recv), args = allArgs,
+				suspendCall = suspension.suspendCall, clrAwaitBridge = suspension.clrAwaitBridge, awaitResult = suspension.awaitResult,
+				anySlot = anySlot, superCall = true.takeIf { call.superQualifierSymbol != null }, companionCall = companionCall)
 		}
 		// A2 (#61): a PLAIN static/instance call by the .NET owner's FQN identity; bir2cir's NetInteropBinding
 		// resolves the owner off the .NET refs and shapes it (clrStatic/clrInstance). No .NET-shape decision here.
 		val (cArgs, cArgTypes) = clrCallArgs(call, callee)
 		return if (isStatic)
-			"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag$anySlotTag$companionCallTag}"""
+			BirCallStatic(ownerType = clrType, method = member, sig = overloadSignature(callee), argTypes = cArgTypes,
+				ret = ret, args = cArgs, suspendCall = suspension.suspendCall, clrAwaitBridge = suspension.clrAwaitBridge,
+				awaitResult = suspension.awaitResult, anySlot = anySlot, companionCall = companionCall)
 		else
-			"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag$anySlotTag${superTag(call)}$companionCallTag}"""
+			BirCallInstance(virtual = clrCallVirtual, ownerType = memberType, method = member,
+				sig = overloadSignature(callee), argTypes = cArgTypes, ret = ret, recv = expr(recv!!), args = cArgs,
+				suspendCall = suspension.suspendCall, clrAwaitBridge = suspension.clrAwaitBridge, awaitResult = suspension.awaitResult,
+				anySlot = anySlot, superCall = true.takeIf { call.superQualifierSymbol != null }, companionCall = companionCall)
 	}
 
 		// An EXTERNAL top-level property (from a DotKt assembly) -> the referenced .NET file class holds it. An
@@ -1780,11 +1820,11 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
 			val externalPropertyOwner = clrExternalOwner(p)
 			if (declaringClass == null) externalPropertyOwner?.let { fileClass ->
-				val companionTag = companionReceiverCallTag(p, call)
-				val ta = typeArgsJson(call)
+				val companionReceiver = companionReceiverCallType(p, call)
+				val ta = typeArguments(call)
 				// A projected companion extension has no runtime receiver. Keep its Kotlin source identity in BIR;
 				// bir2cir binds that identity to the trusted producer carrier's exact CLR member.
-				if (isCompanionExtensionCallee(p) || companionTag.isNotEmpty()) {
+				if (isCompanionExtensionCallee(p) || companionReceiver != null) {
 					val setter = callee === p.setter
 					// Context parameters remain ordinary physical accessor arguments even though the companion receiver
 					// itself has no runtime value. A lazy cross-module setter can still retain its source `value` in the
@@ -1795,16 +1835,17 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 						val value = call.arguments.lastOrNull { it != null }
 						if (value != null && positional.none { it === value }) positional + value else positional
 					} else positional
-					val tag = companionTag
 					if (isClrField(p)) {
 						return if (setter)
-							"""{"k":"staticFieldSet","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())},"value":${expr(values.first())}$tag}"""
-						else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}$tag}"""
+							BirStaticFieldSet(TypeNode.Fqn(fileClass), p.name.asString(), expr(values.first()), companionReceiver = companionReceiver)
+						else BirStaticFieldGet(TypeNode.Fqn(fileClass), p.name.asString(), companionReceiver = companionReceiver)
 					}
-					val argTypes = values.joinToString(",") { birType(it.type).toJson() }
-					val args = values.joinToString(",") { expr(it) }
-					val ret = if (setter) fqnJson("kotlin.Unit") else birType(callee.returnType).toJson()
-					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":${str(if (setter) "set" else "get")}${overloadSigField(callee)}$ta,"argTypes":[$argTypes],"ret":$ret,"args":[$args]$tag}"""
+					val argTypes = values.map { birType(it.type) }
+					val args = values.map { expr(it) }
+					val ret = if (setter) TypeNode.Fqn("kotlin.Unit") else birType(callee.returnType)
+					return BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(),
+						prop = if (setter) "set" else "get", sig = overloadSignature(callee), typeArgs = ta,
+						argTypes = argTypes, ret = ret, args = args, companionReceiver = companionReceiver)
 				}
 				// An accessor that takes ANY argument — an extension receiver, or a `context(...)` parameter — is a
 				// method on the file class, never a static field: route it to the accessor path
@@ -1821,11 +1862,14 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 					val customSet = !hasDefaultSetter(p)
 					if (callee === p.setter) {
 						return if (customSet)
-							"""{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"argTypes":[${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"args":[${expr(regularArgs(call).first())}]}"""
+							BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(), prop = "set",
+								sig = overloadSignature(callee), typeArgs = ta, argTypes = listOf(birType(regularArgs(call).first().type)),
+								ret = TypeNode.Fqn("kotlin.Unit"), args = listOf(expr(regularArgs(call).first())))
 						else kotc.bir.BirStaticFieldSet(ownerType = TypeNode.Fqn(fileClass), name = p.name.asString(), value = expr(regularArgs(call).first()))
 					}
 					return if (customGet)
-						"""{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta,"argTypes":[],"ret":${birType(callee.returnType).toJson()},"args":[]}"""
+						BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(), prop = "get",
+							sig = overloadSignature(callee), typeArgs = ta, argTypes = emptyList(), ret = birType(callee.returnType), args = emptyList())
 					else kotc.bir.BirStaticFieldGet(ownerType = TypeNode.Fqn(fileClass), name = p.name.asString())
 				}
 				val recv = extensionReceiver(call)
@@ -1834,13 +1878,17 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 				// the accessor role; bir2cir finds no matching .NET property/field and applies the shared forward allocation.
 				if (callee === p.setter) {
 					val args = listOfNotNull(recv) + regularArgs(call)
-					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
+					return BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(), prop = "set",
+						sig = overloadSignature(callee), typeArgs = ta, argTypes = args.map { birType(it.type) },
+						ret = TypeNode.Fqn("kotlin.Unit"), args = args.map { expr(it) })
 				}
 				// The getter's args are the SAME projection every other call uses: `[__self?] + <positional args>` —
 				// the positional part is empty for a plain extension property and carries the `context(...)` arguments
 				// for a context property.
 				val getArgs = listOfNotNull(recv) + regularArgs(call)
-				return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta,"argTypes":[${getArgs.joinToString(",") { birType(it.type).toJson() }}],"ret":${birType(callee.returnType).toJson()},"args":[${getArgs.joinToString(",") { expr(it) }}]}"""
+				return BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(), prop = "get",
+					sig = overloadSignature(callee), typeArgs = ta, argTypes = getArgs.map { birType(it.type) },
+					ret = birType(callee.returnType), args = getArgs.map { expr(it) })
 			}
 		}
 
@@ -1849,7 +1897,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
 	(callee.correspondingPropertySymbol?.owner)?.let { p ->
 		if (declaringClass == null) {
-			val companionPropertyCallTag = companionReceiverCallTag(p, call)
+			val companionReceiver = companionReceiverCallType(p, call)
 			val ext = extensionReceiver(call)
 			// C7: a TOP-LEVEL EXTENSION property (`val List<T>.lastIndex`, `val Int.absoluteValue`, `val
 			// CharSequence.indices`) has NO real static field — its value is an accessor emitted by the property's
@@ -1868,12 +1916,15 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 				// carry the resolved type args (+ a retType hint) so ilemit MakeGenericMethods it; without them the call
 				// hits the uninstantiated generic method ("type is not fully instantiated"). Mirrors the generic
 				// extension-FUNCTION path. A non-generic getter (Int.absoluteValue, CharSequence.lastIndex) emits no ta.
-				val ta = typeArgsJson(call)
+				val ta = typeArguments(call)
 				return if (callee === p.setter) {
 					val args = listOf(ext) + regularArgs(call)
-					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"args":[${args.joinToString(",") { expr(it) }}]${calleeOwnerTag(p)}$companionPropertyCallTag}"""
+					BirCallStatic(owner = BirField.Null, method = p.name.asString(), prop = "set", sig = overloadSignature(callee),
+						typeArgs = ta, args = args.map { expr(it) }, calleeOwner = calleeOwnerType(p), companionReceiver = companionReceiver)
 				} else
-					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), birType(call.type))},"args":[${(listOf(ext) + regularArgs(call)).joinToString(",") { expr(it) }}]${calleeOwnerTag(p)}$companionPropertyCallTag}"""
+					BirCallStatic(owner = BirField.Null, method = p.name.asString(), prop = "get", sig = overloadSignature(callee),
+						typeArgs = ta, ret = birType(call.type).takeIf { ta != null }, args = (listOf(ext) + regularArgs(call)).map { expr(it) },
+						calleeOwner = calleeOwnerType(p), companionReceiver = companionReceiver)
 			}
 			// A plain top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING
 			// file's class. Use the property's own file, NOT the file currently being emitted — else a cross-file
@@ -1891,7 +1942,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// top-level val is a computed accessor — so the staticField branches keep the fileClassOf owner.)
 			val crossModule = p.parent !is IrFile
 			val owner = fileClassOf(p)
-			val accessorOwner = if (crossModule) "null" else fqnJson(owner)
+			val accessorOwner = if (crossModule) BirField.Null else BirField.Value(TypeNode.Fqn(owner))
 			// A COMPUTED top-level property (`val foo: T get() = ...`, no backing field) OR one that has a backing
 			// field (initializer) but ALSO a CUSTOM accessor (`val foo = 41; get() = field + 1`, #89) -> a static
 			// call by the property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81), NOT the
@@ -1901,16 +1952,18 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// `var` may pair a default getter (field read) with a custom setter (accessor call), or vice versa.
 			return if (callee === p.setter) {
 				if (!writesAsStaticField(p))
-					"""{"k":"callStatic","owner":$accessorOwner,"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]$companionPropertyCallTag}"""
+					BirCallStatic(owner = accessorOwner, method = p.name.asString(), prop = "set", sig = overloadSignature(callee),
+						args = regularArgs(call).map { expr(it) }, companionReceiver = companionReceiver)
 				else
-					"""{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}$companionPropertyCallTag}"""
+					BirStaticFieldSet(TypeNode.Fqn(owner), p.name.asString(), expr(regularArgs(call).first()), companionReceiver = companionReceiver)
 			} else {
 				if (!readsAsStaticField(p))
-					"""{"k":"callStatic","owner":$accessorOwner,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]${retHint(false, call.type)}$companionPropertyCallTag}"""
+					BirCallStatic(owner = accessorOwner, method = p.name.asString(), prop = "get", sig = overloadSignature(callee),
+						args = regularArgs(call).map { expr(it) }, companionReceiver = companionReceiver)
 				else if (isLateinitProperty(p))
-					"""{"k":"lateinitGet","ownerType":${fqnJson(owner)},"static":true,"name":${str(p.name.asString())}$companionPropertyCallTag}"""
+					BirLateinitGet(ownerType = TypeNode.Fqn(owner), static = true, name = p.name.asString(), companionReceiver = companionReceiver)
 				else
-					"""{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())}$companionPropertyCallTag}"""
+					BirStaticFieldGet(TypeNode.Fqn(owner), p.name.asString(), companionReceiver = companionReceiver)
 			}
 		}
 	}
@@ -1941,9 +1994,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// just with the real FQN instead of the retired `dotkt$KProperty` synthetic.
 	if (property != null && declaringClass != null) {
 		val recvExpr = dispatchReceiver(call)
-		val recv = recvExpr?.let { expr(it) } ?: kotc.bir.BirThis().toJson()
+		val recv = recvExpr?.let { expr(it) } ?: BirThis()
 		val ownerStr = ownerSpec(declaringClass, recvExpr?.type)
-		val owner = str(ownerStr)
 		// A property with a custom accessor — OR one overriding an interface property (e.g. CharSequence.length) —
 		// routes through an accessor, not the backing field. Physical binding belongs to bir2cir and uses the explicit
 		// property identity plus the `overrides` marker.
@@ -1955,17 +2007,22 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// The accessor's arg list is the SAME projection a function call uses: the leading `__self` (member
 			// extension), then the [isValueParameter] sequence — a `context(c: Ctx) val p` accessor's context
 			// parameters, and for a setter the `value` parameter that follows them.
-			val accArgs = (listOfNotNull(pExt) + regularArgs(call).map { expr(it) }).joinToString(",")
+			val accArgs = listOfNotNull(pExt) + regularArgs(call).map { expr(it) }
 			return if (callee === property.setter)
-				"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(property.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[$accArgs]${overridesJson(callee)}${superTag(call)}}"""
-			else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(property.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[$accArgs]${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}${overridesJson(callee)}${superTag(call)}}"""
+				BirCallInstance(ownerType = ownerStr, virtual = virtual, recv = recv, method = property.name.asString(), prop = "set",
+					sig = overloadSignature(callee), args = accArgs, overrides = overrideDeclarations(callee),
+					superCall = true.takeIf { call.superQualifierSymbol != null })
+			else BirCallInstance(ownerType = ownerStr, virtual = virtual, recv = recv, method = property.name.asString(), prop = "get",
+				sig = overloadSignature(callee), args = accArgs, ret = if ((ownerStr as? TypeNode.Fqn)?.args != null) birType(call.type) else null,
+				overrides = overrideDeclarations(callee), superCall = true.takeIf { call.superQualifierSymbol != null })
 		}
 		// A fake override selects inherited storage, not a field declared by the receiver class. Preserve the
 		// selected Kotlin declaration and its substituted supertype frame; synthetic capture names are unrelated.
 		val fieldOwner = fieldDeclarationOwner(callee, recvExpr?.type ?: declaringClass.defaultType)
 		return if (callee === property.setter)
 			kotc.bir.BirFieldSetExpression(ownerType = fieldOwner, recv = recv, name = property.name.asString(), value = expr(regularArgs(call).first()))
-		else """{"k":"field","ownerType":${str(fieldOwner)},"recv":$recv,"name":${str(property.name.asString())}${retHint((fieldOwner as? TypeNode.Fqn)?.args != null, call.type)}}"""
+		else BirFieldGet(ownerType = fieldOwner, recv = recv, name = property.name.asString(),
+			ret = if ((fieldOwner as? TypeNode.Fqn)?.args != null) birType(call.type) else null)
 	}
 
 	// Kotlin universal methods (hashCode/toString/equals) on a builtin receiver. The System.Object slot is correct
@@ -2365,12 +2422,11 @@ internal fun BirEmitter.suspendCallTag(callee: IrFunction): String {
  * inspect FlagsAttribute, select the enum's underlying width, or choose an IL opcode; it carries the annotation value
  * from the exact frontend-selected declaration so bir2cir can realize that Kotlin operation against the target CLR
  * type. */
-internal fun BirEmitter.clrFlagsOperationTag(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
+internal fun BirEmitter.clrFlagsOperation(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String? {
 	val annotation = callee.annotations.singleOrNull {
 		it.type.classFqName?.asString() == "kotlin.clr.ClrFlagsOperation"
-	} ?: return ""
-	val role = (regularArgs(annotation).singleOrNull() as? IrConst)?.value as? String ?: return ""
-	return ""","clrFlagsOperation":${str(role)}"""
+	} ?: return null
+	return (regularArgs(annotation).singleOrNull() as? IrConst)?.value as? String
 }
 
 /** #199/#204: the `,"calleeOwner":<fileClassFqn>` mandatory DISPATCH identity on a top-level `callStatic` whose `owner` stays
@@ -2496,8 +2552,8 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): BirExpression? {
 	if (isExternalNetType(cls)) return null
 	val backing = prop.backingField ?: return null
 	if (prop.isDelegated || isLateinitProperty(prop) || isClrField(prop)) return null
-	val recv = dispatchReceiver(call)?.let { expr(it) } ?: kotc.bir.BirThis().toJson()
-	val owner = ownerSpec(cls, dispatchReceiver(call)?.type).toJson()
+	val recv = dispatchReceiver(call)?.let { expr(it) } ?: BirThis()
+	val owner = ownerSpec(cls, dispatchReceiver(call)?.type)
 	val rendered = kotc.bir.BirFieldGet(ownerType = owner, recv = recv, name = prop.name.asString())
 	return memberFieldVisibilityStamped(backing, rendered)
 }
@@ -2516,24 +2572,24 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): BirExpression? {
  *
  *  A `ClrRef<T>` param already maps to `byref:T` via birType (so the out/ref overload resolves + optional params still
  *  default-fill); a `byref(x)` arg unwraps to its lvalue `x`, which ilemit passes by address. */
-internal fun BirEmitter.clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<String, String> {
+internal fun BirEmitter.clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression, callee: org.jetbrains.kotlin.ir.declarations.IrFunction): Pair<List<BirExpression>, List<TypeNode>> {
 	val aj = filledExternalArgs(call)
 	val tj = inMemberDeclarationFrame(callee) {
-		regularParams(callee).map { birType(it.type).toJson() }
+		regularParams(callee).map { birType(it.type) }
 	}.take(aj.size)
-	return aj.joinToString(",") to tj.joinToString(",")
+	return aj to tj
 }
 
 /** [clrCallArgs] with the callee's EXTENSION receiver prepended to both vectors — a .NET `static M(this T self, …)`
  *  surfaced as a Kotlin extension, or a restored DotKt member extension whose leading `__self` is that receiver. */
 internal fun BirEmitter.clrCallArgsWithRecv(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
-		callee: org.jetbrains.kotlin.ir.declarations.IrFunction, extRecv: IrExpression): Pair<String, String> {
+		callee: org.jetbrains.kotlin.ir.declarations.IrFunction, extRecv: IrExpression): Pair<List<BirExpression>, List<TypeNode>> {
 	val (aj, tj) = clrCallArgs(call, callee)
 	val extParamType = extensionReceiverParam(callee)
 		?.let { inMemberDeclarationFrame(callee) { birType(it.type) } } ?: birType(extRecv.type)
-	val args = listOf(expr(extRecv)) + listOfNotNull(aj.takeIf { it.isNotEmpty() })
-	val types = listOf(extParamType.toJson()) + listOfNotNull(tj.takeIf { it.isNotEmpty() })
-	return args.joinToString(",") to types.joinToString(",")
+	val args = listOf(expr(extRecv)) + aj
+	val types = listOf(extParamType) + tj
+	return args to types
 }
 
 // #82: whether an IrProperty is backed by a REAL static field vs a COMPUTED property whose cross-module

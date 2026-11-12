@@ -9,6 +9,7 @@ import kotc.backend.parameterNullCheck
 import kotc.backend.nonNullResult
 import kotc.backend.nullConstant
 import kotc.backend.sourceValueBlock
+import kotc.backend.withDefaultDispatchRoot
 import kotc.backend.yieldsNullAtJoin
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.impl.IrFactoryImpl
@@ -20,6 +21,47 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.types.Variance
 
 class TypeNodeTest {
+    @Test
+    fun sourceInlineCarrierKeepsBodiesCapturesAndOmittedSlotsTyped() {
+        val frame = TypeNode.Tv("method", 1)
+        val value = BirLocal("value", sty = frame)
+        assertEquals("{}", buildString { BirInlineReceivers().writeJson(this) })
+        assertEquals("""{"dispatch":{"k":"local","name":"receiver"}}""",
+            buildString { BirInlineReceivers(dispatch = BirLocal("receiver")).writeJson(this) })
+        assertEquals("""{"dispatchTypeArgs":[{"t":"tv","scope":"method","i":1}]}""",
+            buildString { BirInlineReceivers(dispatchTypeArgs = listOf(frame)).writeJson(this) })
+        val capture = BirInlineCapture("captured", frame, value = value,
+            sharedCellType = TypeNode.Fqn("Cell", listOf(frame)),
+            sharedCellTypeParams = listOf(TypeParameterDeclaration("T", constraints = listOf(frame))))
+        val transfer = BirSetLocal("result", value)
+        val carrier = BirInlineLambda(listOf(BirLambdaParameter("p", frame)), listOf(capture),
+            listOf(BirBlock(listOf(transfer, BirGoto(3))), BirLabel(3)), value)
+        val receiver = BirFieldGet(TypeNode.Fqn("Inner"), BirThis(sty = TypeNode.Fqn("Inner")), "outer")
+        val read = BirFieldGet(TypeNode.Fqn("Outer"), receiver, "value")
+        val defaultRead = read.withDefaultDispatchRoot() as BirFieldGet
+        assertEquals(BirDefaultReceiver("dispatch"), (defaultRead.recv as BirFieldGet).recv)
+        assertSame(carrier, carrier.withDefaultDispatchRoot())
+        val call = BirCallInline(TypeNode.Fqn("demo.invoke"), null, 2, 1, listOf(frame),
+            BirInlineReceivers(extension = value, dispatchTypeArgs = listOf(frame)),
+            listOf(carrier, null), frame, listOf(frame))
+        assertSame(value, carrier.result)
+        assertSame(value, capture.value)
+        assertSame(transfer, (carrier.body[0] as BirBlock).body[0])
+        assertEquals(null, call.args[1])
+        assertEquals(listOf(frame), call.recvs.dispatchTypeArgs)
+        assertEquals(frame, capture.sharedCellTypeParams!!.single().constraints!!.single())
+        assertEquals("""{"k":"return"}""", BirReturn().toJson())
+        assertEquals("""{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"kotlin.Any"},"value":null}}""",
+            BirReturn(BirConstant(TypeNode.Fqn("kotlin.Any"), BirLiteral.NullLiteral)).toJson())
+        for (sample in listOf(call, carrier,
+            BirTry(TypeNode.Fqn("kotlin.Unit"), carrier.body,
+                listOf(BirCatch(TypeNode.Fqn("kotlin.Throwable"), "e", listOf(BirReturn(value)))), finallyBody = emptyList()),
+            BirForArray(null, "item", value, carrier.body),
+            BirStackGet(BirLocal("ptr"), BirLocal("len"), value, frame))) {
+            println("IR_BIR_CORE_SAMPLE ${sample.toJson()}")
+        }
+    }
+
     @Test
     fun sourceCompositeNodesKeepTheirTypedChildrenAndClosedTypeFrame() {
         val frame = TypeNode.Tv("method", 1)

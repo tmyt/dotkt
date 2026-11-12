@@ -97,11 +97,15 @@ def outputs(root, definitions):
         lines += ["    override fun writeJson(output: StringBuilder) {"]
         opening = '{"k":' + json.dumps(tag) if is_node else "{"
         lines += ["        output.append(" + json.dumps(opening) + ")"]
+        if not is_node:
+            lines += ["        var hasField = false"]
         for index, (key, field) in enumerate(fields):
             optional = key not in required
             name = field.get("x-dotkt-kotlin-name", key)
             prefix = ("," if is_node or index else "") + json.dumps(key) + ":"
-            append_key = "output.append(" + json.dumps(prefix) + ")"
+            append_key = ("output.append(" + json.dumps(prefix) + ")" if is_node else
+                          "if (hasField) output.append(','); hasField = true; output.append(" +
+                          json.dumps(json.dumps(key) + ":") + ")")
             if key in required and "const" in field:
                 lines += ["        " + append_key,
                           "        output.append(" + json.dumps(json.dumps(field["const"])) + ")"]

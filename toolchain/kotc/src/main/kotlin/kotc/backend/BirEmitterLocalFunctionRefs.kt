@@ -1,6 +1,6 @@
 package kotc.backend
 
-import kotc.bir.TypeNode
+import kotc.bir.*
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
@@ -50,16 +50,15 @@ internal fun BirEmitter.localFunctionRef(
 	fn: IrSimpleFunction,
 	local: BirEmitter.LocalFunctionFact,
 	funcType: TypeNode.Fn,
-): String {
+): BirExpression {
 	val ownParams = localFunctionOwnParams(fn)
 	val bound = localFunctionBoundArguments(node, fn)
 	val resolvedTypeArgs = if (local.typeParams.isEmpty()) null else localFunctionTypeArgs(local, fn, node.typeArguments)
 	if (local.captures.isEmpty() && bound.isEmpty())
-		return kotc.bir.BirLocalFunctionReference(local.id, funcType, resolvedTypeArgs).toJson()
-	val callTypeArgs = resolvedTypeArgs?.joinToString(",", ",\"typeArgs\":[", "]") { it.toJson() }.orEmpty()
+		return BirLocalFunctionReference(local.id, funcType, resolvedTypeArgs)
 
 	val frame = localFunctionReferenceFrame(node, fn, local)
-	val closureTypeArgs = liftedTypeArgsJson(frame.typeParams)
+	val closureTypeArgs = liftedTypeArguments(frame.typeParams)
 	val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
 	val boundNames = bound.indices.map { "dotkt\$bound$it" }
 	val capPairs = uniqueCaptureNames(local.captures, boundNames.toMutableSet())
@@ -72,25 +71,24 @@ internal fun BirEmitter.localFunctionRef(
 	fun field(name: String) =
 		kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = name)
 	val fields = capPairs.map { (decl, name) ->
-		"""{"name":${str(name)},"type":${captureFieldType(decl).toJson()}}"""
+		BirCaptureDescriptor(name, captureFieldType(decl))
 	} + bound.zip(boundNames).map { (binding, name) ->
-		"""{"name":${str(name)},"type":${birType(frame.parameterTypes.getValue(binding.first)).toJson()}}"""
+		BirCaptureDescriptor(name, birType(frame.parameterTypes.getValue(binding.first)))
 	}
 	val callArgs = capPairs.map { (_, name) -> field(name) } + ownParams.map { parameter ->
 		boundFields[parameter]?.let(::field)
-			?: kotc.bir.BirLocal(arguments.getValue(parameter)).toJson()
+			?: BirLocal(arguments.getValue(parameter))
 	}
-	val sig = capPairs.map { (decl, _) -> captureFieldType(decl).toJson() } +
-		ownParams.map { birType(it.type).toJson() }
-	val call = """{"k":"callLocal","id":${str(local.id)},"sig":[${sig.joinToString(",")}],"args":[${callArgs.joinToString(",")}]$callTypeArgs}"""
-	val body = if (funcType.ret == TypeNode.Fqn("kotlin.Unit")) kotc.bir.BirExpressionStatement(expr = call)
-		else """{"k":"return","value":$call}"""
-	val params = physicalTypes.zip(paramNames).joinToString(",") { (type, name) ->
-		"""{"name":${str(name)},"type":${type.toJson()}}"""
+	val sig = capPairs.map { (decl, _) -> captureFieldType(decl) } + ownParams.map { birType(it.type) }
+	val call = BirCallLocal(local.id, callArgs, sig = sig, typeArgs = resolvedTypeArgs)
+	val body = if (funcType.ret == TypeNode.Fqn("kotlin.Unit")) BirExpressionStatement(call) else BirReturn(call)
+	val params = physicalTypes.zip(paramNames).map { (type, name) ->
+		BirLambdaParameter(name, type)
 	}
 	// The adapter's values and the call's type arguments now share the same enclosing Kotlin frame. bir2cir alone
 	// chooses the closure owner and rebinds those free parameters into its physical declaration.
-	val synthClass = """{"name":${str(cname)},"fields":[${fields.joinToString(",")}],"params":[$params],"ret":${funcType.ret.toJson()},"body":[$body]${typeParamsJson(frame.typeParams)}${semanticUseSiteOwnerJson()}}"""
+	val synthClass = BirClosureDefinition(cname, fields, params, funcType.ret, listOf(body),
+		typeParams = typeParameterDeclarations(frame.typeParams).takeIf { frame.typeParams.isNotEmpty() }, semanticOwner = activeSemanticOwner ?: fileClass)
 	val values = local.captures.map { capValueExpr(it) } + bound.map { expr(it.second) }
-	return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[${values.joinToString(",")}],"method":"invoke","funcType":${funcType.toJson()}$closureTypeArgs,"synthClass":$synthClass}"""
+	return BirNewClosure(TypeNode.Fqn(cname), values, "invoke", funcType, synthClass, typeArgs = closureTypeArgs)
 }

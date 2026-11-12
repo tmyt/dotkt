@@ -1,6 +1,7 @@
 package kotc.backend
 
 import kotc.bir.TypeNode
+import kotc.bir.BirStatement
 import kotc.bir.BirConstant
 import kotc.bir.BirConditionalBranch
 import kotc.bir.BirIf
@@ -136,15 +137,15 @@ internal fun parameterNullCheck(parameterName: String, message: String): BirIf {
  * the extension receiver, but that is a JVM-ism the CLR companion representation makes unsound — a deliberate DotKt
  * deviation (docs/dotkt-semantics.md).
  */
-internal fun BirEmitter.preconditionChecks(fn: IrFunction): List<String> {
+internal fun BirEmitter.preconditionChecks(fn: IrFunction): List<BirStatement> {
 	if (!isPublicSurface(fn) || !ownerIsNamed(fn) || fn.isInline) return emptyList()
 	val ownerMethod = fn.fqNameWhenAvailable?.asString() ?: fn.name.asString()
-	val out = ArrayList<String>()
+	val out = ArrayList<BirStatement>()
 	for (p in fn.parameters) {
 		if (p.kind != IrParameterKind.Regular) continue             // receivers/context params -> skip (see kdoc)
 		if (!needsNonNullCheck(p.type)) continue
 		val msg = "Parameter specified as non-null is null: $ownerMethod, parameter ${p.name.asString()}"
-		out.add(parameterNullCheck(p.name.asString(), msg).toJson())
+		out.add(parameterNullCheck(p.name.asString(), msg))
 	}
 	return out
 }
@@ -182,7 +183,7 @@ internal fun BirEmitter.wrapNonNullValue(value: kotc.bir.BirExpression, valueTyp
 	val nvLoc = BirLocal(nv)
 	val throwNpe = BirThrowExpression(newExc("kotlin.NullPointerException", message))
 	return sourceValueBlock(
-		statements = listOf(kotc.bir.BirVariable(name = nv, type = birType(valueType), init = kotc.bir.BirField.Value(value))),
+		stmts = listOf(kotc.bir.BirVariable(name = nv, type = birType(valueType), init = kotc.bir.BirField.Value(value))),
 		result = nonNullResult(nvLoc, throwNpe),
 	)
 }

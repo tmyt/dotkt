@@ -392,7 +392,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 
 	// Lambda lifting: non-capturing lambdas become named static methods appended to the file class;
 	// capturing lambdas become synthesized closure classes appended to the file's types.
-	internal val liftedMethods = ArrayList<String>()
+	internal val liftedMethods = ArrayList<kotc.bir.BirFunctionDeclaration>()
 	internal val liftedTypes = ArrayList<String>()
 	// Building the stdlib ITSELF: emit kotlin.* REFERENCE types (List/Set/Map/Iterable/Iterator/Map.Entry) as their real
 	// kotlin.* types, NOT lowered to the BCL — the BCL substitution is the consuming APP's emit-time job (driven by the
@@ -827,9 +827,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 
 	internal data class RefTypeFact(
 		val name: String,
-		val elemJson: String,
+		val elem: TypeNode,
 		val capturedParameters: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>,
-		val capturedDeclarationsJson: String,
+		val capturedDeclarations: List<kotc.bir.TypeParameterDeclaration>,
 	)
 	/** identity key -> ref-cell representation facts. One entry per DISTINCT cell shape in the file. */
 	internal val refTypes = LinkedHashMap<String, RefTypeFact>()
@@ -886,7 +886,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		val savedSubst = typeArgSubst.toMap()
 		val fact = try {
 			parameters.forEachIndexed { index, parameter -> typeArgSubst[parameter] = TypeNode.Tv("type", index) }
-			RefTypeFact(name, birType(d.type).toJson(), parameters, typeParamDeclarationsJson(parameters))
+			RefTypeFact(name, birType(d.type), parameters, typeParameterDeclarations(parameters))
 		} finally {
 			typeArgSubst.clear()
 			typeArgSubst.putAll(savedSubst)
@@ -902,9 +902,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		return TypeNode.Fqn(name, parameters.takeIf { it.isNotEmpty() }?.map { typeArgSubst[it] ?: tvOf(it) })
 	}
 
-	internal fun refTypeParametersJson(d: IrValueDeclaration): String {
+	internal fun refTypeParameters(d: IrValueDeclaration): List<kotc.bir.TypeParameterDeclaration> {
 		refTypeName(d)
-		return refTypeByVariable.getValue(d).capturedDeclarationsJson
+		return refTypeByVariable.getValue(d).capturedDeclarations
 	}
 
 	/** A key for the declaration identity and bounds of every type variable [t] mentions; empty for a closed type. */
@@ -933,7 +933,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// (single `v` field + its init ctor) into the file `types` from this registry. The element type is unrecoverable
 	// from the use-site nodes alone (a bare `field .v` read carries no type), so the registry is the required fact.
 	internal fun refTypesJson(): String = refTypes.values.joinToString(",") { fact ->
-		"""{"name":${str(fact.name)},"elem":${fact.elemJson},"typeParams":${fact.capturedDeclarationsJson}}"""
+		"""{"name":${str(fact.name)},"elem":${fact.elem.toJson()},"typeParams":[${fact.capturedDeclarations.joinToString(",") { it.toJson() }}]}"""
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
@@ -1174,7 +1174,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			classes.map { typeDef(it) } + (objects + nestedObjects).map { typeDef(it, isObject = true) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
 			semanticCompanions.map { typeDef(it, isObject = true) } +
 			(richEnums + nestedRichEnums).map { richEnumDef(it) } + (annClasses + nestedAnnotations).map { annotationDef(it) }
-		val methods = (fnMethods + topPropAccessors + liftedMethods).joinToString(",")
+		val methods = (fnMethods + topPropAccessors + liftedMethods.map { buildString { it.writeJson(this) } }).joinToString(",")
 		// #52 (kotc-purity): the CLR-representation synthetic TYPE definitions are no longer synthesized here — kotc emits
 		// only the FACTS. bir2cir owns the type synthesis: SharedSyntheticSynthesis builds the fixed-shape
 		// `dotkt$CharSequence` interface from its use-site identity and each generated ref cell from the `refTypes`
