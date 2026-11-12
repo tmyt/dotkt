@@ -18,14 +18,25 @@
 
   "$defs": {
 
-    "sourceBoundsSnapshot": {
-      "type": "object", "properties": { "bounds": { "type": "object", "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/type" } } } },
-      "required": ["bounds"], "additionalProperties": false
+    "sourceTypeFacts": {
+      "type": "object", "properties": {
+        "base": { "$ref": "#/$defs/type" }, "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "bounds": { "type": "object", "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/type" } } }
+      }, "additionalProperties": false
     },
-    "sourceBoundsSnapshotText": {
+    "sourceTypeFactsText": {
+      "type": "string", "x-dotkt-csharp-type": "SourceTypeFacts", "x-dotkt-csharp-codec": "SourceTypeFacts",
+      "x-dotkt-json-content": "#/$defs/sourceTypeFacts",
+      "$comment": "Typed source-phase base, interfaces and bounds. JSON text is produced only for the remaining DOM consumer frontier, not used as the internal representation."
+    },
+    "sourceMethodBounds": {
+      "type": "object", "properties": { "bounds": { "type": "object", "additionalProperties": {
+        "type": "array", "items": { "$ref": "#/$defs/type" }
+      } } }, "required": ["bounds"], "additionalProperties": false
+    },
+    "sourceMethodBoundsText": {
       "type": "string", "x-dotkt-csharp-type": "SourceBoundsSnapshot", "x-dotkt-csharp-codec": "SourceBoundsSnapshot",
-      "x-dotkt-json-content": "#/$defs/sourceBoundsSnapshot",
-      "$comment": "Typed source-phase bounds. JSON text is produced only for the remaining DOM consumer frontier, not used as the internal representation."
+      "x-dotkt-json-content": "#/$defs/sourceMethodBounds"
     },
 
     "birSourceTypeAlias": { "$ref": "kotlin-typealias.schema.json", "x-dotkt-model": { "name": "SourceTypeAlias" } },
@@ -349,6 +360,7 @@
     },
     "birParameter": {
       "type": "object", "x-dotkt-model": { "name": "BirParameter", "domain": "birCoreValues", "loweringSourceFields": ["default"], "loweringProperties": {
+        "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "nominalParameterSignatureIdentity": { "$ref": "#/$defs/type" },
         "genericParameterSignatureBounds": { "type": "array", "items": { "$ref": "#/$defs/type" } }
       } },
@@ -371,7 +383,7 @@
       "required": ["k", "id", "decl"], "additionalProperties": false
     },
     "birInheritedImplementation": {
-      "type": "object", "x-dotkt-model": { "name": "BirInheritedImplementation", "domain": "birCoreValues", "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceBoundsSnapshotText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirInheritedImplementation", "domain": "birCoreValues", "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
       "properties": {
         "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string" }, "arity": { "type": "integer" },
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "sig": { "type": "array", "items": { "$ref": "#/$defs/type" } }
@@ -385,8 +397,9 @@
     },
     "birFunctionDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "loweringProperties": {
+        "retKotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "declarationSourceName": { "type": "string" },
-        "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceBoundsSnapshotText" },
+        "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
         "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
       } },
       "properties": {
@@ -423,7 +436,9 @@
       "required": ["params", "baseArgs", "body"], "additionalProperties": false
     },
     "birFieldDeclaration": {
-      "type": "object", "x-dotkt-model": { "name": "BirFieldDeclaration", "domain": "birCoreValues", "loweringProperties": { "constant": { "$ref": "#/$defs/literalValue" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirFieldDeclaration", "domain": "birCoreValues", "loweringProperties": {
+        "constant": { "$ref": "#/$defs/literalValue" }, "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true }
+      } },
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "static": { "type": "boolean", "x-dotkt-kotlin-name": "isStatic" },
         "init": { "oneOf": [{ "$ref": "#/$defs/birExpressionNode" }, { "type": "null" }] }, "vis": { "type": "string" },
@@ -439,12 +454,14 @@
       "required": ["name", "type"], "additionalProperties": false
     },
     "birRefTypeDeclaration": {
-      "type": "object", "x-dotkt-model": { "name": "BirRefTypeDeclaration", "domain": "birCoreValues", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceBoundsSnapshotText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirRefTypeDeclaration", "domain": "birCoreValues", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
       "properties": { "name": { "type": "string" }, "elem": { "$ref": "#/$defs/type" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } } },
       "required": ["name", "elem", "typeParams"], "additionalProperties": false
     },
     "birPropertyDeclaration": {
-      "type": "object", "x-dotkt-model": { "name": "BirPropertyDeclaration", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirPropertyDeclaration", "domain": "birCoreValues", "loweringProperties": {
+        "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true }
+      } },
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
         "kotlinAccessors": { "type": "array", "items": { "type": "string" } }, "propertyAssociation": { "type": "string" },
@@ -453,7 +470,7 @@
       "required": ["name", "type", "kotlinAccessors", "propertyAssociation"], "additionalProperties": false
     },
     "birInterfaceDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirInterfaceDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringProperties": { "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinSupertypesPre": { "$ref": "#/$defs/sourceBoundsSnapshotText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirInterfaceDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringProperties": { "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "interface" }, "semanticOwner": { "type": "string" }, "vis": { "type": "string" },
         "mods": { "$ref": "#/$defs/birModifiers" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
@@ -474,7 +491,7 @@
       "properties": { "underlying": { "$ref": "#/$defs/type" } }, "required": ["underlying"], "additionalProperties": false
     },
     "birEnumDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirEnumDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["entries"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceBoundsSnapshotText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirEnumDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["entries"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "enum" }, "semanticOwner": { "type": "string" }, "vis": { "type": "string" },
         "clrEnum": { "$ref": "#/$defs/birClrEnumDeclaration" }, "entries": { "type": "array", "items": { "$ref": "#/$defs/birEnumEntryDeclaration" } },
@@ -483,7 +500,7 @@
       "required": ["name", "kind", "entries", "attrs"], "additionalProperties": false
     },
     "birClassDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["clrEvents"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceBoundsSnapshotText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["clrEvents"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "class" }, "generated": { "const": true }, "base": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
         "companionCaptureOwner": { "type": "string" },
@@ -543,7 +560,7 @@
     },
     "birInheritedClassMethod": {
       "type": "object", "x-dotkt-model": { "name": "BirInheritedClassMethod", "domain": "birCoreValues", "loweringProperties": {
-        "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceBoundsSnapshotText" },
+        "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
         "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
       } },
       "properties": {
@@ -592,7 +609,7 @@
       "required": ["name", "type"], "additionalProperties": false
     },
     "birClosureDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirClosureDefinition", "domain": "birCoreValues", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceBoundsSnapshotText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirClosureDefinition", "domain": "birCoreValues", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
       "properties": {
         "name": { "type": "string" }, "fields": { "type": "array", "items": { "$ref": "#/$defs/birCaptureDescriptor" } },
         "params": { "type": "array", "items": { "$ref": "#/$defs/birLambdaParameter" } }, "ret": { "$ref": "#/$defs/type" },
@@ -1470,7 +1487,7 @@
       }, "required": ["name"], "additionalProperties": false
     },
     "cirMethodImpl": {
-      "type": "object", "x-dotkt-model": { "name": "CirMethodImpl", "domain": "cirDeclarations", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceBoundsSnapshotText" } } },
+      "type": "object", "x-dotkt-model": { "name": "CirMethodImpl", "domain": "cirDeclarations", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
       "properties": {
         "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "arity": { "type": "integer" },
         "params": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "ret": { "$ref": "#/$defs/type" },

@@ -39,6 +39,7 @@ static class Bir2Cir
                 ForeignStarProjectionBinding.SelfTest();
                 MemberCallSubstitution.StaticCollectionPreferenceSelfTest();
                 FunctionSignatureIdentity.SelfTest();
+                FunctionValueRepresentation.SelfTestSourceFacts();
                 ClrTypeVariance.SelfTest();
                 PhysicalValueCoercion.SelfTest();
                 StringCharSequenceBridge.SelfTest();
@@ -198,6 +199,7 @@ sealed class Pipeline
         var valuePolicy = new ValueRepresentationSourcePolicy(captured, refs, referenceBuild);
         for (var index = 0; index < captured.Length; index++) captured[index] = valuePolicy.EraseBounds(captured[index]);
         captured = CallableVisibilityLowering.ApplyAll(captured, refs);
+        captured = FunctionValueRepresentation.PreserveSourceFacts(captured);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -251,7 +253,6 @@ sealed class Pipeline
         var declarationSemanticSignatures = module.Signatures;
         var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild, module.ValuePolicy);
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
-        FunctionValueRepresentation.PreserveSourceFacts(birRoots);
         ClrEventImplBinding.PreserveSourceFacts(birRoots);
         CapturedGenericInvocation.PreserveSourceFacts(birRoots, refs);
         ContinuationErasure.PreserveSourceSupertypes(birRoots, refs);
