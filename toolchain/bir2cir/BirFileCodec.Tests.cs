@@ -77,6 +77,23 @@ static partial class BirFileCodec
             catch (Exception error) when (error is FormatException or MessagePackSerializationException or EndOfStreamException) { failed = true; }
             if (!failed) throw new InvalidOperationException("Malformed current BIR framing was accepted");
         }
+        foreach (var fields in new[] {
+            new[] { ("k", "const"), ("unknownField", "value") },
+            new[] { ("k", "const"), ("k", "const") },
+            new[] { ("k", "unknownKind") },
+        })
+        {
+            var buffer = new ArrayBufferWriter<byte>();
+            var writer = new MessagePackWriter(buffer);
+            writer.WriteMapHeader(fields.Length);
+            foreach (var (key, value) in fields) { writer.Write(key); writer.Write(value); }
+            writer.Flush();
+            var reader = new MessagePackReader(buffer.WrittenMemory);
+            var failed = false;
+            try { BirGraphMessagePack.ReadNode(ref reader); }
+            catch (FormatException) { failed = true; }
+            if (!failed) throw new InvalidOperationException("Malformed current BIR fields/kind were accepted");
+        }
         Console.WriteLine("[BIR MessagePack] self-test OK (all kinds, numeric bits/UTF16, presence, exact frames/IDs, opaque bytes, independent executable mutation)");
     }
 }

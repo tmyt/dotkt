@@ -32,6 +32,15 @@ dotnet build "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
     -p:BaseIntermediateOutputPath="$OUT/obj/" \
     -p:BaseOutputPath="$OUT/bin/" >/dev/null
 
+# Configuration validation must fail before invoking the compiler, even on an incremental build.
+if invalid_out="$(dotnet msbuild "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
+    -t:DotKtComputeCompileOptions -p:Configuration=Release -p:DotKtBirFormat=invalid \
+    -p:BaseIntermediateOutputPath="$OUT/obj/" -p:BaseOutputPath="$OUT/bin/" 2>&1)"; then
+    die "SDK accepted an unknown BIR format"
+fi
+grep -qF 'DotKtBirFormat must be json or msgpack.' <<<"$invalid_out" \
+    || die "invalid BIR format did not produce its configuration diagnostic"
+
 probe_dir="$OUT/bin/Release/net10.0"
 raw="$OUT/TargetUniverseProbe.raw.dll"
 cp "$probe_dir/TargetUniverseProbe.dll" "$raw"

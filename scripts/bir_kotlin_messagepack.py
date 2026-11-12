@@ -9,12 +9,12 @@ def outputs(root, definitions):
     lines = ["// Generated from docs/bir-cir.schema.json; run scripts/generate-ir-model.py.",
              "package kotc.bir", "", "import org.msgpack.core.MessagePacker", "",
              "internal object BirMessagePack {", "    private const val maxDepth = 1024",
-             "    private fun checkDepth(depth: Int) { require(depth < maxDepth) }", "",
+             "    private fun checkDepth(depth: Int) { require(depth < maxDepth) { \"BIR nesting exceeds $maxDepth\" } }", "",
              "    fun write(value: BirValue, packer: MessagePacker, depth: Int = 0) {",
              "        checkDepth(depth)", "        when (value) {",
              "            is TypeNode -> writeType(value, packer, depth)",
              "            is BirLiteral -> writeLiteral(value, packer, depth)",
-             "            is SourceTypeAlias -> SourceMetadataMessagePack.write(value, packer)",
+             "            is SourceTypeAlias -> SourceMetadataMessagePack.write(value, packer, depth)",
              "            is TypeParameterDeclaration -> writeTypeParameterDeclaration(value, packer, depth)"]
     for shape in shapes.values():
         name = shape["x-dotkt-model"]["name"]
@@ -29,7 +29,7 @@ def outputs(root, definitions):
             return [indent + f"MessagePackText.write(packer, {value}.toJson())"]
         key = refkey(field)
         if key:
-            if key == "birSourceTypeAlias": target = f"SourceMetadataMessagePack.write({value}, packer)"
+            if key == "birSourceTypeAlias": target = f"SourceMetadataMessagePack.write({value}, packer, {depth})"
             elif key == "type": target = f"writeType({value}, packer, {depth})"
             elif key == "literalValue": target = f"writeLiteral({value}, packer, {depth})"
             elif key == "sourceClassifier": target = f"writeTypeSourceClassifier({value}, packer, {depth})"

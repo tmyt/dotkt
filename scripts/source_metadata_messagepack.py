@@ -12,8 +12,9 @@ def outputs(root, named, definitions, variants, parameters, cs_type, cs_name, kt
     kt = [header, "package kotc.bir", "", "import org.msgpack.core.MessagePack", "import org.msgpack.core.MessagePacker", "",
           "internal object SourceMetadataMessagePack {",
           "    fun encode(value: SourceTypeAlias): ByteArray = MessagePack.newDefaultBufferPacker().use { packer ->",
-          "        writeSourceTypeAlias(value, packer)", "        packer.toByteArray()", "    }",
-          "    fun write(value: SourceTypeAlias, packer: MessagePacker) = writeSourceTypeAlias(value, packer)", ""]
+          "        write(value, packer)", "        packer.toByteArray()", "    }",
+          "    fun write(value: SourceTypeAlias, packer: MessagePacker, depth: Int = 0) = writeSourceTypeAlias(value, packer, depth)",
+          "    private fun checkDepth(depth: Int) { require(depth < 1024) { \"BIR nesting exceeds 1024\" } }", ""]
 
     def target(shape):
         return definitions[shape["$ref"].removeprefix("#/$defs/")]
@@ -44,15 +45,16 @@ def outputs(root, named, definitions, variants, parameters, cs_type, cs_name, kt
         method = "IrMessagePack.WriteString(ref writer, " if cs_type(shape) == "string" else "writer.Write("
         return [f"{indent}{method}{value});"]
 
-    def kt_write(shape, value, indent):
+    def kt_write(shape, value, indent, level=1):
         if "$ref" in shape:
             definition = target(shape)
             if "x-dotkt-model" in definition:
-                return [f'{indent}write{definition["x-dotkt-model"]["name"]}({value}, packer)']
-            return kt_write(definition, value, indent)
+                return [f'{indent}write{definition["x-dotkt-model"]["name"]}({value}, packer, depth + {level})']
+            return kt_write(definition, value, indent, level)
         if shape.get("type") == "array":
-            return [f"{indent}packer.packArrayHeader({value}.size)", f"{indent}{value}.forEach {{ item ->",
-                    *kt_write(shape["items"], "item", indent + "    "), f"{indent}}}"]
+            return [f"{indent}checkDepth(depth + {level})", f"{indent}packer.packArrayHeader({value}.size)",
+                    f"{indent}{value}.forEach {{ item ->",
+                    *kt_write(shape["items"], "item", indent + "    ", level + 1), f"{indent}}}"]
         if "const" in shape:
             return [f'{indent}packer.packString({json.dumps(shape["const"])});']
         if kt_type(shape) == "String":
@@ -102,7 +104,8 @@ def outputs(root, named, definitions, variants, parameters, cs_type, cs_name, kt
             if optional:
                 cs.append("        }")
         cs.extend(["    }", ""])
-        kt.extend([f"    private fun write{name.replace('.', '')}(value: {name}, packer: MessagePacker) {{"])
+        kt.extend([f"    private fun write{name.replace('.', '')}(value: {name}, packer: MessagePacker, depth: Int) {{",
+                   "        checkDepth(depth)"])
         count = str(required) + "".join(f" + (if (value.{key} == null) 0 else 1)" for key in properties if key not in definition["required"])
         kt.append(f"        packer.packMapHeader({count})")
         for key, shape in properties.items():
@@ -128,10 +131,10 @@ def outputs(root, named, definitions, variants, parameters, cs_type, cs_name, kt
                 cs.append(f'            {json.dumps(tag)} => Read{name}{variant}(ref reader),')
             cs.extend(["            _ => throw new FormatException(),", "        };", "",
                        f"    private static void Write{name}(ref MessagePackWriter writer, {name} value, int depth)", "    {", "        switch (value)", "        {"])
-            kt.extend([f"    private fun write{name}(value: {name}, packer: MessagePacker) {{", "        when (value) {"])
+            kt.extend([f"    private fun write{name}(value: {name}, packer: MessagePacker, depth: Int) {{", "        when (value) {"])
             for variant, _ in cases:
                 cs.append(f"            case {name}.{variant} node: Write{name}{variant}(ref writer, node, depth); break;")
-                kt.append(f"            is {name}.{variant} -> write{name}{variant}(value, packer)")
+                kt.append(f"            is {name}.{variant} -> write{name}{variant}(value, packer, depth)")
             cs.extend(["            default: throw new FormatException();", "        }", "    }", ""])
             kt.extend(["        }", "    }", ""])
             for variant, shape in cases:

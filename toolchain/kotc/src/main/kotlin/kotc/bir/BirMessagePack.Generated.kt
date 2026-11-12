@@ -5,14 +5,14 @@ import org.msgpack.core.MessagePacker
 
 internal object BirMessagePack {
     private const val maxDepth = 1024
-    private fun checkDepth(depth: Int) { require(depth < maxDepth) }
+    private fun checkDepth(depth: Int) { require(depth < maxDepth) { "BIR nesting exceeds $maxDepth" } }
 
     fun write(value: BirValue, packer: MessagePacker, depth: Int = 0) {
         checkDepth(depth)
         when (value) {
             is TypeNode -> writeType(value, packer, depth)
             is BirLiteral -> writeLiteral(value, packer, depth)
-            is SourceTypeAlias -> SourceMetadataMessagePack.write(value, packer)
+            is SourceTypeAlias -> SourceMetadataMessagePack.write(value, packer, depth)
             is TypeParameterDeclaration -> writeTypeParameterDeclaration(value, packer, depth)
             is BirFileDeclaration -> writeBirFileDeclaration(value, packer, depth)
             is BirBinaryOperation -> writeBirBinaryOperation(value, packer, depth)
@@ -187,7 +187,7 @@ internal object BirMessagePack {
         checkDepth(depth + 1)
         packer.packArrayHeader(value.typeAliases.size)
         for (item0 in value.typeAliases) {
-            SourceMetadataMessagePack.write(item0, packer)
+            SourceMetadataMessagePack.write(item0, packer, depth + 1 + 1)
         }
     }
 

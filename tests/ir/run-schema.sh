@@ -34,7 +34,7 @@ PY="${PYTHON:-python3}"
 "$PY" tests/ir/test-generic-receiver-schema.py || exit 1
 "$PY" tests/ir/test-valueblock-schema.py || exit 1
 ./gradlew -q :kotc:test --tests kotc.bir.TypeNodeTest --tests kotc.bir.SourceMetadataTest \
-    --tests kotc.bir.TypeParameterDeclarationTest || exit 1
+    --tests kotc.bir.TypeParameterDeclarationTest --tests kotc.pipeline.BirFileConfigurationTest || exit 1
 "$PY" tests/ir/check-type-model-coverage.py || exit 1
 "$PY" tests/ir/check-source-metadata-coverage.py || exit 1
 

@@ -276,7 +276,7 @@
   <!-- Incremental (#134): re-lower ONLY when the frontend recompiled
        ($(DotKtIntermediateBirPath)/.stamp bumps) or the bir2cir tool itself changed (version proxy). A reference-set
        change already retriggers KotlinCompile (its Inputs include the resolved refs) and thus the .stamp, so the
-       cascade covers it. Keyed off the .stamp — not the *.bir.json glob — because target-body items don't exist when
+       cascade covers it. Keyed off the .stamp — not the selected BIR glob — because target-body items don't exist when
        MSBuild evaluates the Inputs, and the .stamp is the compile's single stable up-to-date marker.
        Reflection-restricted mode has a distinct output stamp so changing publish mode cannot suppress DOTKTSTAR001
        through an ordinary-build cache hit. -->

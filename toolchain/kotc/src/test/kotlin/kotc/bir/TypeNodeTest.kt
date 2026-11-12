@@ -3,6 +3,7 @@ package kotc.bir
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
+import kotlin.test.assertFailsWith
 import kotc.backend.BirEmitter
 import kotc.backend.constant
 import kotc.backend.parameterNullCheck
@@ -47,6 +48,9 @@ class TypeNodeTest {
             typeParams = listOf(TypeParameterDeclaration("T", constraints = listOf(TypeNode.Fqn("kotlin.Any")))))
         reportBinaryFile(BirFileDeclaration("BinaryMetadataKt", false, emptyList(), listOf(method),
             emptyList(), emptyList(), emptyList(), listOf(alias)))
+        org.msgpack.core.MessagePack.newDefaultBufferPacker().use { packer ->
+            assertFailsWith<IllegalArgumentException> { BirMessagePack.write(alias, packer, 1023) }
+        }
     }
 
     @Test

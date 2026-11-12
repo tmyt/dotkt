@@ -1,9 +1,6 @@
 using System.Buffers;
 using DotKt.Bir.Lowering;
-using DotKt.Bir;
 using MessagePack;
-
-enum BirFileFormat { Json, MessagePack }
 
 // Explicit artifact and codec framing. Input construction always owns typed BIR;
 // neither transport reconstructs semantics or reparses a serialized IR graph.
@@ -37,17 +34,5 @@ static partial class BirFileCodec
         var file = BirGraphMessagePack.Read(ref reader);
         if (!reader.End) throw new FormatException();
         return file;
-    }
-
-    internal static void Write(string path, BirFileDeclaration file, BirFileFormat format)
-    {
-        switch (format)
-        {
-            case BirFileFormat.Json:
-                File.WriteAllBytes(path, BirCarrier.EncodeBody(BirCarrier.JsonV1, file, (writer, value) => value.WriteJson(writer)));
-                break;
-            case BirFileFormat.MessagePack: File.WriteAllBytes(path, Encode(file)); break;
-            default: throw new ArgumentOutOfRangeException(nameof(format));
-        }
     }
 }
