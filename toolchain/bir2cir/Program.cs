@@ -129,7 +129,7 @@ sealed class Pipeline
     {
         Directory.CreateDirectory(_options.OutDir);
 
-        var birFiles = LoadBirFiles(_options.Inputs);
+        var birFiles = LoadBirFiles(_options.Inputs, _options.RefBuild);
         var refs = ReferenceMetadataIndex.Build(_options.CompileReferences);
         // Fail-loud: a ref.dll scan swallows load/type failures into Diagnostics (so ONE malformed type never aborts the
         // whole scan). Surface them here — a silent ref-scan miss otherwise surfaces as a distant EntryPointNotFound/NRE
@@ -161,7 +161,7 @@ sealed class Pipeline
             $"bir2cir: lowered {birFiles.Count} BIR file(s) -> {_options.OutDir} ({refs.Count} ref(s), build: {(_options.RefBuild ? "reference" : "substitute/app")}, suspend: {suspend.FunctionCount} fn)");
     }
 
-    static List<BirFile> LoadBirFiles(IReadOnlyList<string> inputs)
+    static List<BirFile> LoadBirFiles(IReadOnlyList<string> inputs, bool referenceBuild)
     {
         var inputsWithSources = new List<(string Path, DotKt.Bir.Lowering.BirFileDeclaration Source, SuspendShapeAnalysis Suspend)>();
         foreach (var input in inputs)
@@ -184,10 +184,12 @@ sealed class Pipeline
             }
         }
         var captured = DeclarationSignatureIdentity.Capture(TakeSources());
+        for (var index = 0; index < captured.Length; index++) captured[index] = SourceOwnerClosure.Apply(captured[index]);
+        captured = ComparableRepresentationLowering.Apply(captured, referenceBuild);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
-            var source = SourceOwnerClosure.Apply(captured[index]);
+            var source = captured[index];
             captured[index] = null;
             // The remaining passes still own DOM graphs. Construct that frontier
             // directly; never serialize/reparse the typed input between passes.
@@ -233,7 +235,6 @@ sealed class Pipeline
     List<CirFile> TransformFiles(IReadOnlyList<BirFile> birFiles, ReferenceMetadataIndex refs)
     {
         var birRoots = birFiles.Select(b => b.Root).ToList();
-        ComparableRepresentationLowering.Apply(birRoots, _options.RefBuild);
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);

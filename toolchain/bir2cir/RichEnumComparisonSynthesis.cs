@@ -1,6 +1,6 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -12,35 +12,22 @@ using DotKt.Cir;
 static class RichEnumComparisonSynthesis
 {
     internal const string Face = "DotKt.Runtime.CompilerServices.KotlinEnumComparison";
-    internal static void Apply(IEnumerable<JsonNode> roots)
+    internal static BirFileDeclaration Apply(BirFileDeclaration root)
     {
-        foreach (var type in roots.OfType<JsonObject>()
-            .SelectMany(root => (root["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()))
+        if (!root.Types.HasValue) return root;
+        return root with { Types = root.Types.Value.Select(type =>
         {
-            if (type["richEnum"] is not JsonObject metadata) continue;
-            var owner = type["name"].GetValue<string>();
-            var ordinal = metadata["ordinal"].GetValue<string>();
-            type["base"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.KotlinEnumComparable");
-            foreach (var constructor in (type["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (constructor["thisArgs"] is not JsonArray)
-                {
-                    constructor["baseArgs"] = new JsonArray();
-                    constructor["delegationSig"] = new JsonArray();
-                    constructor.Remove("delegationDeclarationId");
-                }
-            var interfaces = type["interfaces"] as JsonArray ?? new JsonArray();
-            if (type["interfaces"] == null) type["interfaces"] = interfaces;
-            interfaces.Add(TypeJson.Fqn(Face));
-            var methods = type["methods"] as JsonArray ?? new JsonArray();
-            if (type["methods"] == null) type["methods"] = methods;
-            var names = methods.OfType<JsonObject>().Select(method => method["name"]?.GetValue<string>()).ToHashSet();
+            if (type is not BirClassDefinition { RichEnum.HasValue: true } declaration) return type;
+            var owner = declaration.Name.Value;
+            var ordinal = declaration.RichEnum.Value.Ordinal.Value;
+            var names = declaration.Methods.OrEmpty().Select(method => method.Name.OrDefault()).ToHashSet();
             var suffix = 0;
             string name;
             do { name = "$enumComparison$" + suffix++; } while (names.Contains(name));
             BirFieldGet Ordinal(IBirExpression receiver) => new() {
                 OwnerType = new TypeNode.Fqn(owner), Name = ordinal, Recv = OptionalField<IBirExpression>.Of(receiver),
             };
-            methods.Add(new BirFunctionDeclaration {
+            var bridge = new BirFunctionDeclaration {
                 Name = name, Static = false, Virtual = true, Override = false,
                 Abstract = false, Vis = "private", Generated = true, PhysicalSlotBridge = true,
                 Params = new[] { new BirParameter { Name = "other", Type = new TypeNode.Fqn("kotlin.Any") } },
@@ -53,7 +40,16 @@ static class RichEnumComparisonSynthesis
                     Owner = new TypeNode.Fqn(Face), Member = "compareEnumTo", Arity = 0,
                     Params = new TypeNode[] { new TypeNode.Fqn("kotlin.Any") }, Ret = new TypeNode.Fqn("kotlin.Int"),
                 } },
-            }.ToDom());
-        }
+            };
+            return declaration with {
+                Base = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.KotlinEnumComparable"),
+                Ctors = declaration.Ctors.HasValue ? OptionalField<BirConstructor[]>.Of(declaration.Ctors.Value.Select(constructor =>
+                    constructor.ThisArgs.HasValue ? constructor : constructor with {
+                        BaseArgs = Array.Empty<IBirExpression>(), DelegationSig = Array.Empty<TypeNode>(), DelegationDeclarationId = default,
+                    }).ToArray()) : declaration.Ctors,
+                Interfaces = declaration.Interfaces.OrEmpty().Append(new TypeNode.Fqn(Face)).ToArray(),
+                Methods = declaration.Methods.OrEmpty().Append(bridge).ToArray(),
+            };
+        }).ToArray() };
     }
 }

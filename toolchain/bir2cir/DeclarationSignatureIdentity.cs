@@ -623,7 +623,7 @@ static class DeclarationSignatureIdentity
         {
             var root = source.DeepClone();
             root = CaptureFixture(root);
-            ComparableRepresentationLowering.Apply(new[] { root }, referenceBuild);
+            root = ComparableRepresentationLowering.ApplyFixtures(new[] { root }, referenceBuild)[0];
             var plan = Plan(new[] { root });
             if (plan.Count != 2) throw new InvalidOperationException("Upper-bound overloads were not allocated");
             Apply(new[] { root }, plan);
