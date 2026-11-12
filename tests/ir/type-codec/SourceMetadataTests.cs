@@ -39,7 +39,9 @@ internal static class SourceMetadataTests
                 File.WriteAllBytes(inputPath, Encoding.UTF8.GetBytes(input.ToJsonString()));
                 var load = tool.GetType("Pipeline", true)!.GetMethod("LoadBirFiles",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-                var module = load.Invoke(null, [new[] { inputPath }, false, null])!;
+                var references = tool.GetType("ReferenceMetadataIndex", true)!.GetMethod("Build")!
+                    .Invoke(null, [Array.Empty<string>()])!;
+                var module = load.Invoke(null, [new[] { inputPath }, false, references])!;
                 var loaded = (System.Collections.IEnumerable)module.GetType().GetProperty("Files")!.GetValue(module)!;
                 var file = loaded.Cast<object>().Single();
                 root = (JsonObject)file.GetType().GetProperty("Root")!.GetValue(file)!;
