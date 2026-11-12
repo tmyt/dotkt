@@ -2,6 +2,7 @@ package kotc.bir
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertSame
 import kotc.backend.BirEmitter
 import kotc.backend.constant
 import kotc.backend.parameterNullCheck
@@ -19,6 +20,50 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.types.Variance
 
 class TypeNodeTest {
+    @Test
+    fun sourceCompositeNodesKeepTheirTypedChildrenAndClosedTypeFrame() {
+        val frame = TypeNode.Tv("method", 1)
+        val input = BirLocal("input", sty = TypeNode.Fqn("kotlin.Any"))
+        val cast = BirCast(TypeNode.Array(frame), input, reifiedTypeOperand = false)
+        val index = BirConstant(TypeNode.Fqn("kotlin.Int"), BirLiteral.IntegerLiteral(0))
+        val element = BirArrayGet(cast, index)
+        val spread = BirSpreadConcat(frame, listOf(
+            BirSpreadPart(false, element), BirSpreadPart(true, cast),
+        ))
+        assertSame(input, cast.e)
+        assertSame(cast, element.array)
+        assertSame(element, spread.parts[0].e)
+        assertSame(cast, spread.parts[1].e)
+        assertEquals(frame, spread.elem)
+        assertEquals(false, cast.reifiedTypeOperand)
+        assertEquals(null, cast.copy(reifiedTypeOperand = null).reifiedTypeOperand)
+        assertEquals(
+            """{"k":"spreadConcat","elem":{"t":"tv","scope":"method","i":1},"parts":[{"spread":false,"e":{"k":"arrayGet","array":{"k":"cast","type":{"t":"array","elem":{"t":"tv","scope":"method","i":1}},"reifiedTypeOperand":false,"e":{"k":"local","name":"input","sty":{"t":"fqn","name":"kotlin.Any"}}},"index":{"k":"const","type":{"t":"fqn","name":"kotlin.Int"},"value":0}}},{"spread":true,"e":{"k":"cast","type":{"t":"array","elem":{"t":"tv","scope":"method","i":1}},"reifiedTypeOperand":false,"e":{"k":"local","name":"input","sty":{"t":"fqn","name":"kotlin.Any"}}}}]}""",
+            spread.toJson(),
+        )
+        val samples = listOf(
+            BirBinaryOperation("-", index, index),
+            cast, BirIsInstance(frame, input), BirInstanceOrNull(frame, input, true),
+            BirSafeValueCast(frame, input), BirConcat(listOf(input)), BirRuntimeClass(input),
+            BirNullableWrap(frame, element), element, BirArraySet(cast, index, input), BirArrayLength(cast),
+            BirNewArray(frame, listOf(element)), BirNewArraySized(frame, index),
+            BirNewArrayInit(frame, index, input), spread, BirDefaultValue(frame),
+            BirEnumName(frame, input), BirEnumOrdinal(input, frame), BirEnumParse(frame, input),
+            BirObjectMethod("equals", input, input),
+            BirDefaultArgument,
+        )
+        samples.forEach { assertEquals(false, it.yieldsNullAtJoin()) }
+        val binding = BirCallBinding("selected", "default", "value", false, frame, "value", input)
+        val call = BirCallEvaluation(frame, listOf(binding), BirBindingReference(binding.id, frame), "owner")
+        assertSame(input, call.bindings.single().expr)
+        assertEquals(false, call.yieldsNullAtJoin())
+        assertEquals(
+            """{"k":"callEval","type":{"t":"tv","scope":"method","i":1},"semanticOwner":"owner","bindings":[{"id":"selected","phase":"default","kind":"value","stable":false,"type":{"t":"tv","scope":"method","i":1},"role":"value","expr":{"k":"local","name":"input","sty":{"t":"fqn","name":"kotlin.Any"}}}],"expr":{"k":"bindRef","id":"selected","sty":{"t":"tv","scope":"method","i":1}}}""",
+            call.toJson(),
+        )
+        assertEquals("""{"k":"defaultArg"}""", BirDefaultArgument.toJson())
+    }
+
     @Test
     fun actualNonNullResultsKeepTypedBranchesAndExceptionMessages() {
         val emitter = BirEmitter()
@@ -131,12 +176,12 @@ class TypeNodeTest {
             BirNew(
                 type = TypeNode.Fqn("demo.Owner", listOf(TypeNode.Tv("method", 1))),
                 args = emptyList(), argTypes = emptyList(),
-                constructorDeclarationId = "selected-declaration", localCtorIndex = 0,
+                constructorDeclarationId = "selected-declaration",
                 memberVisibility = "protected",
                 memberOwnerTypeParams = listOf(TypeParameterDeclaration("T", reified = false,
                     variance = "out", constraints = listOf(TypeNode.Fqn("kotlin.Any")))),
                 memberSignature = listOf(TypeNode.Tv("type", 0)),
-            ) to """{"k":"new","type":{"t":"fqn","name":"demo.Owner","args":[{"t":"tv","scope":"method","i":1}]},"argTypes":[],"args":[],"constructorDeclarationId":"selected-declaration","localCtorIndex":0,"memberVisibility":"protected","memberOwnerTypeParams":[{"name":"T","reified":false,"variance":"out","constraints":[{"t":"fqn","name":"kotlin.Any"}]}],"memberSignature":[{"t":"tv","scope":"type","i":0}]}""",
+            ) to """{"k":"new","type":{"t":"fqn","name":"demo.Owner","args":[{"t":"tv","scope":"method","i":1}]},"argTypes":[],"args":[],"constructorDeclarationId":"selected-declaration","memberVisibility":"protected","memberOwnerTypeParams":[{"name":"T","reified":false,"variance":"out","constraints":[{"t":"fqn","name":"kotlin.Any"}]}],"memberSignature":[{"t":"tv","scope":"type","i":0}]}""",
         )
         samples.forEach { (node, expected) ->
             assertEquals(expected, node.toJson())

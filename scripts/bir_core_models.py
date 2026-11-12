@@ -27,6 +27,8 @@ def outputs(root, definitions):
 
     def shape_type(field):
         field = non_null(field)
+        if field.get("x-dotkt-kotlin-json-type"):
+            return "TypeNode"
         if "$ref" in field:
             ref = field["$ref"].removeprefix("#/$defs/")
             return "TypeNode" if ref == "type" else definitions[ref]["x-dotkt-model"]["name"]
@@ -42,6 +44,8 @@ def outputs(root, definitions):
         if nullable(field):
             return [indent + f'if ({value} == null) output.append("null")', indent + "else {",
                     *write(non_null(field), value, indent + "    ", depth), indent + "}"]
+        if field.get("x-dotkt-kotlin-json-type"):
+            return [indent + f"TypeNodeJson.writeString({value}.toJson(), output)"]
         if "$ref" in field:
             return [indent + f"{value}.writeJson(output)"]
         if field.get("type") == "array":
@@ -84,10 +88,13 @@ def outputs(root, definitions):
                 value_type += "?" if optional or nullable(field) else ""
                 default = " = null" if optional else ""
             parameters.append(f"    val {name}: {value_type}{default}")
-        bases = ["Bir" + info["role"].capitalize()] if is_node else info.get("interfaces", ["BirValue"])
-        lines += [f'data class {info["name"]}(', ",\n".join(parameters),
-                  ") : " + ", ".join(bases) + " {",
-                  "    override fun writeJson(output: StringBuilder) {"]
+        bases = ["Bir" + info["role"].capitalize() + "()"] if is_node else info.get("interfaces", ["BirValue"])
+        if parameters:
+            lines += [f'data class {info["name"]}(', ",\n".join(parameters),
+                      ") : " + ", ".join(bases) + " {"]
+        else:
+            lines += [f'data object {info["name"]} : ' + ", ".join(bases) + " {"]
+        lines += ["    override fun writeJson(output: StringBuilder) {"]
         opening = '{"k":' + json.dumps(tag) if is_node else "{"
         lines += ["        output.append(" + json.dumps(opening) + ")"]
         for index, (key, field) in enumerate(fields):

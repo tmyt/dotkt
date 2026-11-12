@@ -466,9 +466,9 @@ internal fun BirEmitter.nullableValueUnwrapElem(srcType: IrType, useType: IrType
 /** Emit `node` coerced into a slot of the EXPECTED type: unwrap a value-type-nullable (`Int?`) to its
  *  non-null value (`Int`) when the slot demands the bare value — the CLR twin of the JVM backend's implicit
  *  `Integer.intValue()` coercion at an assignment / argument / return, which has NO IR cast node. */
-internal fun BirEmitter.coerceValue(node: IrExpression, expected: IrType): String =
+internal fun BirEmitter.coerceValue(node: IrExpression, expected: IrType): kotc.bir.BirExpression =
 	if (isPreUnwrappedRead(node)) expr(node)
-	else nullableValueUnwrapElem(node.type, expected)?.let { elem -> """{"k":"nullableValue","elem":${str(elem)},"e":${expr(node)}}""" } ?: expr(node)
+	else nullableValueUnwrapElem(node.type, expected)?.let { elem -> kotc.bir.BirNullableValue(elem = elem, e = expr(node)) } ?: expr(node)
 
 /** True if reading `o` already yields the bare non-null VALUE of a value-type-nullable — an IrGetValue whose
  *  `valSubst` substitution was pre-unwrapped to `Nullable<T>.Value` (a `SAFE_CALL` receiver). The unwrap helpers

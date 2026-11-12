@@ -288,7 +288,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 			// The body spelling is owner-relative, but its exact static type is already known here. Carry that frontend
 			// fact on the value node so a later inline splice can move it into an array operation without asking
 			// bir2cir to reconstruct which receiver frame the bare `this` originally denoted (#558).
-			"""{"k":"this","sty":${birType(d.type).toJson()}}"""
+			kotc.bir.BirThis(sty = birType(d.type))
 		else
 			kotc.bir.BirLocal(name).toJson()
 		if (isOuterReceiver) captureLocalName.remove(d) else captureLocalName[d] = name
@@ -527,12 +527,12 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 					"""{"name":${str(fname)},"type":${str(captureFieldType(decl))}}"""
 				}
 				val ctorArgs = (capPairs.map { (_, fname) ->
-					"""{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
+					kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = fname)
 				} + ps.map { kotc.bir.BirLocal(it.name.asString()).toJson() }).joinToString(",")
 				val ctorArgTypes = (capPairs.map { (decl, _) -> str(captureFieldType(decl)) } +
 					ps.map { birType(it.type).toJson() }).joinToString(",")
 				val retT = birType(ctor.returnType)
-				val newE = """{"k":"new","type":${ownerSpec(klass, ctor.returnType).toJson()},"argTypes":[$ctorArgTypes],"args":[$ctorArgs]}"""
+				val newE = kotc.bir.BirNew(type = ownerSpec(klass, ctor.returnType), argTypes = ctorArgTypes, args = ctorArgs)
 				val freeTps = freeTypeParams(
 					captures.map { it.type } + ps.map { it.type } + listOf(ctor.returnType))
 				val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(ps)}],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]${typeParamsJson(freeTps)}${semanticUseSiteOwnerJson()}}"""
@@ -549,7 +549,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val argsJson = ps.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 				val argTypesJson = ps.joinToString(",") { birType(it.type).toJson() }
 				val liftedRet = birType(ctor.returnType)
-				val newE = """{"k":"new","type":${ownerSpec(klass, ctor.returnType).toJson()},"argTypes":[$argTypesJson],"args":[$argsJson]}"""
+				val newE = kotc.bir.BirNew(type = ownerSpec(klass, ctor.returnType), argTypes = argTypesJson, args = argsJson)
 				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedRet.toJson()},"body":[{"k":"return","value":$newE}]}"""
 			}
 			liftedMethods.add(declaration)
@@ -567,7 +567,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val psJson = ps.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
 				val argsJson = ps.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
 				val liftedRet = birType(ctor.returnType)
-				val newE = """{"k":"new","type":${fqnJson(clrName(klass)!!)},"argTypes":[${ps.joinToString(",") { birType(it.type).toJson() }}],"args":[$argsJson]}"""
+				val newE = kotc.bir.BirNew(type = TypeNode.Fqn(clrName(klass)!!), argTypes = ps.map { birType(it.type) }, args = argsJson)
 				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedRet.toJson()},"body":[{"k":"return","value":$newE}]}"""
 			}
 			liftedMethods.add(declaration)
@@ -665,7 +665,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(node), node.endOffset, fn.name.asString(), "call")
 			val ownerType = selectedOwner?.let(::birType)?.toJson() ?: fqnJson(clrOwner)
 			val callE = """{"k":"callStatic","ownerType":$ownerType,"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"argTypes":[$argTypes],"ret":${liftedFuncType.ret.toJson()},"args":[$argsJson]$anySlotTag$memberDeclarationIdentityTag}"""
-			val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$callE}"""
+			val body = if (fn.returnType.isUnit()) kotc.bir.BirExpressionStatement(expr = callE)
 				else """{"k":"return","value":$callE}"""
 			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]$semanticOwner}"""
 		}
@@ -704,7 +704,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val liftedRefTa = functionReferenceTypeArgs(node, fn)
 					?: error("validated top-level function reference lost its type arguments in its lifted method frame")
 				val call = """{"k":"callStatic","owner":null,"method":${str(targetName)}${overloadSigField(fn)}$liftedRefTa,"args":[$argsJson],"ret":${liftedFuncType.ret.toJson()}${calleeOwnerTag(fn)}$companionExtensionTag$declarationIdentityTag}"""
-				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
+				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) kotc.bir.BirExpressionStatement(expr = call)
 					else """{"k":"return","value":$call}"""
 				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 			}
@@ -764,12 +764,12 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val regTypes = liftedFnType.params.drop(1)
 			val psJson = (listOf("""{"name":"__self","type":${selfT.toJson()}}""") +
 				regTypes.mapIndexed { i, t -> """{"name":${str("__a${i + 1}")},"type":${t.toJson()}}""" }).joinToString(",")
-			val callArgs = (listOf("""{"k":"local","name":"__self"}""") +
+			val callArgs = (listOf(kotc.bir.BirLocal(name = "__self")) +
 				regTypes.indices.map { kotc.bir.BirLocal("__a${it + 1}").toJson() }).joinToString(",")
 			val retT = liftedFnType.ret
 			val retVoid = retT == TypeNode.Fqn("kotlin.Unit") // the SUBSTITUTED return (fn's own T may resolve to Unit)
 			val callE = extensionReferenceCall(node, fn, retT, callArgs)
-			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
+			val body = if (retVoid) kotc.bir.BirExpressionStatement(expr = callE) else """{"k":"return","value":$callE}"""
 			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${retT.toJson()},"body":[$body]}"""
 		}
 		liftedMethods.add(declaration)
@@ -810,7 +810,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 					?: error("validated companion function reference lost its type arguments in its lifted method frame")
 				val rawCall = """{"k":"callInstance","ownerType":$liftedOwner,"virtual":$virtual,"recv":$adapterReceiver,"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag}"""
 				val call = memberVisibilityStamped(fn, rawCall)
-				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
+				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) kotc.bir.BirExpressionStatement(expr = call)
 					else """{"k":"return","value":$call}"""
 				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 			}
@@ -826,7 +826,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val evaluatedReceiverName = "__companionReceiver${scopeCounter++}"
 			return valueBlockJson(
 				type = resolvedFuncType.toJson(),
-				stmts = """{"k":"var","name":${str(evaluatedReceiverName)},"type":${TypeNode.Fqn("kotlin.Any").toJson()},"init":${expr(boundRecv)}}""",
+				stmts = kotc.bir.BirVariable(name = evaluatedReceiverName, type = TypeNode.Fqn("kotlin.Any"), init = kotc.bir.BirField.Value(expr(boundRecv))),
 				result = delegate,
 			)
 		}
@@ -838,7 +838,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val captureName = "__recvCapture${scopeCounter++}"
 		val captureValue = valueBlockJson(
 			type = selfT.toJson(),
-			stmts = """{"k":"var","name":${str(captureName)},"type":${selfT.toJson()},"init":${expr(boundRecv)}}""",
+			stmts = kotc.bir.BirVariable(name = captureName, type = selfT, init = kotc.bir.BirField.Value(expr(boundRecv))),
 			result = kotc.bir.BirLocal(captureName).toJson(),
 		)
 		val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
@@ -846,7 +846,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			"""{"name":${str(parameter.name.asString())},"type":${type.toJson()}}"""
 		}
 		val argsJson = regs.joinToString(",") { kotc.bir.BirLocal(it.name.asString()).toJson() }
-		val recv = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
+		val recv = kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = "__recv")
 		val declaration = selectedDeclaration ?: if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
 		val declarationOwner = declaration.parent as? IrClass
 		val externalDeclaration = declarationOwner?.let { isExternalNetType(it) } == true
@@ -874,7 +874,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			"""{"k":"callInstance","ownerType":$selectedOwner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}$signature$referenceTypeArgs,"argTypes":[$argTypes],"ret":$resultType,"sty":$resultType,"args":[$argsJson]$overrideFacts${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$flagsOperationTag}"""
 		}
 		val call = memberVisibilityStamped(if (externalDeclaration) declaration else fn, rawCall)
-		val body = if (resolvedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
+		val body = if (resolvedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) kotc.bir.BirExpressionStatement(expr = call)
 			else """{"k":"return","value":$call}"""
 		val nodeTypeArgs = (node.type as? IrSimpleType)?.arguments
 			?.mapNotNull { (it as? IrTypeProjection)?.type }.orEmpty()
@@ -924,7 +924,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val identityCallE = if (effectiveIdentityTag.isEmpty()) callE
 				else callE.dropLast(1) + effectiveIdentityTag + "}"
 			val retT = liftedFnType.ret
-			val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$identityCallE}"""
+			val body = if (fn.returnType.isUnit()) kotc.bir.BirExpressionStatement(expr = identityCallE)
 				else """{"k":"return","value":$identityCallE}"""
 			"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}"""
 		}
@@ -960,7 +960,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val callE = """{"k":"callStatic","ownerType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$liftedArgTypes],"ret":${liftedFuncType.ret.toJson()},"args":[$argsJson]$anySlotTag}"""
 				val identityCallE = if (memberDeclarationIdentityTag.isEmpty()) callE
 					else callE.dropLast(1) + memberDeclarationIdentityTag + "}"
-				val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$identityCallE}"""
+				val body = if (fn.returnType.isUnit()) kotc.bir.BirExpressionStatement(expr = identityCallE)
 					else """{"k":"return","value":$identityCallE}"""
 				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 			}
@@ -1009,7 +1009,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val effectiveIdentityTag = if (!selfT.containsStarProjection()) memberDeclarationIdentityTag else ""
 				val identityCallE = if (effectiveIdentityTag.isEmpty()) callE
 					else callE.dropLast(1) + effectiveIdentityTag + "}"
-				val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$identityCallE}"""
+				val body = if (fn.returnType.isUnit()) kotc.bir.BirExpressionStatement(expr = identityCallE)
 					else """{"k":"return","value":$identityCallE}"""
 				"""{"name":${str(lname)}${liftedDeclarationIdentityField(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 			}
@@ -1191,7 +1191,7 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 		else -> return unsupported(node, "a suspend function reference",
 			"its receiver could not be resolved to a supported (top-level or user-member) suspend target")
 	}
-	val body = if (ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$bodyCall}""" else """{"k":"return","value":$bodyCall}"""
+	val body = if (ret == TypeNode.Fqn("kotlin.Unit")) kotc.bir.BirExpressionStatement(expr = bodyCall) else """{"k":"return","value":$bodyCall}"""
 	val capValuesJson = if (capValues == null) "" else ""","capValues":[$capValues]"""
 	// The SM must be generic over any enclosing type params in the reference's signature (reified CLR generics); bare
 	// names (bir2cir prepends `gp:`), consistent with suspendLambda().
@@ -1269,10 +1269,10 @@ internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFun
 	val retVoid = retT == TypeNode.Fqn("kotlin.Unit")
 	val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
 	val invokeParams = regTypes.mapIndexed { i, t -> """{"name":${str("__a${i + 1}")},"type":${t.toJson()}}""" }.joinToString(",")
-	val recvArg = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
+	val recvArg = kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = "__recv")
 	val callArgs = (listOf(recvArg) + regTypes.indices.map { kotc.bir.BirLocal("__a${it + 1}").toJson() }).joinToString(",")
 	val callE = extensionReferenceCall(node, fn, retT, callArgs)
-	val forwardBody = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
+	val forwardBody = if (retVoid) kotc.bir.BirExpressionStatement(expr = callE) else """{"k":"return","value":$callE}"""
 	// The closure must be GENERIC over any enclosing type params referenced by the captured receiver or the invoke
 	// signature (reified CLR generics) — mirrors `lambda()`'s freeTps over capture+param+ret types.
 	val nodeTypeArgs = (node.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }.orEmpty()
@@ -1342,7 +1342,7 @@ internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFuncti
 	val capPairs = boundCaps.map { (p, _) -> p to captureFieldName(p) }
 	val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
 	capPairs.forEach { (decl, fname) ->
-		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
+		captureSubst[decl] = kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = fname)
 	}
 	val body = withFreshLambdaLocalFunctionIds(fn) {
 		(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
@@ -1363,7 +1363,7 @@ internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFuncti
  * `propertyRef` lift below) is always correct for it. Replaces the retired `dotkt$KPropertyImpl` synthetic.
  */
 internal fun BirEmitter.kPropertyStub(name: String): String =
-	"""{"k":"new","type":${TypeNode.Fqn("kotlin.reflect.ClrPropertyStub", listOf(OBJ)).toJson()},"argTypes":[${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(name)}}]}"""
+	kotc.bir.BirNew(type = TypeNode.Fqn("kotlin.reflect.ClrPropertyStub", listOf(OBJ)), argTypes = fqnJson("kotlin.String"), args = listOf(kotc.bir.BirConstant(type = TypeNode.Fqn("kotlin.String"), value = name)))
 
 /**
  * A genuine callable reference to a property (`::x`, `obj::p`, `Type::p`) -> a lifted class implementing the
@@ -1517,8 +1517,8 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val cname = "dotkt\$${synthScope}\$PropRef${closureCounter++}"
 
 	fun recvExprIn(): String = when {
-		bound -> """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
-		unbound -> """{"k":"local","name":"receiver"}"""
+		bound -> kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = "__recv")
+		unbound -> kotc.bir.BirLocal(name = "receiver")
 		else -> kotc.bir.BirThis().toJson()
 	}
 	val memberOwner: TypeNode = when {
@@ -1545,8 +1545,8 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	fun extAccessorCall(isSetter: Boolean, valueArg: String?): String {
 		val kind = if (isSetter) "set" else "get"
 		val recvArg = if (bound)
-			"""{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
-		else """{"k":"local","name":"receiver"}"""
+			kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = "__recv")
+		else kotc.bir.BirLocal(name = "receiver")
 		val args = listOfNotNull(recvArg, valueArg).joinToString(",")
 		// The `sig` overload key MUST match the accessor being called: the setter's param list is [recv, value], the
 		// getter's is [recv]. Using the getter's sig for `prop:set` would key a same-name `var`-ext-property overload
@@ -1592,7 +1592,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	// `field`/`setFieldExpr` shapes the ordinary member-access path emits — over the lift's receiver
 	// (bound = the captured `__recv` field, unbound = the `receiver` param).
 	fun fieldAccess(isSetter: Boolean, valueArg: String?): String = when {
-		isSetter -> """{"k":"setFieldExpr","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)},"value":$valueArg}"""
+		isSetter -> kotc.bir.BirFieldSetExpression(ownerType = memberOwner, recv = recvExprIn(), name = name, value = valueArg)
 		// A field read carries the constructed-generic ret hint (a `tv`-typed field on `B<T>`) — parity with the
 		// ordinary member field-read path (BirEmitterCalls).
 		else -> """{"k":"field","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)}${retHint((memberOwner as? TypeNode.Fqn)?.args != null, getterFn.returnType)}}"""
@@ -1600,7 +1600,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	fun staticPropertyAccess(isSetter: Boolean, valueArg: String?): String {
 		val owner = memberOwner.toJson()
 		if (fieldBacked) return if (isSetter)
-			"""{"k":"staticFieldSet","ownerType":$owner,"name":${str(name)},"value":$valueArg}"""
+			kotc.bir.BirStaticFieldSet(ownerType = owner, name = name, value = valueArg)
 		else """{"k":"staticField","ownerType":$owner,"name":${str(name)},"ret":${vType.toJson()}}"""
 		val kind = if (isSetter) "set" else "get"
 		val fn = if (isSetter) setterFn!! else getterFn
@@ -1659,17 +1659,17 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val mutableReference = ifaceSpec.name == "kotlin.reflect.KMutableProperty0" || ifaceSpec.name == "kotlin.reflect.KMutableProperty1"
 	val setMethod: String? = setterFn?.takeIf { mutableReference }?.let {
 		val setBody = when {
-			companionExtension -> """{"k":"exprStmt","expr":${companionExtensionAccess(true, """{"k":"local","name":"value"}""")}}"""
-			hasExtRecv -> """{"k":"exprStmt","expr":${extAccessorCall(true, """{"k":"local","name":"value"}""")}}"""
-			staticProperty -> """{"k":"exprStmt","expr":${staticPropertyAccess(true, """{"k":"local","name":"value"}""")}}"""
-			declClass != null && fieldBacked -> """{"k":"exprStmt","expr":${fieldAccess(true, """{"k":"local","name":"value"}""")}}"""
+			companionExtension -> kotc.bir.BirExpressionStatement(expr = companionExtensionAccess(true, kotc.bir.BirLocal(name = "value")))
+			hasExtRecv -> kotc.bir.BirExpressionStatement(expr = extAccessorCall(true, kotc.bir.BirLocal(name = "value")))
+			staticProperty -> kotc.bir.BirExpressionStatement(expr = staticPropertyAccess(true, kotc.bir.BirLocal(name = "value")))
+			declClass != null && fieldBacked -> kotc.bir.BirExpressionStatement(expr = fieldAccess(true, kotc.bir.BirLocal(name = "value")))
 			declClass == null -> {
 				val owner = clrExternalOwner(prop) ?: fileClassOf(prop)
 				if (writesAsStaticField(prop))
-					"""{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(name)},"value":{"k":"local","name":"value"}}}"""
+					kotc.bir.BirExpressionStatement(expr = kotc.bir.BirStaticFieldSet(ownerType = TypeNode.Fqn(owner), name = name, value = kotc.bir.BirLocal(name = "value")))
 				else """{"k":"exprStmt","expr":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(name)},"prop":"set"${overloadSigField(setterFn!!)},"args":[{"k":"local","name":"value"}]${declarationIdField(setterFn!!)}}}"""
 			}
-			else -> """{"k":"exprStmt","expr":${accessorCall(true, """{"k":"local","name":"value"}""")}}"""
+			else -> kotc.bir.BirExpressionStatement(expr = accessorCall(true, kotc.bir.BirLocal(name = "value")))
 		}
 		val setParams = (if (unbound) """{"name":"receiver","type":${str(recvTypeNode ?: OBJ)}},""" else "") +
 			"""{"name":"value","type":${str(vType)}}"""
@@ -1682,7 +1682,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	// stdlib impl instead of duplicating a bare-name `emptyList` call. The lift already implements KProperty<V> via
 	// its KProperty0/1 interface, so the ClrPropertyStub<V>:KProperty<V> base is a CLR-legal diamond.
 	val stubBase = TypeNode.Fqn("kotlin.reflect.ClrPropertyStub", listOf(vType))
-	val stubBaseArg = """{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(name)}}"""
+	val stubBaseArg = kotc.bir.BirConstant(type = TypeNode.Fqn("kotlin.String"), value = name)
 
 	val recvFieldType = if (bound) birType(capturedRecv!!.type) else null
 	val fields = if (bound) """{"name":"__recv","type":${str(recvFieldType!!)}}""" else ""
@@ -1703,7 +1703,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val propertyFunctionTag = ""","propertyFunction":{"iface":${constructionPropertyInterface.toJson()}}"""
 	val creation = """{"k":"new","type":${classType.toJson()},"argTypes":[$ctorSig],"args":[$constructionArgs]$companionCaptureTag$propertyFunctionTag}"""
 	if (staticReceiverEvaluation != null)
-		"""{"k":"valueBlock","stmts":[{"k":"exprStmt","expr":$staticReceiverEvaluation}],"result":$creation}"""
+		kotc.bir.BirValueBlock(stmts = listOf(kotc.bir.BirExpressionStatement(expr = staticReceiverEvaluation)), result = creation)
 	else creation
 	} finally {
 		freeTps.forEach { parameter ->
@@ -1973,7 +1973,7 @@ internal fun BirEmitter.captureFieldPairs(
 }
 
 /** A capture's value at the `new` site (in the enclosing context): the outer `this`, or an outer local. */
-internal fun BirEmitter.capValueExpr(d: IrValueDeclaration): String =
+internal fun BirEmitter.capValueExpr(d: IrValueDeclaration): kotc.bir.BirExpression =
 	// Evaluate the capture VALUE in the enclosing context, mirroring `exprInner`'s IrGetValue resolution ORDER:
 	// captureSubst (an outer closure field / intrinsic-block binding), then `selfSubst` (an EXTENSION receiver bound to
 	// its `__self`/`__recv` — an inline-lambda carrier RENAMES its ext receiver via selfSubst, so a lifted local fn /
@@ -1982,7 +1982,7 @@ internal fun BirEmitter.capValueExpr(d: IrValueDeclaration): String =
 	// param was `__recvN` -> ilemit "load unknown var $this$buildString"), then `valSubst`, then the `<this>`/local
 	// fallback. selfSubst/captureSubst are IDENTITY-keyed (the receiver by symbol, not name).
 	captureSubst[d] ?: selfSubst[d] ?: valSubst[d]
-		?: if (d.name.asString() == "<this>") kotc.bir.BirThis().toJson() else kotc.bir.BirLocal(localSlotName(d)).toJson()
+		?: if (d.name.asString() == "<this>") kotc.bir.BirThis() else kotc.bir.BirLocal(localSlotName(d))
 
 /**
  * The lambda's value parameters in DELEGATE (physical `FunctionN` type-argument) order — everything but the
@@ -2202,7 +2202,7 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): String {
 	// path); dropping it leaves the enclosing frame reading a bare local it no longer has.
 	val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
 	capPairs.forEach { (decl, fname) ->
-		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
+		captureSubst[decl] = kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = fname)
 	}
 	// A local class that references an enclosing type parameter (in a capture field, its supertype/bounds, or a member
 	// signature/body operand) is lifted GENERICALLY over those params — reified CLR generics, exactly as the lifted

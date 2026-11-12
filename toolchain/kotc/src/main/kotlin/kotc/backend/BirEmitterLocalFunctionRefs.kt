@@ -70,7 +70,7 @@ internal fun BirEmitter.localFunctionRef(
 	val paramNames = physicalTypes.indices.map { "dotkt\$arg$it" }
 	val arguments = remaining.zip(paramNames).toMap()
 	fun field(name: String) =
-		"""{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(name)}}"""
+		kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = name)
 	val fields = capPairs.map { (decl, name) ->
 		"""{"name":${str(name)},"type":${captureFieldType(decl).toJson()}}"""
 	} + bound.zip(boundNames).map { (binding, name) ->
@@ -83,7 +83,7 @@ internal fun BirEmitter.localFunctionRef(
 	val sig = capPairs.map { (decl, _) -> captureFieldType(decl).toJson() } +
 		ownParams.map { birType(it.type).toJson() }
 	val call = """{"k":"callLocal","id":${str(local.id)},"sig":[${sig.joinToString(",")}],"args":[${callArgs.joinToString(",")}]$callTypeArgs}"""
-	val body = if (funcType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
+	val body = if (funcType.ret == TypeNode.Fqn("kotlin.Unit")) kotc.bir.BirExpressionStatement(expr = call)
 		else """{"k":"return","value":$call}"""
 	val params = physicalTypes.zip(paramNames).joinToString(",") { (type, name) ->
 		"""{"name":${str(name)},"type":${type.toJson()}}"""

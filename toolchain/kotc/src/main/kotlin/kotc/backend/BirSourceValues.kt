@@ -12,7 +12,18 @@ internal fun BirExpression.yieldsNullAtJoin(): Boolean = when (this) {
     is BirUnaryOperation, is BirNullableHasValue, is BirNullableValue,
     is BirEnumValue, is BirEnumValues, is BirCompanionValue, is BirClassReference,
     is BirNullableNull, is BirDefaultParameter, is BirDefaultReceiver,
-    is BirBindingReference, is BirLocalFunctionReference -> false
+    is BirBindingReference, is BirLocalFunctionReference,
+    is BirBinaryOperation, is BirCast, is BirIsInstance, is BirInstanceOrNull,
+    is BirSafeValueCast, is BirConcat, is BirRuntimeClass, is BirNullableWrap,
+    is BirArrayGet, is BirArraySet, is BirArrayLength, is BirNewArray,
+    is BirNewArraySized, is BirNewArrayInit, is BirSpreadConcat, is BirDefaultValue,
+    is BirEnumName, is BirEnumOrdinal, is BirEnumParse, is BirObjectMethod,
+    is BirCallEvaluation, BirDefaultArgument,
+    is BirCallStatic, is BirCallInstance, is BirCallLocal,
+    is BirFieldGet, is BirStaticFieldGet, is BirFieldSetExpression, is BirStaticFieldSet,
+    is BirLateinitGet, is BirLateinitIsInitialized, is BirCallInline, is BirNewBoundDelegate,
+    is BirByRefOf, is BirByRefLoad, is BirByRefStore, is BirReturnExpression,
+    is BirUnsupportedExpression -> false
 }
 
 /** The result is the only pass-through value; statements contribute only effects. */

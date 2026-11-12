@@ -116,8 +116,8 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String
 		// A property read designates its own-source backing storage here just as it does when `byref(...)` is passed
 		// directly to a ref parameter. Routing through get_<p>() would take the address of a returned copy, so writes
 		// through the delegated local would be silently lost and a volatile backing field could not order ldobj/stobj.
-		val init = inner?.let { """{"k":"byrefOf","inner":${byrefBackingField(it) ?: expr(it)}}""" } ?: "null"
-		"""{"k":"var","name":${str(localSlotName(node))},"type":${birType(node.type).toJson()},"init":$init}"""
+		val init = inner?.let { kotc.bir.BirByRefOf(inner = byrefBackingField(it) ?: expr(it)) } ?: "null"
+		kotc.bir.BirVariable(name = localSlotName(node), type = birType(node.type), init = kotc.bir.BirField.Value(init))
 	}
 	// A ref-cell var: `var x = init` -> `val x = new dotkt$Ref_<elem>(init)` (the heap cell). The cell's `v` field —
 	// and thus the synthesized ctor param — is the FULL element type `birType(node.type)`; when that is a value-type
@@ -128,8 +128,8 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String
 	else if (isRefCell(node)) {
 		val rt = refType(node).toJson()
 		val elem = birType(node.type)
-		val init = node.initializer?.let { expr(it) } ?: """{"k":"default","type":${elem.toJson()}}"""
-		"""{"k":"var","name":${str(localSlotName(node))},"type":$rt,"init":{"k":"new","type":$rt,"args":[$init],"argTypes":[${elem.toJson()}]}}"""
+		val init = node.initializer?.let { expr(it) } ?: kotc.bir.BirDefaultValue(type = elem)
+		kotc.bir.BirVariable(name = localSlotName(node), type = rt, init = kotc.bir.BirField.Value(kotc.bir.BirNew(type = rt, args = init, argTypes = elem)))
 	} else {
 		// Evaluate the initializer FIRST so an object-expr init registers its synthetic name before the var's
 		// type is read (`val x = object {}` whose type IS that anonymous class). A value-type-nullable initializer
@@ -167,7 +167,7 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String
 		// statement position (unlike the instance `setField`, which ilemit emits directly as a statement).
 		val staticOwner = staticBackingFieldOwner(node.symbol.owner)
 		val rendered = if (staticOwner != null)
-			"""{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(staticOwner)},"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}}"""
+			kotc.bir.BirExpressionStatement(expr = kotc.bir.BirStaticFieldSet(ownerType = TypeNode.Fqn(staticOwner), name = node.symbol.owner.name.asString(), value = expr(node.value)))
 		else if (clr != null)
 			"""{"k":"setField","ownerType":${fqnJson(clr)},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
 		else
@@ -175,7 +175,7 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String
 		// staticFieldSet is wrapped in exprStmt at statement position; stamp the inner access node before wrapping.
 		if (staticOwner != null) {
 			val inner = rendered.removePrefix("{\"k\":\"exprStmt\",\"expr\":").dropLast(1)
-			"""{"k":"exprStmt","expr":${memberFieldVisibilityStamped(node.symbol.owner, inner)}}"""
+			kotc.bir.BirExpressionStatement(expr = memberFieldVisibilityStamped(node.symbol.owner, inner))
 		} else memberFieldVisibilityStamped(node.symbol.owner, rendered)
 	}
 	is IrReturn -> {
@@ -241,12 +241,12 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String
 		?: BirContinue(node.label).toJson()
 	is IrWhen -> cfgWhen(node)
 	is IrTry -> tryStmt(node)
-	is IrThrow -> """{"k":"throw","value":${expr(node.value)}}"""
+	is IrThrow -> kotc.bir.BirThrow(value = expr(node.value))
 	// A value coerced to Unit in statement position (e.g. `i++`) -> emit its inner block as statements
 	// (otherwise the side effects — the `<unary>` temp + the assignment — would be dropped).
 	is IrTypeOperatorCall -> if (node.operator == IrTypeOperator.IMPLICIT_COERCION_TO_UNIT) {
 		stmt(node.argument)
-	} else """{"k":"exprStmt","expr":${expr(node)}}"""
+	} else kotc.bir.BirExpressionStatement(expr = expr(node))
 	// Preserve a local function as a lexical BIR declaration. bir2cir alone chooses its CLR MethodDef owner.
 	is IrSimpleFunction -> localFunctionDecl(node)
 	// A function-local class -> lift it to a top-level synthetic type (captures become leading ctor params).
@@ -255,6 +255,6 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): String
 		?: """{"k":"block","body":[${node.statements.joinToString(",") { stmt(it) }}]}"""
 	// IrComposite: a scope-less statement container (e.g. a desugared loop body) -> a flat block.
 	is IrComposite -> """{"k":"block","body":[${node.statements.joinToString(",") { stmt(it) }}]}"""
-	is IrExpression -> """{"k":"exprStmt","expr":${expr(node)}}"""
+	is IrExpression -> kotc.bir.BirExpressionStatement(expr = expr(node))
 	else -> unsupported(node, "this statement", "the IR node ${node::class.simpleName} has no .NET lowering")
 }

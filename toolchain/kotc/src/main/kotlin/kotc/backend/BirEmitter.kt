@@ -133,8 +133,8 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 
 	internal fun declarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
 		declarationIds.getOrPut(fn) {
-			(if (ownsInheritedAbstractDeclaration(fn)) null else carriedDeclarationId(fn)) ?: computeDeclarationId(fn, companionReceiverJson(fn)
-				?: companionExtensionReceiverType(fn)?.let { birType(it).toJson() })
+			(if (ownsInheritedAbstractDeclaration(fn)) null else carriedDeclarationId(fn)) ?: computeDeclarationId(fn, companionReceiverType(fn)
+				?: companionExtensionReceiverType(fn)?.let { birType(it) })
 		}
 
 	private fun carriedDeclarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String? {
@@ -203,7 +203,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 
 	private fun computeDeclarationId(
 		fn: org.jetbrains.kotlin.ir.declarations.IrFunction,
-		companionReceiver: String?,
+		companionReceiver: TypeNode?,
 	): String {
 			val owner = when (val parent = fn.parent) {
 				is IrClass -> typeName(parent)
@@ -219,7 +219,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 				append("dotkt-declaration-v1|").append(owner).append('|').append(fn.name.asString())
 				// fir2ir removes a companion extension's receiver parameter. Its frontend-captured receiver fact is
 				// therefore part of the declaration identity just as an ordinary extension-receiver parameter is.
-				companionReceiver?.let { append("|companionReceiver:").append(it) }
+				companionReceiver?.let { append("|companionReceiver:"); it.writeJson(this) }
 				append('|').append(typeParamsJson(fn.typeParameters))
 				for (parameter in fn.parameters)
 					append('|').append(parameter.kind.name).append(':').append(birValueParameterType(parameter).toJson())
@@ -313,7 +313,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		return try { render() } finally { suppressSourcePoints = saved }
 	}
 
-	internal fun sourcePointJson(node: IrElement): String? {
+	internal fun sourcePoint(node: IrElement): BirSourcePoint? {
 		if (suppressSourcePoints) return null
 		when (activeSemanticOwnerDeclaration?.origin) {
 			IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER,
@@ -329,8 +329,10 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		if (a.line < 0 || a.column < 0 || b.line < a.line || b.column < 0 ||
 			(b.line == a.line && b.column <= a.column)) return null
 		return BirSourcePoint(BirSourceSpan(source.name, a.line + 1, a.column + 1,
-			b.line + 1, b.column + 1)).toJson()
+			b.line + 1, b.column + 1))
 	}
+
+	internal fun sourcePointJson(node: IrElement): String? = sourcePoint(node)?.toJson()
 
 	/**
 	 * Report an unsupported Kotlin construct as a clear, source-located compile error and return a placeholder
@@ -342,11 +344,11 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// `--build-stdlib=metadata|runtime` flag downstream. The stdlib REFERENCE build and the RUNTIME build produce
 	// BIT-IDENTICAL BIR from a single kotc frontend run. docs/architecture.md.
 
-	internal fun unsupported(node: IrElement?, what: String, detail: String): String {
+	internal fun unsupported(node: IrElement?, what: String, detail: String): kotc.bir.BirUnsupportedExpression {
 		hadError = true
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
 			"the .NET backend does not support $what yet: $detail", locationOf(node))
-		return """{"k":"unsupportedExpr","of":${str("$what — $detail")}}"""
+		return kotc.bir.BirUnsupportedExpression("$what — $detail")
 	}
 
 	/**
@@ -355,15 +357,15 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	 * the emitter's own bookkeeping is inconsistent, so the message must name the invariant rather than tell the user
 	 * to rewrite working code. The build fails (hadError), so the placeholder never reaches ilemit.
 	 */
-	internal fun invariantBroken(node: IrElement?, invariant: String): String {
+	internal fun invariantBroken(node: IrElement?, invariant: String): kotc.bir.BirUnsupportedExpression {
 		hadError = true
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
 			"kotc internal error: broken emitter invariant — $invariant", locationOf(node))
-		return """{"k":"unsupportedExpr","of":${str("broken emitter invariant — $invariant")}}"""
+		return kotc.bir.BirUnsupportedExpression("broken emitter invariant — $invariant")
 	}
 
 	// Subject substitutions follow the resolved declaration, not its spelling in an enclosing scope.
-	internal val valSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	internal val valSubst = java.util.IdentityHashMap<IrValueDeclaration, kotc.bir.BirExpression>()
 	// Subset of `valSubst` keys whose substitution ALREADY yields the bare non-null VALUE of a value-type-nullable
 	// (`Int?`) — e.g. a `SAFE_CALL` receiver bound to `Nullable<T>.Value`. The value-nullable unwrap helpers
 	// (coerceValue / argExpr) must NOT re-wrap such a read, else the `.Value` is unwrapped twice
@@ -531,7 +533,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	internal val anonNames = java.util.IdentityHashMap<IrClass, String>()
 	// Captured outer values inside a capturing object literal -> `this.<field>`. Keyed by value-declaration
 	// IDENTITY (not name): the anon's own `<this>` and a captured outer `<this>` share the name "<this>".
-	internal val captureSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	internal val captureSubst = java.util.IdentityHashMap<IrValueDeclaration, kotc.bir.BirExpression>()
 	// A declaration that is an immutable alias of the current lexical dispatch receiver remains the exact enclosing
 	// instance.  Declaration-site variance may change the physical representation of ordinary VALUE slots, but it must
 	// never turn `this` (or `val owner = this`) into the declaration's existential carrier: inner construction and
@@ -553,7 +555,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// (`class C { fun T.f() }`) the extension receiver and the dispatch receiver BOTH have name "<this>", so a
 	// name-keyed map can't tell them apart (it would capture C's `this` too). The dispatch `<this>` then falls
 	// through to `{"k":"this"}` and the extension receiver resolves here.
-	internal val selfSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	internal val selfSubst = java.util.IdentityHashMap<IrValueDeclaration, kotc.bir.BirExpression>()
 	private val extensionReceiverSlotNames = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, String>()
 	/** The physical leading slot for a declaration extension receiver. Keep the conventional spelling when it is free,
 	 *  but allocate a collision-free name when a valid value parameter is itself named `__self`. Receiver meaning rides
@@ -583,7 +585,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// the value EXPRESSION's identity, so every reader of that one IR node — the call's own receiver/argument slot, an
 	// inner-class `new`'s enclosing-instance arg, a spliced default, a reconstructed `copy` field — reaches the ONE
 	// binding through the ordinary `expr()`. Installed by [CallPlan.bindValue] and released with the plan's scope.
-	internal val planReads = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, String>()
+	internal val planReads = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, kotc.bir.BirExpression>()
 	// The evaluation plan of each call whose emission is in progress, keyed by the CALL node's identity — what
 	// [filledArgs]/[filledExternalArgs] append their bindings to. Scoped by [withCallPlan]; a nested call installs its
 	// own, so a plan never collects another call site's values.
@@ -935,7 +937,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
-	internal fun refBase(d: IrValueDeclaration) = captureSubst[d] ?: kotc.bir.BirLocal(localSlotName(d)).toJson()
+	internal fun refBase(d: IrValueDeclaration): kotc.bir.BirExpression = captureSubst[d] ?: kotc.bir.BirLocal(localSlotName(d))
 	/** A captured value's type as held in the closure: the Ref cell for a ref-cell var, else its plain type. */
 	internal fun captureFieldType(d: IrValueDeclaration): TypeNode = if (isRefCell(d)) refType(d) else birType(d.type)
 
@@ -1227,7 +1229,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		)
 	}
 
-	internal fun throwExpr(exc: String): String = """{"k":"throwExpr","value":$exc}"""
+	internal fun throwExpr(exc: kotc.bir.BirExpression): kotc.bir.BirExpression = kotc.bir.BirThrowExpression(value = exc)
 
 
 	// kotc emits ONLY the faithful op + faithful operand expression nodes — no cast-stripped static-TYPE HINTS

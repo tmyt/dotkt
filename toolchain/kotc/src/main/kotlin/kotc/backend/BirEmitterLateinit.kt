@@ -30,7 +30,7 @@ internal fun BirEmitter.validateLateinitAnnotations(file: IrFile) {
 }
 
 /** Preserve the frontend-selected lexical initialization query before materializing an ordinary property reference. */
-internal fun BirEmitter.lateinitInitializationQuery(call: IrCall): String? {
+internal fun BirEmitter.lateinitInitializationQuery(call: IrCall): kotc.bir.BirLateinitIsInitialized? {
 	val callee = call.symbol.owner
 	val intrinsic = callee.correspondingPropertySymbol?.owner ?: return null
 	if (intrinsic.fqNameWhenAvailable?.asString() != "kotlin.isInitialized" || intrinsic.getter !== callee)
@@ -43,8 +43,7 @@ internal fun BirEmitter.lateinitInitializationQuery(call: IrCall): String? {
 		selectedGetter.resolveFakeOverride() ?: selectedGetter else selectedGetter
 	val receiver = propRefDispatchReceiver(reference)
 	val owner = declaration.parent as? IrClass
-	val ownerFact = if (owner == null || receiver == null) "" else
-		""","ownerType":${ownerSpec(owner, receiver?.type).toJson()}"""
-	val receiverFact = receiver?.let { ""","recv":${expr(it)}""" }.orEmpty()
-	return """{"k":"lateinitIsInitialized","lateinitDeclarationId":${str(declarationId(declaration))}$ownerFact$receiverFact}"""
+	val ownerType = if (owner == null || receiver == null) null else ownerSpec(owner, receiver.type)
+	val value = receiver?.let { expr(it) }
+	return kotc.bir.BirLateinitIsInitialized(declarationId(declaration), ownerType, value)
 }

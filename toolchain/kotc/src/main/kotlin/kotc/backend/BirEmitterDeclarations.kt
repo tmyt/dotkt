@@ -861,7 +861,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 		"""{"name":"__ordinal","type":${fqnJson("kotlin.Int")},"initOnly":true}""") + userFields).toMutableList()
 	// per-entry static singleton, init = new <Enum-or-entry-subclass>("NAME", ordinal, <entry ctor args>).
 	val subDefs = ArrayList<String>()
-	val nameOrd = { i: Int, ent: IrEnumEntry -> listOf("""{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(ent.name.asString())}}""", """{"k":"const","type":${fqnJson("kotlin.Int")},"value":$i}""") }
+	val nameOrd = { i: Int, ent: IrEnumEntry -> listOf(kotc.bir.BirConstant(type = TypeNode.Fqn("kotlin.String"), value = ent.name.asString()), kotc.bir.BirConstant(type = TypeNode.Fqn("kotlin.Int"), value = i)) }
 	entries.forEachIndexed { i, ent ->
 		val cc = ent.correspondingClass
 		if (cc != null) {
@@ -909,9 +909,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	val declaresToString = (declaredMethods + absMethods).any {
 		!isKotlinStaticFunction(it) && it.name.asString() == "toString" && isAnySlotMethod(it)
 	}
-	val sf = { e: IrEnumEntry -> """{"k":"staticField","ownerType":${fqnJson(name)},"name":${str(e.name.asString())}}""" }
+	val sf = { e: IrEnumEntry -> kotc.bir.BirStaticFieldGet(ownerType = TypeNode.Fqn(name), name = e.name.asString()) }
 	val toStr = """{"name":"toString","static":false,"override":true,"virtual":true,"objectOverride":true,"vis":"public","params":[],"ret":${fqnJson("kotlin.String")},"body":[{"k":"return","value":{"k":"field","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":"__name"}}]}"""
-	val valuesArr = """{"k":"newArray","elem":${fqnJson(name)},"elems":[${entries.joinToString(",") { sf(it) }}]}"""
+	val valuesArr = kotc.bir.BirNewArray(elem = TypeNode.Fqn(name), elems = entries.map { sf(it) })
 	val valuesM = """{"name":"values","generated":true,"static":true,"override":false,"virtual":false,"vis":"public","params":[],"ret":${TypeNode.Array(TypeNode.Fqn(name)).toJson()},"body":[{"k":"return","value":$valuesArr}]}"""
 	val voBranches = entries.joinToString(",") { ent ->
 		"""{"cond":{"k":"objEq","lhs":{"k":"local","name":"name"},"rhs":{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(ent.name.asString())}}},"body":[{"k":"return","value":${sf(ent)}}]}"""
@@ -922,7 +922,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// the faithful control-flow shape, this avoids manufacturing an `if` whose interpolated branch list starts with a
 	// comma. Non-empty enums retain the ordinary linear name match followed by the same failure path.
 	val voBody = if (entries.isEmpty()) {
-		"""{"k":"exprStmt","expr":$voThrow}"""
+		kotc.bir.BirExpressionStatement(expr = voThrow)
 	} else {
 		"""{"k":"if","branches":[$voBranches,{"else":true,"body":[{"k":"exprStmt","expr":$voThrow}]}]}"""
 	}
@@ -1121,7 +1121,7 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 		}
 	activeSemanticOwner = savedSemanticOwner
 	activeSemanticOwnerDeclaration = savedSemanticDeclaration
-	val baseArgs = (listOf("""{"k":"local","name":"__name"}""", """{"k":"local","name":"__ordinal"}""") + userArgs).joinToString(",")
+	val baseArgs = (listOf(kotc.bir.BirLocal(name = "__name"), kotc.bir.BirLocal(name = "__ordinal")) + userArgs).joinToString(",")
 	val delegationSig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) +
 		baseParamTypes).joinToString(",")
 	val bindings = delegationBindings?.let { ""","delegationBindings":$it""" } ?: ""
@@ -1245,22 +1245,22 @@ internal fun BirEmitter.innerTypeArguments(klass: IrClass, arguments: List<TypeN
 }
 
 internal fun BirEmitter.innerEnclosingBindings(
-	inner: IrClass, immediateReceiver: String,
-): List<Pair<IrValueDeclaration, String>> {
+	inner: IrClass, immediateReceiver: kotc.bir.BirExpression,
+): List<Pair<IrValueDeclaration, kotc.bir.BirExpression>> {
 	var owner = inner.parent as? IrClass ?: return emptyList()
 	var receiver = immediateReceiver
-	val result = mutableListOf<Pair<IrValueDeclaration, String>>()
+	val result = mutableListOf<Pair<IrValueDeclaration, kotc.bir.BirExpression>>()
 	while (true) {
 		owner.thisReceiver?.let { result.add(it to receiver) }
 		// A lifted owner stores free lexical values too. An inner declaration reaches those values through the
 		// same enclosing instance, not through its own `this` or a no-longer-live function local.
 		for ((declaration, field) in captureFieldPairs(owner, localClassCaptures[owner].orEmpty()))
-			result.add(declaration to """{"k":"field","ownerType":${birType(owner.defaultType).toJson()},"recv":$receiver,"name":${str(field)},"memberVisibility":"private"}""")
+			result.add(declaration to kotc.bir.BirFieldGet(ownerType = birType(owner.defaultType), recv = receiver, name = field, memberVisibility = "private"))
 		if (!owner.isInner) break
 		val parent = owner.parent as? IrClass ?: break
 		// This lexical capture is private storage. A carried default can move its read into another module;
 		// bir2cir then selects the access mechanism from this privilege and the referenced field declaration.
-		receiver = """{"k":"field","ownerType":${birType(owner.defaultType).toJson()},"recv":$receiver,"name":"__outer","outer":true,"memberVisibility":"private"}"""
+		receiver = kotc.bir.BirFieldGet(ownerType = birType(owner.defaultType), recv = receiver, name = "__outer", outer = true, memberVisibility = "private")
 		owner = parent
 	}
 	return result
@@ -1273,7 +1273,7 @@ internal fun BirEmitter.innerClassDef(inner: IrClass): String {
 	// chain while rendering the declaration: Leaf.this.__outer reaches Middle, and another __outer reaches Outer.
 	// Each edge is an explicit Kotlin inner relation; bir2cir later supplies the constructed CLR owner TypeSpecs.
 	val saved = java.util.IdentityHashMap<IrValueDeclaration, String?>()
-	val immediate = """{"k":"field","ownerType":${birType(inner.defaultType).toJson()},"recv":{"k":"this"},"name":"__outer","outer":true,"memberVisibility":"private"}"""
+	val immediate = kotc.bir.BirFieldGet(ownerType = birType(inner.defaultType), recv = kotc.bir.BirThis(), name = "__outer", outer = true, memberVisibility = "private")
 	for ((declaration, receiver) in innerEnclosingBindings(inner, immediate)) {
 		saved[declaration] = captureSubst[declaration]
 		captureSubst[declaration] = receiver
@@ -1511,10 +1511,7 @@ private fun BirEmitter.overrideOwnerType(fn: IrSimpleFunction, owner: IrClass): 
 			?: error("override owner '${owner.name}' has no Kotlin qualified name"))
 }
 
-private fun BirEmitter.overrideOwnerJson(fn: IrSimpleFunction, owner: IrClass): String =
-	overrideOwnerType(fn, owner).toJson()
-
-internal fun BirEmitter.overridesJson(fn: IrSimpleFunction, ordinaryPropertySlots: Boolean = false): String {
+internal fun BirEmitter.overrideDeclarations(fn: IrSimpleFunction, ordinaryPropertySlots: Boolean = false): List<kotc.bir.BirOverride>? {
 	val prop = fn.correspondingPropertySymbol?.owner
 	val items = if (prop != null) {
 		// An ACCESSOR: walk the PROPERTY's override closure (the setter of a `var size` overriding a `val size` has
@@ -1535,16 +1532,23 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction, ordinaryPropertySlot
 				target.getter?.let(::isInheritedSynthetic) == true)
 		}.mapNotNull { p -> (p.parent as? IrClass)?.let { owner ->
 			val targetAccessor = if (kind == "getter") p.getter else p.setter
-			"""{"owner":${overrideOwnerJson(fn, owner)},"member":${str(p.name.asString())},"kind":${str(kind)},"arity":$accArity${targetAccessor?.let { declarationIdField(it) }.orEmpty()}}""" } }
+			kotc.bir.BirOverride(overrideOwnerType(fn, owner), p.name.asString(), kind, accArity,
+				declarationId = targetAccessor?.let(::declarationId)) } }
 	} else {
 		val ordered = LinkedHashSet<IrSimpleFunction>()
 		fun walk(f: IrSimpleFunction) { for (ov in f.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walk(o) } }
 		walk(fn)
 		ordered.mapNotNull { m -> (m.parent as? IrClass)?.let { owner ->
-			"""{"owner":${overrideOwnerJson(fn, owner)},"member":${str(m.name.asString())},"kind":"method","arity":${emittedParamCount(m)}${declarationIdField(m)}}""" } }
+			kotc.bir.BirOverride(overrideOwnerType(fn, owner), m.name.asString(), "method", emittedParamCount(m),
+				declarationId = declarationId(m)) } }
 	}
-	return if (items.isEmpty()) "" else ""","overrides":[${items.joinToString(",")}]"""
+	return items.takeIf { it.isNotEmpty() }
 }
+
+internal fun BirEmitter.overridesJson(fn: IrSimpleFunction, ordinaryPropertySlots: Boolean = false): String =
+	overrideDeclarations(fn, ordinaryPropertySlots)?.let { items ->
+		""","overrides":[${items.joinToString(",") { item -> buildString { item.writeJson(this) } }}]"""
+	}.orEmpty()
 
 private fun BirEmitter.accessorBodyStmts(acc: IrSimpleFunction): String {
 	val property = acc.correspondingPropertySymbol?.owner
@@ -2505,12 +2509,16 @@ internal fun BirEmitter.sourcePathOf(node: IrElement): String? {
  *  Carried as a JSON STRING rather than an inline type node, for the same reason `kotlinType`/`collIdentity` are:
  *  the association names a KOTLIN type and must survive CLR type lowering untouched. A `companion fun String.f()`
  *  has to still read `kotlin.String` when the consuming module restores it, not `System.String`. */
-internal fun BirEmitter.companionReceiverJson(decl: org.jetbrains.kotlin.ir.IrElement): String? {
-	val own = kotc.frontend.ClrCompanionExtensions.receiverTypeJsonAt(sourcePathOf(decl), decl.endOffset)
+internal fun BirEmitter.companionReceiverType(decl: org.jetbrains.kotlin.ir.IrElement): TypeNode? {
+	val own = kotc.frontend.ClrCompanionExtensions.receiverTypeAt(sourcePathOf(decl), decl.endOffset)
 	if (own != null) return own
 	val property = (decl as? IrSimpleFunction)?.correspondingPropertySymbol?.owner ?: return null
-	return kotc.frontend.ClrCompanionExtensions.receiverTypeJsonAt(sourcePathOf(property), property.endOffset)
+	return kotc.frontend.ClrCompanionExtensions.receiverTypeAt(sourcePathOf(property), property.endOffset)
 }
+
+// Temporary output boundary for declaration/call emitters not yet switched to typed source nodes.
+internal fun BirEmitter.companionReceiverJson(decl: org.jetbrains.kotlin.ir.IrElement): String? =
+	companionReceiverType(decl)?.toJson()
 
 internal fun BirEmitter.companionReceiverField(
 	decl: org.jetbrains.kotlin.ir.IrElement,
@@ -2533,20 +2541,27 @@ internal fun BirEmitter.companionReceiverCallJson(
 	decl: org.jetbrains.kotlin.ir.IrElement,
 	use: org.jetbrains.kotlin.ir.IrElement? = null,
 ): String? {
-	val receiver = companionReceiverJson(decl)
+	return companionReceiverCallType(decl, use)?.toJson()
+}
+
+internal fun BirEmitter.companionReceiverCallType(
+	decl: org.jetbrains.kotlin.ir.IrElement,
+	use: org.jetbrains.kotlin.ir.IrElement? = null,
+): TypeNode? {
+	val receiver = companionReceiverType(decl)
 		?: (decl as? org.jetbrains.kotlin.ir.declarations.IrDeclaration)
 			?.let { companionExtensionReceiverType(it) }
-			?.let { birType(it).toJson() }
+			?.let { birType(it) }
 		?: use?.let {
-		kotc.frontend.ClrCompanionExtensions.receiverTypeJsonAtUse(sourcePathOf(it), it.startOffset, it.endOffset)
+		kotc.frontend.ClrCompanionExtensions.receiverTypeAtUse(sourcePathOf(it), it.startOffset, it.endOffset)
 	}
 	return receiver
 }
 
 /** Callable-reference use-site twin. fir2ir's reference wrapper does not retain declaration offsets. */
 internal fun BirEmitter.companionReceiverUseTag(use: org.jetbrains.kotlin.ir.IrElement): String {
-	val hit = kotc.frontend.ClrCompanionExtensions.receiverTypeJsonAtUse(sourcePathOf(use), use.startOffset, use.endOffset)
-	return hit?.let { ""","companionReceiver":${str(it)}""" } ?: ""
+	val hit = kotc.frontend.ClrCompanionExtensions.receiverTypeAtUse(sourcePathOf(use), use.startOffset, use.endOffset)
+	return hit?.let { ""","companionReceiver":${str(it.toJson())}""" } ?: ""
 }
 
 /** How many parameters `fn` EMITS: the [isValueParameter] physical sequence with the extension receiver's leading
@@ -2769,11 +2784,11 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
  *  `birType(...).toJson()` path every other type slot uses), NOT a legacy comma-string. Omitting the context parameters
  *  here used to make the descriptor one arity short and let the old emitter's name fallback emit a short argument list
  *  (invalid IL); the resolved-CIR contract now rejects such an incomplete identity. */
-internal fun BirEmitter.overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
-	fun signature(): String {
+internal fun BirEmitter.overloadSignature(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): List<TypeNode> {
+	fun signature(): List<TypeNode> {
 		val ext = extensionReceiverParam(fn)?.let { birType(it.type) }
 		val vals = fn.parameters.filter { isValueParameter(it) }.map { birValueParameterType(it) }
-		return ""","sig":[${(listOfNotNull(ext) + vals).joinToString(",") { it.toJson() }}]"""
+		return listOfNotNull(ext) + vals
 	}
 	// Local functions carry their separately authored dense capture frame until hoisting.
 	return if (fn.parent is org.jetbrains.kotlin.ir.declarations.IrClass ||
@@ -2781,6 +2796,9 @@ internal fun BirEmitter.overloadSigField(fn: org.jetbrains.kotlin.ir.declaration
 		inMemberDeclarationFrame(fn) { signature() }
 	else signature()
 }
+
+internal fun BirEmitter.overloadSigField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
+	""","sig":[${overloadSignature(fn).joinToString(",") { it.toJson() }}]"""
 
 /** True iff `fn` is an override of one of kotlin.Any's three universal methods (the CLR System.Object slots) —
  *  toString()/hashCode() (arity 0) or equals(Any?) (arity 1) with a dispatch receiver and no extension receiver. The

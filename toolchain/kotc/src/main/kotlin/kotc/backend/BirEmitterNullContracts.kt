@@ -177,13 +177,12 @@ internal fun <T> BirEmitter.withReturnPostcondition(fn: IrSimpleFunction, emit: 
  * Used by explicit checked casts and public return postconditions. The compiler-only name cannot alias a source
  * parameter; source locals already use their declaration-owned slots.
  */
-internal fun BirEmitter.wrapNonNullValue(valueJson: String, valueType: IrType, message: String): String {
+internal fun BirEmitter.wrapNonNullValue(value: kotc.bir.BirExpression, valueType: IrType, message: String): kotc.bir.BirValueBlock {
 	val nv = "dotkt\$nonNullValue${scopeCounter++}"
 	val nvLoc = BirLocal(nv)
 	val throwNpe = BirThrowExpression(newExc("kotlin.NullPointerException", message))
-	return valueBlockJson(
-		type = null,
-		stmts = """{"k":"var","name":${str(nv)},"type":${birType(valueType).toJson()},"init":$valueJson}""",
-		result = nonNullResult(nvLoc, throwNpe).toJson(),
+	return sourceValueBlock(
+		statements = listOf(kotc.bir.BirVariable(name = nv, type = birType(valueType), init = kotc.bir.BirField.Value(value))),
+		result = nonNullResult(nvLoc, throwNpe),
 	)
 }

@@ -679,8 +679,8 @@ internal fun BirEmitter.spliceBodyWithReturns(target: IrSimpleFunction, unit: Bo
 			val last = stmts.lastOrNull()
 			if (last is IrReturn && last.returnTargetSymbol == target.symbol) {
 				stmts.dropLast(1).forEach { pre.add(stmt(it)) }
-				if (last.value !is IrGetObjectValue) pre.add("""{"k":"exprStmt","expr":${expr(last.value)}}""")
-				return """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
+				if (last.value !is IrGetObjectValue) pre.add(kotc.bir.BirExpressionStatement(expr = expr(last.value)))
+				return kotc.bir.BirConstant(type = TypeNode.Fqn("kotlin.Unit"), value = null)
 			}
 		}
 		return spliceBody(stmts, unit, pre, target.symbol)
@@ -689,7 +689,7 @@ internal fun BirEmitter.spliceBodyWithReturns(target: IrSimpleFunction, unit: Bo
 	val end = cfgFresh()
 	res?.let {
 		val rt = birType(target.returnType)
-		pre.add("""{"k":"var","name":${str(it)},"type":${str(rt)},"init":{"k":"default","type":${str(rt)}}}""")
+		pre.add(kotc.bir.BirVariable(name = it, type = rt, init = kotc.bir.BirField.Value(kotc.bir.BirDefaultValue(type = rt))))
 	}
 	val saved = inlineReturnSubst[target.symbol]
 	inlineReturnSubst[target.symbol] = res to end
@@ -707,7 +707,7 @@ internal fun BirEmitter.spliceBodyWithReturns(target: IrSimpleFunction, unit: Bo
 		kotc.bir.BirLocal(res).toJson()
 	} else {
 		pre.add(kotc.bir.BirLabel(end).toJson())
-		"""{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
+		kotc.bir.BirConstant(type = TypeNode.Fqn("kotlin.Unit"), value = null)
 	}
 }
 
@@ -723,7 +723,7 @@ internal fun BirEmitter.spliceBody(
 	pre: MutableList<String>,
 	ownReturnTarget: IrReturnTargetSymbol? = null,
 ): String {
-	if (unit) { stmts.forEach { pre.add(stmt(it)) }; return """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""" }
+	if (unit) { stmts.forEach { pre.add(stmt(it)) }; return kotc.bir.BirConstant(type = TypeNode.Fqn("kotlin.Unit"), value = null) }
 	stmts.dropLast(1).forEach { pre.add(stmt(it)) }
 	return when (val last = stmts.lastOrNull()) {
 		is IrReturn -> {
@@ -735,7 +735,7 @@ internal fun BirEmitter.spliceBody(
 			sourcePointJson(last)?.let(pre::add)
 			expr(last)
 		}
-		else -> { last?.let { pre.add(stmt(it)) }; """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""" }
+		else -> { last?.let { pre.add(stmt(it)) }; kotc.bir.BirConstant(type = TypeNode.Fqn("kotlin.Unit"), value = null) }
 	}
 }
 
@@ -751,7 +751,7 @@ internal fun BirEmitter.emitStackBuffer(call: IrCall): String {
 	val c = scopeCounter++
 	val ptrName = "__sbp$c"; val lenName = "__sbl$c"
 	val pre = arrayListOf(
-		"""{"k":"var","name":${str(lenName)},"type":${fqnJson("kotlin.Int")},"init":${expr(args[0])}}""",
+		kotc.bir.BirVariable(name = lenName, type = TypeNode.Fqn("kotlin.Int"), init = kotc.bir.BirField.Value(expr(args[0]))),
 		"""{"k":"var","name":${str(ptrName)},"type":${fqnJson("dotkt\$stackptr")},"init":{"k":"stackAlloc","count":{"k":"local","name":${str(lenName)}},"elem":${str(elemT)}}}""")
 	stackBufSubst[bufParam] = BirEmitter.StackBufInfo(ptrName, lenName, elemT)
 	val result = spliceBody(bodyStatements(fn.body), fn.returnType.isUnit() || call.type.isUnit(), pre, fn.symbol)

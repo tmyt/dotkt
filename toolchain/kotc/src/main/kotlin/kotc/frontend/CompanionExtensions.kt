@@ -43,13 +43,13 @@ import org.jetbrains.kotlin.fir.types.coneTypeOrNull
  * onto the IR declaration, FIR and IR can disagree about the START (leading trivia moves FIR's start) but always
  * agree about the END, and the path is part of the key because offsets are file-local.
  *
- * The value is the receiver type already rendered as BIR type JSON. Rendering here rather than in the backend
- * keeps the ONE Cone-typed step next to the FIR it reads; the backend splices an opaque string.
+ * Resolve the receiver to a source TypeNode while FIR is available. Keep that value typed across the FIR/IR
+ * handoff; writing its eventual metadata carrier is a separate operation, not the internal representation.
  */
 object ClrCompanionExtensions {
-	/** "<file path>|<end offset>" -> the receiver type of the companion extension declared there, as BIR type JSON. */
-	private val byKey = java.util.concurrent.ConcurrentHashMap<String, String>()
-	private data class UseFact(val start: Int, val end: Int, val receiver: String)
+	/** "<file path>|<end offset>" -> the resolved source receiver type. */
+	private val byKey = java.util.concurrent.ConcurrentHashMap<String, TypeNode>()
+	private data class UseFact(val start: Int, val end: Int, val receiver: TypeNode)
 	private val byUseFile = java.util.concurrent.ConcurrentHashMap<
 		String,
 		java.util.concurrent.ConcurrentLinkedQueue<UseFact>,
@@ -60,12 +60,12 @@ object ClrCompanionExtensions {
 
 	private fun key(file: String, offset: Int) = "$file|$offset"
 
-	private fun put(file: String, offset: Int, typeJson: String) {
+	private fun put(file: String, offset: Int, receiver: TypeNode) {
 		if (offset < 0) return
 		val k = key(file, offset)
 		if (k in poisoned) return
-		val prior = byKey.putIfAbsent(k, typeJson)
-		if (prior != null && prior != typeJson) {
+		val prior = byKey.putIfAbsent(k, receiver)
+		if (prior != null && prior != receiver) {
 			byKey.remove(k)
 			poisoned.add(k)
 		}
@@ -78,14 +78,14 @@ object ClrCompanionExtensions {
 		poisoned.clear()
 	}
 
-	/** The BIR type JSON of the companion-extension receiver declared at this slot, or null when there is none. */
-	fun receiverTypeJsonAt(file: String?, end: Int): String? {
+	/** The resolved receiver declared at this slot, or null when there is none. */
+	fun receiverTypeAt(file: String?, end: Int): TypeNode? {
 		if (file == null || end < 0) return null
 		return byKey[key(file, end)]
 	}
 
 	/** Associated receiver captured on a companion callable-reference expression. */
-	fun receiverTypeJsonAtUse(file: String?, start: Int, end: Int): String? {
+	fun receiverTypeAtUse(file: String?, start: Int, end: Int): TypeNode? {
 		if (file == null || start < 0 || end < start) return null
 		// This lookup classifies a use as a companion extension, so an enclosing/contained interval is not sufficient:
 		// it may merely be an ordinary call nested around or inside the real companion-extension expression. Use the
@@ -125,9 +125,9 @@ object ClrCompanionExtensions {
 					val receiver = target.receiverParameter?.typeRef?.coneTypeOrNull ?: return
 					val source = element.source ?: return
 					if (source.startOffset < 0 || source.endOffset < source.startOffset) return
-					val json = associatedType(session, receiver).toJson()
+					val type = associatedType(session, receiver)
 					byUseFile.computeIfAbsent(path) { java.util.concurrent.ConcurrentLinkedQueue() }
-						.add(UseFact(source.startOffset, source.endOffset, json))
+						.add(UseFact(source.startOffset, source.endOffset, type))
 				}
 
 				override fun visitElement(element: FirElement) {
@@ -172,11 +172,11 @@ object ClrCompanionExtensions {
 	private fun record(session: FirSession, path: String, d: FirDeclaration) {
 		if (d !is FirCallableDeclaration || !d.isCompanionExtension) return
 		val receiver = d.receiverParameter?.typeRef?.coneTypeOrNull ?: return
-		val json = associatedType(session, receiver).toJson()
-		d.source?.let { put(path, it.endOffset, json) }
+		val type = associatedType(session, receiver)
+		d.source?.let { put(path, it.endOffset, type) }
 		if (d is FirProperty) {
-			d.getter?.source?.let { put(path, it.endOffset, json) }
-			d.setter?.source?.let { put(path, it.endOffset, json) }
+			d.getter?.source?.let { put(path, it.endOffset, type) }
+			d.setter?.source?.let { put(path, it.endOffset, type) }
 		}
 	}
 

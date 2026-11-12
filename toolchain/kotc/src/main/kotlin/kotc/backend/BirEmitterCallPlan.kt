@@ -4,6 +4,9 @@ package kotc.backend
 
 import kotc.bir.TypeNode
 import kotc.bir.BirBindingReference
+import kotc.bir.BirExpression
+import kotc.bir.BirCallBinding
+import kotc.bir.BirCallEvaluation
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
@@ -64,7 +67,7 @@ internal inline fun <T> BirEmitter.withDefaultTypeFrame(frame: DefaultTypeFrame,
 /** One call site's ordered evaluation plan, built while its arguments are rendered. Installed for the call node by
  *  [BirEmitter.withCallPlan] and read back by [filledArgs] / [filledExternalArgs]. */
 internal class CallPlan(private val e: BirEmitter) {
-	private val bindings = ArrayList<String>()
+	private val bindings = ArrayList<BirCallBinding>()
 	private val registered = ArrayList<IrExpression>()
 
 	val isEmpty: Boolean get() = bindings.isEmpty()
@@ -74,21 +77,21 @@ internal class CallPlan(private val e: BirEmitter) {
 	 *  below means); `kind` is `value` or `address`; `role` is the source-level phrase a storage diagnostic uses
 	 *  instead of the minted id. Append order IS Kotlin evaluation order — the caller is responsible for calling
 	 *  this in that order, which is why [filledArgs] renders every supplied value before any filled default. */
-	fun bind(phase: String, kind: String, stable: Boolean, type: TypeNode, role: String, expr: String): String {
+	fun bind(phase: String, kind: String, stable: Boolean, type: TypeNode, role: String, expr: BirExpression): BirBindingReference {
 		// `dotkt$b…` NAMESPACE, minted from `scopeCounter` — the counter the emitter's other call-site synthesis uses,
 		// distinct from `localSlotCounter` (which renames ordinary locals to `dotkt$localN`) and from `inlCounter`
 		// (the `__…` frame names). The three prefixes are disjoint by construction, so no counter has to know the
 		// others exist, and `$` is not writable in a plain Kotlin identifier, so a user name cannot alias any of them.
 		// This id is the plan's own key, not a local name: bir2cir mints the local a binding lowers to (spec §2.7).
 		val id = "dotkt\$b${e.scopeCounter++}"
-		bindings.add("""{"id":${e.str(id)},"phase":${e.str(phase)},"kind":${e.str(kind)},"stable":$stable,"type":${type.toJson()},"role":${e.str(role)},"expr":$expr}""")
-		return BirBindingReference(id, type).toJson()
+		bindings.add(BirCallBinding(id, phase, kind, stable, type, role, expr))
+		return BirBindingReference(id, type)
 	}
 
 	/** Bind an IR value of this call and register the binding as THE rendering of that IR node, so every other reader
 	 *  — the call's own receiver/argument slot, an inner-class `new`'s enclosing-instance argument, a spliced default —
 	 *  reaches it through the ordinary `expr()` and renders the same read. Re-binding the same node is a no-op. */
-	fun bindValue(node: IrExpression, phase: String, role: String): String {
+	fun bindValue(node: IrExpression, phase: String, role: String): BirExpression {
 		e.planReads[node]?.let { return it }
 		val type = e.birType(node.type)
 		// `expr(node)` FIRST: it may itself install a nested plan, whose bindings belong to that inner call.
@@ -105,13 +108,15 @@ internal class CallPlan(private val e: BirEmitter) {
 		registered.forEach { e.planReads.remove(it) }
 	}
 
-	fun bindingsJson(): String = bindings.joinToString(",", "[", "]")
+	fun bindingsJson(): String = bindings.joinToString(",", "[", "]") { binding ->
+		buildString { binding.writeJson(this) }
+	}
 
 	/** The call node under its plan — or the bare call when nothing was bound (no plan is emitted then: the positional
 	 *  array already IS the evaluation plan). */
-	fun wrap(call: String, type: String): String =
+	fun wrap(call: BirExpression, type: TypeNode): BirExpression =
 		if (bindings.isEmpty()) call
-		else """{"k":"callEval","type":$type${e.semanticUseSiteOwnerJson()},"bindings":${bindingsJson()},"expr":$call}"""
+		else BirCallEvaluation(type, bindings.toList(), call, e.activeSemanticOwner ?: e.fileClass)
 }
 
 /** Run `emit` with a fresh evaluation plan installed for `call`, hand back both. The plan is scoped: a nested call
