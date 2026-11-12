@@ -9,6 +9,7 @@ internal object SourceMetadataMessagePack {
         writeSourceTypeAlias(value, packer)
         packer.toByteArray()
     }
+    fun write(value: SourceTypeAlias, packer: MessagePacker) = writeSourceTypeAlias(value, packer)
 
     private fun writeSourceTypeAlias(value: SourceTypeAlias, packer: MessagePacker) {
         packer.packMapHeader(8)

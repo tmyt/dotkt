@@ -60,8 +60,11 @@ sealed class SourceTypeFacts
     }
 
     internal static SourceTypeFacts Read(ref Utf8JsonReader reader)
+        => ReadFrozenText(reader.GetString());
+
+    internal static SourceTypeFacts ReadFrozenText(string text)
     {
-        var content = Encoding.UTF8.GetBytes(reader.GetString());
+        var content = Encoding.UTF8.GetBytes(text);
         var inner = new Utf8JsonReader(content, new JsonReaderOptions { MaxDepth = BirJson.MaxDepth });
         if (!inner.Read() || inner.TokenType != JsonTokenType.StartObject) throw new FormatException();
         TypeNode baseType = null;
@@ -137,6 +140,8 @@ sealed class SourceTypeFacts
         }
         return Encoding.UTF8.GetString(output.ToArray());
     }
+
+    internal string FrozenText => ToJson();
 
     internal static void Write(Utf8JsonWriter writer, SourceTypeFacts value) => writer.WriteStringValue(value.ToJson());
     internal static JsonNode ToDom(SourceTypeFacts value) => JsonValue.Create(value.ToJson());

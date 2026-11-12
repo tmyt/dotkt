@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 from bir_lowering_models import outputs
 from bir_core_models import outputs as source_outputs
+from bir_messagepack import outputs as binary_outputs
+from bir_kotlin_messagepack import outputs as source_binary_outputs
 
 
 class PhaseCompositionTests(unittest.TestCase):
@@ -21,10 +23,21 @@ class PhaseCompositionTests(unittest.TestCase):
     def test_lowering_value_facts_stay_out_of_the_source_profile(self):
         lowering = "\n".join(outputs(ROOT, self.definitions).values())
         source = "\n".join(source_outputs(ROOT, self.definitions).values())
+        source += "\n".join(source_binary_outputs(ROOT, self.definitions).values())
         self.assertIn("record EventPropertySourceFacts", lowering)
         self.assertIn("KotlinPropertyAccessorCarrier", lowering)
         self.assertNotIn("EventPropertySourceFacts", source)
         self.assertNotIn("kotlinPropertyAccessorCarrier", source)
+
+    def test_binary_codecs_follow_the_same_declared_field(self):
+        self.definitions["birFileDeclaration"]["properties"]["currentTransportFact"] = {"type": "integer"}
+        model = "\n".join(outputs(ROOT, self.definitions).values())
+        binary = "\n".join(binary_outputs(ROOT, self.definitions).values())
+        source = "\n".join(source_binary_outputs(ROOT, self.definitions).values())
+        self.assertIn("OptionalField<int> CurrentTransportFact", model)
+        self.assertIn('case "currentTransportFact":', binary)
+        self.assertIn("value.CurrentTransportFact.IsPresent", binary)
+        self.assertIn("value.currentTransportFact?.let", source)
 
     def test_consumed_node_fact_requires_a_type(self):
         self.definitions["cirNewClrNode"]["x-dotkt-model"]["sourceConsumed"].append("untypedCurrentFact")

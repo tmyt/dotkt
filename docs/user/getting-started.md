@@ -132,7 +132,13 @@ disable caching. Direct `kotc` invocation retains Kotlin's upstream default of 6
 `-Xklib-zip-file-accessor-cache-limit`. Projects with more than 256 reference KLIBs can raise
 the SDK bound to avoid cache churn.
 
-Intermediate CIR defaults to JSON for inspection. Use `dotnet build -p:DotKtCirFormat=msgpack`
+Intermediate BIR and CIR default to JSON for inspection. Use
+`dotnet build -p:DotKtBirFormat=msgpack` for direct typed MessagePack transport
+from kotc to bir2cir; this output choice recompiles Kotlin when it changes.
+Direct kotc invocations use `-P plugin:dotkt:bir-format=json|msgpack`, including
+inside standard Kotlin argument files.
+
+Use `dotnet build -p:DotKtCirFormat=msgpack`
 to use direct typed MessagePack transport between bir2cir and ilemit. Switching formats
 reruns lowering/emission without recompiling unchanged Kotlin; generated program semantics
 are unchanged. Direct bir2cir invocations accept `--cir-format=json|msgpack`.

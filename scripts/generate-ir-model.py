@@ -14,6 +14,8 @@ from bir_literal_models import outputs as bir_literal_outputs
 from bir_core_models import outputs as bir_core_outputs
 from bir_lowering_models import outputs as bir_lowering_outputs
 from cir_messagepack import generate as cir_messagepack
+from bir_messagepack import outputs as bir_messagepack_outputs
+from bir_kotlin_messagepack import outputs as bir_kotlin_messagepack_outputs
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "docs/bir-cir.schema.json"
@@ -808,6 +810,8 @@ def outputs(schema):
         **bir_literal_outputs(ROOT, definitions),
         **bir_core_outputs(ROOT, definitions),
         **bir_lowering_outputs(ROOT, definitions),
+        **bir_messagepack_outputs(ROOT, definitions),
+        **bir_kotlin_messagepack_outputs(ROOT, definitions),
         ROOT / "toolchain/cir-common/Executable.Model.Generated.cs": executable_model,
         ROOT / "toolchain/bir2cir/CirBodyRewrite.Generated.cs": declaration_body_rewrite(definitions),
         ROOT / "toolchain/bir2cir/CirExecutableProjection.Generated.cs": executable_projection,

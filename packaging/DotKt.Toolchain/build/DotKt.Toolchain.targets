@@ -19,6 +19,7 @@
          cascades exactly when the frontend produced new BIR and no-ops otherwise. -->
     <DotKtDll2KlibJobs Condition="'$(DotKtDll2KlibJobs)' == ''">$([System.Environment]::ProcessorCount)</DotKtDll2KlibJobs>
     <DotKtCirFormat Condition="'$(DotKtCirFormat)' == ''">json</DotKtCirFormat>
+    <DotKtBirFormat Condition="'$(DotKtBirFormat)' == ''">json</DotKtBirFormat>
     <!-- CLR targeting packs exceed the upstream CLI's 64-entry ZIP cache. Keep project builds bounded but avoid
          reopening the usual reference universe on every metadata query; zero disables caching. -->
     <DotKtKlibZipFileAccessorCacheLimit Condition="'$(DotKtKlibZipFileAccessorCacheLimit)' == ''">256</DotKtKlibZipFileAccessorCacheLimit>
@@ -179,6 +180,11 @@
        .kt clears stale BIR and emits an empty assembly. WriteOnlyWhenDifferent preserves true no-op builds. -->
   <Target Name="DotKtComputeCompileOptions"
           DependsOnTargets="DotKtInitializeIntermediatePaths;DotKtResolveReferenceSets">
+    <PropertyGroup>
+      <_DotKtBirFormat>$(DotKtBirFormat.ToLowerInvariant())</_DotKtBirFormat>
+    </PropertyGroup>
+    <Error Condition="'$(_DotKtBirFormat)' != 'json' and '$(_DotKtBirFormat)' != 'msgpack'"
+           Text="DotKtBirFormat must be json or msgpack." />
     <!-- MPP (#119): when common sources are present, mark them with -Xcommon-sources and enable the common→platform
          module split (-Xmulti-platform) + cross-module expect/actual (-Xexpect-actual-classes) — the exact
          invocation the MPP NUnit producer exercises. All sources still pass POSITIONALLY (in @(KotlinCompile));
@@ -189,7 +195,7 @@
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;$(_DotKtEscapedCommonSourcePaths)&quot;</DotKtMppFlags>
     </PropertyGroup>
     <WriteLinesToFile File="$(DotKtCompileOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="kotc=$(DotKtKotcOptions);klib-zip-cache=$(DotKtKlibZipFileAccessorCacheLimit);mpp=$(DotKtMppFlags);@(DotKtCommon->'common=%(FullPath)');@(KotlinCompile->'source=%(FullPath)');@(_DotKtCompileReference->'compile-ref=%(FullPath)');@(_DotKtRuntimeReference->'runtime-ref=%(FullPath)')" />
+                      Lines="kotc=$(DotKtKotcOptions);bir-format=$(_DotKtBirFormat);klib-zip-cache=$(DotKtKlibZipFileAccessorCacheLimit);mpp=$(DotKtMppFlags);@(DotKtCommon->'common=%(FullPath)');@(KotlinCompile->'source=%(FullPath)');@(_DotKtCompileReference->'compile-ref=%(FullPath)');@(_DotKtRuntimeReference->'runtime-ref=%(FullPath)')" />
   </Target>
 
   <!-- Compile every .kt to BIR from the frontend stdlib plus the complete MSBuild-resolved reference-KLIB set.
@@ -236,6 +242,8 @@
       <_DotKtKotcResponseArgument Include="_output_option"><Value>-d</Value></_DotKtKotcResponseArgument>
       <_DotKtKotcResponseArgument Include="_output_value"><Value>&quot;$(_DotKtEscapedBirOutputPath)&quot;</Value></_DotKtKotcResponseArgument>
       <_DotKtKotcResponseArgument Include="_klib_zip_cache"><Value>-Xklib-zip-file-accessor-cache-limit=$(DotKtKlibZipFileAccessorCacheLimit)</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_bir_format_option"><Value>-P</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_bir_format_value"><Value>plugin:dotkt:bir-format=$(_DotKtBirFormat)</Value></_DotKtKotcResponseArgument>
       <!-- Keep the manifest and compiler on the same MPP argument source. This is intentionally one argfile line:
            kotc tokenizes its three arguments, while the quoted common-source value remains one token. -->
       <_DotKtKotcResponseArgument Include="_mpp_flags" Condition="'$(DotKtMppFlags)' != ''"><Value>$(DotKtMppFlags)</Value></_DotKtKotcResponseArgument>
@@ -276,7 +284,7 @@
           DependsOnTargets="KotlinCompile;DotKtResolveReferenceSets;DotKtComputeBir2CirModeStamp"
           Inputs="$(DotKtIntermediateBirPath)/.stamp;$(DotKtBir2Cir)" Outputs="$(_DotKtBir2CirModeStamp)">
     <ItemGroup>
-      <_DotKtBir Include="$(DotKtIntermediateBirPath)/*.bir.json" />
+      <_DotKtBir Include="$(DotKtIntermediateBirPath)/*.bir.$(_DotKtBirFormat)" />
       <!-- Inputs only.  The exact compile-reference universe was materialized by DotKtResolveReferenceSets. -->
     </ItemGroup>
     <RemoveDir Directories="$(DotKtIntermediateCirPath)" />

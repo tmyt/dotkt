@@ -68,6 +68,21 @@ foreach (var line in samples)
     scalars++;
 }
 if (scalars != 23) throw new Exception($"Expected 23 actual Kotlin scalar samples, got {scalars}");
+var binarySamples = 0;
+foreach (var line in samples)
+{
+    const string prefix = "IR_BIR_BINARY_SAMPLE ";
+    if (!line.StartsWith(prefix, StringComparison.Ordinal)) continue;
+    var pair = line[prefix.Length..].TrimEnd('\r').Split(' ');
+    if (pair.Length != 2) throw new Exception("Malformed Kotlin binary sample report");
+    var json = Encoding.UTF8.GetString(Convert.FromBase64String(pair[0]));
+    var graph = BirFileCodec.Decode(Convert.FromBase64String(pair[1]));
+    Same(json, graph, "actual Kotlin MessagePack file");
+    Same(json, BirFileCodec.Decode(BirFileCodec.Encode(graph)), "C# MessagePack rewrite");
+    binarySamples++;
+}
+if (binarySamples != 29) throw new Exception($"Expected 29 actual Kotlin binary files, got {binarySamples}");
+Console.WriteLine($"Kotlin -> C# BIR MessagePack: {binarySamples} files preserve literals, aliases, UTF16, source IDs and generic frames");
 var nullReader = Reader("{\"k\":\"const\",\"value\":null}");
 if (BirGraphJson.ReadNode(ref nullReader) is not BirConstant { Value.HasValue: true, Value.Value: BirLiteral.NullLiteral })
     throw new Exception("A semantic null literal was decoded as an untyped null field");

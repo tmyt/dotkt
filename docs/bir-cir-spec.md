@@ -35,6 +35,28 @@ placeholders are rewritten through schema-generated executable edges in typed
 CIR; declaration signatures and opaque metadata are not executable edges.
 The remaining intermediate DOM projection is still an unfinished migration boundary.
 
+### BIR files
+
+`kotc` emits `.bir.json` by default. `-P plugin:dotkt:bir-format=msgpack` selects
+`.bir.msgpack`; `bir-format=json` selects JSON explicitly. The standard Kotlin
+argument parser handles this option in both direct invocations and `@argfiles`.
+SDK projects use `DotKtBirFormat` (`json` by default). Changing this frontend
+output choice recompiles Kotlin and replaces the preceding BIR file cohort.
+
+Binary files start with the exact ASCII bytes `DOTKT\0BIR\0MSGPACK\0`, followed
+by one MessagePack map. The suffix selects the reader; a binary framing or decode
+failure does not retry JSON. Trailing values are invalid. Both writers use the
+maintained logical schema and construct the same owning typed BIR, without a
+JSON-text bridge. Existing explicitly frozen metadata text remains a text leaf;
+opaque embedded payload bytes are transported without decoding or rewriting them.
+
+Semantic literals retain signed/unsigned integer values and tagged IEEE bit
+patterns, and use the shared UTF-16-preserving string codec. Optional fields keep
+absent, explicit null, and value distinct. File transport does not select a CLR
+representation or alter declaration identities and generic frames. Executable
+attribute carriers retain their own explicitly declared codec independently of
+the enclosing file format.
+
 ### CIR files
 
 `bir2cir --cir-format=json` (the default) emits `.cir.json` for inspection.

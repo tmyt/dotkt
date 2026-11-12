@@ -7,11 +7,13 @@ def outputs(root, named, definitions, variants, parameters, cs_type, cs_name, kt
     cs = [header, "#nullable enable", "using System;", "using System.Collections.Generic;", "using MessagePack;",
           "namespace DotKt.Bir;", "", "public static class SourceMetadataMessagePack", "{",
           "    public static SourceTypeAlias Read(ref MessagePackReader reader) => ReadSourceTypeAlias(ref reader);",
-          "    public static void Write(ref MessagePackWriter writer, SourceTypeAlias value) => WriteSourceTypeAlias(ref writer, value, 0);", ""]
+          "    public static void Write(ref MessagePackWriter writer, SourceTypeAlias value) => WriteSourceTypeAlias(ref writer, value, 0);",
+          "    public static void Write(ref MessagePackWriter writer, SourceTypeAlias value, int depth) => WriteSourceTypeAlias(ref writer, value, depth);", ""]
     kt = [header, "package kotc.bir", "", "import org.msgpack.core.MessagePack", "import org.msgpack.core.MessagePacker", "",
           "internal object SourceMetadataMessagePack {",
           "    fun encode(value: SourceTypeAlias): ByteArray = MessagePack.newDefaultBufferPacker().use { packer ->",
-          "        writeSourceTypeAlias(value, packer)", "        packer.toByteArray()", "    }", ""]
+          "        writeSourceTypeAlias(value, packer)", "        packer.toByteArray()", "    }",
+          "    fun write(value: SourceTypeAlias, packer: MessagePacker) = writeSourceTypeAlias(value, packer)", ""]
 
     def target(shape):
         return definitions[shape["$ref"].removeprefix("#/$defs/")]

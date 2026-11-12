@@ -43,6 +43,7 @@ static class Bir2Cir
                 BirNodeType.SelfTest();
                 CapturedGenericInvocation.SelfTestSourceFacts();
                 SourceModuleIndex.SelfTest();
+                BirFileCodec.SelfTest();
                 ClrTypeVariance.SelfTest();
                 PhysicalValueCoercion.SelfTest();
                 StringCharSequenceBridge.SelfTest();
@@ -114,7 +115,7 @@ static class Bir2Cir
         catch (UsageException ex)
         {
             Console.Error.WriteLine(ex.Message);
-            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] [--build-stdlib=metadata|runtime] [--reflection-restricted] [--cir-format=json|msgpack] <file.bir.json>...");
+            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] [--build-stdlib=metadata|runtime] [--reflection-restricted] [--cir-format=json|msgpack] <file.bir.json|file.bir.msgpack>...");
             return 1;
         }
         catch (Exception ex)
@@ -176,7 +177,7 @@ sealed class Pipeline
         foreach (var input in inputs)
         {
             var path = Path.GetFullPath(input);
-            var source = DefaultBirCarrier.FreezeSourceDefaults(BirInputJson.Read(File.ReadAllBytes(path)));
+            var source = DefaultBirCarrier.FreezeSourceDefaults(BirFileCodec.Read(path));
             var suspend = SuspendShapeAnalyzer.Analyze(source);
             inputsWithSources.Add((path, source, suspend));
         }
@@ -1814,6 +1815,8 @@ sealed class Pipeline
     static string OutputNameFor(string inputPath)
     {
         var name = Path.GetFileName(inputPath);
+        if (name.EndsWith(".bir.msgpack", StringComparison.Ordinal))
+            return name[..^".bir.msgpack".Length] + ".cir.json";
         if (name.EndsWith(".bir.json", StringComparison.Ordinal))
             return name[..^".bir.json".Length] + ".cir.json";
         if (name.EndsWith(".json", StringComparison.Ordinal))
