@@ -102,13 +102,15 @@ static partial class CirDeclarationProjection
                 || (method == "Equals" && enumSlot.Arg.Value is not CirLocal { Name: "other" }))
                 throw new InvalidOperationException("Enum object-slot binding changed an operand or retained call-only facts");
         }
-        var metadataOnly = new JsonObject {
-            ["fields"] = new JsonArray(new JsonObject {
-                ["init"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Double"), ["value"] = 1.0 }
-            }),
+        var metadataOnly = new CirFileDeclaration {
+            FileClass = "ReferenceLiteral", HasMain = false, Types = [], Methods = [],
+            Fields = new[] { new CirField {
+                Name = "value", Type = new TypeNode.Fqn("kotlin.Double"),
+                Init = new CirConstant { Type = new TypeNode.Fqn("kotlin.Double"), Value = new AttributeArgument.Float64Value(BitConverter.DoubleToInt64Bits(1.0)) },
+            } },
         };
-        RefBodySquash.LowerLiteralPlaceholders(metadataOnly);
-        if (ReadCirNode(metadataOnly["fields"]![0]!["init"]!) is not CirConstant {
+        var metadataPlaceholders = RefBodySquash.LowerLiteralPlaceholders(metadataOnly);
+        if (metadataPlaceholders.Fields[0].Init.Value is not CirConstant {
             Type: TypeNode.Fqn { Name: "System.Object" }, Value: AttributeArgument.NullValue })
             throw new InvalidOperationException("A metadata-only facade literal became a native runtime value");
         var malformedOptional = new JsonObject {

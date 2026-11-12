@@ -16,6 +16,7 @@
 using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Cir;
 
 static partial class ClrMemberResolution
 {
@@ -59,6 +60,21 @@ static partial class ClrMemberResolution
         if (attr.ContainsKey("memberRef")) return;
         if (TypeJson.Read(attr["attr"]) is not TypeNode.Fqn attrFqn) return;
         var assembly = (attr["attrAssembly"] as JsonValue)?.GetValue<string>();
+        var arguments = (attr["argTypes"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>();
+        if (ResolveAppliedAttributeCtor(attrFqn, assembly, arguments) is { } selected)
+            attr["memberRef"] = selected.Write();
+    }
+
+    internal static AttributeApplication ResolveAttributeCtor(AttributeApplication attribute, ReferenceMetadataIndex refs)
+    {
+        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        if (attribute.AttrExternal != true || attribute.MemberRef != null || attribute.Attr is not TypeNode.Fqn type)
+            return attribute;
+        return attribute with { MemberRef = ResolveAppliedAttributeCtor(type, attribute.AttrAssembly, attribute.ArgTypes) };
+    }
+
+    static MemberRefNode ResolveAppliedAttributeCtor(TypeNode.Fqn attrFqn, string assembly, IReadOnlyList<TypeNode> arguments)
+    {
         // The exact declaring scope when one is stated: a compiler-synthesized attribute can share its FQN with
         // a private lookalike, which is why that key exists at all.
         var open = assembly != null
@@ -66,15 +82,13 @@ static partial class ClrMemberResolution
             : ResolveOwnerType(attrFqn);
         // An attribute type outside the reference set is already skipped downstream — a compile-time opt-in
         // marker that need not survive into IL. Nothing to name, so nothing is claimed.
-        if (open == null) return;
+        if (open == null) return null;
         // An attribute's declared argument vector admits BOTH spellings CIR allows for a primitive — the
         // metadata-reader shorthand (`int`) and the BCL FQN (`System.Int32`) — because it is written by
         // whichever pass authored the attribute. Canonicalize before matching, or the same constructor is
         // found or missed depending on who wrote the application down.
-        var argNodes = (attr["argTypes"] as JsonArray)?
-            .Select(t => TypeJson.Read(t) is { } n ? BirTypeLowering.CanonicalPhysicalSlotType(n) : null)
-            .ToList() ?? new List<TypeNode>();
-        if (argNodes.Any(t => t == null)) return;
+        var argNodes = arguments.Select(type => type is { } ? BirTypeLowering.CanonicalPhysicalSlotType(type) : null).ToList();
+        if (argNodes.Any(t => t == null)) return null;
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == argNodes.Count).ToList();
         // ONE POLICY for the whole lane. An annotation whose constructor this cannot select is left unnamed,
@@ -83,7 +97,6 @@ static partial class ClrMemberResolution
         // marker could not be encoded. (`PickUnique` throws, which is right where a MEMBER is being called and
         // wrong here, and the difference is the whole reason this uses the quiet form.)
         var win = TryPickUniqueCtor(ctors, argNodes, attrFqn.Args);
-        if (win == null) return;
-        attr["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
+        return win == null ? null : MemberRefOf(win, MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
     }
 }

@@ -93,7 +93,7 @@ if [ $# -eq 0 ]; then
   if ! bir_corpus="$("$PY" tests/ir/corpus.py bir --literal)"; then exit 2; fi
   bir_graph_manifest="$ROOT/build/bir-owning-graph-corpus.list"
   printf '%s\n' "$bir_corpus" > "$bir_graph_manifest"
-  bir_graph_args=("$bir_graph_manifest")
+  bir_graph_args=("$bir_graph_manifest" "$cir_codec_manifest")
 fi
 if ! dotnet run --project tests/ir/bir-graph/Probe.csproj --no-launch-profile \
     -p:DotKtBir2CirPath="$ROOT/$BIR2CIR_DLL" -- \

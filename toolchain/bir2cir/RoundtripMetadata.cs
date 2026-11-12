@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Cir;
 
 // ROUNDTRIP-METADATA GENERATION (#71 S2). bir2cir GENERATES every Kotlin round-trip metadata attribute — as ordinary
 // CIR `attrs`/`retAttrs` entries {attr:fqn,args:[…]} + the embedded attribute-class DEFS — and ilemit only STAMPS them
@@ -1086,14 +1087,18 @@ static class RoundtripMetadata
     // NO name (a named ctor param would mint Param rows the embedded attrs never had); the empty body chains to
     // Attribute()'s protected ctor.
     // ---------------------------------------------------------------------------------------------------------------
-    public static JsonObject SynthDefsFile(ReferenceMetadataIndex refs, bool runtimeOnly = false)
+    public static CirFileDeclaration SynthDefsFile(ReferenceMetadataIndex refs, bool runtimeOnly = false)
     {
         // Resolve the shared base delegation BEFORE any ctor is built, so every synthesized class states the
         // member it delegates to rather than describing it.
-        _attributeBaseCtorRef = ClrMemberResolution.ParameterlessBaseCtorRef(refs, "System.Attribute");
-        var types = new JsonArray
+        var baseConstructor = ClrMemberResolution.ParameterlessBaseCtorRef(refs, "System.Attribute");
+        CirConstructor Ctor(params CirParameter[] parameters) => new() {
+            Vis = "public", Params = parameters, BaseArgs = Array.Empty<ICirExpression>(),
+            BaseCtorRef = baseConstructor, Body = [],
+        };
+        var types = new CirTypeDeclaration[]
         {
-            TypeAliasAttributeDefinition(),
+            TypeAliasAttributeDefinition(refs, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKFunction, Ctor(Param("System.Int32"))),
             AttrClass(AKFileClass, Ctor()),
             AttrClass(AKInline, Ctor(Param("System.String"), Param(ByteArrayType()))),
@@ -1135,81 +1140,40 @@ static class RoundtripMetadata
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
-        if (runtimeOnly) types = new JsonArray(TypeAliasAttributeDefinition(),
+        if (runtimeOnly) types = new[] { TypeAliasAttributeDefinition(refs, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))),
-            AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))));
-        return new JsonObject
+            AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))) };
+        return new CirFileDeclaration
         {
-            ["fileClass"] = "",     // no top-level funs/fields -> ilemit defines no file-class type for this file
-            ["hasMain"] = false,
-            ["methods"] = new JsonArray(),
-            ["fields"] = new JsonArray(),
-            ["types"] = types,
+            FileClass = "", HasMain = false, Methods = [], Fields = [], Types = types,
         };
     }
 
-    static JsonObject TypeAliasAttributeDefinition()
+    static CirTypeDeclaration TypeAliasAttributeDefinition(ReferenceMetadataIndex refs, CirConstructor constructor)
     {
-        var definition = AttrClass(AKTypeAlias, Ctor(Param("System.String"), Param(ByteArrayType())));
-        definition["attrs"] = new JsonArray(new JsonObject
-        {
-            ["attr"] = Fqn("System.AttributeUsageAttribute"),
-            ["attrExternal"] = true,
-            ["attrAssembly"] = "System.Runtime",
-            ["argTypes"] = new JsonArray(Fqn("System.AttributeTargets")),
-            ["args"] = new JsonArray(new JsonObject { ["type"] = Fqn("System.AttributeTargets"), ["value"] = 1 }),
-            ["namedArgs"] = new JsonArray(
-                new JsonObject { ["kind"] = "property", ["name"] = "AllowMultiple", ["type"] = Fqn("System.Boolean"),
-                    ["value"] = new JsonObject { ["type"] = Fqn("System.Boolean"), ["value"] = true } },
-                new JsonObject { ["kind"] = "property", ["name"] = "Inherited", ["type"] = Fqn("System.Boolean"),
-                    ["value"] = new JsonObject { ["type"] = Fqn("System.Boolean"), ["value"] = false } }),
-        });
-        return definition;
-    }
-
-    static JsonObject AttrClass(string fqn, params JsonObject[] ctors)
-    {
-        var carr = new JsonArray();
-        foreach (var c in ctors) carr.Add(c);
-        return new JsonObject
-        {
-            ["name"] = fqn,
-            ["kind"] = "class",
-            ["vis"] = "internal",
-            ["final"] = true,                                // -> TypeAttributes.Sealed
-            ["generated"] = true,                            // -> [CompilerGenerated] provenance marker
-            ["base"] = Fqn("System.Attribute"),
-            ["interfaces"] = new JsonArray(),
-            ["fields"] = new JsonArray(),
-            ["methods"] = new JsonArray(),
-            ["ctors"] = carr,
+        var usage = new AttributeApplication(new TypeNode.Fqn("System.AttributeUsageAttribute"),
+            [new TypeNode.Fqn("System.AttributeTargets")], [new AttributeArgument.Int32Value(1)],
+            AttrExternal: true, AttrAssembly: "System.Runtime", NamedArgs: [
+                new NamedAttributeArgument("property", "AllowMultiple", new TypeNode.Fqn("System.Boolean"), new AttributeArgument.BooleanValue(true)),
+                new NamedAttributeArgument("property", "Inherited", new TypeNode.Fqn("System.Boolean"), new AttributeArgument.BooleanValue(false)),
+            ]);
+        return AttrClass(AKTypeAlias, constructor) with {
+            Attrs = new[] { ClrMemberResolution.ResolveAttributeCtor(usage, refs) },
         };
     }
 
-    // The resolved `System.Attribute()` delegation every synthesized attribute class shares. Resolved ONCE per
-    // run: it is the same member for every one of them, and each ctor gets its own copy of the node.
-    static JsonNode _attributeBaseCtorRef;
-
-    static JsonObject Ctor(params JsonNode[] paramTypes)
-    {
-        var ps = new JsonArray();
-        foreach (var t in paramTypes) ps.Add(t);
-        return new JsonObject
-        {
-            ["vis"] = "public",
-            ["params"] = ps,
-            ["baseArgs"] = new JsonArray(),
-            ["baseCtorRef"] = _attributeBaseCtorRef?.DeepClone(),
-            ["body"] = new JsonArray(),
-        };
-    }
+    static CirTypeDeclaration AttrClass(string fqn, params CirConstructor[] ctors) => new() {
+        Name = fqn, Kind = CirTypeKind.Class, Vis = "internal", Final = true, Generated = true,
+        Base = new TypeNode.Fqn("System.Attribute"), Interfaces = Array.Empty<TypeNode>(),
+        Fields = Array.Empty<CirField>(), Methods = Array.Empty<CirMethod>(), Ctors = ctors,
+    };
 
     // A ctor param with a bare CLR type and NO name; omitting the name means no Param metadata row is required.
-    static JsonObject Param(string fqn) => new() { ["type"] = Fqn(fqn) };
-    static JsonObject Param(JsonNode type) => new() { ["type"] = type };
+    static CirParameter Param(string fqn) => new() { Type = new TypeNode.Fqn(fqn) };
+    static CirParameter Param(TypeNode type) => new() { Type = type };
 
-    static JsonObject ByteArrayType() => new() { ["t"] = "array", ["elem"] = Fqn("System.Byte") };
+    static TypeNode ByteArrayType() => new TypeNode.Array(new TypeNode.Fqn("System.Byte"));
 }

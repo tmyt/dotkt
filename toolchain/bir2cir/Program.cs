@@ -30,6 +30,7 @@ static class Bir2Cir
                 DotKt.Cir.MessagePackSelfTest.Run();
                 CirDeclarationProjection.SelfTest();
                 CirDeclarationProjection.SelfTestExecutable();
+                CirFinalizationTests.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
                 DeclarationIdentityBinding.SelfTest();
@@ -1667,8 +1668,10 @@ sealed class Pipeline
         // Preserve the assembly-wide fixed-member contract independently of source-root elision below. A valid
         // alias-only compilation can have every lowered source root removed by IsEmptyCir; its synthetic CIR root is
         // then the only surviving carrier, and ilemit must still receive the complete fail-closed role table.
-        var fixedMemberTable = loweredRoots.Select(file => (file.Root as JsonObject)?["wellKnownRefs"])
-            .FirstOrDefault(table => table != null)?.DeepClone();
+        var fixedMemberSource = loweredRoots.Select(file => (file.Root as JsonObject)?["wellKnownRefs"])
+            .FirstOrDefault(table => table != null);
+        var fixedMemberTable = fixedMemberSource?.AsObject().ToDictionary(pair => pair.Key,
+                pair => MemberRefNode.Read(pair.Value), StringComparer.Ordinal);
         foreach (var (lowered, outputName) in loweredRoots)
         {
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
@@ -1682,14 +1685,17 @@ sealed class Pipeline
         // authored directly as CIR after all source-semantic passes have completed; it is not a Kotlin source type
         // and must not be fed back through those passes. The fixed synthetic file also makes the ownership visible in
         // captured CIR instead of letting ilemit manufacture an undeclared ABI from a build-mode switch.
+        var physicalDefinitions = new List<CirFile>();
         if (_options.StdlibMode != BuildStdlibMode.App)
         {
             if (pendingOutput.Any(f => f.OutputName == CanonicalDelegateSynthesis.OutputName))
                 throw new InvalidOperationException(
                     $"bir2cir: reserved synthetic CIR name '{CanonicalDelegateSynthesis.OutputName}' collides with an input file");
             var delegateDefinitions = CanonicalDelegateSynthesis.SynthDefsFile();
-            if (fixedMemberTable != null) delegateDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
-            pendingOutput.Insert(0, (delegateDefinitions, CanonicalDelegateSynthesis.OutputName));
+            if (fixedMemberTable != null) delegateDefinitions = delegateDefinitions with {
+                WellKnownRefs = new Dictionary<string, MemberRefNode>(fixedMemberTable, StringComparer.Ordinal),
+            };
+            physicalDefinitions.Insert(0, new CirFile(CanonicalDelegateSynthesis.OutputName, delegateDefinitions));
         }
 
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
@@ -1702,19 +1708,25 @@ sealed class Pipeline
             const string synthName = "000-dotkt-roundtrip-attrs.cir.json";
             // A real source file must never map to the reserved synthetic name — the two CirFiles would clobber on disk
             // and every Kotlin stamp would then silently vanish (its attr class absent -> BuildCab skips).
-            if (pendingOutput.Any(f => f.OutputName == synthName))
+            if (pendingOutput.Any(f => f.OutputName == synthName) || physicalDefinitions.Any(file => file.OutputName == synthName))
                 throw new InvalidOperationException($"bir2cir: reserved synthetic CIR name '{synthName}' collides with an input file");
             var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs, runtimeOnly: _options.SubstituteStdlibBuild);
-            ClrMemberResolution.ResolveAttributeCtors(attributeDefinitions, refs);
-            if (fixedMemberTable != null) attributeDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
-            pendingOutput.Insert(0, (attributeDefinitions, synthName));
+            if (fixedMemberTable != null) attributeDefinitions = attributeDefinitions with {
+                WellKnownRefs = new Dictionary<string, MemberRefNode>(fixedMemberTable, StringComparer.Ordinal),
+            };
+            physicalDefinitions.Insert(0, new CirFile(synthName, attributeDefinitions));
         }
 
-        AttributeProjection.ApplyAll(pendingOutput.Select(file => file.Root).ToList());
+        // These declarations already own physical CIR. Include their names in
+        // the module's annotation-admission set, without projecting them to DOM.
+        files.AddRange(physicalDefinitions);
+        AttributeProjection.ApplyAll(pendingOutput.Select(file => file.Root).ToList(),
+            physicalDefinitions.SelectMany(file => file.Model.Types).Select(type => type.Name));
         foreach (var file in pendingOutput)
         {
-            if (_options.RefBuild) RefBodySquash.LowerLiteralPlaceholders(file.Root);
-            files.Add(new CirFile(file.OutputName, CirDeclarationProjection.ReadCirFileDeclaration(file.Root)));
+            var declaration = CirDeclarationProjection.ReadCirFileDeclaration(file.Root);
+            if (_options.RefBuild) declaration = RefBodySquash.LowerLiteralPlaceholders(declaration);
+            files.Add(new CirFile(file.OutputName, declaration));
         }
         return files;
     }

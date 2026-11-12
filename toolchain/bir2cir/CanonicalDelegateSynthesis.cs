@@ -1,5 +1,5 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Cir;
 
 // #220 — materialize the CLR declarations selected by BirTypeLowering for Kotlin function arities 17..22.
 // The family is part of the stdlib ABI, so bir2cir (the Kotlin-semantics -> CLR-representation owner) authors
@@ -12,9 +12,9 @@ static class CanonicalDelegateSynthesis
     // preserving that metadata order avoids turning an ownership move into unrelated stdlib token churn.
     public const string OutputName = "zzz-dotkt-wide-delegates.cir.json";
 
-    public static JsonObject SynthDefsFile()
+    public static CirFileDeclaration SynthDefsFile()
     {
-        var types = new JsonArray();
+        var types = new List<CirTypeDeclaration>();
         for (var arity = BirTypeLowering.CanonicalDelegateMinArity;
              arity <= BirTypeLowering.CanonicalDelegateMaxArity;
              arity++)
@@ -23,55 +23,36 @@ static class CanonicalDelegateSynthesis
             types.Add(Delegate("KFunc", arity, returnsValue: true));
         }
 
-        return new JsonObject
+        return new CirFileDeclaration
         {
-            ["fileClass"] = "",
-            ["hasMain"] = false,
-            ["methods"] = new JsonArray(),
-            ["fields"] = new JsonArray(),
-            ["types"] = types,
+            FileClass = "", HasMain = false, Methods = [], Fields = [], Types = types.ToArray(),
         };
     }
 
-    static JsonObject Delegate(string family, int kotlinArity, bool returnsValue)
+    static CirTypeDeclaration Delegate(string family, int kotlinArity, bool returnsValue)
     {
         var genericArity = kotlinArity + (returnsValue ? 1 : 0);
-        var typeParams = new JsonArray();
-        var parameters = new JsonArray();
+        var typeParams = new List<CirTypeParameter>();
+        var parameters = new List<CirParameter>();
         for (var i = 0; i < kotlinArity; i++)
         {
-            typeParams.Add(TypeParam("T" + (i + 1), "in"));
-            parameters.Add(new JsonObject
+            typeParams.Add(new CirTypeParameter { Name = "T" + (i + 1), Variance = "in" });
+            parameters.Add(new CirParameter
             {
-                ["name"] = "p" + (i + 1),
-                ["type"] = TypeJson.Write(new TypeNode.Tv("type", i)),
+                Name = "p" + (i + 1), Type = new TypeNode.Tv("type", i),
             });
         }
-        if (returnsValue) typeParams.Add(TypeParam("TResult", "out"));
+        if (returnsValue) typeParams.Add(new CirTypeParameter { Name = "TResult", Variance = "out" });
 
-        return new JsonObject
+        return new CirTypeDeclaration
         {
             // This is an exact CLR metadata identity, including arity. Unlike Kotlin classifiers, the CLR permits
             // KFunc`18 ... KFunc`23 to share one unsuffixed source name, so the physical CIR name stays explicit.
-            ["name"] = Ns + family + "`" + genericArity,
-            ["kind"] = "delegate",
-            ["vis"] = "public",
-            ["generated"] = true,
-            ["typeParams"] = typeParams,
-            ["params"] = parameters,
-            ["ret"] = returnsValue
-                ? TypeJson.Write(new TypeNode.Tv("type", genericArity - 1))
-                : TypeJson.Fqn("System.Void"),
-            ["interfaces"] = new JsonArray(),
-            ["fields"] = new JsonArray(),
-            ["ctors"] = new JsonArray(),
-            ["methods"] = new JsonArray(),
+            Name = Ns + family + "`" + genericArity, Kind = CirTypeKind.Delegate,
+            Vis = "public", Generated = true, TypeParams = typeParams.ToArray(), Params = parameters.ToArray(),
+            Ret = returnsValue ? new TypeNode.Tv("type", genericArity - 1) : new TypeNode.Fqn("System.Void"),
+            Interfaces = Array.Empty<TypeNode>(), Fields = Array.Empty<CirField>(),
+            Ctors = Array.Empty<CirConstructor>(), Methods = Array.Empty<CirMethod>(),
         };
     }
-
-    static JsonObject TypeParam(string name, string variance) => new()
-    {
-        ["name"] = name,
-        ["variance"] = variance,
-    };
 }
