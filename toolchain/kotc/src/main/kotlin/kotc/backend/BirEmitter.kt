@@ -606,7 +606,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// ctor at construction sites). Keyed by the IrClass.
 	internal val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()
 	// A lifted anon-object / local class that captures ENCLOSING generic type parameters: the `gp:`-token names it was
-	// made generic over (detected by typeDef from its own rendered members). The construction site brackets these onto
+	// made generic over (detected by sourceClassDefinition from its own rendered members). The construction site brackets these onto
 	// the constructed type (`dotkt$objN[gp:T]`) so ilemit instantiates it with the enclosing args. Keyed by the IrClass.
 	internal val liftedTypeArgNames = java.util.IdentityHashMap<IrClass, List<String>>()
 	// The captured enclosing type-PARAMETERS (the actual IrTypeParameter symbols, in declaration order) that a lifted

@@ -689,7 +689,7 @@ internal fun BirEmitter.sourceEnumDefinition(e: IrClass): BirEnumDefinition {
 	}
 	val semanticOwner = semanticTypeOwner(e)
 	val visibility = sourceVisOf(e).takeUnless { it == "public" }
-	// The companion is emitted as its own semantic declaration; enumDef must not manufacture a duplicate association.
+	// The companion is emitted as its own semantic declaration; sourceEnumDefinition must not manufacture a duplicate association.
 	return BirEnumDefinition(typeName(e), entries, sourceAttributes(e.annotations), semanticOwner = semanticOwner,
 		vis = visibility, clrEnum = clrEnumFact, pos = if (explicit) sourcePosition(e) else null)
 }
@@ -697,7 +697,7 @@ internal fun BirEmitter.sourceEnumDefinition(e: IrClass): BirEnumDefinition {
 /** A "rich" enum has source-authored state/behavior or per-entry bodies -> can't be a CLR enum. */
 internal fun BirEmitter.isRichEnum(ec: IrClass): Boolean {
 	if (ec.kind != ClassKind.ENUM_CLASS) return false
-	// @ClrEnum is an exact source contract. enumDef validates it and emits either that native enum shape or a
+	// @ClrEnum is an exact source contract. sourceEnumDefinition validates it and emits either that native enum shape or a
 	// source-located error; malformed input must never silently fall back to the rich reference-class representation.
 	if (ec.isExplicitClrEnum()) return false
 	// A CLR enum cannot implement an interface. Even a marker/default-only interface therefore requires the rich
@@ -750,7 +750,7 @@ internal fun BirEmitter.sourceRichEnumDefinitions(ec: IrClass): List<BirClassDef
 		return fresh("__name") to fresh("__ordinal")
 	}
 	val (primaryNameParam, primaryOrdinalParam) = metadataParamNames(primaryCtor)
-	// User properties follow the CLR property model exactly like typeDef: the access site emits an explicit property
+	// User properties follow the CLR property model exactly like sourceClassDefinition: the access site emits an explicit property
 	// identity and role (there is no rich-enum special case for user props — only name/ordinal route to the
 	// __name/__ordinal fields), so the class must carry real accessors plus a
 	// `properties` entry, with private backing storage shared with ordinary classes. A bare public field alone crashes
@@ -963,7 +963,7 @@ internal fun BirEmitter.sourceRichEnumDefinitions(ec: IrClass): List<BirClassDef
 	// `richEnum` is the durable round-trip declaration fact: it explicitly relates each source entry to its physical
 	// singleton field, the two instance metadata slots, and the two compiler-generated physical APIs. A downstream
 	// compiler must not reconstruct
-	// enum meaning from those members' spellings or signatures. richEnumDef likewise does not flatten a companion's
+	// enum meaning from those members' spellings or signatures. sourceRichEnumDefinitions likewise does not flatten a companion's
 	// declarations into the enum class.
 	val richEnumEntries = entries.map { ent ->
 		BirRichEnumEntry(ent.name.asString(), ent.name.asString())
@@ -1340,7 +1340,7 @@ internal fun BirEmitter.isFieldLikeClrEvent(p: IrProperty): Boolean =
 /** Declared native-event implementations require `by clrEvent()` or `by clrEvent(policy)`; an ordinary handle-valued
  *  property cannot supply add/remove accessors. Abstract containers and abstract fake accessors defer implementation
  *  to concrete classes/enum entries, whose missing abstract members are rejected by the Kotlin frontend. An enum can
- *  retain an abstract fake accessor even when its Kotlin modality is not ABSTRACT; richEnumDef preserves that obligation.
+ *  retain an abstract fake accessor even when its Kotlin modality is not ABSTRACT; sourceRichEnumDefinitions preserves that obligation.
  *  The remaining concrete fake overrides must come from a declaring base class or an external .NET base. External-base
  *  interface satisfaction is not inferred here: the physical relation belongs to bir2cir's reference metadata. */
 internal fun BirEmitter.checkUnimplementedClrEvents(klass: IrClass) {
@@ -1510,7 +1510,7 @@ internal fun BirEmitter.overrideDeclarations(fn: IrSimpleFunction, ordinaryPrope
 		fun walkP(p: org.jetbrains.kotlin.ir.declarations.IrProperty) { for (ov in p.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walkP(o) } }
 		walkP(prop)
 		// `arity` is the count of EMITTED parameters of this accessor — `[__self?] + contexts + regulars` ([isValueParameter],
-		// the same sequence `accessorMethod`/`topLevelAccessorMethod` lay out) — because every consumer compares it against a
+		// the same sequence `sourceAccessor`/`sourceTopLevelAccessor` lay out) — because every consumer compares it against a
 		// physical parameter count (DeclarationRename compares it against the @ClrIntrinsic arity). A plain `val`
 		// override still reports 0 and a plain `var`
 		// setter 1, exactly as the emitted accessors have.
@@ -1602,7 +1602,7 @@ internal fun BirEmitter.sourceAccessor(acc: IrSimpleFunction, propName: String, 
 	// [isValueParameter], not `Regular`: `context(c: Ctx) val C.p get() = c.n` carries its context parameter as an
 	// ordinary slot here exactly as the top-level accessor path does, so the accessor's arity matches its call sites'.
 	// The `mods.context` marker rides with it for the cross-module restore ([KotlinContextParameter]). Kept as this
-	// explicit {name,type} projection rather than routed through [paramsJsonList]: that helper would ALSO start
+	// explicit {name,type} projection rather than routed through [sourceParameters]: that helper would ALSO start
 	// emitting parameter ANNOTATIONS on a member accessor (a `@setparam:` on a setter's `value`), which this
 	// declaration has never carried — a change of subject, and one no test pins.
 	val ps = (listOfNotNull(selfParam) + acc.parameters.filter { isValueParameter(it) }
@@ -1643,7 +1643,7 @@ internal fun BirEmitter.sourceAccessor(acc: IrSimpleFunction, propName: String, 
 	val vis = visOf(acc)
 	// Emit the PROPERTY's annotations (e.g. @ClrIntrinsic) onto its accessor method — the SAME unconditional
 	// pass-through method()/ifaceMethod already do for plain methods (kotc does not filter/select annotations;
-	// attrsJson doctrine). The @ClrIntrinsic is on the property (`@ClrIntrinsic("Length") val length`), so read it
+	// sourceAttributes doctrine). The @ClrIntrinsic is on the property (`@ClrIntrinsic("Length") val length`), so read it
 	// from the corresponding property. bir2cir consumes it from the explicitly associated accessor (TryMemberIntrinsic /
 	// DeclarationRename) to lower a `.length` read to clrPropGet Length. In a stdlib build the ref.dll carries the
 	// binding; the rt build strips ALL metadata downstream (ilemit under `--build-stdlib=runtime`) so the rt.dll
@@ -1912,7 +1912,7 @@ internal fun BirEmitter.sourceClassDefinition(klass: IrClass, captures: List<Pai
 	// METHOD to bind the interface slot (property-accessor analog of the method-side overridesIface fix; e.g.
 	// ComparableRange.start over ClosedRange.start). See design-clr-property-model.md. This is ALSO the sole producer
 	// of accessors that OVERRIDE a .NET base-CLASS virtual property (`override val Message` over System.Exception):
-	// accessorMethod emits the source property identity/role plus the `overrides` marker; bir2cir derives the
+	// sourceAccessor emits the source property identity/role plus the `overrides` marker; bir2cir derives the
 	// `clrOverride` field from that marker (kotc emits no clrOverride — A2 / #73 M4.3).
 	fun ovIface(a: IrSimpleFunction) = a.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
 	// A FAKE-OVERRIDE property whose implementation is INHERITED FROM A BASE CLASS (`name` in `Sq : Shape("sq")`)
@@ -2233,7 +2233,7 @@ internal fun BirEmitter.sourceMethod(fn: IrSimpleFunction, static: Boolean, sema
 	val coreBody = if (tailrecStart != null) listOf(BirLabel(tailrecStart)) + bodyStmts else bodyStmts
 	// #6 non-null parameter PRECONDITIONS run at entry, BEFORE the tailrec label so a self-tail-jump does not re-check.
 	// An abstract declaration has no entry at which they can run. Keep its BIR body empty, symmetrically with
-	// accessorMethod, rather than asking ilemit to discard executable statements from an abstract CLR slot.
+	// sourceAccessor, rather than asking ilemit to discard executable statements from an abstract CLR slot.
 	val body = if (isAbstract) emptyList() else preconditionChecks(fn) + coreBody
 	if (extRecv != null) selfSubst.remove(extRecv)
 	val selfParam = extRecv?.let { BirParameter(extRecvName!!, birType(it.type), mods = BirModifiers(isExtensionReceiver = true)) }
@@ -2409,7 +2409,7 @@ internal fun BirEmitter.typeParamsJson(tps: List<org.jetbrains.kotlin.ir.declara
 internal fun BirEmitter.isValueParameter(p: IrValueParameter): Boolean =
 	p.kind == IrParameterKind.Regular || p.kind == IrParameterKind.Context
 
-/** `,"ctxFnType":N` for a declaration slot whose Kotlin TYPE is a CONTEXT function type — N = how many of that
+/** The context-function-type arity of a declaration slot — N = how many of that
  *  function type's LEADING physical arguments are contexts (`context(A) B.(D) -> E` is
  *  `@ExtensionFunctionType Function3<A,B,D,E>`, so N=1: contexts first, then the receiver, then the value params).
  *
@@ -2419,8 +2419,8 @@ internal fun BirEmitter.isValueParameter(p: IrValueParameter): Boolean =
  *
  *  fir2ir ERASES the arity: `context(A) B.(D) -> E` and `B.(A, D) -> E` are the SAME IrType, so the number cannot be
  *  read off `IrType` at all. It comes from the FIR capture ([kotc.frontend.ClrContextFnTypes]), keyed by this slot's
- *  source offset (fir2ir copies the same PSI offsets onto the IR declaration). Empty for every ordinary slot. */
-/** The context-function-type arity of a PARAMETER slot, with the property fallback a default SETTER needs.
+ *  source offset (fir2ir copies the same PSI offsets onto the IR declaration). Zero for every ordinary slot.
+ *  Parameter slots use the property's fact as a fallback for a default SETTER.
  *
  *  A default accessor's IR range is the property HEADER (fir2ir deliberately excludes the initializer), so a default
  *  setter's `value` parameter has no range of its own that matches what the capture recorded, and
@@ -2436,7 +2436,7 @@ internal fun BirEmitter.ctxFnCountFor(p: IrValueParameter): Int {
 	return kotc.frontend.ClrContextFnTypes.returnContextCountAt(sourcePathOf(prop), prop.startOffset, prop.endOffset)
 }
 
-/** The RETURN-position twin of [ctxFnTypeField]: `,"retCtxFnType":N` for a declaration whose RETURN type is a
+/** The return-position twin of [ctxFnCountFor], for a declaration whose return type is a
  *  context function type (`fun make(): context(A) B.() -> C`, and a property accessor's restored type). A property
  *  accessor is keyed by its OWN source offset when it has one and by the property's otherwise — a default accessor
  *  is synthesized and carries the property's. */
@@ -2582,7 +2582,7 @@ internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations
  *  name) at the consumer. Capturing closures, SAMs and suspend lambdas already carry their raw synthesis facts on their
  *  construction node (`synthClass`, captures/body, or suspend-lambda descriptor), so they need no second envelope.
  *
- *  Receiver reads are closed by [paramsJsonList] before this renderer runs. The carrier therefore contains explicit
+ *  Receiver reads are closed by [sourceParameters] before this renderer runs. The carrier therefore contains explicit
  *  `{k:defaultArgReceiver,kind:dispatch|extension|enclosing}` leaves rather than the ambiguous ordinary BIR `{k:this}`.
  *  A nested closure/SAM/suspend-lambda's OWN `{k:this}` remains ordinary BIR and is never mistaken for the callee's
  *  receiver by the consumer-side token substitution. */
@@ -2686,7 +2686,7 @@ internal fun BirEmitter.sourceParameters(params: List<IrValueParameter>, ownerFn
 			// pass it; a kcc caller relies on the @KotlinDefault splice below.
 			val default = if (isMetadataRepresentableDefault(it)) expr(it.defaultValue!!.expression) else null
 			// PARAMETER-level annotations -> .NET custom attributes on the emitted parameter (e.g. @ClrRefArgument,
-			// which bir2cir reads from the ref.dll to pass the arg by reference). attrsJson is stripped in the runtime
+			// which bir2cir reads from the ref.dll to pass the arg by reference). sourceAttributes is stripped in the runtime
 			// build (`--build-stdlib=runtime`), so param attrs ride only the ref.dll — exactly bir2cir's read surface.
 			val srcAttrs = sourceAttributes(it.annotations)
 			val defaultBir = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
@@ -2706,13 +2706,11 @@ internal fun BirEmitter.sourceParameters(params: List<IrValueParameter>, ownerFn
 	return result
 }
 
-/** A `,"sig":[<TypeNode>,...]` field carrying the frontend-resolved declaration's parameter vector into BIR.
- *  Emit it ALWAYS: for a non-overloaded callee it is still the exact declaration identity, and emitting
- *  unconditionally avoids any overload-detection edge case. bir2cir projects this fact into the physical CIR member
+/** The frontend-resolved declaration's typed parameter vector, carried as BIR's signature fact.
+ *  Preserve it for every callee, not only overloaded ones. bir2cir projects this fact into the physical CIR member
  *  descriptor; ilemit only links that descriptor. The signature
- *  MATCHES how `method()` lays out the def's `params` — the [isValueParameter] physical sequence `[ext receiver?] +
- *  contexts + regulars`, each `birType` — the #37 m3b type-path structuring: sig is a STRUCTURED TypeNode array (the same
- *  `birType(...).toJson()` path every other type slot uses), NOT a legacy comma-string. Omitting the context parameters
+ *  matches how [sourceMethod] lays out the declaration's parameters — the [isValueParameter] sequence `[ext receiver?] +
+ *  contexts + regulars`, each projected with `birType`. Omitting the context parameters
  *  here used to make the descriptor one arity short and let the old emitter's name fallback emit a short argument list
  *  (invalid IL); the resolved-CIR contract now rejects such an incomplete identity. */
 internal fun BirEmitter.overloadSignature(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): List<TypeNode> {

@@ -279,7 +279,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 				val semanticArgs = if (t.hasRawType()) sargs.map { TypeNode.Star }
 				else sargs.map(::birTypeProjection)
 				// A local classifier's IR may already include captured arguments, but their order need not match the
-				// captured declaration segment emitted by typeDef. Use that declaration's recorded correspondence.
+				// captured declaration segment emitted by sourceClassDefinition. Use that declaration's recorded correspondence.
 				val all = if (liftedCaps.isEmpty()) semanticArgs else semanticArgs.take(klass.typeParameters.size) + liftedCaps
 				return sourceClassifierType(klass, all)
 			}

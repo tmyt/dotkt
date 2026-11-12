@@ -356,14 +356,14 @@ internal fun BirEmitter.blockExpr(block: IrBlock): BirExpression {
 				return invariantBroken(block, "an object expression writes a captured outer variable that was not " +
 					"promoted to a heap ref-cell")
 			// Capturing an ENCLOSING TYPE PARAMETER (`fun <T> mk(v:T) = object : Box<T> { ... }`, or an inlined object
-			// whose supertype/captures resolve to the enclosing `T`): typeDef makes the synthesized class GENERIC over
+			// whose supertype/captures resolve to the enclosing `T`): sourceClassDefinition makes the synthesized class GENERIC over
 			// the params its members reference (reified CLR generics), recording them in `liftedTypeArgNames`. The `new`
 			// site must then INSTANTIATE it with the enclosing args — bracket those `gp:` tokens onto the constructed type
 			// (they resolve at THIS site, i.e. the enclosing method/type scope). Mirrors newClosure/newSam's `typeArgs`.
 			val capPairs = captureFieldPairs(anon, captured)
 			// Save any PRIOR binding for each captured decl: when this object literal is nested inside a capturing
 			// closure/object that captures the SAME outer var (`element`), the enclosing frame already bound it to
-			// its OWN field. Blindly `remove`ing after typeDef would clobber that, so the capture VALUE below would
+			// its OWN field. Blindly `remove`ing after sourceClassDefinition would clobber that, so the capture VALUE below would
 			// mis-render as a bare `local element` (the enclosing `this.element` is out of scope at the `new` site ->
 			// ilemit "load unknown var"). Restore the prior binding instead — mirrors the closure path (lambda()).
 			val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }

@@ -160,7 +160,7 @@ internal fun BirEmitter.filledArgs(
 		listOf(receiver.symbol) + localClassCaptures[inner.parent as? IrClass].orEmpty().map { it.symbol }
 	}.toHashSet()
 	// The callee's POSITIONAL parameters with their `call.arguments` index — contexts then regulars, the SAME sequence
-	// [paramsJsonList] emits as `params` and [overloadSigField] keys `sig` by, so the returned list is index-for-index
+	// [sourceParameters] emits as `params` and [overloadSignature] keys `sig` by, so the returned list is index-for-index
 	// the declaration's arg array (the caller prepends `__self` on both sides).
 	val vals = callee.parameters.mapIndexedNotNull { i, selected ->
 		if (isValueParameter(selected)) Triple(i, selected, defaultCallee.parameters[i]) else null
@@ -609,7 +609,7 @@ internal fun enclosingThisChain(callee: org.jetbrains.kotlin.ir.declarations.IrF
 /** Each enclosing `this` and its captured lexical values bound to the call-site expression that yields it. A CONSTRUCTOR's dispatch
  *  receiver IS the enclosing instance (the `new`'s leading arg), so its first level needs no hop; a MEMBER's receiver
  *  is an instance of the callee's own class, so every level is reached through that class's `__outer` capture field —
- *  the same chain `innerClassDef` installs while emitting the class body. Empty when the call has no receiver
+ *  the same chain `sourceInnerClassDefinition` installs while emitting the class body. Empty when the call has no receiver
  *  expression to start from. */
 internal fun BirEmitter.enclosingThisSubst(
 	chain: List<Pair<IrValueParameter, IrClass>>, recv: BirExpression?, calleeIsCtor: Boolean,
@@ -1266,7 +1266,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// ordinary `callInstance` invoke on that delegate (the fall-through member-call path). bir2cir owns any splice.
 	// `(::x)()` (invoking a property-reference VALUE inline) needs NO special handling here: KProperty0/
 	// KProperty1's declared `() -> V`/`(T) -> V` supertype gives them a REAL fake-overridden `invoke` abstract
-	// member declared directly ON the interface itself (confirmed in the compiled BIR — typeDef's own
+	// member declared directly ON the interface itself (confirmed in the compiled BIR — sourceClassDefinition's own
 	// interfaces-collection drops the FunctionN supertype off ANY interface def, `bt is TypeNode.Fn -> null`,
 	// but the fake override still lands in the interface's OWN `methods`). So a call's resolved `declaringClass`
 	// for `invoke` on a KProperty0/1-typed receiver is KProperty0/1 itself, never Function0/1 — the ordinary
@@ -1595,7 +1595,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// `get_Item`/`[IndexerName]` accessor slot, `op_X` operators — is decided BELOW the kotc boundary by
 	// bir2cir's `NetInteropBinding`, which re-detects the .NET owner itself (ResolveNetType off the ref dlls),
 	// independent of this gate. What differs from the plain-Kotlin member paths below is only the fact-carrier
-	// DIALECT (`ownerType`+`argTypes`+`ret`+`prop` marker vs `owner`+`sig`+`retHint`) — the kotc↔bir2cir
+	// DIALECT (`ownerType`+`argTypes`+`ret`+`prop` marker vs `owner`+`sig`+`ret`) — the kotc↔bir2cir
 	// serialization contract that routes a node to `NetInteropBinding` (ownerType-keyed) vs `MemberCallSubstitution`
 	// (owner-keyed) — NOT a CLR decision. The `clrName` gate is a pure ORIGIN fact ("this owner is external",
 	// read from the dll2klib-projected annotation — a frontend fact kotc is allowed to forward), NOT
@@ -1680,7 +1680,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 				val gRegArgs = filledExternalArgs(call)
 				val args = listOfNotNull(gExt?.let { expr(it) }) + gRegArgs
 				// A `suspend` generic .NET-member callee carries the `"suspendCall":true` FACT for bir2cir's deferred
-				// Task/await lowering, exactly like the non-generic call paths (suspendCallTag) — otherwise a generic
+				// Task/await lowering, exactly like the non-generic call paths (sourceCallSuspension) — otherwise a generic
 				// .NET-member suspend call would silently drop out of the suspension lowering. (latent ⑤.)
 				// A2 (#61): a PLAIN call by identity carrying the generic FACTS (typeArgs + declared shapeTypes);
 				// bir2cir's NetInteropBinding resolves the owner off the .NET refs and shapes it to clrGenericStatic/
@@ -1770,7 +1770,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		val member = name
 		val anySlot = true.takeIf { isAnySlotMethod(callee) }
 		regularArgs(call).map { expr(it) }
-		// kotc emits the PLAIN Kotlin return type; a `suspend` callee is marked by `suspendTag` only (the Task/await
+		// kotc emits the PLAIN Kotlin return type; a `suspend` callee is marked by `sourceCallSuspension` only (the Task/await
 		// lowering is a deferred downstream layer). No coroutine ABI (Task<T>) is baked here.
 		val ret = inMemberDeclarationFrame(callee) { birType(callee.returnType) }
 		val suspension = sourceCallSuspension(callee)
@@ -2231,7 +2231,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	val regArgs = filledArgs(call)
 	// A generic method `fun <T> id(...)` -> carry the resolved type args so ilemit can MakeGenericMethod.
 	val ta = typeArguments(call)
-	// PLAIN Kotlin return type for the retType hint; a `suspend` callee is flagged by `suspendCallTag` on the node
+	// PLAIN Kotlin return type for the retType hint; a `suspend` callee is flagged by `sourceCallSuspension` on the node
 	// (the kickoff/Task/await lowering is a deferred downstream layer). kotc bakes no coroutine ABI here.
 	val effRet = birType(call.type)
 	val recv = dispatchReceiver(call)
@@ -2257,7 +2257,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// `owner:null` (the substitution/recognition axis — UNTOUCHED) and instead carries `calleeOwner`, the
 	// FIR-resolved callee file-class (the mandatory DISPATCH axis — the owner-null recognition machinery IGNORES it, while
 	// ilemit's dispatch consults it, mirroring `sty`). That disambiguates two same-simple-name top-level funcs in
-	// DIFFERENT packages (a.foo/b.foo both emit `method:foo`) without shadowing substitution. See `calleeOwnerTag`.
+	// DIFFERENT packages (a.foo/b.foo both emit `method:foo`) without shadowing substitution. See `calleeOwnerType`.
 	// An extension function: the receiver is the `__self` first arg. TOP-LEVEL `fun T.f()` -> static `f(self,args)`.
 	// MEMBER `class C { fun T.f() }` has BOTH receivers -> instance method on the enclosing C (dispatch receiver),
 	// with the extension receiver as the first arg (mirrors the JVM `C.f(T $receiver)` shape).
@@ -2363,7 +2363,7 @@ internal fun BirEmitter.plainExternalTopLevelCall(call: IrCall, callee: IrSimple
 		}
 	}
 	// A2 (#61): a PLAIN static call by identity to the referenced .NET file class; bir2cir's NetInteropBinding
-	// shapes it to clrStatic. A `suspend` callee is flagged by `suspendCallTag` (Task/await lowering deferred).
+	// shapes it to clrStatic. A `suspend` callee is flagged by `sourceCallSuspension` (Task/await lowering deferred).
 	val ret = birType(callee.returnType)
 	// #146: build the regular args as STRINGS so an omitted NON-CONST default emits a `defaultArg` placeholder (bir2cir's
 	// DefaultArgSplice fills it from the callee's ref.dll @KotlinDefault). The extension receiver (arg[0] = `__self`) is
@@ -2411,7 +2411,7 @@ internal fun BirEmitter.clrFlagsOperation(callee: org.jetbrains.kotlin.ir.declar
 	return (regularArgs(annotation).singleOrNull() as? IrConst)?.value as? String
 }
 
-/** #199/#204: the `,"calleeOwner":<fileClassFqn>` mandatory DISPATCH identity on a top-level `callStatic` whose `owner` stays
+/** The mandatory file-owner dispatch identity on a top-level `callStatic` whose `owner` stays
  *  `null`. `owner:null` is the load-bearing "top-level call" axis ~12 bir2cir owner-null recognizers key on
  *  (@ClrIntrinsic/@ClrCollectionFactory/@ClrArrayFactory substitution, Precondition/Repeat/Enum/ForIn/CharSeq
  *  lowerings, …); calleeOwner is a SEPARATE axis those passes ignore (they carry it through DeepClone or
@@ -2427,7 +2427,7 @@ internal fun BirEmitter.calleeOwnerType(decl: org.jetbrains.kotlin.ir.declaratio
 	return owner?.let { TypeNode.Fqn(it) }
 }
 
-/** `,"typeArgs":["int"]` when the callee is a generic method (its own type params resolved at this call). */
+/** Method type arguments resolved by the frontend at this call site. */
 internal fun BirEmitter.typeArguments(call: IrCall): List<TypeNode>? {
 	// Read the resolved arguments from the call itself. Kotlin 2.4 represents a same-module companion-block static
 	// call through a wrapper symbol whose own typeParameters list is empty even though the IrCall retains the real
@@ -2527,7 +2527,7 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): BirExpression? {
  *  Both vectors retain the call's PARAMETER POSITIONS, never just "the expressions that happen to be present". Building
  *  them from provided expressions (the previous shape here and at the three sibling member paths) silently DELETED an
  *  omitted default's slot: no `defaultArg` placeholder was emitted, so a later provided argument slid into the omitted
- *  parameter's position. `sig` (emitted by the callers via [overloadSigField]) identifies the frontend-selected
+ *  parameter's position. `sig` (emitted by the callers via [overloadSignature]) identifies the frontend-selected
  *  declaration; `argTypes` stays aligned with the args actually emitted. bir2cir fills both positional placeholders
  *  and a purely trailing short vector from that declaration's reference-DLL defaults.
  *

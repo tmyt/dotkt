@@ -2181,11 +2181,11 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): kotc.bir.BirStatement {
 	}
 	// A local class that references an enclosing type parameter (in a capture field, its supertype/bounds, or a member
 	// signature/body operand) is lifted GENERICALLY over those params — reified CLR generics, exactly as the lifted
-	// object-literal path (blockExpr) does. `captureEnclosingGenerics` runs typeDef's structural scan, which records
+	// object-literal path (blockExpr) does. `captureEnclosingGenerics` runs sourceClassDefinition's structural scan, which records
 	// `liftedTypeArgParams[klass]`; each `new L()` site (IrConstructorCall) instantiates the flattened class with the
 	// enclosing args from that record. A non-generic local class captures nothing and lifts unchanged.
 	// Register BEFORE emitting the class: a member of this class may CONSTRUCT it (or a subclass may delegate to its
-	// ctor) while `typeDef` is running, and that construction site reads this record to prepend the capture arguments.
+	// ctor) while `sourceClassDefinition` is running, and that construction site reads this record to prepend the capture arguments.
 	localClassCaptures[klass] = captured
 	liftedTypes.add(sourceClassDefinition(klass, capPairs, captureEnclosingGenerics = true, generated = true))
 	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
