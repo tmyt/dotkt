@@ -270,6 +270,8 @@ var signatureSnapshot = SourceTypeVector.ReadFrozenText("[{\"t\":\"tv\",\"scope\
 var phaseFacts = new BirFileDeclaration {
     Methods = new[] { new BirFunctionDeclaration { Body = new IBirStatement[] {
         new BirExpressionStatement { Expr = new BirNativeStatic {
+            Sty = frame, SuspendCall = false, _capturedGenericResult = frame,
+            _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
             ResolvedMemberParams = new TypeNode[] { frame }, ResolvedMemberReturn = frame,
             _resolvedMethodTypeParams = new[] { new BirTypeParameter { Name = "T", SpecialConstraints = new[] { "class" } } },
         } },
@@ -277,18 +279,34 @@ var phaseFacts = new BirFileDeclaration {
             Sty = frame, SuspendCall = false, _capturedGenericResult = frame,
             _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
         } },
-        new BirExpressionStatement { Expr = new BirPropertyGet { _foreignDeclarationSignature = signatureSnapshot } },
+        new BirExpressionStatement { Expr = new BirNativeInstance {
+            SuspendCall = false, _capturedGenericResult = frame,
+            _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
+        } },
+        new BirExpressionStatement { Expr = new BirPropertyGet {
+            _foreignDeclarationSignature = signatureSnapshot, Sty = frame, _capturedGenericResult = frame,
+            _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
+        } },
+        new BirExpressionStatement { Expr = new BirPropertySet {
+            Sty = frame, _capturedGenericResult = frame,
+            _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
+        } },
         new BirExpressionStatement { Expr = new BirCallStatic { NullableWitnessCount = 2 } },
         new BirExpressionStatement { Expr = new BirNewClr { MemberSignature = new TypeNode[] { frame } } },
         new BirExpressionStatement { Expr = new BirValueBlock { Sty = frame } },
         new BirExpressionStatement { Expr = new BirNewList { Sty = frame } },
+        new BirExpressionStatement { Expr = new BirObjectMethod { Sty = frame } },
+        new BirExpressionStatement { Expr = new BirThis { Outer = true } },
         new BirExpressionStatement { Expr = new BirNewClosure { DotktDelegateSlot = frame } },
         new BirExpressionStatement { Expr = new BirNewDelegate { DotktDelegateSlot = frame } },
         new BirExpressionStatement { Expr = new BirNewBoundDelegate { DotktDelegateSlot = frame } },
         new BirExpressionStatement { Expr = new BirBoundClrDelegate { DotktDelegateSlot = frame } },
         new BirExpressionStatement { Expr = new BirClrStaticDelegate { DotktDelegateSlot = frame } },
         new BirExpressionStatement { Expr = new BirNewSuspendLambda {
-            Captures = new[] { new BirCaptureDescriptor { Name = "value", Type = new TypeNode.Fqn("object"), KotlinType = frame } },
+            Captures = new[] { new BirCaptureDescriptor {
+                Name = "value", Type = new TypeNode.Fqn("object"), KotlinType = frame,
+                NullableGeneric = new TypeNode.Nullable(frame), NullableFlags = new[] { 2 },
+            } },
         } },
     } } },
     Types = new IBirTypeDeclaration[] { new BirClassDefinition {

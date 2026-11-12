@@ -524,6 +524,7 @@ internal static class BirGraphDom
                 case "method": break;
                 case "recv": break;
                 case "arg": break;
+                case "sty": break;
                 case "anySlot": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirObjectMethod at {source.GetPath()}");
             }
@@ -532,6 +533,7 @@ internal static class BirGraphDom
             Method = Field<string>(fields, "method", value => value!.GetValue<string>()),
             Recv = Field<IBirExpression>(fields, "recv", value => ReadBirExpression(value!)),
             Arg = Field<IBirExpression>(fields, "arg", value => ReadBirExpression(value!)),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
             AnySlot = Field<bool>(fields, "anySlot", value => value!.GetValue<bool>()),
         };
     }
@@ -2225,6 +2227,8 @@ internal static class BirGraphDom
                 case "type": break;
                 case "outer": break;
                 case "kotlinType": break;
+                case "nullableGeneric": break;
+                case "nullableFlags": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirCaptureDescriptor at {source.GetPath()}");
             }
         return new BirCaptureDescriptor
@@ -2233,6 +2237,8 @@ internal static class BirGraphDom
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             Outer = Field<bool>(fields, "outer", value => value!.GetValue<bool>()),
             KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableGeneric = Field<TypeNode>(fields, "nullableGeneric", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableFlags = Field<int[]>(fields, "nullableFlags", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
         };
     }
 
@@ -3510,11 +3516,13 @@ internal static class BirGraphDom
             {
                 case "k": if (field.Value?.GetValue<string>() != "this") throw new FormatException(); break;
                 case "sty": break;
+                case "outer": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirThis at {source.GetPath()}");
             }
         return new BirThis
         {
             Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
+            Outer = Field<bool>(fields, "outer", value => value!.GetValue<bool>()),
         };
     }
 
@@ -4102,6 +4110,9 @@ internal static class BirGraphDom
                 case "argTypes": break;
                 case "sty": break;
                 case "super": break;
+                case "suspendCall": break;
+                case "_capturedGenericArgument": break;
+                case "_capturedGenericResult": break;
                 case "_erasedConstraintDispatch": break;
                 case "resolvedMemberParams": break;
                 case "_foreignDeclarationSignature": break;
@@ -4127,6 +4138,9 @@ internal static class BirGraphDom
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
             Super = Field<bool>(fields, "super", value => value!.GetValue<bool>()),
+            SuspendCall = Field<bool>(fields, "suspendCall", value => value!.GetValue<bool>()),
+            _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
+            _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             _erasedConstraintDispatch = Field<bool>(fields, "_erasedConstraintDispatch", value => value!.GetValue<bool>()),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             _foreignDeclarationSignature = Field<SourceTypeVector>(fields, "_foreignDeclarationSignature", value => SourceTypeVector.ReadFrozenText(value!.GetValue<string>())),
@@ -4156,6 +4170,9 @@ internal static class BirGraphDom
                 case "recv": break;
                 case "argTypes": break;
                 case "sty": break;
+                case "suspendCall": break;
+                case "_capturedGenericArgument": break;
+                case "_capturedGenericResult": break;
                 case "resolvedMemberParams": break;
                 case "resolvedMemberReturn": break;
                 case "_foreignDeclarationSignature": break;
@@ -4178,6 +4195,9 @@ internal static class BirGraphDom
             Recv = Field<IBirExpression>(fields, "recv", value => ReadBirExpression(value!)),
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
+            SuspendCall = Field<bool>(fields, "suspendCall", value => value!.GetValue<bool>()),
+            _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
+            _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ResolvedMemberReturn = Field<TypeNode>(fields, "resolvedMemberReturn", value => TypeNode.Read(value) ?? throw new FormatException()),
             _foreignDeclarationSignature = Field<SourceTypeVector>(fields, "_foreignDeclarationSignature", value => SourceTypeVector.ReadFrozenText(value!.GetValue<string>())),
@@ -4209,6 +4229,8 @@ internal static class BirGraphDom
                 case "ret": break;
                 case "super": break;
                 case "sty": break;
+                case "_capturedGenericArgument": break;
+                case "_capturedGenericResult": break;
                 case "_erasedConstraintDispatch": break;
                 case "propertyName": break;
                 case "propertyAccessor": break;
@@ -4235,6 +4257,8 @@ internal static class BirGraphDom
             Ret = Field<TypeNode>(fields, "ret", value => TypeNode.Read(value) ?? throw new FormatException()),
             Super = Field<bool>(fields, "super", value => value!.GetValue<bool>()),
             Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
+            _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
+            _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             _erasedConstraintDispatch = Field<bool>(fields, "_erasedConstraintDispatch", value => value!.GetValue<bool>()),
             PropertyName = Field<string>(fields, "propertyName", value => value!.GetValue<string>()),
             PropertyAccessor = Field<string>(fields, "propertyAccessor", value => value!.GetValue<string>()),
@@ -4266,6 +4290,9 @@ internal static class BirGraphDom
                 case "clrOwnerResolved": break;
                 case "name": break;
                 case "super": break;
+                case "sty": break;
+                case "_capturedGenericArgument": break;
+                case "_capturedGenericResult": break;
                 case "_erasedConstraintDispatch": break;
                 case "propertyName": break;
                 case "propertyAccessor": break;
@@ -4291,6 +4318,9 @@ internal static class BirGraphDom
             ClrOwnerResolved = Field<bool>(fields, "clrOwnerResolved", value => value!.GetValue<bool>()),
             Name = Field<string>(fields, "name", value => value!.GetValue<string>()),
             Super = Field<bool>(fields, "super", value => value!.GetValue<bool>()),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
+            _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
+            _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             _erasedConstraintDispatch = Field<bool>(fields, "_erasedConstraintDispatch", value => value!.GetValue<bool>()),
             PropertyName = Field<string>(fields, "propertyName", value => value!.GetValue<string>()),
             PropertyAccessor = Field<string>(fields, "propertyAccessor", value => value!.GetValue<string>()),
