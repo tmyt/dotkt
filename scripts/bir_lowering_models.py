@@ -56,8 +56,7 @@ def declaration_cases(definitions):
     return result
 
 
-def compose_shapes(definitions):
-    aliases = {
+PHYSICAL_ALIASES = {
         "cirExpressionNode": "birExpressionNode", "cirStatementNode": "birStatementNode",
         "cirExpression": "birExpressionNode",
         "cirConditionalBranch": "birBranch", "birConditionalBranch": "birBranch",
@@ -75,7 +74,19 @@ def compose_shapes(definitions):
         "cirEnumEntry": "birEnumEntryDeclaration",
         "cirEvent": "birClrEventBacking",
         "cirFile": "birFileDeclaration",
-    }
+}
+
+PHYSICAL_DECLARATIONS = {
+    "cirMethod": ["birFunctionDeclaration"], "cirConstructor": ["birConstructor"],
+    "cirField": ["birFieldDeclaration"], "cirProperty": ["birPropertyDeclaration"],
+    "cirParameter": ["birParameter"], "mods": ["birModifiers"],
+    "cirTypeDeclaration": ["birClassDefinition", "birInterfaceDefinition", "birEnumDefinition"],
+    "cirEnumEntry": ["birEnumEntryDeclaration"], "cirEvent": ["birClrEventBacking"],
+}
+
+
+def compose_shapes(definitions):
+    aliases = PHYSICAL_ALIASES
 
     def normalize(value):
         if isinstance(value, list):
@@ -128,12 +139,7 @@ def compose_shapes(definitions):
     # Declaration and executable phase profiles share their corresponding source
     # record. Add only physical fields; source fields retain source semantics up
     # to the already-typed final CIR projection (notably annotation arguments).
-    declarations = {"cirMethod": ["birFunctionDeclaration"], "cirConstructor": ["birConstructor"],
-                    "cirField": ["birFieldDeclaration"], "cirProperty": ["birPropertyDeclaration"],
-                    "cirParameter": ["birParameter"], "mods": ["birModifiers"],
-                    "cirTypeDeclaration": ["birClassDefinition", "birInterfaceDefinition", "birEnumDefinition"],
-                    "cirEnumEntry": ["birEnumEntryDeclaration"],
-                    "cirEvent": ["birClrEventBacking"]}
+    declarations = PHYSICAL_DECLARATIONS
     for key, targets in declarations.items():
         for target in targets:
             fields = shapes[target]["properties"]

@@ -30,7 +30,11 @@ migration seam, not completion of #1414; it must disappear as owning passes move
 to the typed graph. No enclosing graph is serialized and reparsed at that seam.
 
 Final physical declaration synthesis (wide delegates and compiler metadata
-attribute classes) constructs typed CIR directly. Reference-only literal
+attribute classes) constructs typed CIR directly. After physical operand
+normalization, source roots enter an owning typed graph once and remain typed
+through protected-region transfers, canonical-type elision, metadata admission,
+variance resolution and schema-generated CIR projection. No final graph returns
+to DOM. Reference-only literal
 placeholders are rewritten through schema-generated executable edges in typed
 CIR; declaration signatures and opaque metadata are not executable edges.
 The remaining intermediate DOM projection is still an unfinished migration boundary.
@@ -339,9 +343,9 @@ records containing `name` and their optional variance/constraint facts. Optional
 absence, explicit null and a value separately. Opaque `inlineBir` contents remain bytes, not trees.
 Implementation and reference emission reuse the declarations without dropping signature metadata.
 
-This is an incremental migration, not the completed typed-IR/binary-transport design. bir2cir's
-owning passes still construct a DOM, and an explicitly temporary, schema-generated projection
-constructs typed physical declarations at their output boundary. Generic parameter declarations
+This is an incremental migration, not the completed typed-IR/binary-transport design. Earlier
+bir2cir passes still own a DOM, but the final physical tail projects its owning typed graph
+directly into CIR without a DOM reader or attribute-value wrapper. Generic parameter declarations
 are records in both BIR and CIR, including unconstrained slots.
 Executable bodies, constructor operands and field initializers use concrete generated `CirNode`
 records with explicit statement/expression roles. ilemit consumes these records directly; executable

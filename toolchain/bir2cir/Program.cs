@@ -7,6 +7,8 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 using DotKt.Toolchain;
 
 static class Bir2Cir
@@ -1300,7 +1302,7 @@ sealed class Pipeline
             staged.Select(s => s.Root));
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
-        var pendingOutput = new List<(JsonNode Root, string OutputName)>();
+        var pendingOutput = new List<(BirFileDeclaration Root, string OutputName)>();
         // The fully-lowered roots, kept so the implementing-position half of the crossing refusal can be asked of the
         // WHOLE compilation at once: a Kotlin interface declared in one file may be the only path from a class in
         // another to the .NET declaration whose slot it cannot fill.
@@ -1657,26 +1659,25 @@ sealed class Pipeline
                 PhysicalOperandNormalization.Apply(lowered, isValueFqn, physicalResultType, refs);
         }
 
-        foreach (var (lowered, _) in loweredRoots) ProtectedRegionTransfers.Apply(lowered, refs);
-
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
         DeclarationIdentityBinding.ValidateFinalPhysicalNames(loweredRoots.Select(file => file.Root));
+        var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
+            root["assemblyAttrs"] is JsonArray { Count: > 0 });
+
+        // The final owning frontier is one-way. Control flow and physical CIR
+        // projection retain typed occurrences; no final graph returns to DOM.
+        var physicalRoots = loweredRoots.Select(file =>
+            (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
+        loweredRoots.Clear();
+        foreach (var (root, _) in physicalRoots) TypedProtectedRegions.Apply(root, refs);
 
         // Canonical runtime synthetics were useful as module-wide representation templates, but an application does
         // not emit their TypeDefs. Remove those declarations from CIR so its local/external ownership is literal:
         // every surviving reference to the type names the runtime assembly and no duplicate local declaration exists.
-        foreach (var (root, _) in loweredRoots)
-            if (root is JsonObject document && document["types"] is JsonArray types)
-                for (var i = types.Count - 1; i >= 0; i--)
-                    if (types[i] is JsonObject type
-                        && (type["name"] as JsonValue)?.TryGetValue<string>(out var name) == true
-                        && externalCanonicalTypes.Contains(name))
-                        types.RemoveAt(i);
-
-        // Kotlin variance has already been saved in round-trip metadata. Resolve the legal physical GenericParam
-        // flags over the complete final graph, including inherited interfaces; ilemit only emits these flags.
-        ClrTypeVariance.ApplyAll(loweredRoots.Select(file => file.Root), refs);
+        foreach (var (root, _) in physicalRoots)
+            if (root.Types.HasValue)
+                root.Types = root.Types.Value.Where(type => !externalCanonicalTypes.Contains(TypedCirProjection.TypeName(type))).ToArray();
 
         // SERIALIZATION IS THE LAST THING, and not the tail of the loop above. The check that just ran asks each
         // Kotlin body which slot it fills, and the answer is a pass-to-pass record on the declaration that must not
@@ -1685,11 +1686,10 @@ sealed class Pipeline
         // Preserve the assembly-wide fixed-member contract independently of source-root elision below. A valid
         // alias-only compilation can have every lowered source root removed by IsEmptyCir; its synthetic CIR root is
         // then the only surviving carrier, and ilemit must still receive the complete fail-closed role table.
-        var fixedMemberSource = loweredRoots.Select(file => (file.Root as JsonObject)?["wellKnownRefs"])
+        var fixedMemberSource = physicalRoots.Select(file => file.Root.WellKnownRefs.OrDefault())
             .FirstOrDefault(table => table != null);
-        var fixedMemberTable = fixedMemberSource?.AsObject().ToDictionary(pair => pair.Key,
-                pair => MemberRefNode.Read(pair.Value), StringComparer.Ordinal);
-        foreach (var (lowered, outputName) in loweredRoots)
+        var fixedMemberTable = fixedMemberSource?.Members;
+        foreach (var (lowered, outputName) in physicalRoots)
         {
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
             // AliasHelperHoist dropped them — emit no CIR file for it (an empty file-class would be a pointless empty
@@ -1719,8 +1719,7 @@ sealed class Pipeline
         // file (glob-sorted first via the `000-` prefix so its TypeDefs precede the user types, minimizing dump churn).
         // Alias declarations also survive in a stdlib runtime assembly; projection still excludes that assembly
         // by its explicit stdlib marker. Runtime twins also keep representation-type associations and rich-enum API maps.
-        if (!_options.SubstituteStdlibBuild || runtimeRepresentationTypes || localRichEnums.Count != 0 || birRoots.OfType<JsonObject>().Any(root =>
-                root["assemblyAttrs"] is JsonArray { Count: > 0 }))
+        if (!_options.SubstituteStdlibBuild || runtimeRepresentationTypes || localRichEnums.Count != 0 || hasAssemblyAttributes)
         {
             const string synthName = "000-dotkt-roundtrip-attrs.cir.json";
             // A real source file must never map to the reserved synthetic name — the two CirFiles would clobber on disk
@@ -1737,24 +1736,27 @@ sealed class Pipeline
         // These declarations already own physical CIR. Include their names in
         // the module's annotation-admission set, without projecting them to DOM.
         files.AddRange(physicalDefinitions);
-        AttributeProjection.ApplyAll(pendingOutput.Select(file => file.Root).ToList(),
-            physicalDefinitions.SelectMany(file => file.Model.Types).Select(type => type.Name));
-        foreach (var file in pendingOutput)
+        var emitted = pendingOutput.SelectMany(file => file.Root.Types.OrEmpty()).Select(TypedCirProjection.TypeName)
+            .Concat(physicalDefinitions.SelectMany(file => file.Model.Types).Select(type => type.Name))
+            .Where(name => name != null).ToHashSet(StringComparer.Ordinal);
+        var projection = new TypedCirProjection(emitted);
+        var declarations = ClrTypeVariance.ApplyAll(pendingOutput.Select(file =>
+            projection.ProjectCirFileDeclaration(file.Root)).ToArray(), refs);
+        for (var index = 0; index < pendingOutput.Count; index++)
         {
-            var declaration = CirDeclarationProjection.ReadCirFileDeclaration(file.Root);
+            var declaration = declarations[index];
             if (_options.RefBuild) declaration = RefBodySquash.LowerLiteralPlaceholders(declaration);
-            files.Add(new CirFile(file.OutputName, declaration));
+            files.Add(new CirFile(pendingOutput[index].OutputName, declaration));
         }
         return files;
     }
 
     // A lowered CIR root that carries no types, no methods and no fields contributes nothing — its file-class would be
     // an empty static type. True once AliasHelperHoist has dropped a file whose sole content was @ClrTypeAlias types.
-    static bool IsEmptyCir(JsonNode root)
+    static bool IsEmptyCir(BirFileDeclaration root)
     {
-        if (root is not JsonObject o) return false;
-        static bool Empty(JsonNode n) => n is not JsonArray a || a.Count == 0;
-        return Empty(o["types"]) && Empty(o["methods"]) && Empty(o["fields"]) && Empty(o["assemblyAttrs"]);
+        return root.Types.OrEmpty().Length == 0 && root.Methods.OrEmpty().Length == 0
+            && root.Fields.OrEmpty().Length == 0 && root.AssemblyAttrs.OrEmpty().Length == 0;
     }
 
     // True iff this file declares a type whose `interfaces` names the synthetic `dotkt$CharSequence` — i.e. a user
