@@ -150,58 +150,10 @@ static class ComparableRepresentationLowering
         };
     }
 
-    static BirGraphValue EraseBounds(BirGraphValue node)
-    {
-        if (node is BirAttribute or BirOverride) return node;
-        var parameters = node switch {
-            BirFunctionDeclaration value => value.TypeParams,
-            BirClassDefinition value => value.TypeParams,
-            BirInterfaceDefinition value => value.TypeParams,
-            BirEnumDefinition value => value.TypeParams,
-            BirClosureDefinition value => value.TypeParams,
-            BirRefTypeDeclaration value => value.TypeParams,
-            BirInheritedClassMethod value => value.TypeParams,
-            BirInheritedImplementation value => value.TypeParams,
-            BirMethodImpl value => value.TypeParams,
-            _ => default,
-        };
-        if (parameters.HasValue)
-        {
-            var bounds = new Dictionary<int, TypeNode[]>();
-            var changed = false;
-            var rewritten = parameters.Value.Select((parameter, index) => {
-                if (parameter.Constraints.OrDefault() is { Length: > 0 } constraints)
-                {
-                    // A snapshot preserves all siblings, including unchanged source parameters.
-                    bounds[index] = constraints;
-                    if (constraints.Any(bound => bound is TypeNode.Fqn { Name: "kotlin.Comparable" }))
-                    {
-                        changed = true;
-                        return parameter with { Constraints = constraints.Where(bound => bound is not TypeNode.Fqn { Name: "kotlin.Comparable" }).ToArray() };
-                    }
-                }
-                return parameter;
-            }).ToArray();
-            if (changed)
-            {
-                SourceBoundsSnapshot Merge(OptionalField<SourceBoundsSnapshot> previous) => previous.HasValue
-                    ? previous.Value.Merge(bounds) : new SourceBoundsSnapshot(bounds);
-                node = node switch {
-                    BirFunctionDeclaration value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
-                    BirClassDefinition value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
-                    BirInterfaceDefinition value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
-                    BirEnumDefinition value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
-                    BirClosureDefinition value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
-                    BirRefTypeDeclaration value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
-                    BirInheritedClassMethod value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
-                    BirInheritedImplementation value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
-                    BirMethodImpl value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
-                    _ => node,
-                };
-            }
-        }
-        return node.RewriteChildren(EraseBounds);
-    }
+    static BirGraphValue EraseBounds(BirGraphValue node) => SourceConstraintErasure.Apply(node, constraints => {
+        var retained = constraints.Where(bound => bound is not TypeNode.Fqn { Name: "kotlin.Comparable" }).ToArray();
+        return (retained, retained.Length != constraints.Length);
+    }, includeEmptyBounds: false);
 
     // Authored sparse self-test inputs cross the same typed consumer boundary.
     internal static JsonObject[] ApplyFixtures(IEnumerable<JsonNode> roots, bool referenceBuild)

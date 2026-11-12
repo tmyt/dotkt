@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 sealed record ValueRepresentationBinding(string Classifier, string ClassifierFactory, string ComponentClassifier, string InterfaceMarker);
 
@@ -12,13 +13,14 @@ sealed class ValueRepresentationLowering
 {
     internal const string TypeAttribute = "kotlin.clr.ClrValueRepresentation";
     internal const string MemberAttribute = "kotlin.clr.ClrValueMember";
-    readonly Dictionary<string, ValueRepresentationBinding> bindings = new(StringComparer.Ordinal);
-    readonly Dictionary<string, string> aliases;
+    readonly IReadOnlyDictionary<string, ValueRepresentationBinding> bindings;
+    readonly IReadOnlyDictionary<string, string> aliases;
+    readonly ValueRepresentationSourcePolicy sourcePolicy;
     readonly Dictionary<string, JsonArray> localParameters = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> adapters = new(StringComparer.Ordinal);
     readonly Dictionary<string, (string Owner, JsonObject Method, string Slot)> members = new(StringComparer.Ordinal);
     readonly Dictionary<string, (string Owner, JsonObject Method)> locals = new(StringComparer.Ordinal);
-    readonly Dictionary<string, SupertypeGraph.Def> sourceHierarchy;
+    readonly IReadOnlyDictionary<string, SupertypeGraph.Def> sourceHierarchy;
     IReadOnlyDictionary<string, IReadOnlyList<string>> interfaceMarkers;
     readonly ReferenceMetadataIndex refs;
     readonly bool referenceBuild;
@@ -30,14 +32,15 @@ sealed class ValueRepresentationLowering
             .SingleOrDefault(attribute => TypeJson.OwnerName(attribute["attr"]) == name);
     static string Argument(JsonObject attribute, int index) => Text(attribute?["args"]?[index]?["value"]);
 
-    internal ValueRepresentationLowering(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex references, bool refBuild)
+    internal ValueRepresentationLowering(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex references, bool refBuild,
+        ValueRepresentationSourcePolicy sourcePolicy)
     {
         refs = references;
         referenceBuild = refBuild;
-        sourceHierarchy = SupertypeGraph.Collect(roots);
-        aliases = new Dictionary<string, string>(refs?.Aliases ?? new Dictionary<string, string>(), StringComparer.Ordinal);
-        foreach (var assembly in refs?.Assemblies ?? Array.Empty<ReferenceAssembly>())
-            foreach (var (name, binding) in assembly.DotKt.ValueRepresentations) bindings[name] = binding;
+        this.sourcePolicy = sourcePolicy;
+        sourceHierarchy = sourcePolicy.Hierarchy;
+        aliases = sourcePolicy.Aliases;
+        bindings = sourcePolicy.Bindings;
         foreach (var member in refs?.ValueMembers ?? Array.Empty<MemberBinding>())
         {
             members[member.DeclarationId] = (member.Owner, new JsonObject {
@@ -55,15 +58,6 @@ sealed class ValueRepresentationLowering
             if (Text(declaration["name"]) is string name)
             {
                 if (declaration["typeParams"] is JsonArray parameters) localParameters[name] = parameters;
-                var attribute = Attribute(declaration, TypeAttribute);
-                var source = attribute == null ? name : Argument(attribute, 4) switch { "" => name, var target => target };
-                if (Attribute(declaration, "kotlin.clr.ClrTypeAlias") is { } alias)
-                {
-                    aliases[name] = Argument(alias, 0);
-                    aliases[source] = Argument(alias, 0);
-                }
-                if (attribute != null)
-                    bindings[source] = new(Argument(attribute, 0), Argument(attribute, 1), Argument(attribute, 2), Argument(attribute, 3));
             }
             var owner = Text(declaration["fileClass"]) ?? Text(declaration["name"]);
             foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
@@ -233,52 +227,6 @@ sealed class ValueRepresentationLowering
         };
     }
 
-    // Freeze source constraints before companion frames are materialized. The physical
-    // alias is not the semantic numeric union and cannot express its Kotlin upper bound.
-    internal void EraseBounds(JsonNode root)
-    {
-        if (referenceBuild || bindings.Count == 0) return;
-        void Walk(JsonNode node)
-        {
-            if (node is JsonArray array) { foreach (var child in array) Walk(child); return; }
-            if (node is not JsonObject declaration) return;
-            if (declaration["k"] == null && declaration["typeParams"] is JsonArray parameters)
-            {
-                var bounds = new JsonObject();
-                var changed = false;
-                for (var index = 0; index < parameters.Count; index++)
-                    if (parameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints)
-                    {
-                        bounds[index.ToString()] = constraints.DeepClone();
-                        changed |= constraints.Select(TypeJson.Read).Any(type => type != null && !type.Equals(AliasFace(type)));
-                        var retained = constraints.Where(bound => TypeJson.Read(bound) is not TypeNode.Fqn f
-                            || !bindings.ContainsKey(f.Name)).Select(bound => bound.DeepClone()).ToArray();
-                        if (retained.Length == constraints.Count) continue;
-                        parameter["constraints"] = new JsonArray(retained);
-                        changed = true;
-                    }
-                if (changed)
-                {
-                    if (declaration["kind"] != null)
-                        KotlinSupertypesRecord.Merge(declaration, new JsonObject { ["bounds"] = bounds });
-                    else
-                    {
-                        var payload = Text(declaration[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string encoded
-                            ? JsonNode.Parse(encoded).AsObject() : new JsonObject();
-                        var saved = payload["bounds"] as JsonObject ?? new JsonObject();
-                        if (payload["bounds"] == null) payload["bounds"] = saved;
-                        foreach (var (index, value) in bounds)
-                            if (!saved.ContainsKey(index)) saved[index] = value.DeepClone();
-                        declaration[NullableGenericErasure.MethodTypeParameterBoundsPre] = payload.ToJsonString();
-                    }
-                }
-            }
-            foreach (var (key, child) in declaration.ToArray())
-                if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)) Walk(child);
-        }
-        Walk(root);
-    }
-
     internal void BindOperations(JsonNode root)
     {
         if (referenceBuild || bindings.Count == 0) return;
@@ -396,19 +344,7 @@ sealed class ValueRepresentationLowering
         Walk(root);
     }
 
-    TypeNode AliasFace(TypeNode type) => type switch {
-        TypeNode.Fqn f when bindings.ContainsKey(f.Name) =>
-            BirTypeLowering.PhysicalHead(f.Name, aliases[f.Name], f.Args?.Select(AliasFace).ToArray()),
-        TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(AliasFace).ToArray()),
-        TypeNode.Array a => new TypeNode.Array(AliasFace(a.Elem), a.Rank, a.SzArray),
-        TypeNode.Nullable n => new TypeNode.Nullable(AliasFace(n.Of)),
-        TypeNode.Oblivious o => new TypeNode.Oblivious(AliasFace(o.Of)),
-        TypeNode.ByRef b => new TypeNode.ByRef(AliasFace(b.Of)),
-        TypeNode.Projection p => new TypeNode.Projection(p.Variance, AliasFace(p.Of)),
-        TypeNode.Fn f => f with { Ret = AliasFace(f.Ret), Params = f.Params.Select(AliasFace).ToArray(),
-            Recv = f.Recv == null ? null : AliasFace(f.Recv), Ctx = f.Ctx?.Select(AliasFace).ToArray() },
-        _ => type,
-    };
+    TypeNode AliasFace(TypeNode type) => sourcePolicy.AliasFace(type);
 
     internal void RecordSourceTypes(JsonNode root)
     {
@@ -643,11 +579,11 @@ sealed class ValueRepresentationLowering
     {
         var root = JsonNode.Parse("""
         {"fileClass":"Helpers","types":[{"name":"Union","kind":"class","attrs":[
-          {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]},
+          {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"k":"const","value":"System.Object"}]},
           {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueRepresentation"},"args":[
-           {"value":"Helpers.matches"},{"value":"Helpers.classifier"},{"value":"Helpers.component"},{"value":""},{"value":""}]}],
+           {"k":"const","value":"Helpers.matches"},{"k":"const","value":"Helpers.classifier"},{"k":"const","value":"Helpers.component"},{"k":"const","value":""},{"k":"const","value":""}]}],
           "methods":[{"name":"convert","declarationId":"convert","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"abstract":true,"attrs":[
-           {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueMember"},"args":[{"value":"Helpers.convert"},{"value":"Slots.convert"}]}]}]},
+           {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueMember"},"args":[{"k":"const","value":"Helpers.convert"},{"k":"const","value":"Slots.convert"}]}]}]},
           {"name":"Child","kind":"class","base":{"t":"fqn","name":"Union"},"methods":[
            {"name":"differentName","declarationId":"child-convert","ret":{"t":"fqn","name":"kotlin.Int"},"params":[],
             "overrides":[{"declarationId":"convert"}],"abstract":false}]}],"methods":[
@@ -668,12 +604,12 @@ sealed class ValueRepresentationLowering
              "methods":[{"name":"convert","declarationId":"abstract-convert","abstract":true,
               "params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"body":[],
               "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrValueMember"},
-                "args":[{"value":"Helpers.convert"},{"value":"Slots.convert"}]}],
+                "args":[{"k":"const","value":"Helpers.convert"},{"k":"const","value":"Slots.convert"}]}],
               "overrides":[{"declarationId":"convert"}]}]}
             """));
         root["types"].AsArray().Add(JsonNode.Parse("""
             {"name":"AliasMiddle","kind":"class","base":{"t":"fqn","name":"Union"},"methods":[],
-             "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]}]}
+             "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"k":"const","value":"System.Object"}]}]}
             """));
         root["types"].AsArray().Add(JsonNode.Parse("""
             {"name":"AliasLeaf","kind":"class","base":{"t":"fqn","name":"AliasMiddle"},"methods":[
@@ -681,7 +617,10 @@ sealed class ValueRepresentationLowering
               "overrides":[{"declarationId":"convert"}],"abstract":false}]}
             """));
         var referenceRoot = root.DeepClone();
-        var policy = new ValueRepresentationLowering(new[] { root }, null, false);
+        var source = ReadFixture(root);
+        var sourcePolicy = new ValueRepresentationSourcePolicy(new[] { source }, null, false);
+        root = sourcePolicy.EraseBounds(source).ToDom();
+        var policy = new ValueRepresentationLowering(new[] { root }, null, false, sourcePolicy);
         var inheritedCall = JsonNode.Parse("""
             {"k":"callInstance","overrides":[{"declarationId":"convert"}],
              "recv":{"k":"local","name":"value"},"args":[],"sig":[],"ret":{"t":"fqn","name":"kotlin.Int"}}
@@ -708,7 +647,6 @@ sealed class ValueRepresentationLowering
         var vector = policy.Predicate(new TypeNode.Array(new TypeNode.Fqn("Union")));
         var projected = policy.Predicate(new TypeNode.Array(new TypeNode.Array(
             new TypeNode.Projection("out", new TypeNode.Fqn("Union")))));
-        policy.EraseBounds(root);
         policy.BindOperations(root);
         var method = root["methods"][3];
         foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
@@ -744,7 +682,7 @@ sealed class ValueRepresentationLowering
             || Text(bridge["body"][0]["value"][DeclarationIdentityBinding.Key]) != "child-convert"
             || Text(bridge["clrInterfaceImpls"][0]["member"]) != "convert")
             throw new InvalidOperationException("Nominal slots lost exact override/member bindings");
-        new ValueRepresentationLowering(new[] { referenceRoot }, null, true)
+        FixturePolicy(referenceRoot, true)
             .SynthesizeSlots(new[] { referenceRoot }, _ => false);
         foreach (var face in new[] { root, referenceRoot })
         {
@@ -767,14 +705,14 @@ sealed class ValueRepresentationLowering
             throw new InvalidOperationException("Reference face dropped a runtime nominal-slot declaration");
         var markerRoot = JsonNode.Parse("""
             {"types":[{"name":"Tag","kind":"interface","attrs":[
-              {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"value":"System.Object"}]},
+              {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"k":"const","value":"System.Object"}]},
               {"attr":{"t":"fqn","name":"kotlin.clr.ClrValueRepresentation"},"args":[
-                {"value":"Helpers.matches"},{"value":"Helpers.classifier"},
-                {"value":"Helpers.component"},{"value":"Slots.Tag"},{"value":""}]}]},
+                {"k":"const","value":"Helpers.matches"},{"k":"const","value":"Helpers.classifier"},
+                {"k":"const","value":"Helpers.component"},{"k":"const","value":"Slots.Tag"},{"k":"const","value":""}]}]},
               {"name":"Implementation","kind":"class","interfaces":[{"t":"fqn","name":"Tag"},{"t":"fqn","name":"Slots.Tag"}],
                 "fields":[{"name":"value","type":{"t":"fqn","name":"Tag"}}]}]}
             """);
-        var markers = new ValueRepresentationLowering(new[] { markerRoot }, null, false).InterfaceMarkers;
+        var markers = FixturePolicy(markerRoot, false).InterfaceMarkers;
         var projectedMarker = BirTypeLowering.Lower(markerRoot, false,
             new Dictionary<string, string> { ["Tag"] = "System.Object" }, interfaceMarkers: markers);
         if (TypeJson.OwnerName(projectedMarker["types"][1]["interfaces"][0]) != "Slots.Tag"
@@ -785,7 +723,7 @@ sealed class ValueRepresentationLowering
         var externalRoot = markerRoot.DeepClone();
         externalRoot["types"][0]["name"] = "Carrier.Tag";
         externalRoot["types"][0]["attrs"][1]["args"][4]["value"] = "Tag";
-        var external = new ValueRepresentationLowering(new[] { externalRoot }, null, false);
+        var external = FixturePolicy(externalRoot, false);
         if (!external.InterfaceMarkers["Tag"].SequenceEqual(new[] { "Slots.Tag" })
             || external.InterfaceMarkers.ContainsKey("Carrier.Tag")
             || external.AliasFace(new TypeNode.Fqn("Tag")) != new TypeNode.Fqn("System.Object"))
@@ -796,7 +734,7 @@ sealed class ValueRepresentationLowering
         derivedMarker["interfaces"] = new JsonArray(TypeJson.Fqn("Tag"));
         derivedMarker["attrs"][1]["args"][3]["value"] = "Slots.DerivedTag";
         inheritedMarkerRoot["types"].AsArray().Add(derivedMarker);
-        var inheritedMarkers = new ValueRepresentationLowering(new[] { inheritedMarkerRoot }, null, false).InterfaceMarkers;
+        var inheritedMarkers = FixturePolicy(inheritedMarkerRoot, false).InterfaceMarkers;
         if (!inheritedMarkers["DerivedTag"].SequenceEqual(new[] { "Slots.DerivedTag", "Slots.Tag" }))
             throw new InvalidOperationException("A mapped interface lost its source ancestor facets");
         var arguments = new TypeNode[] { new TypeNode.Fqn("kotlin.String") };
@@ -810,4 +748,13 @@ sealed class ValueRepresentationLowering
             throw new InvalidOperationException("Non-generic object alias retained semantic type arguments or erased a native construction");
         Console.WriteLine("[value representation] self-test OK (source carriers, bounds, exact adapters, nominal slots, array classifiers)");
     }
+
+    // Sparse authored tests enter through the current typed input codec. This is
+    // a test adapter, not a production pass hand-off or an older-artifact reader.
+    static BirFileDeclaration ReadFixture(JsonNode root) =>
+        BirGraphJson.ReadFile(System.Text.Encoding.UTF8.GetBytes(root.ToJsonString()));
+
+    static ValueRepresentationLowering FixturePolicy(JsonNode root, bool referenceBuild) =>
+        new(new[] { root }, null, referenceBuild,
+            new ValueRepresentationSourcePolicy(new[] { ReadFixture(root) }, null, referenceBuild));
 }
