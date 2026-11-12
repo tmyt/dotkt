@@ -281,6 +281,15 @@ var phaseFacts = new BirFileDeclaration {
         new BirExpressionStatement { Expr = new BirCallStatic { NullableWitnessCount = 2 } },
         new BirExpressionStatement { Expr = new BirNewClr { MemberSignature = new TypeNode[] { frame } } },
         new BirExpressionStatement { Expr = new BirValueBlock { Sty = frame } },
+        new BirExpressionStatement { Expr = new BirNewList { Sty = frame } },
+        new BirExpressionStatement { Expr = new BirNewClosure { DotktDelegateSlot = frame } },
+        new BirExpressionStatement { Expr = new BirNewDelegate { DotktDelegateSlot = frame } },
+        new BirExpressionStatement { Expr = new BirNewBoundDelegate { DotktDelegateSlot = frame } },
+        new BirExpressionStatement { Expr = new BirBoundClrDelegate { DotktDelegateSlot = frame } },
+        new BirExpressionStatement { Expr = new BirClrStaticDelegate { DotktDelegateSlot = frame } },
+        new BirExpressionStatement { Expr = new BirNewSuspendLambda {
+            Captures = new[] { new BirCaptureDescriptor { Name = "value", Type = new TypeNode.Fqn("object"), KotlinType = frame } },
+        } },
     } } },
     Types = new IBirTypeDeclaration[] { new BirClassDefinition {
         Kind = "class", ClrEvents = new[] { new BirClrEventBacking {

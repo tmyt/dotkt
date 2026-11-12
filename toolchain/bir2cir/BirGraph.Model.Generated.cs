@@ -4187,6 +4187,7 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
     public OptionalField<string> Name { get; set; }
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<bool> Outer { get; set; }
+    public OptionalField<TypeNode> KotlinType { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
     }
@@ -4202,6 +4203,7 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
         WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "outer", Outer, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "kotlinType", KotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -4210,6 +4212,7 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
         if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Outer.IsPresent) result["outer"] = Outer.IsNull ? null : JsonValue.Create(Outer.Value);
+        if (KotlinType.IsPresent) result["kotlinType"] = KotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(KotlinType.Value));
         return result;
     }
 }
@@ -4285,6 +4288,7 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<TypeNode> FuncType { get; set; }
     public OptionalField<TypeNode[]> TypeArgs { get; set; }
     public OptionalField<BirClosureDefinition> SynthClass { get; set; }
+    public OptionalField<TypeNode> DotktDelegateSlot { get; set; }
     public OptionalField<BirMemberReference> DelegateCtorRef { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -4315,6 +4319,7 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "funcType", FuncType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "typeArgs", TypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "synthClass", SynthClass, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "dotktDelegateSlot", DotktDelegateSlot, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "delegateCtorRef", DelegateCtorRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
@@ -4329,6 +4334,7 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
         if (FuncType.IsPresent) result["funcType"] = FuncType.IsNull ? null : TypeNode.Write(FuncType.Value);
         if (TypeArgs.IsPresent) result["typeArgs"] = TypeArgs.IsNull ? null : new JsonArray(TypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (SynthClass.IsPresent) result["synthClass"] = SynthClass.IsNull ? null : ((BirGraphValue)SynthClass.Value).ToDom();
+        if (DotktDelegateSlot.IsPresent) result["dotktDelegateSlot"] = DotktDelegateSlot.IsNull ? null : TypeNode.Write(DotktDelegateSlot.Value);
         if (DelegateCtorRef.IsPresent) result["delegateCtorRef"] = DelegateCtorRef.IsNull ? null : ((BirGraphValue)DelegateCtorRef.Value).ToDom();
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         return result;
@@ -4346,6 +4352,7 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<TypeNode> CompanionReceiver { get; set; }
     public OptionalField<string> DeclarationId { get; set; }
     public OptionalField<bool> DotktDeclarationIdentityBound { get; set; }
+    public OptionalField<TypeNode> DotktDelegateSlot { get; set; }
     public OptionalField<BirMemberReference> DelegateCtorRef { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
     public OptionalField<TypeNode> CalleeRet { get; set; }
@@ -4377,6 +4384,7 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         WriteOptional(writer, "companionReceiver", CompanionReceiver, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "dotktDeclarationIdentityBound", DotktDeclarationIdentityBound, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "dotktDelegateSlot", DotktDelegateSlot, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "delegateCtorRef", DelegateCtorRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "calleeRet", CalleeRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
@@ -4395,6 +4403,7 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         if (CompanionReceiver.IsPresent) result["companionReceiver"] = CompanionReceiver.IsNull ? null : JsonValue.Create(TypeNode.ToJson(CompanionReceiver.Value));
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
         if (DotktDeclarationIdentityBound.IsPresent) result["dotktDeclarationIdentityBound"] = DotktDeclarationIdentityBound.IsNull ? null : JsonValue.Create(DotktDeclarationIdentityBound.Value);
+        if (DotktDelegateSlot.IsPresent) result["dotktDelegateSlot"] = DotktDelegateSlot.IsNull ? null : TypeNode.Write(DotktDelegateSlot.Value);
         if (DelegateCtorRef.IsPresent) result["delegateCtorRef"] = DelegateCtorRef.IsNull ? null : ((BirGraphValue)DelegateCtorRef.Value).ToDom();
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
         if (CalleeRet.IsPresent) result["calleeRet"] = CalleeRet.IsNull ? null : TypeNode.Write(CalleeRet.Value);
@@ -5039,6 +5048,7 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
     public OptionalField<TypeNode[]> MemberSignature { get; set; }
     public OptionalField<TypeNode> MemberReturnType { get; set; }
     public OptionalField<bool> DotktDeclarationIdentityBound { get; set; }
+    public OptionalField<TypeNode> DotktDelegateSlot { get; set; }
     public OptionalField<BirMemberReference> DelegateCtorRef { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
     public OptionalField<TypeNode> CalleeRet { get; set; }
@@ -5094,6 +5104,7 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "dotktDeclarationIdentityBound", DotktDeclarationIdentityBound, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "dotktDelegateSlot", DotktDelegateSlot, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "delegateCtorRef", DelegateCtorRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "calleeRet", CalleeRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
@@ -5124,6 +5135,7 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
         if (DotktDeclarationIdentityBound.IsPresent) result["dotktDeclarationIdentityBound"] = DotktDeclarationIdentityBound.IsNull ? null : JsonValue.Create(DotktDeclarationIdentityBound.Value);
+        if (DotktDelegateSlot.IsPresent) result["dotktDelegateSlot"] = DotktDelegateSlot.IsNull ? null : TypeNode.Write(DotktDelegateSlot.Value);
         if (DelegateCtorRef.IsPresent) result["delegateCtorRef"] = DelegateCtorRef.IsNull ? null : ((BirGraphValue)DelegateCtorRef.Value).ToDom();
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
         if (CalleeRet.IsPresent) result["calleeRet"] = CalleeRet.IsNull ? null : TypeNode.Write(CalleeRet.Value);
@@ -7086,6 +7098,8 @@ internal sealed record BirNewList : BirGraphNode, IBirExpression, IBirAttributeV
     public OptionalField<IBirExpression[]> Elems { get; set; }
     public OptionalField<BirMemberReference> CtorRef { get; set; }
     public OptionalField<BirMemberReference> AddRef { get; set; }
+    public OptionalField<TypeNode> Sty { get; set; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Elems.HasValue) { foreach (var item0 in Elems.Value) { visit((BirGraphValue)item0); } }
@@ -7112,6 +7126,7 @@ internal sealed record BirNewList : BirGraphNode, IBirExpression, IBirAttributeV
         WriteOptional(writer, "elems", Elems, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "ctorRef", CtorRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "addRef", AddRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "sty", Sty, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -7122,6 +7137,7 @@ internal sealed record BirNewList : BirGraphNode, IBirExpression, IBirAttributeV
         if (Elems.IsPresent) result["elems"] = Elems.IsNull ? null : new JsonArray(Elems.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (CtorRef.IsPresent) result["ctorRef"] = CtorRef.IsNull ? null : ((BirGraphValue)CtorRef.Value).ToDom();
         if (AddRef.IsPresent) result["addRef"] = AddRef.IsNull ? null : ((BirGraphValue)AddRef.Value).ToDom();
+        if (Sty.IsPresent) result["sty"] = Sty.IsNull ? null : TypeNode.Write(Sty.Value);
         return result;
     }
 }
@@ -8307,6 +8323,7 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
     public OptionalField<TypeNode[]> Sig { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
     public OptionalField<bool> ClrOwnerResolved { get; set; }
+    public OptionalField<TypeNode> DotktDelegateSlot { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
@@ -8343,6 +8360,7 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         WriteOptional(writer, "sig", Sig, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "clrOwnerResolved", ClrOwnerResolved, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "dotktDelegateSlot", DotktDelegateSlot, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -8363,6 +8381,7 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         if (Sig.IsPresent) result["sig"] = Sig.IsNull ? null : new JsonArray(Sig.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (ClrOwnerResolved.IsPresent) result["clrOwnerResolved"] = ClrOwnerResolved.IsNull ? null : JsonValue.Create(ClrOwnerResolved.Value);
+        if (DotktDelegateSlot.IsPresent) result["dotktDelegateSlot"] = DotktDelegateSlot.IsNull ? null : TypeNode.Write(DotktDelegateSlot.Value);
         return result;
     }
 }
@@ -8381,6 +8400,7 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<TypeNode[]> Sig { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
+    public OptionalField<TypeNode> DotktDelegateSlot { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (DelegateCtorRef.HasValue) { visit((BirGraphValue)DelegateCtorRef.Value); }
@@ -8411,6 +8431,7 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "sig", Sig, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "dotktDelegateSlot", DotktDelegateSlot, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -8428,6 +8449,7 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Sig.IsPresent) result["sig"] = Sig.IsNull ? null : new JsonArray(Sig.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (DotktDelegateSlot.IsPresent) result["dotktDelegateSlot"] = DotktDelegateSlot.IsNull ? null : TypeNode.Write(DotktDelegateSlot.Value);
         return result;
     }
 }

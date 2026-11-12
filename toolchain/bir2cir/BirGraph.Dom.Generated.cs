@@ -2224,6 +2224,7 @@ internal static class BirGraphDom
                 case "name": break;
                 case "type": break;
                 case "outer": break;
+                case "kotlinType": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirCaptureDescriptor at {source.GetPath()}");
             }
         return new BirCaptureDescriptor
@@ -2231,6 +2232,7 @@ internal static class BirGraphDom
             Name = Field<string>(fields, "name", value => value!.GetValue<string>()),
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             Outer = Field<bool>(fields, "outer", value => value!.GetValue<bool>()),
+            KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
         };
     }
 
@@ -2276,6 +2278,7 @@ internal static class BirGraphDom
                 case "funcType": break;
                 case "typeArgs": break;
                 case "synthClass": break;
+                case "dotktDelegateSlot": break;
                 case "delegateCtorRef": break;
                 case "calleeParams": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirNewClosure at {source.GetPath()}");
@@ -2288,6 +2291,7 @@ internal static class BirGraphDom
             FuncType = Field<TypeNode>(fields, "funcType", value => TypeNode.Read(value) ?? throw new FormatException()),
             TypeArgs = Field<TypeNode[]>(fields, "typeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             SynthClass = Field<BirClosureDefinition>(fields, "synthClass", value => ReadBirClosureDefinition(value!)),
+            DotktDelegateSlot = Field<TypeNode>(fields, "dotktDelegateSlot", value => TypeNode.Read(value) ?? throw new FormatException()),
             DelegateCtorRef = Field<BirMemberReference>(fields, "delegateCtorRef", value => ReadBirMemberReference(value!)),
             CalleeParams = Field<TypeNode[]>(fields, "calleeParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
         };
@@ -2308,6 +2312,7 @@ internal static class BirGraphDom
                 case "companionReceiver": break;
                 case "declarationId": break;
                 case "dotktDeclarationIdentityBound": break;
+                case "dotktDelegateSlot": break;
                 case "delegateCtorRef": break;
                 case "memberRef": break;
                 case "calleeRet": break;
@@ -2324,6 +2329,7 @@ internal static class BirGraphDom
             CompanionReceiver = Field<TypeNode>(fields, "companionReceiver", value => TypeNode.Parse(value!.GetValue<string>())),
             DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
             DotktDeclarationIdentityBound = Field<bool>(fields, "dotktDeclarationIdentityBound", value => value!.GetValue<bool>()),
+            DotktDelegateSlot = Field<TypeNode>(fields, "dotktDelegateSlot", value => TypeNode.Read(value) ?? throw new FormatException()),
             DelegateCtorRef = Field<BirMemberReference>(fields, "delegateCtorRef", value => ReadBirMemberReference(value!)),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
             CalleeRet = Field<TypeNode>(fields, "calleeRet", value => TypeNode.Read(value) ?? throw new FormatException()),
@@ -2664,6 +2670,7 @@ internal static class BirGraphDom
                 case "memberSignature": break;
                 case "memberReturnType": break;
                 case "dotktDeclarationIdentityBound": break;
+                case "dotktDelegateSlot": break;
                 case "delegateCtorRef": break;
                 case "memberRef": break;
                 case "calleeRet": break;
@@ -2692,6 +2699,7 @@ internal static class BirGraphDom
             MemberSignature = Field<TypeNode[]>(fields, "memberSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
             DotktDeclarationIdentityBound = Field<bool>(fields, "dotktDeclarationIdentityBound", value => value!.GetValue<bool>()),
+            DotktDelegateSlot = Field<TypeNode>(fields, "dotktDelegateSlot", value => TypeNode.Read(value) ?? throw new FormatException()),
             DelegateCtorRef = Field<BirMemberReference>(fields, "delegateCtorRef", value => ReadBirMemberReference(value!)),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
             CalleeRet = Field<TypeNode>(fields, "calleeRet", value => TypeNode.Read(value) ?? throw new FormatException()),
@@ -3736,6 +3744,7 @@ internal static class BirGraphDom
                 case "elems": break;
                 case "ctorRef": break;
                 case "addRef": break;
+                case "sty": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirNewList at {source.GetPath()}");
             }
         return new BirNewList
@@ -3744,6 +3753,7 @@ internal static class BirGraphDom
             Elems = Field<IBirExpression[]>(fields, "elems", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             CtorRef = Field<BirMemberReference>(fields, "ctorRef", value => ReadBirMemberReference(value!)),
             AddRef = Field<BirMemberReference>(fields, "addRef", value => ReadBirMemberReference(value!)),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 
@@ -4388,6 +4398,7 @@ internal static class BirGraphDom
                 case "sig": break;
                 case "calleeParams": break;
                 case "clrOwnerResolved": break;
+                case "dotktDelegateSlot": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirBoundClrDelegate at {source.GetPath()}");
             }
         return new BirBoundClrDelegate
@@ -4406,6 +4417,7 @@ internal static class BirGraphDom
             Sig = Field<TypeNode[]>(fields, "sig", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             CalleeParams = Field<TypeNode[]>(fields, "calleeParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ClrOwnerResolved = Field<bool>(fields, "clrOwnerResolved", value => value!.GetValue<bool>()),
+            DotktDelegateSlot = Field<TypeNode>(fields, "dotktDelegateSlot", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 
@@ -4427,6 +4439,7 @@ internal static class BirGraphDom
                 case "type": break;
                 case "sig": break;
                 case "calleeParams": break;
+                case "dotktDelegateSlot": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirClrStaticDelegate at {source.GetPath()}");
             }
         return new BirClrStaticDelegate
@@ -4442,6 +4455,7 @@ internal static class BirGraphDom
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             Sig = Field<TypeNode[]>(fields, "sig", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             CalleeParams = Field<TypeNode[]>(fields, "calleeParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            DotktDelegateSlot = Field<TypeNode>(fields, "dotktDelegateSlot", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 
