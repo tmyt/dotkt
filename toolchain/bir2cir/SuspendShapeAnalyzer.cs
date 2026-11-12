@@ -1,27 +1,26 @@
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 sealed class SuspendShapeAnalyzer
 {
-    public static SuspendShapeAnalysis Analyze(JsonNode root)
+    public static SuspendShapeAnalysis Analyze(BirFileDeclaration root)
     {
-        return new SuspendShapeAnalysis(CountFunctions(root));
+        var count = root.Methods.OrEmpty().Count(method => method.Mods.OrDefault()?.Suspend.OrDefault() == true);
+        foreach (var type in root.Types.OrEmpty())
+        {
+            var methods = type switch {
+                BirClassDefinition value => value.Methods.OrEmpty(),
+                BirInterfaceDefinition value => value.Methods.OrEmpty(),
+                BirEnumDefinition value => value.Methods.OrEmpty(),
+                _ => throw new System.InvalidOperationException(),
+            };
+            count += methods.Count(method => method.Mods.OrDefault()?.Suspend.OrDefault() == true);
+        }
+        return new SuspendShapeAnalysis(count);
     }
 
-    static int CountFunctions(JsonNode node)
-    {
-        if (node is not JsonObject obj) return 0;
-        var count = obj["methods"] is JsonArray methods
-            ? methods.OfType<JsonObject>().Count(method => ModFlag(method, "suspend"))
-            : 0;
-        if (obj["types"] is JsonArray types)
-            count += types.Sum(CountFunctions);
-        return count;
-    }
-
-    // Structured declaration modifier (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).
-    static bool ModFlag(JsonObject obj, string name) => obj["mods"] is JsonObject m && (m[name] as JsonValue)?.GetValue<bool>() == true;
 }
 
 sealed record SuspendShapeAnalysis(int FunctionCount)

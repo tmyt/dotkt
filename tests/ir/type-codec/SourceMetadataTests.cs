@@ -26,13 +26,26 @@ internal static class SourceMetadataTests
 
             // Exercise the actual production input boundary and freezer, not a second codec copy.
             var tool = typeof(SourceTypeAlias).Assembly;
-            var input = new JsonObject { ["k"] = "file", ["typeAliases"] = new JsonArray(expected.DeepClone()) };
-            var readInput = tool.GetType("BirInputJson", true)!.GetMethod("Read")!;
-            var (root, aliases) = ((JsonObject, SourceTypeAlias[]))readInput.Invoke(null,
-                [Encoding.UTF8.GetBytes(input.ToJsonString())])!;
-            if (root.ContainsKey("typeAliases") || aliases.Length != 1)
-                throw new Exception("Source declarations leaked into physical DOM traversal");
-            tool.GetType("RoundtripMetadata", true)!.GetMethod("FreezeTypeAliases")!.Invoke(null, [root, aliases]);
+            var input = new JsonObject {
+                ["fileClass"] = "SourceMetadataProbeKt", ["hasMain"] = false,
+                ["fields"] = new JsonArray(), ["methods"] = new JsonArray(), ["properties"] = new JsonArray(),
+                ["types"] = new JsonArray(), ["refTypes"] = new JsonArray(),
+                ["typeAliases"] = new JsonArray(expected.DeepClone()),
+            };
+            var inputPath = Path.Combine(Path.GetTempPath(), "dotkt-source-metadata-" + Guid.NewGuid() + ".bir.json");
+            JsonObject root;
+            try
+            {
+                File.WriteAllBytes(inputPath, Encoding.UTF8.GetBytes(input.ToJsonString()));
+                var load = tool.GetType("Pipeline", true)!.GetMethod("LoadBirFiles",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+                var loaded = (System.Collections.IEnumerable)load.Invoke(null, [new[] { inputPath }])!;
+                var file = loaded.Cast<object>().Single();
+                root = (JsonObject)file.GetType().GetProperty("Root")!.GetValue(file)!;
+            }
+            finally { File.Delete(inputPath); }
+            if (root.ContainsKey("typeAliases") || root["assemblyAttrs"] is not JsonArray { Count: 1 })
+                throw new Exception("Source declarations leaked into physical DOM traversal or lost their assembly carrier");
             var arguments = root["assemblyAttrs"]![0]!["args"]!;
             if (arguments[0]!["value"]!.GetValue<string>() != BirCarrier.MessagePackV1)
                 throw new Exception("Source alias carrier is not actually binary");

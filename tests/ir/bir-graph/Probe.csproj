@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>DotKt.Tests.BirGraph</AssemblyName>
+    <DotKtBir2CirPath Condition="'$(DotKtBir2CirPath)' == ''">$(MSBuildThisFileDirectory)../../../build/bir2cir-bin/bir2cir.dll</DotKtBir2CirPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="bir2cir"><HintPath>$(DotKtBir2CirPath)</HintPath></Reference>
+  </ItemGroup>
+</Project>

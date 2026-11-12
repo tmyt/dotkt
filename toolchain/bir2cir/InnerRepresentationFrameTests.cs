@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 static class InnerRepresentationFrameTests
 {
@@ -189,7 +190,12 @@ static class InnerRepresentationFrameTests
         };
         root["inlineBir"] = Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, executable));
         root["suspendResult"] = executable.ToJsonString();
-        var defaultAttribute = DefaultBirCarrier.Create(0, executable);
+        var defaultBody = new BirValueBlock {
+            Type = source,
+            Stmts = new IBirStatement[] { new BirVariable { Name = "outer", Type = outer } },
+            Result = new BirClassReference { Type = source },
+        };
+        var defaultAttribute = DefaultBirCarrier.Create(0, defaultBody).ToDom();
         root["attrs"] = new JsonArray(defaultAttribute);
         OpaqueCarrierTypeBinding.ApplyAll(new[] { root }, ReferenceMetadataIndex.Build(Array.Empty<string>()),
             new Dictionary<string, JsonObject> { ["declaration"] = signature });
@@ -201,10 +207,13 @@ static class InnerRepresentationFrameTests
             throw new InvalidOperationException("Source carriers unnecessarily changed a top-level classifier");
         var inline = BirCarrier.DecodeBody(BirCarrier.JsonV1,
             Convert.FromBase64String(root["inlineBir"]!.GetValue<string>()));
-        foreach (var payload in new[] { inline, JsonNode.Parse(root["suspendResult"]!.GetValue<string>()),
-            DefaultBirCarrier.Decode(defaultAttribute) })
+        foreach (var payload in new[] { inline, JsonNode.Parse(root["suspendResult"]!.GetValue<string>()) })
             if (TypeJson.Read(payload!["body"]![0]) != expected || TypeJson.Read(payload["body"]![1]) != outer)
                 throw new InvalidOperationException("Executable carriers must bind nested identities without retargeting their top-level owners");
+        var defaultPayload = DefaultBirCarrier.Decode(defaultAttribute);
+        if (TypeJson.Read(defaultPayload["type"]) != expected || TypeJson.Read(defaultPayload["result"]["type"]) != expected
+            || TypeJson.Read(defaultPayload["stmts"][0]["type"]) != outer)
+            throw new InvalidOperationException("Typed default carriers must bind nested identities without retargeting top-level owners");
         if (TypeJson.Read(inline["params"]![0]) != source)
             throw new InvalidOperationException("Inline overload signatures must remain semantic");
     }

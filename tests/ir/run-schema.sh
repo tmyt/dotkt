@@ -29,6 +29,7 @@ cd "$ROOT" || exit 1
 PY="${PYTHON:-python3}"
 
 "$PY" scripts/generate-ir-model.py --check || exit 1
+"$PY" tests/ir/test-bir-graph-model.py || exit 1
 "$PY" tests/ir/test-typealias-schema.py || exit 1
 "$PY" tests/ir/test-generic-receiver-schema.py || exit 1
 "$PY" tests/ir/test-valueblock-schema.py || exit 1
@@ -85,6 +86,19 @@ if ! dotnet run --project tests/ir/type-codec/Probe.csproj --no-launch-profile \
     "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeParameterDeclarationTest.xml" \
     "${cir_codec_args[@]}"; then
   echo "SCHEMA GATE: RED (cross-language type/source metadata codecs)"; exit 1
+fi
+
+bir_graph_args=()
+if [ $# -eq 0 ]; then
+  if ! bir_corpus="$("$PY" tests/ir/corpus.py bir --literal)"; then exit 2; fi
+  bir_graph_manifest="$ROOT/build/bir-owning-graph-corpus.list"
+  printf '%s\n' "$bir_corpus" > "$bir_graph_manifest"
+  bir_graph_args=("$bir_graph_manifest")
+fi
+if ! dotnet run --project tests/ir/bir-graph/Probe.csproj --no-launch-profile \
+    -p:DotKtBir2CirPath="$ROOT/$BIR2CIR_DLL" -- \
+    "$ROOT/toolchain/kotc/build/test-results/test/TEST-kotc.bir.TypeNodeTest.xml" "${bir_graph_args[@]}"; then
+  echo "SCHEMA GATE: RED (owning BIR graph)"; exit 1
 fi
 
 # SELF-TEST next: the validator checks whatever is on disk, so one that silently stopped checking would look
