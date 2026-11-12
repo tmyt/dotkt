@@ -170,11 +170,23 @@ sealed class Pipeline
             inputsWithSources.Add((path, source, suspend));
         }
 
-        var captured = DeclarationSignatureIdentity.Capture(inputsWithSources.Select(file => file.Source));
+        IEnumerable<DotKt.Bir.Lowering.BirFileDeclaration> TakeSources()
+        {
+            for (var index = 0; index < inputsWithSources.Count; index++)
+            {
+                var input = inputsWithSources[index];
+                // Transfer this root to capture instead of retaining every
+                // original graph alongside its replacement and the DOM output.
+                inputsWithSources[index] = (input.Path, null, input.Suspend);
+                yield return input.Source;
+            }
+        }
+        var captured = DeclarationSignatureIdentity.Capture(TakeSources());
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
             var source = captured[index];
+            captured[index] = null;
             // The remaining passes still own DOM graphs. Construct that frontier
             // directly; never serialize/reparse the typed input between passes.
             var root = (source with { TypeAliases = default }).ToDom();

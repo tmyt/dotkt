@@ -485,6 +485,18 @@ static class DeclarationSignatureIdentity
 
     static void SelfTestTypedCapture()
     {
+        var graphTypes = typeof(BirGraphValue).Assembly.GetTypes().Where(type => typeof(BirGraphValue).IsAssignableFrom(type)).ToArray();
+        var parameterOwners = graphTypes.Where(type => type.GetProperty("Params")?.PropertyType is Type parameters
+            && (parameters == typeof(OptionalField<BirParameter[]>) || parameters == typeof(OptionalField<BirLambdaParameter[]>)));
+        if (!parameterOwners.ToHashSet().SetEquals(new[] { typeof(BirFunctionDeclaration), typeof(BirConstructor),
+                typeof(BirClassDefinition), typeof(BirInterfaceDefinition), typeof(BirEnumDefinition),
+                typeof(BirInheritedClassMethod), typeof(BirClosureDefinition), typeof(BirNewSuspendLambda), typeof(BirInlineLambda) })
+            || !graphTypes.Where(type => type.GetProperty("Params") != null && type.GetProperty("Overrides") != null).ToHashSet()
+                .SetEquals(new[] { typeof(BirFunctionDeclaration), typeof(BirInheritedClassMethod),
+                    typeof(BirInheritedDefaultMethod), typeof(BirInheritedDefaultAccessor) })
+            || !graphTypes.Where(type => type.GetProperty("Name") != null && type.GetProperty("Methods") != null).ToHashSet()
+                .SetEquals(new[] { typeof(BirClassDefinition), typeof(BirInterfaceDefinition), typeof(BirEnumDefinition) }))
+            throw new InvalidOperationException("A typed signature capture capability changed without an explicit coverage audit");
         var methodFrame = new TypeNode.Tv("method", 0);
         var ownerFrame = new TypeNode.Tv("type", 0);
         var bytes = new byte[] { 0, 255, 0xd8, 17 };
@@ -502,11 +514,24 @@ static class DeclarationSignatureIdentity
                 new BirOverride(), new BirOverride { DeclarationId = "second" } },
             Body = new IBirStatement[] { new BirExpressionStatement { Expr = inline },
                 new BirExpressionStatement { Expr = suspend }, new BirExpressionStatement { Expr = closure } } };
+        var nested = method with { Name = "nested", DeclarationId = "nested", Body = Array.Empty<IBirStatement>() };
+        method = method with { Body = method.Body.Value.Concat(new IBirStatement[] {
+            new BirLocalFunction { Decl = nested },
+            new BirExpressionStatement { Expr = new BirDefaultCarrier { Lifted = new[] { nested } } },
+        }).ToArray() };
         var constructor = new BirConstructor { Params = new[] { parameter } };
         var type = new BirClassDefinition { Name = "TypedCaptureOwner", Kind = "class",
-            Methods = new[] { method }, Ctors = new[] { constructor } };
+            Methods = new[] { method }, Ctors = new[] { constructor },
+            InheritedClassMethods = new[] { new BirInheritedClassMethod {
+                Params = method.Params, TypeParams = variables, Overrides = method.Overrides } },
+            InheritedDefaultMethods = new[] { new BirInheritedDefaultMethod {
+                Params = new TypeNode[] { methodFrame }, Overrides = method.Overrides } },
+            InheritedDefaultAccessors = new[] { new BirInheritedDefaultAccessor {
+                Params = new TypeNode[] { methodFrame }, Overrides = method.Overrides } } };
         var source = new BirFileDeclaration { FileClass = "TypedCaptureFile", Methods = new[] { method },
-            Types = new IBirTypeDeclaration[] { type } };
+            Types = new IBirTypeDeclaration[] { type,
+                new BirInterfaceDefinition { Name = "TypedCaptureInterface", Kind = "interface", Methods = new[] { nested } },
+                new BirEnumDefinition { Name = "TypedCaptureEnum", Kind = "enum", Methods = new[] { nested } } } };
         var captured = Capture(new[] { source })[0];
         var fileMethod = captured.Methods.Value[0];
         var ownedType = (BirClassDefinition)captured.Types.Value[0];
@@ -527,13 +552,51 @@ static class DeclarationSignatureIdentity
             || capturedInline.Params.Value[0].GenericParameterSignatureBounds.IsPresent
             || !capturedSuspend.Params.Value[0].GenericParameterSignatureBounds.HasValue
             || !capturedClosure.Params.Value[0].GenericParameterSignatureBounds.HasValue
-            || parameter.NominalParameterSignatureIdentity.IsPresent || lambdaParameter.NominalParameterSignatureIdentity.IsPresent
-            || source.Types.Value.Length != 1 || ReferenceEquals(method.Params.Value, capturedMethod.Params.Value)
+            || source.Methods.Value[0].Params.Value[0].NominalParameterSignatureIdentity.IsPresent
+            || ((BirClassDefinition)source.Types.Value[0]).Methods.Value[0].Params.Value[0].NominalParameterSignatureIdentity.IsPresent
+            || ((BirInlineLambda)((BirExpressionStatement)source.Methods.Value[0].Body.Value[0]).Expr.Value)
+                .Params.Value[0].NominalParameterSignatureIdentity.IsPresent
+            || !ReferenceEquals(source.Types.Value[0], type) || ReferenceEquals(method.Params.Value, capturedMethod.Params.Value)
             || !((BirOpaqueBytes)slot.Attrs.Value[0].Args.Value[0]).Bytes.Value.SequenceEqual(bytes)
-            || captured.Types.Value.Skip(1).OfType<BirClassDefinition>().Any(marker =>
+            || captured.Types.Value.Skip(3).OfType<BirClassDefinition>().Any(marker =>
                 marker.Vis.Value != "private" || !marker.Generated.Value || !marker.Mods.Value.Sealed.Value
                 || marker.TypeParams.Value.Any(variable => !variable.SpecialConstraints.Value.SequenceEqual(new[] { "allowsRefStruct" }))))
             throw new InvalidOperationException("Typed signature capture lost a lambda/constructor edge, source ownership or frozen metadata");
+        if (!ownedType.InheritedClassMethods.Value[0].SignatureOverrideDeclarations.Value.SequenceEqual(new[] { "first", "second" })
+            || !ownedType.InheritedClassMethods.Value[0].Params.Value[0].GenericParameterSignatureBounds.HasValue
+            || !ownedType.InheritedDefaultMethods.Value[0].SignatureOverrideDeclarations.Value.SequenceEqual(new[] { "first", "second" })
+            || !ownedType.InheritedDefaultAccessors.Value[0].SignatureOverrideDeclarations.Value.SequenceEqual(new[] { "first", "second" })
+            || !((BirLocalFunction)capturedMethod.Body.Value[3]).Decl.Value.Params.Value[0].NominalParameterSignatureIdentity.HasValue
+            || !((BirDefaultCarrier)((BirExpressionStatement)capturedMethod.Body.Value[4]).Expr.Value).Lifted.Value[0]
+                .Params.Value[0].GenericParameterSignatureBounds.HasValue)
+            throw new InvalidOperationException("Typed signature capture missed an inherited declaration or nested-function edge");
+        var nominalNames = new[] { slot.NominalParameterSignatureIdentity.Value,
+            ((BirInterfaceDefinition)captured.Types.Value[1]).Methods.Value[0].Params.Value[0].NominalParameterSignatureIdentity.Value,
+            ((BirEnumDefinition)captured.Types.Value[2]).Methods.Value[0].Params.Value[0].NominalParameterSignatureIdentity.Value,
+        }.Cast<TypeNode.Fqn>().Select(marker => marker.Name).ToArray();
+        var markerNames = captured.Types.Value.Skip(3).OfType<BirClassDefinition>().Select(marker => marker.Name.Value).ToHashSet();
+        var references = new HashSet<string>();
+        void MarkerReferences(TypeNode value)
+        {
+            if (value is not TypeNode.Fqn marker) return;
+            references.Add(marker.Name);
+            foreach (var argument in marker.Args ?? Array.Empty<TypeNode>()) MarkerReferences(argument);
+        }
+        captured.Rewrite(value => {
+            if (value is BirParameter capturedParameter)
+            {
+                if (capturedParameter.NominalParameterSignatureIdentity.HasValue) MarkerReferences(capturedParameter.NominalParameterSignatureIdentity.Value);
+                foreach (var bound in capturedParameter.GenericParameterSignatureBounds.OrEmpty()) MarkerReferences(bound);
+            }
+            if (value is BirLambdaParameter parameterLambda)
+            {
+                if (parameterLambda.NominalParameterSignatureIdentity.HasValue) MarkerReferences(parameterLambda.NominalParameterSignatureIdentity.Value);
+                foreach (var bound in parameterLambda.GenericParameterSignatureBounds.OrEmpty()) MarkerReferences(bound);
+            }
+            return value;
+        });
+        if (nominalNames.Distinct().Count() != 3 || markerNames.Count == 0 || !references.IsSubsetOf(markerNames))
+            throw new InvalidOperationException("Typed signature capture omitted a marker TypeDef or mixed declaration owners");
         Console.WriteLine("[typed signature capture] self-test OK (owner/method frames, bounds, overrides, lambda families, frozen metadata)");
     }
 
