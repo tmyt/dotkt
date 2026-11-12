@@ -4325,6 +4325,7 @@ internal sealed record BirClosureDefinition : BirGraphValue
     public OptionalField<IBirStatement[]> Body { get; set; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; set; }
     public OptionalField<string> SemanticOwner { get; set; }
+    public OptionalField<int> OuterTypeParamCount { get; set; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; set; }
     public OptionalField<SourceTypeFacts> KotlinSupertypesPre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -4361,6 +4362,7 @@ internal sealed record BirClosureDefinition : BirGraphValue
         WriteOptional(writer, "body", Body, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "typeParams", TypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "semanticOwner", SemanticOwner, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "outerTypeParamCount", OuterTypeParamCount, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         WriteOptional(writer, "kotlinSupertypesPre", KotlinSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
         writer.WriteEndObject();
@@ -4375,6 +4377,7 @@ internal sealed record BirClosureDefinition : BirGraphValue
         if (Body.IsPresent) result["body"] = Body.IsNull ? null : new JsonArray(Body.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (TypeParams.IsPresent) result["typeParams"] = TypeParams.IsNull ? null : new JsonArray(TypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (SemanticOwner.IsPresent) result["semanticOwner"] = SemanticOwner.IsNull ? null : JsonValue.Create(SemanticOwner.Value);
+        if (OuterTypeParamCount.IsPresent) result["outerTypeParamCount"] = OuterTypeParamCount.IsNull ? null : JsonValue.Create(OuterTypeParamCount.Value);
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         if (KotlinSupertypesPre.IsPresent) result["kotlinSupertypesPre"] = KotlinSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(KotlinSupertypesPre.Value);
         return result;

@@ -5448,8 +5448,9 @@ internal static partial class BirGraphJson
         OptionalField<IBirStatement[]> field4 = default;
         OptionalField<BirTypeParameter[]> field5 = default;
         OptionalField<string> field6 = default;
-        OptionalField<SourceBoundsSnapshot> field7 = default;
-        OptionalField<SourceTypeFacts> field8 = default;
+        OptionalField<int> field7 = default;
+        OptionalField<SourceBoundsSnapshot> field8 = default;
+        OptionalField<SourceTypeFacts> field9 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -5485,13 +5486,17 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 6);
                     field6 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
-                case "methodTypeParameterBoundsPre":
+                case "outerTypeParamCount":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.Read(ref reader));
+                    field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<int>.Null : OptionalField<int>.Of(reader.GetInt32());
+                    break;
+                case "methodTypeParameterBoundsPre":
+                    Seen(ref seen, 1UL << 8);
+                    field8 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.Read(ref reader));
                     break;
                 case "kotlinSupertypesPre":
-                    Seen(ref seen, 1UL << 8);
-                    field8 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.Read(ref reader));
+                    Seen(ref seen, 1UL << 9);
+                    field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.Read(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -5506,8 +5511,9 @@ internal static partial class BirGraphJson
             Body = field4,
             TypeParams = field5,
             SemanticOwner = field6,
-            MethodTypeParameterBoundsPre = field7,
-            KotlinSupertypesPre = field8,
+            OuterTypeParamCount = field7,
+            MethodTypeParameterBoundsPre = field8,
+            KotlinSupertypesPre = field9,
         };
     }
 

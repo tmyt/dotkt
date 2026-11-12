@@ -700,6 +700,7 @@
     },
     "birClosureDefinition": {
       "type": "object", "x-dotkt-model": { "name": "BirClosureDefinition", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": {
+        "outerTypeParamCount": { "type": "integer" },
         "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
         "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }
       } },

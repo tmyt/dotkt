@@ -2304,6 +2304,7 @@ internal static class BirGraphDom
                 case "body": break;
                 case "typeParams": break;
                 case "semanticOwner": break;
+                case "outerTypeParamCount": break;
                 case "methodTypeParameterBoundsPre": break;
                 case "kotlinSupertypesPre": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirClosureDefinition at {source.GetPath()}");
@@ -2317,6 +2318,7 @@ internal static class BirGraphDom
             Body = Field<IBirStatement[]>(fields, "body", value => ((JsonArray)value!).Select(item0 => ReadBirStatement(item0!)).ToArray()),
             TypeParams = Field<BirTypeParameter[]>(fields, "typeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             SemanticOwner = Field<string>(fields, "semanticOwner", value => value!.GetValue<string>()),
+            OuterTypeParamCount = Field<int>(fields, "outerTypeParamCount", value => value!.GetValue<int>()),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
         };

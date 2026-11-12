@@ -87,6 +87,17 @@ static class ExecutableBirCodec
             Recvs = new BirInlineReceivers { DispatchOwnerTypeArgs = new TypeNode[] { frame } },
             PreparedDefaults = new IBirExpression[] { null, new BirLocal { Name = "earlier", Sty = frame } },
         };
+        var captured = new BirNewClosure {
+            ClosureType = new TypeNode.Fqn("Captured"), Method = "invoke", Captures = Array.Empty<IBirExpression>(),
+            FuncType = new TypeNode.Fn(false, text, Array.Empty<TypeNode>()),
+            SynthClass = new BirClosureDefinition {
+                Name = "Captured", OuterTypeParamCount = 2,
+                TypeParams = new[] { new BirTypeParameter { Name = "O" }, new BirTypeParameter { Name = "T" } },
+                Fields = Array.Empty<BirCaptureDescriptor>(), Params = Array.Empty<BirLambdaParameter>(), Ret = text,
+                Body = new IBirStatement[] { new BirReturn { Value = new BirConstant {
+                    Type = text, Value = new BirLiteral.TextLiteral("captured") } } },
+            },
+        };
         foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1 })
         {
             var prepared = (BirCallInline)ReadExpression(codec,
@@ -95,6 +106,10 @@ static class ExecutableBirCodec
                 || prepared.PreparedDefaults.Value.Length != 2 || prepared.PreparedDefaults.Value[0] != null
                 || prepared.PreparedDefaults.Value[1] is not BirLocal { Name.Value: "earlier" })
                 throw new InvalidOperationException("Executable carrier lost prepared default or dispatch owner facts");
+            var capture = (BirNewClosure)ReadExpression(codec, EncodeExpressionDom(codec, captured.ToDom()));
+            if (capture.SynthClass.Value.OuterTypeParamCount.Value != 2
+                || capture.SynthClass.Value.TypeParams.Value.Length != 2)
+                throw new InvalidOperationException("Executable carrier lost a closure's enclosing generic frame");
         }
         var outgoing = source.ToDom();
         MaterializedBirPayload.HideSourceSpans(outgoing);

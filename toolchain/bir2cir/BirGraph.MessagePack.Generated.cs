@@ -12433,8 +12433,9 @@ internal static class BirGraphMessagePack
         OptionalField<IBirStatement[]> field4 = default;
         OptionalField<BirTypeParameter[]> field5 = default;
         OptionalField<string> field6 = default;
-        OptionalField<SourceBoundsSnapshot> field7 = default;
-        OptionalField<SourceTypeFacts> field8 = default;
+        OptionalField<int> field7 = default;
+        OptionalField<SourceBoundsSnapshot> field8 = default;
+        OptionalField<SourceTypeFacts> field9 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -12467,13 +12468,17 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 6);
                     field6 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "methodTypeParameterBoundsPre":
+                case "outerTypeParamCount":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field7 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
+                    break;
+                case "methodTypeParameterBoundsPre":
+                    Seen(ref seen, 1UL << 8);
+                    field8 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
                 case "kotlinSupertypesPre":
-                    Seen(ref seen, 1UL << 8);
-                    field8 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    Seen(ref seen, 1UL << 9);
+                    field9 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
                 default: throw new FormatException();
             }
@@ -12488,15 +12493,16 @@ internal static class BirGraphMessagePack
             Body = field4,
             TypeParams = field5,
             SemanticOwner = field6,
-            MethodTypeParameterBoundsPre = field7,
-            KotlinSupertypesPre = field8,
+            OuterTypeParamCount = field7,
+            MethodTypeParameterBoundsPre = field8,
+            KotlinSupertypesPre = field9,
         };
     }
 
     internal static void WriteBirClosureDefinition(ref MessagePackWriter writer, BirClosureDefinition value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Name.IsPresent ? 1 : 0) + (value.Fields.IsPresent ? 1 : 0) + (value.Params.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.SemanticOwner.IsPresent ? 1 : 0) + (value.MethodTypeParameterBoundsPre.IsPresent ? 1 : 0) + (value.KotlinSupertypesPre.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Name.IsPresent ? 1 : 0) + (value.Fields.IsPresent ? 1 : 0) + (value.Params.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.SemanticOwner.IsPresent ? 1 : 0) + (value.OuterTypeParamCount.IsPresent ? 1 : 0) + (value.MethodTypeParameterBoundsPre.IsPresent ? 1 : 0) + (value.KotlinSupertypesPre.IsPresent ? 1 : 0));
         if (value.Name.IsPresent)
         {
             writer.Write("name");
@@ -12578,6 +12584,15 @@ internal static class BirGraphMessagePack
             else
             {
                 IrMessagePack.WriteString(ref writer, value.SemanticOwner.Value);
+            }
+        }
+        if (value.OuterTypeParamCount.IsPresent)
+        {
+            writer.Write("outerTypeParamCount");
+            if (value.OuterTypeParamCount.IsNull) writer.WriteNil();
+            else
+            {
+                writer.Write(value.OuterTypeParamCount.Value);
             }
         }
         if (value.MethodTypeParameterBoundsPre.IsPresent)
