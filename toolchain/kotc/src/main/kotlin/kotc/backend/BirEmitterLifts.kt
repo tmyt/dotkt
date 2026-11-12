@@ -485,7 +485,7 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): BirExpression {
 		params = samParams, ret = ret, mods = samMods, suspendRet = ret.takeIf { sam.isSuspend }, overrides = listOf(samOverride), body = body)
 	savedSubst.forEach { (decl, prev) -> if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val fields = capPairs.map { (decl, fname) ->
-		BirCaptureDescriptor(fname, captureFieldType(decl), outer = true.takeIf { isExactOuterDeclaration(decl) })
+		BirFieldDeclaration(fname, captureFieldType(decl), outer = true.takeIf { isExactOuterDeclaration(decl) })
 	}
 	val ctorBody = capPairs.map { (decl, fname) ->
 		val outer = true.takeIf { isExactOuterDeclaration(decl) }
@@ -948,6 +948,39 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 			val retT = liftedFnType.ret
 			val body = if (fn.returnType.isUnit()) BirExpressionStatement(callE) else BirReturn(callE)
 			liftedFunction(lname, freeTps, parameters, retT, listOf(body))
+		}
+		liftedMethods.add(declaration)
+		return liftedDelegate(lname, resolvedFuncType, typeArgs)
+	}
+	// External unbound members do not enter the Kotlin-owner branch above. Their forwarder retains the
+	// frontend-selected constructed owner and signature, just like an ordinary projected instance call.
+	if (dispatchIdx >= 0 && boundRecv == null && !hasExt && ownerClass != null && clrName(ownerClass) != null) {
+		val regs = regularParams(fn)
+		val lname = freshLiftedMethodName("mref")
+		val freeTps = freeTypeParams(listOf(node.type))
+		val typeArgs = liftedTypeArguments(freeTps)
+		val declaration = withLiftedMethodFrame(freeTps) {
+			val liftedFuncType = birType(node.type) as TypeNode.Fn
+			val selfT = liftedFuncType.params.first()
+			val target = selectedDeclaration ?: if (fn.isFakeOverride) fn.resolveFakeOverride() ?: fn else fn
+			val targetOwner = target.parent as IrClass
+			val receiverType = ((node.type as IrSimpleType).arguments.first() as IrTypeProjection).type
+			val selectedOwner = (kotc.frontend.SelectedCallDeclarations.referenceOwnerAt(
+				sourcePathOf(node), node.endOffset, fn.name.asString(),
+			) ?: correspondingSupertypeInstantiation(receiverType, targetOwner, allowCapturedArguments = true))
+				?.let { birType(it) } ?: error("No selected reference owner for ${target.name} on $receiverType")
+			val parameters = listOf(BirParameter("__self", selfT)) +
+				regs.zip(liftedFuncType.params.drop(1)).map { (parameter, type) -> BirParameter(parameter.name.asString(), type) }
+			val arguments = regs.map { BirLocal(it.name.asString()) }
+			val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
+				?: error("validated .NET method reference lost its type arguments in its lifted method frame")
+			val call = BirCallInstance(ownerType = selectedOwner, method = fn.name.asString(), sig = overloadSignature(target),
+				typeArgs = liftedReferenceTypeArgs.takeIf { it.isNotEmpty() }, argTypes = regs.map { birType(it.type) },
+				ret = liftedFuncType.ret, recv = BirLocal("__self"), args = arguments,
+				anySlot = true.takeIf { isAnySlotMethod(fn) }, clrFlagsOperation = flagsOperation,
+				declarationId = memberDeclarationIdentity.takeUnless { selfT.containsStarProjection() })
+			val body = if (fn.returnType.isUnit()) BirExpressionStatement(call) else BirReturn(call)
+			liftedFunction(lname, freeTps, parameters, liftedFuncType.ret, listOf(body))
 		}
 		liftedMethods.add(declaration)
 		return liftedDelegate(lname, resolvedFuncType, typeArgs)
@@ -1624,7 +1657,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): BirExpression {
 	val stubBaseArg = BirConstant(type = TypeNode.Fqn("kotlin.String"), value = BirLiteral.TextLiteral(name))
 
 	val recvFieldType = if (bound) birType(capturedRecv!!.type) else null
-	val fields = if (bound) listOf(BirCaptureDescriptor("__recv", recvFieldType!!)) else emptyList()
+	val fields = if (bound) listOf(BirFieldDeclaration("__recv", recvFieldType!!)) else emptyList()
 	val ctorParams = if (bound) listOf(BirParameter("__recv", recvFieldType!!)) else emptyList()
 	val ctorBody = if (bound) listOf(BirSetField(TypeNode.Fqn(cname), BirThis(), "__recv", BirLocal("__recv"))) else emptyList()
 

@@ -112,11 +112,13 @@ internal class CallPlan(private val e: BirEmitter) {
 		buildString { binding.writeJson(this) }
 	}
 
+	fun bindingFacts(): List<BirCallBinding> = bindings.toList()
+
 	/** The call node under its plan — or the bare call when nothing was bound (no plan is emitted then: the positional
 	 *  array already IS the evaluation plan). */
 	fun wrap(call: BirExpression, type: TypeNode): BirExpression =
 		if (bindings.isEmpty()) call
-		else BirCallEvaluation(type, bindings.toList(), call, e.activeSemanticOwner ?: e.fileClass)
+		else BirCallEvaluation(type, bindingFacts(), call, e.activeSemanticOwner ?: e.fileClass)
 }
 
 /** Run `emit` with a fresh evaluation plan installed for `call`, hand back both. The plan is scoped: a nested call

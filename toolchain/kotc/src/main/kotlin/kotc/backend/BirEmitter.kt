@@ -2,6 +2,8 @@ package kotc.backend
 
 import kotc.bir.TypeNode
 import kotc.bir.BirNew
+import kotc.bir.BirField
+import kotc.bir.BirFieldDeclaration
 import kotc.bir.BirConstant
 import kotc.bir.BirLiteral
 import kotc.bir.BirSourcePoint
@@ -295,13 +297,18 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	 * string, allow-listed in verify-schema.py STR_OK. The leading comma makes it splice into a decl template's tail.
 	 */
 	internal fun posJson(node: IrElement?): String {
-		val loc = locationOf(node) ?: return ""
+		val position = sourcePosition(node) ?: return ""
+		return ",\"pos\":" + buildString { position.writeJson(this) }
+	}
+
+	internal fun sourcePosition(node: IrElement?): kotc.bir.BirDeclarationPosition? {
+		val loc = locationOf(node) ?: return null
 		// IrFileEntry.getLineAndColumnNumbers (behind locationOf) yields 0-based line/column here; emit the
 		// user-facing 1-based `File.kt:line` convention (editors, grep -n, compiler errors) so the diagnostic
 		// points at the real source line. line<0 = a file-only location (no offset) -> emit just the path.
 		val line = loc.line
-		return if (line >= 0) ""","pos":{"f":${str(loc.path)},"l":${line + 1},"c":${loc.column + 1}}"""
-			else ""","pos":{"f":${str(loc.path)}}"""
+		return if (line >= 0) kotc.bir.BirDeclarationPosition(loc.path, line + 1, loc.column + 1)
+			else kotc.bir.BirDeclarationPosition(loc.path)
 	}
 
 	// Statement provenance is independent of declaration diagnostics and survives moving the BIR body.
@@ -932,8 +939,12 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// use-site `new`/`field`/`setField` on the cell. bir2cir's SharedSyntheticSynthesis assembles the actual trivial class
 	// (single `v` field + its init ctor) into the file `types` from this registry. The element type is unrecoverable
 	// from the use-site nodes alone (a bare `field .v` read carries no type), so the registry is the required fact.
-	internal fun refTypesJson(): String = refTypes.values.joinToString(",") { fact ->
-		"""{"name":${str(fact.name)},"elem":${fact.elem.toJson()},"typeParams":[${fact.capturedDeclarations.joinToString(",") { it.toJson() }}]}"""
+	internal fun refTypeDeclarations(): List<kotc.bir.BirRefTypeDeclaration> = refTypes.values.map { fact ->
+		kotc.bir.BirRefTypeDeclaration(fact.name, fact.elem, fact.capturedDeclarations)
+	}
+
+	internal fun refTypesJson(): String = refTypeDeclarations().joinToString(",") { declaration ->
+		buildString { declaration.writeJson(this) }
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
@@ -1091,41 +1102,36 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			val bf = p.backingField ?: return@mapNotNull null
 			val init = (bf.initializer as? IrExpressionBody)?.expression?.let {
 				if (p.isConst) expr(it) else sourceMarkedValue(it)
-			} ?: "null"
-			val const = if (p.isConst) ""","const":true""" else ""
-			val companionProperty = if (companionReceiverJson(p) != null) {
-				val setterVisibility = p.setter?.let { visOf(it) } ?: visOf(p)
-				val setter = if (p.isVar) ""","companionSetterVisibility":${str(setterVisibility)}""" else ""
-				val storageReadOnly = !p.isVar || p.isDelegated
-				// A default field-backed companion extension has no accessor declaration for kotc to annotate. Preserve
-				// each accessor's source annotation separately; bir2cir owns the synthesized CLR MethodDefs and consumes
-				// these facts while materializing them.
-				val getterExplicitName = p.getter?.let { explicitClrNameValue(it) }
-				val setterExplicitName = p.setter?.let { explicitClrNameValue(it) }
-				val getterName = getterExplicitName
-					?.let { ""","companionGetterExplicitClrName":${str(it)}""" } ?: ""
-				val setterName = setterExplicitName
-					?.let { ""","companionSetterExplicitClrName":${str(it)}""" } ?: ""
-				val getterId = getterExplicitName?.let { p.getter }
-					?.let { declarationIdForPhysicalAllocation(it) }
-					?.let { ""","companionGetterDeclarationId":${str(it)}""" } ?: ""
-				val setterId = setterExplicitName?.let { p.setter }
-					?.let { declarationIdForPhysicalAllocation(it) }
-					?.let { ""","companionSetterDeclarationId":${str(it)}""" } ?: ""
-				""","companionPropertyMutable":${p.isVar},"companionStorageReadOnly":$storageReadOnly$setter$getterName$setterName$getterId$setterId"""
-			} else ""
+			}
+			val companionReceiver = companionReceiverType(p)
+			// Default field-backed companion extensions have no emitted accessor declarations. Preserve their
+			// annotations and identities as separate facts for bir2cir's synthesized accessors.
+			val getterExplicitName = if (companionReceiver != null) p.getter?.let { explicitClrNameValue(it) } else null
+			val setterExplicitName = if (companionReceiver != null) p.setter?.let { explicitClrNameValue(it) } else null
+			val getterId = getterExplicitName?.let { p.getter }?.let { declarationIdForPhysicalAllocation(it) }
+			val setterId = setterExplicitName?.let { p.setter }?.let { declarationIdForPhysicalAllocation(it) }
 			// A val, or a var whose setter is more restricted than the property, has a read-only projected field
 			// surface. An internal property's ordinary internal setter does not change its source mutability.
-			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != visOf(p))) ""","readOnly":true""" else ""
+			val readOnly = true.takeIf { !p.isVar || (p.setter != null && visOf(p.setter!!) != visOf(p)) }
 			// Delegated storage has the provider type, not the public value type. Its surface is the generated accessor.
 			// Every other field retains the source declaration's visibility; omitting it means public in BIR/CIR and would
 			// leak a private/internal top-level const into both the CLR surface and the reconstructed reference KLIB.
 				// An accessor-owned top-level surface keeps its field as private implementation storage. Calls on both
 				// accessor roles are routed through the complete method surface emitted below.
 				val v = if (p.isDelegated || accessorRoutedTopLevelProperty(p)) "private" else visOf(p)
-			val vis = if (v != "public") ""","vis":${str(v)}""" else ""
-			val attrs = if (v == "private" && accessorRoutedTopLevelProperty(p)) "" else ""","attrs":[${attrsJson(p.annotations)}]"""
-			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$const$vis$ro$companionProperty${lateinitFieldFlag(p)}${volatileFieldFlag(p)}${companionReceiverField(p, "field", p.name.asString())}$attrs}"""
+			val attrs = if (v == "private" && accessorRoutedTopLevelProperty(p)) null else sourceAttributes(p.annotations)
+			BirFieldDeclaration(bf.name.asString(), birType(bf.type), isStatic = true,
+				init = init?.let { BirField.Value(it) } ?: BirField.Null, isConst = true.takeIf { p.isConst },
+				vis = v.takeUnless { it == "public" }, readOnly = readOnly,
+				isLateinit = true.takeIf { p.isLateinit }, lateinitDeclarationId = if (p.isLateinit) declarationId(p.getter!!) else null,
+				isVolatile = true.takeIf { isVolatile(p) }, attrs = attrs,
+				companionReceiver = companionReceiver, companionMemberKind = companionReceiver?.let { "field" },
+				companionSourceName = companionReceiver?.let { p.name.asString() },
+				companionPropertyMutable = companionReceiver?.let { p.isVar },
+				companionStorageReadOnly = companionReceiver?.let { !p.isVar || p.isDelegated },
+				companionSetterVisibility = if (companionReceiver != null && p.isVar) p.setter?.let { visOf(it) } ?: visOf(p) else null,
+				companionGetterExplicitClrName = getterExplicitName, companionSetterExplicitClrName = setterExplicitName,
+				companionGetterDeclarationId = getterId, companionSetterDeclarationId = setterId)
 		}
 		// Preserve every companion as a separate semantic declaration. Must run BEFORE body emission so every value/type
 		// use resolves to the same representation-neutral identity.
@@ -1188,7 +1194,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// declaration string is identical, while deliberately retaining same-name/different-body entries for a loud
 		// downstream collision.
 		val types = (typeDefs + liftedTypes).distinct().joinToString(",")
-		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"properties":[$topPropRecords],"types":[$types],"refTypes":[${refTypesJson()}],"typeAliases":[${typeAliases.joinToString(",") { kotc.bir.SourceMetadataJson.encode(it) }}]}"""
+		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",") { field -> buildString { field.writeJson(this) } }}],"methods":[$methods],"properties":[$topPropRecords],"types":[$types],"refTypes":[${refTypesJson()}],"typeAliases":[${typeAliases.joinToString(",") { kotc.bir.SourceMetadataJson.encode(it) }}]}"""
 	}
 
 	/** Emit a flattened `inner class`: it captures the enclosing instance as a leading `__outer` ctor param/field. */

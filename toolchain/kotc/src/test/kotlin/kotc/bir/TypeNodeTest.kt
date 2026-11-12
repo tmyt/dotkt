@@ -22,6 +22,32 @@ import org.jetbrains.kotlin.types.Variance
 
 class TypeNodeTest {
     @Test
+    fun declarationModelsKeepDefaultsAttributesAndIdentityFactsTyped() {
+        val frame = TypeNode.Tv("method", 0)
+        val textType = TypeNode.Fqn("kotlin.String")
+        val value = BirConstant(textType, BirLiteral.TextLiteral("tag"))
+        val annotation = BirAttribute(TypeNode.Fqn("demo.Tag"), listOf(textType), listOf(value))
+        val default = BirDefaultBody(0, BirCast(frame, value))
+        val parameter = BirParameter("input", frame, mods = BirModifiers(isContext = true),
+            defaultBir = default, attrs = listOf(annotation))
+        val implementation = BirInheritedImplementation(TypeNode.Fqn("demo.Base"), "read", "method", 1,
+            listOf(TypeParameterDeclaration("T")), sig = listOf(frame))
+        val declaration = BirFunctionDeclaration(listOf(parameter), frame, listOf(BirReturn(BirLocal("input"))),
+            name = "read", declarationId = "selected-declaration", attrs = listOf(annotation),
+            inheritedImplementation = implementation, pos = BirDeclarationPosition("Source.kt"))
+        assertSame(parameter, declaration.params.single())
+        assertSame(default, declaration.params.single().defaultBir)
+        assertSame(annotation, declaration.attrs!!.single())
+        assertSame(value, annotation.args.single())
+        assertEquals(frame, declaration.inheritedImplementation!!.sig!!.single())
+        assertEquals("selected-declaration", declaration.declarationId)
+        assertEquals(null, parameter.defaultValue)
+        assertEquals("""{"attr":{"t":"fqn","name":"demo.Tag"},"argTypes":[{"t":"fqn","name":"kotlin.String"}],"args":[{"k":"const","type":{"t":"fqn","name":"kotlin.String"},"value":"tag"}]}""",
+            buildString { annotation.writeJson(this) })
+        assertEquals("""{"f":"Source.kt"}""", buildString { declaration.pos!!.writeJson(this) })
+    }
+
+    @Test
     fun sourceInlineCarrierKeepsBodiesCapturesAndOmittedSlotsTyped() {
         val frame = TypeNode.Tv("method", 1)
         val value = BirLocal("value", sty = frame)

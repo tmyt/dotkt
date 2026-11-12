@@ -301,12 +301,27 @@
       "properties": { "index": { "type": "integer" }, "body": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["index", "body"], "additionalProperties": false
     },
+    "birAttributeNamedArgument": {
+      "type": "object", "x-dotkt-model": { "name": "BirAttributeNamedArgument", "domain": "birCoreValues" },
+      "properties": { "kind": { "type": "string" }, "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "value": { "$ref": "#/$defs/birExpressionNode" } },
+      "required": ["kind", "name", "type", "value"], "additionalProperties": false
+    },
+    "birAttribute": {
+      "type": "object", "x-dotkt-model": { "name": "BirAttribute", "domain": "birCoreValues" },
+      "properties": {
+        "attr": { "$ref": "#/$defs/type" }, "attrClr": { "type": "boolean" },
+        "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "args": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
+        "namedArgs": { "type": "array", "items": { "$ref": "#/$defs/birAttributeNamedArgument" } }
+      },
+      "required": ["attr", "argTypes", "args"], "additionalProperties": false
+    },
     "birParameter": {
       "type": "object", "x-dotkt-model": { "name": "BirParameter", "domain": "birCoreValues" },
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "outer": { "type": "boolean" },
         "mods": { "$ref": "#/$defs/birModifiers" }, "default": { "$ref": "#/$defs/birExpressionNode", "x-dotkt-kotlin-name": "defaultValue" },
-        "defaultBir": { "$ref": "#/$defs/birDefaultBody" }, "ctxFnType": { "type": "integer" }, "sharedCellType": { "$ref": "#/$defs/type" }
+        "defaultBir": { "$ref": "#/$defs/birDefaultBody" }, "ctxFnType": { "type": "integer" }, "sharedCellType": { "$ref": "#/$defs/type" },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } }
       },
       "required": ["name", "type"], "additionalProperties": false
     },
@@ -320,6 +335,19 @@
       "properties": { "k": { "const": "localFun" }, "id": { "type": "string" }, "decl": { "$ref": "#/$defs/birFunctionDeclaration" } },
       "required": ["k", "id", "decl"], "additionalProperties": false
     },
+    "birInheritedImplementation": {
+      "type": "object", "x-dotkt-model": { "name": "BirInheritedImplementation", "domain": "birCoreValues" },
+      "properties": {
+        "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string" }, "arity": { "type": "integer" },
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "sig": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+      },
+      "required": ["owner", "member", "kind", "arity", "typeParams"], "additionalProperties": false
+    },
+    "birDeclarationPosition": {
+      "type": "object", "x-dotkt-model": { "name": "BirDeclarationPosition", "domain": "birCoreValues" },
+      "properties": { "f": { "type": "string" }, "l": { "type": "integer" }, "c": { "type": "integer" } },
+      "required": ["f"], "additionalProperties": false
+    },
     "birFunctionDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues" },
       "properties": {
@@ -329,6 +357,13 @@
         "body": { "type": "array", "items": { "$ref": "#/$defs/birStatementNode" } }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
         "semanticOwner": { "type": "string" }, "declarationId": { "type": "string" }, "mods": { "$ref": "#/$defs/birModifiers" }, "suspendRet": { "$ref": "#/$defs/type" },
         "overrides": { "type": "array", "items": { "$ref": "#/$defs/birOverride" } },
+        "explicitClrName": { "type": "string" }, "kotlinStatic": { "type": "boolean" },
+        "abstract": { "type": "boolean", "x-dotkt-kotlin-name": "isAbstract" }, "objectOverride": { "type": "boolean" }, "vis": { "type": "string" },
+        "companionReceiver": { "type": "string", "x-dotkt-kotlin-json-type": true }, "companionMemberKind": { "type": "string" }, "companionSourceName": { "type": "string" },
+        "retCtxFnType": { "type": "integer" }, "attrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } }, "pos": { "$ref": "#/$defs/birDeclarationPosition" },
+        "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" }, "propertyAssociation": { "type": "string" },
+        "eventProperty": { "type": "boolean" }, "fakeOverride": { "type": "boolean" },
+        "inheritedImplementation": { "$ref": "#/$defs/birInheritedImplementation" },
         "_syntheticTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" }, "x-dotkt-kotlin-name": "syntheticTypeArgs" }
       },
       "required": ["params", "ret", "body"], "additionalProperties": false
@@ -339,9 +374,35 @@
         "params": { "type": "array", "items": { "$ref": "#/$defs/birParameter" } },
         "baseArgs": { "oneOf": [{ "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } }, { "type": "null" }] },
         "delegationSig": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "thisArgs": { "oneOf": [{ "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } }, { "type": "null" }] },
+        "delegationBindings": { "type": "array", "items": { "$ref": "#/$defs/birCallBinding" } },
+        "delegationOuterSlot": { "type": "integer" }, "delegationDeclarationId": { "type": "string" },
+        "declarationId": { "type": "string" }, "declarationSourceName": { "type": "string" }, "vis": { "type": "string" },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } },
         "body": { "type": "array", "items": { "$ref": "#/$defs/birStatementNode" } }
       },
       "required": ["params", "baseArgs", "body"], "additionalProperties": false
+    },
+    "birFieldDeclaration": {
+      "type": "object", "x-dotkt-model": { "name": "BirFieldDeclaration", "domain": "birCoreValues" },
+      "properties": {
+        "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "static": { "type": "boolean", "x-dotkt-kotlin-name": "isStatic" },
+        "init": { "oneOf": [{ "$ref": "#/$defs/birExpressionNode" }, { "type": "null" }] }, "vis": { "type": "string" },
+        "readOnly": { "type": "boolean" }, "initOnly": { "type": "boolean" }, "const": { "type": "boolean", "x-dotkt-kotlin-name": "isConst" },
+        "kotlinStatic": { "type": "boolean" }, "outer": { "type": "boolean" }, "lateinit": { "type": "boolean", "x-dotkt-kotlin-name": "isLateinit" },
+        "lateinitDeclarationId": { "type": "string" }, "volatile": { "type": "boolean", "x-dotkt-kotlin-name": "isVolatile" },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } },
+        "companionReceiver": { "type": "string", "x-dotkt-kotlin-json-type": true }, "companionMemberKind": { "type": "string" }, "companionSourceName": { "type": "string" },
+        "companionPropertyMutable": { "type": "boolean" }, "companionStorageReadOnly": { "type": "boolean" }, "companionSetterVisibility": { "type": "string" },
+        "companionGetterExplicitClrName": { "type": "string" }, "companionSetterExplicitClrName": { "type": "string" },
+        "companionGetterDeclarationId": { "type": "string" }, "companionSetterDeclarationId": { "type": "string" }
+      },
+      "required": ["name", "type"], "additionalProperties": false
+    },
+    "birRefTypeDeclaration": {
+      "type": "object", "x-dotkt-model": { "name": "BirRefTypeDeclaration", "domain": "birCoreValues" },
+      "properties": { "name": { "type": "string" }, "elem": { "$ref": "#/$defs/type" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } } },
+      "required": ["name", "elem", "typeParams"], "additionalProperties": false
     },
     "birClassDefinition": {
       "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues" },
@@ -349,7 +410,7 @@
         "name": { "type": "string" }, "kind": { "const": "class" }, "generated": { "const": true }, "base": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
         "companionCaptureOwner": { "type": "string" },
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "semanticOwner": { "type": "string" },
-        "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "fields": { "type": "array", "items": { "$ref": "#/$defs/birCaptureDescriptor" } },
+        "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "fields": { "type": "array", "items": { "$ref": "#/$defs/birFieldDeclaration" } },
         "ctors": { "type": "array", "items": { "$ref": "#/$defs/birConstructor" } }, "methods": { "type": "array", "items": { "$ref": "#/$defs/birFunctionDeclaration" } }
       },
       "required": ["name", "kind", "generated", "base", "interfaces", "fields", "ctors", "methods"], "additionalProperties": false
