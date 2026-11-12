@@ -38,6 +38,14 @@
       "type": "string", "x-dotkt-csharp-type": "SourceBoundsSnapshot", "x-dotkt-csharp-codec": "SourceBoundsSnapshot",
       "x-dotkt-json-content": "#/$defs/sourceMethodBounds"
     },
+    "eventPropertySourceFacts": {
+      "type": "object", "x-dotkt-model": { "name": "EventPropertySourceFacts", "domain": "birLoweringValues" },
+      "properties": {
+        "name": { "type": ["string", "null"] }, "kind": { "enum": ["get"] },
+        "association": { "type": ["string", "null"] }, "event": { "type": ["string", "null"] },
+        "inherited": { "type": "boolean" }
+      }, "required": ["name", "kind", "association"], "additionalProperties": false
+    },
 
     "birSourceTypeAlias": { "$ref": "kotlin-typealias.schema.json", "x-dotkt-model": { "name": "SourceTypeAlias" } },
     "birTypeDeclaration": {
@@ -400,6 +408,7 @@
         "retKotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "declarationSourceName": { "type": "string" },
         "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
+        "kotlinPropertyAccessorCarrier": { "$ref": "#/$defs/eventPropertySourceFacts" },
         "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
       } },
       "properties": {

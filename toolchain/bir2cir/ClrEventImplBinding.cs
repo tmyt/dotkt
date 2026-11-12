@@ -4,6 +4,8 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // .NET EVENT IMPLEMENT/RAISE binding (§4.2/§4.3 of design-clr-event-model.md) — the Kotlin↔CLR relation for a Kotlin
 // class that IMPLEMENTS a CLR interface event (`class ViewModelBase : INotifyPropertyChanged { override val
@@ -32,49 +34,116 @@ static class ClrEventImplBinding
 
     // Event accessors adopt their native delegate slot later. Keep Kotlin's complete handler type first,
     // including nominal nullability and covariant Nothing overrides, not only ordinary function shapes.
-    public static void PreserveSourceFacts(IEnumerable<JsonNode> roots)
+    public static BirFileDeclaration[] PreserveSourceFacts(IReadOnlyList<BirFileDeclaration> roots)
     {
-        void Preserve(JsonObject owner)
+        static OptionalField<string> Present(OptionalField<string> field) => field.HasValue ? field : OptionalField<string>.Null;
+        OptionalField<BirFunctionDeclaration[]> Methods(OptionalField<BirFunctionDeclaration[]> methods,
+            IEnumerable<(OptionalField<string> Name, OptionalField<string> Association)> events)
         {
-            if (owner["methods"] is JsonArray inheritedAccessors)
-                foreach (var getter in inheritedAccessors.OfType<JsonObject>().Where(method =>
-                    method["fakeOverride"]?.GetValue<bool>() == true
-                    && method["eventProperty"]?.GetValue<bool>() == true
-                    && Str(method[KotlinPropertyAccessors.KindKey]) == "get"))
-                    getter[KotlinPropertyAccessors.MetadataCarrierKey] = new JsonObject
-                    {
-                        ["name"] = Str(getter[KotlinPropertyAccessors.SourceNameKey]), ["kind"] = "get",
-                        ["association"] = Str(getter[KotlinPropertyAccessors.AssociationKey]), ["inherited"] = true,
-                    };
-            var events = (owner["clrEvents"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>();
-            var forwarders = (owner["clrEventForwarders"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>();
-            if (owner["methods"] is JsonArray accessors)
-                foreach (var declaration in events.Concat(forwarders))
-                    foreach (var getter in accessors.OfType<JsonObject>().Where(method =>
-                        Str(method[KotlinPropertyAccessors.KindKey]) == "get"
-                        && Str(method[KotlinPropertyAccessors.AssociationKey]) is string association
-                        && association == Str(declaration[KotlinPropertyAccessors.AssociationKey])))
-                        getter[KotlinPropertyAccessors.MetadataCarrierKey] = new JsonObject
-                        {
-                            ["name"] = Str(getter[KotlinPropertyAccessors.SourceNameKey]),
-                            ["kind"] = "get",
-                            ["association"] = Str(declaration[KotlinPropertyAccessors.AssociationKey]),
-                            ["event"] = Str(declaration["name"]),
-                        };
-            if (owner["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
+            if (!methods.HasValue) return methods;
+            return methods.Value.Select(method => {
+                var carrier = method.KotlinPropertyAccessorCarrier;
+                if (method.PropertyAccessor.OrDefault() == "get")
                 {
-                    method.Remove("eventProperty");
-                    if (method["body"] is JsonArray { Count: > 0 } body
-                        && Str(body[0]?["k"]) == "clrEventAccessor"
-                        && Str(body[0]?["kind"]) is "add" or "remove"
-                        && method["params"] is JsonArray { Count: 1 } parameters)
-                        parameters[0]["kotlinType"] ??= parameters[0]["type"].ToJsonString();
+                    if (method.FakeOverride.OrDefault() && method.EventProperty.OrDefault())
+                        carrier = new EventPropertySourceFacts {
+                            Name = Present(method.PropertyName), Kind = "get",
+                            Association = Present(method.PropertyAssociation), Inherited = true,
+                        };
+                    if (method.PropertyAssociation.HasValue)
+                        foreach (var declaration in events)
+                            if (method.PropertyAssociation.Value == declaration.Association.OrDefault())
+                                carrier = new EventPropertySourceFacts {
+                                    Name = Present(method.PropertyName), Kind = "get",
+                                    Association = Present(declaration.Association), Event = Present(declaration.Name),
+                                };
                 }
-            if (owner["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>()) Preserve(type);
+                var parameters = method.Params;
+                if (method.Body.OrEmpty().FirstOrDefault() is BirClrEventAccessor accessor
+                    && accessor.Kind.OrDefault() is "add" or "remove"
+                    && parameters.OrDefault() is { Length: 1 } slots && !slots[0].KotlinType.HasValue)
+                    parameters = new[] { slots[0] with { KotlinType = slots[0].Type } };
+                return method with { EventProperty = default, KotlinPropertyAccessorCarrier = carrier, Params = parameters };
+            }).ToArray();
         }
-        foreach (var root in roots.OfType<JsonObject>()) Preserve(root);
+        var none = Array.Empty<(OptionalField<string>, OptionalField<string>)>();
+        IBirTypeDeclaration Owner(IBirTypeDeclaration declaration) => declaration switch {
+            BirClassDefinition owner => owner with { Methods = Methods(owner.Methods,
+                owner.ClrEvents.OrEmpty().Select(value => (value.Name, value.PropertyAssociation))
+                    .Concat(owner.ClrEventForwarders.OrEmpty().Select(value => (value.Name, value.PropertyAssociation)))) },
+            BirInterfaceDefinition owner => owner with { Methods = Methods(owner.Methods, none) },
+            BirEnumDefinition owner => owner with { Methods = Methods(owner.Methods, none) },
+            _ => throw new InvalidOperationException("Unaccounted event-source owner: " + declaration.GetType().Name),
+        };
+        return roots.Select(root => root with { Methods = Methods(root.Methods, none),
+            Types = root.Types.HasValue ? root.Types.Value.Select(Owner).ToArray() : root.Types,
+        }).ToArray();
+    }
+
+    internal static void SelfTestSourceFacts()
+    {
+        var handler = new TypeNode.Fqn("probe.Handler", new TypeNode[] { new TypeNode.Tv("method", 2) });
+        var earlier = new TypeNode.Nullable(handler);
+        BirFunctionDeclaration Getter(string name, string association) => new() {
+            Name = "read", PropertyName = name, PropertyAccessor = "get", PropertyAssociation = association,
+            FakeOverride = true, EventProperty = true,
+        };
+        BirFunctionDeclaration Accessor(string kind, OptionalField<TypeNode> previous) => new() {
+            Name = kind, Body = new IBirStatement[] { new BirClrEventAccessor { Kind = kind, Event = "Changed" } },
+            Params = new[] { new BirParameter { Name = "handler", Type = handler, KotlinType = previous } },
+        };
+        var methods = new[] { Getter("Changed.日本", "decl"), Getter("Forwarded", "forward"),
+            Getter("Inherited", "base"), Accessor("add", default), Accessor("remove", earlier), Accessor("raise", default) };
+        var owner = new BirClassDefinition { Kind = "class", Name = "probe.Owner", Methods = methods,
+            ClrEvents = new[] { new BirClrEventBacking { Name = "Changed", PropertyAssociation = "decl" } },
+            ClrEventForwarders = new[] { new BirClrEventForwarder { Name = "Forwarded", PropertyAssociation = "forward" } },
+        };
+        var input = new BirFileDeclaration { Methods = new[] { methods[2] }, Types = new IBirTypeDeclaration[] {
+            owner, new BirInterfaceDefinition { Kind = "interface", Methods = new[] { methods[2] } },
+            new BirEnumDefinition { Kind = "enum", Methods = new[] { methods[2] } },
+        } };
+        var result = PreserveSourceFacts(new[] { input }).Single();
+        var rewritten = ((BirClassDefinition)result.Types.Value[0]).Methods.Value;
+        var declared = rewritten[0].KotlinPropertyAccessorCarrier.Value;
+        var forwarded = rewritten[1].KotlinPropertyAccessorCarrier.Value;
+        var inherited = rewritten[2].KotlinPropertyAccessorCarrier.Value;
+        if (declared.Name.Value != "Changed.日本" || declared.Association.Value != "decl"
+            || declared.Event.Value != "Changed" || declared.Inherited.IsPresent
+            || forwarded.Event.Value != "Forwarded" || forwarded.Association.Value != "forward"
+            || !inherited.Inherited.Value || inherited.Event.IsPresent
+            || rewritten.Any(method => method.EventProperty.IsPresent)
+            || rewritten[3].Params.Value[0].KotlinType.Value != handler
+            || rewritten[4].Params.Value[0].KotlinType.Value != earlier
+            || rewritten[5].Params.Value[0].KotlinType.IsPresent
+            || !methods[0].EventProperty.Value || methods[0].KotlinPropertyAccessorCarrier.IsPresent
+            || methods[3].Params.Value[0].KotlinType.IsPresent)
+            throw new InvalidOperationException("Typed event source capture lost association, source type precedence or input ownership");
+        foreach (var method in new[] { result.Methods.Value[0],
+            ((BirInterfaceDefinition)result.Types.Value[1]).Methods.Value[0],
+            ((BirEnumDefinition)result.Types.Value[2]).Methods.Value[0] })
+            if (!method.KotlinPropertyAccessorCarrier.Value.Inherited.Value || method.EventProperty.IsPresent)
+                throw new InvalidOperationException("Typed event source capture missed a declaration owner");
+        // An explicit selected declaration supersedes inherited bookkeeping.
+        var overriding = owner with { ClrEventForwarders = new[] {
+            new BirClrEventForwarder { Name = "Selected", PropertyAssociation = "decl" },
+        } };
+        var selected = ((BirClassDefinition)PreserveSourceFacts(new[] { input with {
+            Types = new IBirTypeDeclaration[] { overriding },
+        } }).Single().Types.Value[0]).Methods.Value[0].KotlinPropertyAccessorCarrier.Value;
+        if (selected.Event.Value != "Selected" || selected.Inherited.IsPresent)
+            throw new InvalidOperationException("Typed event source capture changed declaration precedence");
+        var nullFacts = new EventPropertySourceFacts { Name = OptionalField<string>.Null,
+            Kind = "get", Association = OptionalField<string>.Null, Inherited = true };
+        using var stream = new System.IO.MemoryStream();
+        using (var writer = new System.Text.Json.Utf8JsonWriter(stream)) nullFacts.WriteJson(writer);
+        var reader = new System.Text.Json.Utf8JsonReader(stream.ToArray());
+        if (!reader.Read()) throw new InvalidOperationException();
+        var roundtrip = BirGraphJson.ReadEventPropertySourceFacts(ref reader);
+        if (reader.Read() || !roundtrip.Name.IsNull || !roundtrip.Association.IsNull
+            || roundtrip.Event.IsPresent || !roundtrip.Inherited.Value
+            || !JsonNode.DeepEquals(nullFacts.ToDom(), roundtrip.ToDom()))
+            throw new InvalidOperationException("Typed event facts changed absent/null metadata at the codec boundary");
+        Console.WriteLine("[event source facts] self-test OK (declared/forwarded/inherited association, source frame, first writer, typed leaf codec)");
     }
 
     // Snapshot declaration recipes before per-file lowering mutates their bodies. A local override uses the base

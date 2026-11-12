@@ -8,6 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 from bir_lowering_models import outputs
+from bir_core_models import outputs as source_outputs
 
 
 class PhaseCompositionTests(unittest.TestCase):
@@ -16,6 +17,14 @@ class PhaseCompositionTests(unittest.TestCase):
 
     def test_current_profiles_are_closed(self):
         self.assertEqual(2, len(outputs(ROOT, self.definitions)))
+
+    def test_lowering_value_facts_stay_out_of_the_source_profile(self):
+        lowering = "\n".join(outputs(ROOT, self.definitions).values())
+        source = "\n".join(source_outputs(ROOT, self.definitions).values())
+        self.assertIn("record EventPropertySourceFacts", lowering)
+        self.assertIn("KotlinPropertyAccessorCarrier", lowering)
+        self.assertNotIn("EventPropertySourceFacts", source)
+        self.assertNotIn("kotlinPropertyAccessorCarrier", source)
 
     def test_consumed_node_fact_requires_a_type(self):
         self.definitions["cirNewClrNode"]["x-dotkt-model"]["sourceConsumed"].append("untypedCurrentFact")
