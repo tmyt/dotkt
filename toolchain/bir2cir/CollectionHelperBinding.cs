@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // Select the binding-owned Kotlin implementation while receiver arguments still denote source types.
 // The resulting ordinary declaration-bound call participates in demand analysis and frame materialization;
@@ -12,7 +13,8 @@ static class CollectionHelperBinding
     const string HelperOwner = "kotlin.collections.ClrMapDefaultsKt";
 
     public static void Apply(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references,
-        IReadOnlyDictionary<string, string> aliases, Action<Action<JsonObject>> prepareHelpers = null)
+        IReadOnlyDictionary<string, string> aliases,
+        Action<Action<JsonObject>, Func<BirCallStatic, BirCallStatic>> prepareHelpers = null)
     {
         var inputs = roots.ToArray();
         var applicationOrder = new InnerApplicationOrder(inputs, references);
@@ -38,9 +40,8 @@ static class CollectionHelperBinding
         bool IsInterface(string owner) => localKinds.TryGetValue(owner, out var kind) ? kind == "interface"
             : references != null && references.TryResolveClrOwner(owner, out _, out var referencedKind) && referencedKind == "interface";
 
-        string SelectHelper(string owner, string name, int arity, JsonArray signature)
+        string SelectHelper(string owner, string name, int arity, TypeNode[] parameters)
         {
-            var parameters = signature.Select(TypeJson.Read).ToArray();
             var matches = localHelpers.Where(entry => entry.Owner == owner).Select(entry => entry.Method)
                 .Where(method => Text(method["name"]) == name
                 && method["static"]?.GetValue<bool>() == true
@@ -65,16 +66,17 @@ static class CollectionHelperBinding
             _ => argument,
         };
 
-        void BindAuthoredCall(JsonObject call)
+        BirCallStatic BindAuthoredCall(BirCallStatic call)
         {
-            var arguments = call["typeArgs"] as JsonArray;
-            call[DeclarationIdentityBinding.Key] = SelectHelper(TypeJson.OwnerName(call["owner"]),
-                Text(call["method"]), arguments?.Count ?? 0, (JsonArray)call["sig"]);
-            if (arguments != null)
-                call["typeArgs"] = new JsonArray(arguments.Select(TypeJson.Read).Select(SourceArgument).Select(TypeJson.Write).ToArray());
+            var arguments = call.TypeArgs;
+            return call with {
+                DeclarationId = SelectHelper(((TypeNode.Fqn)call.Owner.Value).Name,
+                    call.Method.Value, arguments.HasValue ? arguments.Value.Length : 0, call.Sig.Value),
+                TypeArgs = arguments.HasValue ? arguments.Value.Select(SourceArgument).ToArray() : arguments,
+            };
         }
 
-        prepareHelpers?.Invoke(BindAuthoredCall);
+        prepareHelpers?.Invoke(call => FaithfulHints.BindHelper(call, BindAuthoredCall), BindAuthoredCall);
 
         JsonNode Walk(JsonNode node, MemberCallSubstitution.SubstCtx context)
         {
@@ -162,7 +164,7 @@ static class CollectionHelperBinding
             var sourceArguments = ((JsonArray)call["typeArgs"]).Select(TypeJson.Read).Select(SourceArgument).ToArray();
             call["typeArgs"] = new JsonArray(sourceArguments.Select(TypeJson.Write).ToArray());
             call[DeclarationIdentityBinding.Key] = SelectHelper(TypeJson.OwnerName(call["owner"]),
-                Text(call["method"]), sourceArguments.Length, (JsonArray)call["sig"]);
+                Text(call["method"]), sourceArguments.Length, ((JsonArray)call["sig"]).Select(TypeJson.Read).ToArray());
             var result = obj["sty"] ?? obj["ret"];
             call["ret"] = result?.DeepClone();
             call["sty"] = result?.DeepClone();
@@ -228,15 +230,24 @@ static class CollectionHelperBinding
         JsonObject Render() => FaithfulHints.CollToString(new JsonObject { ["k"] = "local", ["name"] = "value" },
             FaithfulHints.CollKind.Coll, new TypeNode[] { variable });
         JsonObject Operand() => new JsonObject { ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(collection) };
-        Apply(new[] { root }, null, aliases, bind =>
+        var typedArguments = new IBirExpression[] { new BirLocal { Name = "value" } };
+        BirCallStatic typedRender = null;
+        Apply(new[] { root }, null, aliases, (_, bind) =>
             FaithfulHints.WithHelperBinding(bind, () => {
+                typedRender = bind(new BirCallStatic {
+                    Owner = new TypeNode.Fqn("kotlin.collections.ClrCollectionDefaultsKt"), Method = "clrCollToString",
+                    Sig = new TypeNode[] { collection }, TypeArgs = new TypeNode[] { variable }, Args = typedArguments,
+                });
                 body.Add(Render());
                 body.Add(new JsonObject { ["k"] = "concat", ["parts"] = new JsonArray(Operand()) });
                 body.Add(new JsonObject { ["k"] = "objMethod", ["method"] = "toString", ["recv"] = Operand() });
                 ObjectSlotRename.Apply(root);
                 FaithfulHintRecognition.Apply(root, null, new HashSet<string>());
             }));
-        if (Text(body[0][DeclarationIdentityBinding.Key]) != "render-collection"
+        if (typedRender.DeclarationId.Value != "render-collection"
+            || !ReferenceEquals(typedRender.Args.Value, typedArguments)
+            || typedRender.TypeArgs.Value.Single() != variable
+            || Text(body[0][DeclarationIdentityBinding.Key]) != "render-collection"
             || Text(body[1]["parts"][0][DeclarationIdentityBinding.Key]) != "render-collection"
             || Text(body[2][DeclarationIdentityBinding.Key]) != "render-collection"
             || Render()[DeclarationIdentityBinding.Key] != null)
