@@ -2381,18 +2381,6 @@ internal fun BirEmitter.plainExternalTopLevelCall(call: IrCall, callee: IrSimple
 		clrAwaitBridge = suspension.clrAwaitBridge, awaitResult = suspension.awaitResult, companionReceiver = companionReceiver)
 }
 
-/**
- * `,"ret":${fqnJson("kotlin.Int")}` for a generic call/member access: the concrete result type is known here (FIR-resolved
- * `call.type`), so ilemit need not reflect the un-baked builder's return type (which stays `!0`/`!!0` and
- * would mis-drive value-type boxing). Only emitted for the generic/constructed paths to stay non-invasive.
- */
-internal fun BirEmitter.retHint(generic: Boolean, t: IrType): String =
-	if (generic) ""","ret":${birType(t).toJson()}""" else ""
-
-/** Like [retHint] but with a pre-computed return-type string (e.g. a suspend call's kickoff `Task<T>`). */
-internal fun BirEmitter.retHintStr(generic: Boolean, ret: TypeNode): String =
-	if (generic) ""","ret":${ret.toJson()}""" else ""
-
 /** Neutral metadata tag marking a call whose callee is a `suspend` function. kotc records only the FACT
  *  (mirroring the `"suspend":true` fn-decl flag); the coroutine LOWERING (await / state machine / Task ABI)
  *  is a DEFERRED downstream layer that consumes this tag. kotc does NO coroutine lowering. */
@@ -2410,12 +2398,6 @@ internal fun BirEmitter.sourceCallSuspension(callee: IrFunction): SourceCallSusp
 	if (callee.annotations.none { it.type.classFqName?.asString() == "kotlin.clr.ClrAwaitBridge" })
 		return SourceCallSuspension.Plain
 	return SourceCallSuspension(true, true, birType(callee.returnType))
-}
-
-internal fun BirEmitter.suspendCallTag(callee: IrFunction): String {
-	val facts = sourceCallSuspension(callee)
-	if (facts.suspendCall == null) return ""
-	return ""","suspendCall":true${facts.awaitResult?.let { ""","clrAwaitBridge":true,"awaitResult":${it.toJson()}""" }.orEmpty()}"""
 }
 
 /** Preserve dll2klib's compiler-owned semantic role for a metadata-only CLR [Flags] enum operation. kotc does not
@@ -2445,23 +2427,6 @@ internal fun BirEmitter.calleeOwnerType(decl: org.jetbrains.kotlin.ir.declaratio
 	return owner?.let { TypeNode.Fqn(it) }
 }
 
-internal fun BirEmitter.calleeOwnerTag(decl: org.jetbrains.kotlin.ir.declarations.IrDeclaration): String =
-	calleeOwnerType(decl)?.let { ""","calleeOwner":${it.toJson()}""" }.orEmpty()
-
-/** The owner of a static lift synthesized into the file currently being emitted. Unlike [calleeOwnerTag], this is
- *  never optional: the producer created the target method itself, so its exact file-class identity is known. */
-internal fun BirEmitter.localCalleeOwnerTag(): String = ""","calleeOwner":${fqnJson(fileClass)}"""
-
-/** `,"super":true` on a `super.X()` callInstance (issue #14). kotc already forces `virtual:false` here
- *  (isVirtualInstanceCall), but that non-virtual intent is LOST when a CLR-binding pass in bir2cir reshapes the
- *  node to a `clrInstance`/`clrPropGet` (NetInteropBinding / MemberCallSubstitution drop the `virtual` field). This
- *  marker RIDES ALONG so those passes can re-stamp the produced CLR node non-virtual, and ilemit emits `call`
- *  (not `callvirt`) for a reference owner — a base-slot dispatch exactly like C#'s `base.M()`. Without it a super
- *  call to a CLR-bound base (kotlin.Any/System.Object, a dll2klib-projected .NET base, a @ClrTypeAlias stdlib base)
- *  callvirt-re-dispatches to THIS class's override -> infinite recursion. */
-internal fun BirEmitter.superTag(call: IrCall): String =
-	if (call.superQualifierSymbol != null) ""","super":true""" else ""
-
 /** `,"typeArgs":["int"]` when the callee is a generic method (its own type params resolved at this call). */
 internal fun BirEmitter.typeArguments(call: IrCall): List<TypeNode>? {
 	// Read the resolved arguments from the call itself. Kotlin 2.4 represents a same-module companion-block static
@@ -2471,10 +2436,6 @@ internal fun BirEmitter.typeArguments(call: IrCall): List<TypeNode>? {
 	if (args.isEmpty() || args.any { it == null }) return null
 	return args.map { birType(it!!) }
 }
-
-internal fun BirEmitter.typeArgsJson(call: IrCall): String = typeArguments(call)?.let { args ->
-	""","typeArgs":[${args.joinToString(",") { it.toJson() }}]"""
-}.orEmpty()
 
 /** The `byref(x)` marker intrinsic wrapping an arg -> the inner lvalue `x`; else null. Matched by FULL name
  *  (`kotlin.clr.byref`) so a user function happening to be named `byref` is not mistaken for the intrinsic. */

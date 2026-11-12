@@ -371,7 +371,7 @@ internal fun BirEmitter.blockExpr(block: IrBlock): BirExpression {
 				captureSubst[decl] = kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = fname)
 			}
 			localClassCaptures[anon] = captured
-			liftedTypes.add(typeDef(anon, capPairs, captureEnclosingGenerics = true, generated = true))
+			liftedTypes.add(sourceClassDefinition(anon, capPairs, captureEnclosingGenerics = true, generated = true))
 			capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 			// Instantiate the flattened generic anon with the captured params rendered in THIS (enclosing) scope
 			// (`liftedCaptureArgs` honors any active inline `typeArgSubst`, else the enclosing `tv`) — shared with the

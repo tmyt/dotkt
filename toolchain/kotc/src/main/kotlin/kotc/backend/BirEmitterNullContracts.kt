@@ -99,8 +99,6 @@ private fun BirEmitter.ownerIsNamed(fn: IrFunction): Boolean {
 internal fun nullConstant(): BirConstant =
 	BirConstant(TypeNode.Nullable(TypeNode.Fqn("kotlin.Nothing")), BirLiteral.NullLiteral)
 
-internal fun BirEmitter.nullConstJson(): String = nullConstant().toJson()
-
 /** The already-bound value is read, never evaluated again, on either non-null path. */
 internal fun nonNullResult(value: BirLocal, failure: BirExpression, nullableElement: TypeNode? = null): BirConditional =
 	if (nullableElement != null) BirConditional(

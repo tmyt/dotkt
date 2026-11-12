@@ -231,9 +231,6 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			return "dotkt-declaration-v1:" + digest.joinToString("") { "%02x".format(it) }
 	}
 
-	internal fun declarationIdField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
-		declarationIdForPhysicalAllocation(fn)?.let { ""","declarationId":${str(it)}""" } ?: ""
-
 	/** Explicit source-authored CLR MethodDef name. This is only a Kotlin annotation fact; bir2cir decides whether the
 	 * declaration can be allocated independently, applies the name after CLR lowering, and validates collisions. */
 internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean {
@@ -273,8 +270,6 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		return distinct.singleOrNull()
 	}
 
-	internal fun explicitClrNameField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
-		explicitClrNameValue(fn)?.let { ""","explicitClrName":${str(it)}""" } ?: ""
 	// Diagnostics: a construct the .NET backend can't lower yet is a COMPILE-TIME error with source location
 	// (file:line:col) — never a silent BIR node that crashes ilemit later. `hadError` fails the build.
 	var hadError = false; internal set
@@ -294,13 +289,8 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	 * failure (or a shared IrSanity violation) points at the source declaration instead of a bare `Type.method`
 	 * breadcrumb. OPTIONAL: absent = pre-#112 behavior (a synthetic decl with no source omits it). Values are NUMBERS
 	 * (not a `"file:line:col"` string) so the schema validator's bare-string check is not tripped; `pos.f` is the one
-	 * string, allow-listed in verify-schema.py STR_OK. The leading comma makes it splice into a decl template's tail.
+	 * string, allow-listed in verify-schema.py STR_OK.
 	 */
-	internal fun posJson(node: IrElement?): String {
-		val position = sourcePosition(node) ?: return ""
-		return ",\"pos\":" + buildString { position.writeJson(this) }
-	}
-
 	internal fun sourcePosition(node: IrElement?): kotc.bir.BirDeclarationPosition? {
 		val loc = locationOf(node) ?: return null
 		// IrFileEntry.getLineAndColumnNumbers (behind locationOf) yields 0-based line/column here; emit the
@@ -339,7 +329,6 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			b.line + 1, b.column + 1))
 	}
 
-	internal fun sourcePointJson(node: IrElement): String? = sourcePoint(node)?.toJson()
 
 	/**
 	 * Report an unsupported Kotlin construct as a clear, source-located compile error and return a placeholder
@@ -400,7 +389,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// Lambda lifting: non-capturing lambdas become named static methods appended to the file class;
 	// capturing lambdas become synthesized closure classes appended to the file's types.
 	internal val liftedMethods = ArrayList<kotc.bir.BirFunctionDeclaration>()
-	internal val liftedTypes = ArrayList<String>()
+	internal val liftedTypes = ArrayList<kotc.bir.BirTypeDeclaration>()
 	// Building the stdlib ITSELF: emit kotlin.* REFERENCE types (List/Set/Map/Iterable/Iterator/Map.Entry) as their real
 	// kotlin.* types, NOT lowered to the BCL — the BCL substitution is the consuming APP's emit-time job (driven by the
 	// @Clr metadata). Value-type primitives (Int/Bool/Char/Unit/Nothing/String) stay compiler-intrinsic either way.
@@ -715,9 +704,6 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		return fileClass
 	}
 
-	internal fun semanticOwnerJson(k: IrClass): String =
-		semanticTypeOwner(k)?.let { ""","semanticOwner":${str(it)}""" } ?: ""
-
 	/**
 	 * A lifted local/anonymous type declared inside a Kotlin-static class member has the class as its semantic owner,
 	 * but it cannot capture that class's type parameters. Carry that negative capture fact explicitly: bir2cir will
@@ -768,12 +754,6 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		}
 		return fileClass
 	}
-
-	internal fun semanticOwnerJson(declaration: IrDeclaration): String =
-		""","semanticOwner":${str(semanticOwnerName(declaration))}"""
-
-	internal fun semanticUseSiteOwnerJson(): String =
-		""","semanticOwner":${str(activeSemanticOwner ?: fileClass)}"""
 
 	/** Exact Kotlin owner application, using the active declaration frame unless an explicit declaration is supplied. */
 	internal fun semanticUseSiteOwnerSpec(declaration: IrDeclaration? = activeSemanticOwnerDeclaration): TypeNode {
@@ -943,9 +923,6 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		kotc.bir.BirRefTypeDeclaration(fact.name, fact.elem, fact.capturedDeclarations)
 	}
 
-	internal fun refTypesJson(): String = refTypeDeclarations().joinToString(",") { declaration ->
-		buildString { declaration.writeJson(this) }
-	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
 	internal fun refBase(d: IrValueDeclaration): kotc.bir.BirExpression = captureSubst[d] ?: kotc.bir.BirLocal(localSlotName(d))
@@ -983,7 +960,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 				if (element is IrCall && element.symbol.owner.isInline) {
 					val callee = element.symbol.owner
 					val companionExtension = isCompanionExtensionCallee(callee) ||
-						companionReceiverCallTag(callee, element).isNotEmpty()
+						companionReceiverCallType(callee, element) != null
 					val phantomReceiverIndex = if (companionExtension)
 						callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
 					else -1
@@ -1022,7 +999,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// (driven by the ref.dll @ClrTypeAlias index) DROPS the alias type def (hoisting a class's rule-3 members into the
 	// dotkt$ClrH_* helper; an interface/object alias is dropped with no helper). The drop is a no-op in the REFERENCE
 	// build (AliasHelperHoist is skipped there), so the ref assembly keeps the pure-Kotlin @ClrTypeAlias shapes verbatim.
-	fun emitFile(file: IrFile, typeAliases: List<kotc.bir.SourceTypeAlias> = emptyList()): String {
+	fun emitFile(file: IrFile, typeAliases: List<kotc.bir.SourceTypeAlias> = emptyList()): kotc.bir.BirFileDeclaration? {
 		fileEntry = file.fileEntry
 		validateLateinitAnnotations(file)
 		// Per-FILE lifted state. One BirEmitter instance processes every file in turn, so these MUST be reset here —
@@ -1085,7 +1062,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		}
 		// A source file containing only Kotlin alias declarations still owns a metadata surface.
 		if (functions.isEmpty() && classes.isEmpty() && objects.isEmpty() && interfaces.isEmpty() && enums.isEmpty() && annClasses.isEmpty() && topProps.isEmpty() && typeAliases.isEmpty())
-			return ""
+			return null
 		val className = fileClassName(file)
 		fileClass = className
 		// Entry point: top-level `fun main()` or `fun main(args: Array<String>)`.
@@ -1139,7 +1116,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			.flatMap { listOf(it) + nestedClasses(it) + nestedObjects(it) + nestedInterfaces(it) + nestedEnums(it) + nestedAnnotationClasses(it) }
 			.mapNotNull { semanticCompanion(it) }.distinct()
 		// Emit functions and types first (this lifts lambdas into liftedMethods/liftedTypes), then append them.
-		val fnMethods = functions.map { method(it, static = true) }
+		val fnMethods = functions.map { sourceMethod(it, static = true) }
 		// A top-level property's get_/set_<name> as STATIC methods (the receiver, if any, rides `__self`) — emitted
 			// for a NO-backing-field property (an EXTENSION property `val T.p`, or a computed `val p get() = …`) and for
 			// every role of a backing-field property once EITHER role is custom. A partial custom `var` must expose both
@@ -1148,20 +1125,14 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			val topPropAccessors = topProps.flatMap { p ->
 				val accessorSurface = accessorRoutedTopLevelProperty(p)
 				listOfNotNull(
-					p.getter?.takeIf { accessorSurface }?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
-					p.setter?.takeIf { accessorSurface }?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
+					p.getter?.takeIf { accessorSurface }?.let { sourceTopLevelAccessor(it, p.name.asString(), true) },
+					p.setter?.takeIf { accessorSurface }?.let { sourceTopLevelAccessor(it, p.name.asString(), false) })
 			}
 		// Every emitted top-level accessor has an explicit property association. The CLR Property row may be
 		// getter-only or setter-only when the other access uses direct field storage; MethodSemantics, rather than the
 		// accessor's eventual physical name, is the authoritative reverse-projection edge for dll2klib.
-			val topPropRecords = topProps.filter { p -> accessorRoutedTopLevelProperty(p) }.joinToString(",") { p ->
-				val n = p.name.asString()
-				val accessors = listOfNotNull(
-					p.getter?.let { "get" },
-					p.setter?.let { "set" },
-			).joinToString(",", prefix = "[", postfix = "]") { str(it) }
-			"""{"name":${str(n)},"type":${birType(p.getter!!.returnType).toJson()},"kotlinAccessors":$accessors,"propertyAssociation":${str(propertyAssociation(p))}}"""
-		}
+			val topPropRecords = topProps.filter { p -> accessorRoutedTopLevelProperty(p) }
+				.map { p -> sourcePropertyDeclaration(p, p.setter != null) }
 		// Basic enums -> real CLR enums (int-backed, for .NET interop); rich enums -> plain singleton classes.
 		val (richEnums, basicEnums) = enums.partition { isRichEnum(it) }
 		// Nested (non-inner) classes -> flattened to top-level synthetic types (they keep their real name, so
@@ -1176,11 +1147,14 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		val inners = nestedParents.flatMap { innerClasses(it) }
 		// Nested interfaces (recursively, inside classes/interfaces/objects) -> real nested types so a `TimeSource.WithComparableMarks` supertype resolves.
 		val nestedIfaces = nestedParents.flatMap { nestedInterfaces(it) }
-		val typeDefs = (basicEnums + nestedBasicEnums).map { enumDef(it) } + (interfaces + nestedIfaces).map { interfaceDef(it) } +
-			classes.map { typeDef(it) } + (objects + nestedObjects).map { typeDef(it, isObject = true) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
-			semanticCompanions.map { typeDef(it, isObject = true) } +
-			(richEnums + nestedRichEnums).map { richEnumDef(it) } + (annClasses + nestedAnnotations).map { annotationDef(it) }
-		val methods = (fnMethods + topPropAccessors + liftedMethods.map { buildString { it.writeJson(this) } }).joinToString(",")
+		val typeDefs = (basicEnums + nestedBasicEnums).map { sourceEnumDefinition(it) } +
+			(interfaces + nestedIfaces).map { sourceInterfaceDefinition(it) } +
+			classes.map { sourceClassDefinition(it) } + (objects + nestedObjects).map { sourceClassDefinition(it, isObject = true) } +
+			nested.map { sourceClassDefinition(it) } + inners.map { sourceInnerClassDefinition(it) } +
+			semanticCompanions.map { sourceClassDefinition(it, isObject = true) } +
+			(richEnums + nestedRichEnums).flatMap { sourceRichEnumDefinitions(it) } +
+			(annClasses + nestedAnnotations).map { sourceAnnotationDefinition(it) }
+		val methods = fnMethods + topPropAccessors + liftedMethods
 		// #52 (kotc-purity): the CLR-representation synthetic TYPE definitions are no longer synthesized here — kotc emits
 		// only the FACTS. bir2cir owns the type synthesis: SharedSyntheticSynthesis builds the fixed-shape
 		// `dotkt$CharSequence` interface from its use-site identity and each generated ref cell from the `refTypes`
@@ -1190,11 +1164,12 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// AliasHelperHoist drops each alias type def and, for a class, hoists its rule-3 members into the helper.
 		// One source declaration can be visited through two serialized value roots (notably a default expression is
 		// emitted both into its carrier and at an in-module call site). The lift table then contains the same authored
-		// TypeDef JSON twice. Declaration identity is still its generated name; remove only entries whose serialized
-		// declaration string is identical, while deliberately retaining same-name/different-body entries for a loud
+		// declaration twice. Declaration identity is still its generated name; remove only structurally identical
+		// declaration graphs, while deliberately retaining same-name/different-body entries for a loud
 		// downstream collision.
-		val types = (typeDefs + liftedTypes).distinct().joinToString(",")
-		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",") { field -> buildString { field.writeJson(this) } }}],"methods":[$methods],"properties":[$topPropRecords],"types":[$types],"refTypes":[${refTypesJson()}],"typeAliases":[${typeAliases.joinToString(",") { kotc.bir.SourceMetadataJson.encode(it) }}]}"""
+		val types = (typeDefs + liftedTypes).distinct()
+		return kotc.bir.BirFileDeclaration(className, hasMain, statFields, methods, topPropRecords, types,
+			refTypeDeclarations(), typeAliases.toList())
 	}
 
 	/** Emit a flattened `inner class`: it captures the enclosing instance as a leading `__outer` ctor param/field. */

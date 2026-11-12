@@ -2,7 +2,8 @@
 package kotc.bir
 
 internal object SourceMetadataJson {
-    fun encode(value: SourceTypeAlias): String = buildString { writeSourceTypeAlias(value, this) }
+    fun encode(value: SourceTypeAlias): String = buildString { write(value, this) }
+    fun write(value: SourceTypeAlias, output: StringBuilder) = writeSourceTypeAlias(value, output)
 
     private fun writeSourceTypeAlias(value: SourceTypeAlias, sb: StringBuilder) {
         sb.append('{')

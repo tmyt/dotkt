@@ -469,7 +469,7 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): BirExpression {
 	// suspend SAM `emit` body keeps its raw `suspendCall`-tagged nodes (never cold-transformed) — the whole flow
 	// operator surface (the FlowCollector{} SAM emits: Combine/Merge/Transform/…) would dangle in ilemit. kotc reads
 	// only `sam.isSuspend` (a pure Kotlin fact); the coroutine ABI lowering is entirely downstream.
-	// `suspendRet` rides ALONGSIDE `mods.suspend` (the pairing `resultTypeJson` states for every other declaration
+	// `suspendRet` rides ALONGSIDE `mods.suspend` (the same pairing as every other declaration
 	// emitter): the modifier is the FACT, the slot is the Kotlin RESULT TYPE, and bir2cir's cold registry reads the
 	// slot — a declaration carrying the modifier without it has had its result type dropped, which cost the suspend
 	// SAM's awaited values their type. Same value as `ret` here, since `ret` is the lambda's own Kotlin return type.
@@ -498,7 +498,7 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): BirExpression {
 	// SAM class must be self-carried on the node. bir2cir's ClosureSynthesis assembles it into the consuming file (with
 	// name-dedup) and strips `synthClass` — exactly as it does for `lambda()`'s `newClosure` synthClass. Same-file (no
 	// splice): ClosureSynthesis synthesizes the SAME class into this file, so a non-spliced `newSam` is unchanged.
-	val synthClass = BirClassDefinition(name = cname, base = null, typeParams = typeParameterDeclarations(freeTps).takeIf { freeTps.isNotEmpty() },
+	val synthClass = BirClassDefinition(name = cname, generated = true, base = null, typeParams = typeParameterDeclarations(freeTps).takeIf { freeTps.isNotEmpty() },
 		semanticOwner = activeSemanticOwner ?: fileClass, interfaces = listOf(ifaceSpec), fields = fields,
 		ctors = listOf(BirConstructor(fields.map { BirParameter(it.name, it.type, outer = it.outer) }, null, ctorBody)), methods = listOf(samMethod))
 	val capExprs = captures.map { capValueExpr(it) }
@@ -1665,11 +1665,11 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): BirExpression {
 	// The lifted constructor delegates to ClrPropertyStub(String). Keep that Kotlin declaration identity beside
 	// the arguments so bir2cir, which owns the CLR representation, can resolve and stamp the exact target ctor.
 	val stubDelegationSig = listOf(TypeNode.Fqn("kotlin.String"))
-	val definition = BirClassDefinition(name = cname, companionCaptureOwner = companionCaptureOwner,
+	val definition = BirClassDefinition(name = cname, generated = true, companionCaptureOwner = companionCaptureOwner,
 		typeParams = typeParameterDeclarations(freeTps).takeIf { freeTps.isNotEmpty() }, semanticOwner = activeSemanticOwner ?: fileClass,
 		base = stubBase, interfaces = listOf(ifaceSpec), fields = fields,
 		ctors = listOf(BirConstructor(ctorParams, listOf(stubBaseArg), ctorBody, delegationSig = stubDelegationSig)), methods = methods)
-	liftedTypes.add(buildString { definition.writeJson(this) })
+	liftedTypes.add(definition)
 
 	val classType = if (freeTps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, constructionTypeArgs)
 	val ctorSig = if (bound) listOf(constructionRecvType!!) else emptyList()
@@ -2187,7 +2187,7 @@ internal fun BirEmitter.liftLocalClass(klass: IrClass): kotc.bir.BirStatement {
 	// Register BEFORE emitting the class: a member of this class may CONSTRUCT it (or a subclass may delegate to its
 	// ctor) while `typeDef` is running, and that construction site reads this record to prepend the capture arguments.
 	localClassCaptures[klass] = captured
-	liftedTypes.add(typeDef(klass, capPairs, captureEnclosingGenerics = true, generated = true))
+	liftedTypes.add(sourceClassDefinition(klass, capPairs, captureEnclosingGenerics = true, generated = true))
 	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	return kotc.bir.BirBlock(emptyList())
 }

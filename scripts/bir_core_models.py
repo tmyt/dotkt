@@ -63,7 +63,7 @@ def outputs(root, definitions):
     for shape in selected:
         info = shape["x-dotkt-model"]
         is_node = info["domain"] == "birCore"
-        fields = [(key, field) for key, field in shape["properties"].items() if key != "k"]
+        fields = [(key, field) for key, field in shape["properties"].items() if key != "k" or not is_node]
         required = set(shape["required"])
         if shape.get("additionalProperties") is not False:
             raise ValueError("BIR source records must explicitly account for every field")

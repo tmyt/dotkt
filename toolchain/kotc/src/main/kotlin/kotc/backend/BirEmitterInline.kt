@@ -95,7 +95,7 @@ import java.io.File
 internal fun BirEmitter.hasLambdaArg(call: IrCall): Boolean {
 	val callee = call.symbol.owner
 	val companionExtension = isCompanionExtensionCallee(callee) ||
-		companionReceiverCallTag(callee, call).isNotEmpty()
+		companionReceiverCallType(callee, call) != null
 	val phantomReceiverIndex = if (companionExtension)
 		callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
 	else -1

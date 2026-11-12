@@ -108,10 +108,6 @@ internal class CallPlan(private val e: BirEmitter) {
 		registered.forEach { e.planReads.remove(it) }
 	}
 
-	fun bindingsJson(): String = bindings.joinToString(",", "[", "]") { binding ->
-		buildString { binding.writeJson(this) }
-	}
-
 	fun bindingFacts(): List<BirCallBinding> = bindings.toList()
 
 	/** The call node under its plan — or the bare call when nothing was bound (no plan is emitted then: the positional

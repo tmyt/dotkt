@@ -68,16 +68,16 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 			var baseName = File(irFile.fileEntry.name).name.removeSuffix(".kt")
 			val seen = usedNames.merge(baseName, 1) { a, b -> a + b }!!
 			if (seen > 1) baseName = "${baseName}__$seen"
-			val birJson = try {
+			val birFile = try {
 				bir.emitFile(irFile, typeAliases[File(irFile.fileEntry.name).canonicalPath].orEmpty())
 			} catch (e: Throwable) {
 				crashed = true
 				messageCollector?.report(
 					org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity.ERROR,
 					"BIR emit crashed for ${irFile.fileEntry.name}: ${e.javaClass.simpleName}: ${e.message}")
-				""
+				null
 			}
-			if (birJson.isNotBlank()) File(outputDir, "$baseName.bir.json").writeText(birJson)
+			if (birFile != null) File(outputDir, "$baseName.bir.json").writeText(buildString { birFile.writeJson(this) })
 		}
 
 		// An unsupported construct was reported (with source location), or a file crashed -> fail the compile here, so the

@@ -45,6 +45,15 @@ class TypeNodeTest {
         assertEquals("""{"attr":{"t":"fqn","name":"demo.Tag"},"argTypes":[{"t":"fqn","name":"kotlin.String"}],"args":[{"k":"const","type":{"t":"fqn","name":"kotlin.String"},"value":"tag"}]}""",
             buildString { annotation.writeJson(this) })
         assertEquals("""{"f":"Source.kt"}""", buildString { declaration.pos!!.writeJson(this) })
+        val event = BirClrEventBacking("Changed", false, "property-slot", frame, "open")
+        assertEquals("""{"k":"clrEventBacking","name":"Changed","static":false,"propertyAssociation":"property-slot","handlerType":{"t":"tv","scope":"method","i":0},"modality":"open"}""",
+            buildString { event.writeJson(this) })
+        val property = BirPropertyDeclaration("value", frame, listOf("get"), "property-slot")
+        val owner = BirClassDefinition("demo.Owner", null, emptyList(), emptyList(), emptyList(), listOf(declaration),
+            properties = listOf(property), clrEvents = listOf(event))
+        assertSame(declaration, owner.methods.single())
+        assertSame(property, owner.properties!!.single())
+        assertSame(event, owner.clrEvents!!.single())
     }
 
     @Test

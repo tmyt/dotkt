@@ -18,6 +18,25 @@
 
   "$defs": {
 
+    "birSourceTypeAlias": { "$ref": "kotlin-typealias.schema.json", "x-dotkt-model": { "name": "SourceTypeAlias" } },
+    "birTypeDeclaration": {
+      "x-dotkt-model": { "name": "BirTypeDeclaration" },
+      "oneOf": [{ "$ref": "#/$defs/birClassDefinition" }, { "$ref": "#/$defs/birInterfaceDefinition" }, { "$ref": "#/$defs/birEnumDefinition" }]
+    },
+    "birFileDeclaration": {
+      "type": "object", "x-dotkt-model": { "name": "BirFileDeclaration", "domain": "birCoreValues" },
+      "properties": {
+        "fileClass": { "type": "string" }, "hasMain": { "type": "boolean" },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/birFieldDeclaration" } },
+        "methods": { "type": "array", "items": { "$ref": "#/$defs/birFunctionDeclaration" } },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/birPropertyDeclaration" } },
+        "types": { "type": "array", "items": { "$ref": "#/$defs/birTypeDeclaration" } },
+        "refTypes": { "type": "array", "items": { "$ref": "#/$defs/birRefTypeDeclaration" } },
+        "typeAliases": { "type": "array", "items": { "$ref": "#/$defs/birSourceTypeAlias" } }
+      },
+      "required": ["fileClass", "hasMain", "fields", "methods", "properties", "types", "refTypes", "typeAliases"], "additionalProperties": false
+    },
+
     "birExpressionNode": {
       "x-dotkt-model": { "name": "BirExpression" },
       "oneOf": [
@@ -187,7 +206,7 @@
     },
     "birOverride": {
       "type": "object", "x-dotkt-model": { "name": "BirOverride", "domain": "birCoreValues" },
-      "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string", "enum": ["method", "getter", "setter"] }, "arity": { "type": "integer" }, "declarationId": { "type": "string" } },
+      "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string", "enum": ["method", "getter", "setter", "event-add", "event-remove"] }, "arity": { "type": "integer" }, "declarationId": { "type": "string" } },
       "required": ["owner", "member", "kind", "arity"], "additionalProperties": false
     },
     "birCallStatic": {
@@ -292,7 +311,10 @@
         "inlineOnly": { "const": true, "x-dotkt-kotlin-name": "isInlineOnly" },
         "vararg": { "const": true, "x-dotkt-kotlin-name": "isVararg" }, "noinline": { "const": true, "x-dotkt-kotlin-name": "isNoinline" },
         "crossinline": { "const": true, "x-dotkt-kotlin-name": "isCrossinline" }, "context": { "const": true, "x-dotkt-kotlin-name": "isContext" },
-        "extensionReceiver": { "const": true, "x-dotkt-kotlin-name": "isExtensionReceiver" }
+        "extensionReceiver": { "const": true, "x-dotkt-kotlin-name": "isExtensionReceiver" },
+        "annotation": { "const": true, "x-dotkt-kotlin-name": "isAnnotation" }, "fun": { "const": true, "x-dotkt-kotlin-name": "isFun" },
+        "sealed": { "const": true, "x-dotkt-kotlin-name": "isSealed" }, "value": { "const": true, "x-dotkt-kotlin-name": "isValue" },
+        "object": { "const": true, "x-dotkt-kotlin-name": "isObject" }, "inner": { "const": true, "x-dotkt-kotlin-name": "isInner" }
       },
       "required": [], "additionalProperties": false
     },
@@ -404,16 +426,128 @@
       "properties": { "name": { "type": "string" }, "elem": { "$ref": "#/$defs/type" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } } },
       "required": ["name", "elem", "typeParams"], "additionalProperties": false
     },
+    "birPropertyDeclaration": {
+      "type": "object", "x-dotkt-model": { "name": "BirPropertyDeclaration", "domain": "birCoreValues" },
+      "properties": {
+        "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
+        "kotlinAccessors": { "type": "array", "items": { "type": "string" } }, "propertyAssociation": { "type": "string" },
+        "kotlinStatic": { "type": "boolean" }, "overrides": { "type": "array", "items": { "$ref": "#/$defs/birOverride" } }
+      },
+      "required": ["name", "type", "kotlinAccessors", "propertyAssociation"], "additionalProperties": false
+    },
+    "birInterfaceDefinition": {
+      "type": "object", "x-dotkt-model": { "name": "BirInterfaceDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"] },
+      "properties": {
+        "name": { "type": "string" }, "kind": { "const": "interface" }, "semanticOwner": { "type": "string" }, "vis": { "type": "string" },
+        "mods": { "$ref": "#/$defs/birModifiers" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
+        "base": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
+        "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "fields": { "type": "array", "items": { "$ref": "#/$defs/birFieldDeclaration" } },
+        "ctors": { "type": "array", "items": { "$ref": "#/$defs/birConstructor" } }, "methods": { "type": "array", "items": { "$ref": "#/$defs/birFunctionDeclaration" } },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/birPropertyDeclaration" } }, "attrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } }
+      },
+      "required": ["name", "kind", "base", "interfaces", "fields", "ctors", "methods", "properties", "attrs"], "additionalProperties": false
+    },
+    "birEnumEntryDeclaration": {
+      "type": "object", "x-dotkt-model": { "name": "BirEnumEntryDeclaration", "domain": "birCoreValues" },
+      "properties": { "name": { "type": "string" }, "ordinal": { "type": "integer" }, "value": { "type": "string" } },
+      "required": ["name", "ordinal"], "additionalProperties": false
+    },
+    "birClrEnumDeclaration": {
+      "type": "object", "x-dotkt-model": { "name": "BirClrEnumDeclaration", "domain": "birCoreValues" },
+      "properties": { "underlying": { "$ref": "#/$defs/type" } }, "required": ["underlying"], "additionalProperties": false
+    },
+    "birEnumDefinition": {
+      "type": "object", "x-dotkt-model": { "name": "BirEnumDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"] },
+      "properties": {
+        "name": { "type": "string" }, "kind": { "const": "enum" }, "semanticOwner": { "type": "string" }, "vis": { "type": "string" },
+        "clrEnum": { "$ref": "#/$defs/birClrEnumDeclaration" }, "entries": { "type": "array", "items": { "$ref": "#/$defs/birEnumEntryDeclaration" } },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } }, "pos": { "$ref": "#/$defs/birDeclarationPosition" }
+      },
+      "required": ["name", "kind", "entries", "attrs"], "additionalProperties": false
+    },
     "birClassDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"] },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "class" }, "generated": { "const": true }, "base": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
         "companionCaptureOwner": { "type": "string" },
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "semanticOwner": { "type": "string" },
         "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "fields": { "type": "array", "items": { "$ref": "#/$defs/birFieldDeclaration" } },
-        "ctors": { "type": "array", "items": { "$ref": "#/$defs/birConstructor" } }, "methods": { "type": "array", "items": { "$ref": "#/$defs/birFunctionDeclaration" } }
+        "ctors": { "type": "array", "items": { "$ref": "#/$defs/birConstructor" } }, "methods": { "type": "array", "items": { "$ref": "#/$defs/birFunctionDeclaration" } },
+        "abstract": { "type": "boolean", "x-dotkt-kotlin-name": "isAbstract" }, "vis": { "type": "string" }, "mods": { "$ref": "#/$defs/birModifiers" },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/birPropertyDeclaration" } }, "attrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } },
+        "pos": { "$ref": "#/$defs/birDeclarationPosition" },
+        "staticSemanticOwner": { "type": "string" }, "outerTypeParamCount": { "type": "integer" }, "outerTypeParamOffset": { "type": "integer" },
+        "kotlinCompanion": { "$ref": "#/$defs/birKotlinCompanion" },
+        "inheritedDefaultAccessors": { "type": "array", "items": { "$ref": "#/$defs/birInheritedDefaultAccessor" } },
+        "inheritedDefaultMethods": { "type": "array", "items": { "$ref": "#/$defs/birInheritedDefaultMethod" } },
+        "inheritedClassMethods": { "type": "array", "items": { "$ref": "#/$defs/birInheritedClassMethod" } },
+        "clrEvents": { "type": "array", "items": { "$ref": "#/$defs/birClrEventBacking" } },
+        "clrEventForwarders": { "type": "array", "items": { "$ref": "#/$defs/birClrEventForwarder" } },
+        "enumRich": { "type": "boolean" }, "richEnum": { "$ref": "#/$defs/birRichEnumDeclaration" }
       },
-      "required": ["name", "kind", "generated", "base", "interfaces", "fields", "ctors", "methods"], "additionalProperties": false
+      "required": ["name", "kind", "base", "interfaces", "fields", "ctors", "methods"], "additionalProperties": false
+    },
+    "birKotlinCompanion": {
+      "type": "object", "x-dotkt-model": { "name": "BirKotlinCompanion", "domain": "birCoreValues" },
+      "properties": { "owner": { "type": "string" }, "name": { "type": "string" }, "visibility": { "type": "string" } },
+      "required": ["owner", "name", "visibility"], "additionalProperties": false
+    },
+    "birRichEnumEntry": {
+      "type": "object", "x-dotkt-model": { "name": "BirRichEnumEntry", "domain": "birCoreValues" },
+      "properties": { "name": { "type": "string" }, "field": { "type": "string" } }, "required": ["name", "field"], "additionalProperties": false
+    },
+    "birRichEnumDeclaration": {
+      "type": "object", "x-dotkt-model": { "name": "BirRichEnumDeclaration", "domain": "birCoreValues" },
+      "properties": {
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/birRichEnumEntry" } },
+        "name": { "type": "string" }, "ordinal": { "type": "string" }, "values": { "type": "string" }, "valueOf": { "type": "string" }
+      },
+      "required": ["entries", "name", "ordinal", "values", "valueOf"], "additionalProperties": false
+    },
+    "birInheritedDefaultAccessor": {
+      "type": "object", "x-dotkt-model": { "name": "BirInheritedDefaultAccessor", "domain": "birCoreValues" },
+      "properties": {
+        "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" }, "params": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "ret": { "$ref": "#/$defs/type" }, "overrides": { "type": "array", "items": { "$ref": "#/$defs/birOverride" } }, "implementation": { "$ref": "#/$defs/birInheritedImplementation" }
+      },
+      "required": ["propertyName", "propertyAccessor", "params", "ret", "implementation"], "additionalProperties": false
+    },
+    "birInheritedDefaultMethod": {
+      "type": "object", "x-dotkt-model": { "name": "BirInheritedDefaultMethod", "domain": "birCoreValues" },
+      "properties": {
+        "member": { "type": "string" }, "params": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "ret": { "$ref": "#/$defs/type" },
+        "overrides": { "type": "array", "items": { "$ref": "#/$defs/birOverride" } }, "implementation": { "$ref": "#/$defs/birInheritedImplementation" }
+      },
+      "required": ["member", "params", "ret", "implementation"], "additionalProperties": false
+    },
+    "birInheritedClassMethod": {
+      "type": "object", "x-dotkt-model": { "name": "BirInheritedClassMethod", "domain": "birCoreValues" },
+      "properties": {
+        "member": { "type": "string" }, "params": { "type": "array", "items": { "$ref": "#/$defs/birParameter" } }, "ret": { "$ref": "#/$defs/type" },
+        "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" }, "propertyAssociation": { "type": "string" },
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "mods": { "$ref": "#/$defs/birModifiers" },
+        "overrides": { "type": "array", "items": { "$ref": "#/$defs/birOverride" } }, "inheritedImplementation": { "$ref": "#/$defs/birInheritedImplementation" }
+      },
+      "required": ["member", "params", "ret", "inheritedImplementation"], "additionalProperties": false
+    },
+    "birClrEventBacking": {
+      "type": "object", "x-dotkt-model": { "name": "BirClrEventBacking", "domain": "birCoreValues" },
+      "properties": {
+        "k": { "const": "clrEventBacking" }, "name": { "type": "string" }, "static": { "type": "boolean", "x-dotkt-kotlin-name": "isStatic" },
+        "propertyAssociation": { "type": "string" }, "handlerType": { "$ref": "#/$defs/type" }, "modality": { "type": "string" },
+        "classOverrideOwner": { "$ref": "#/$defs/type" }, "policyField": { "type": "string" }
+      },
+      "required": ["k", "name", "static", "propertyAssociation", "handlerType", "modality"], "additionalProperties": false
+    },
+    "birClrEventForwarder": {
+      "type": "object", "x-dotkt-model": { "name": "BirClrEventForwarder", "domain": "birCoreValues" },
+      "properties": { "name": { "type": "string" }, "propertyAssociation": { "type": "string" }, "ownerType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/birExpressionNode" } },
+      "required": ["name", "propertyAssociation", "ownerType", "recv"], "additionalProperties": false
+    },
+    "birClrEventAccessor": {
+      "type": "object", "x-dotkt-model": { "name": "BirClrEventAccessor", "domain": "birCore", "role": "statement" },
+      "properties": { "k": { "const": "clrEventAccessor" }, "kind": { "type": "string", "enum": ["add", "remove", "raise"] }, "event": { "type": "string" } },
+      "required": ["k", "kind", "event"], "additionalProperties": false
     },
     "birNewSam": {
       "type": "object", "x-dotkt-model": { "name": "BirNewSam", "domain": "birCore", "role": "expression" },
@@ -609,7 +743,7 @@
         { "$ref": "#/$defs/birSetLocal" }, { "$ref": "#/$defs/birSetField" },
         { "$ref": "#/$defs/birBlock" }, { "$ref": "#/$defs/birBranchIf" },
         { "$ref": "#/$defs/birTry" }, { "$ref": "#/$defs/birForArray" },
-        { "$ref": "#/$defs/birLocalFunction" },
+        { "$ref": "#/$defs/birLocalFunction" }, { "$ref": "#/$defs/birClrEventAccessor" },
         { "$ref": "#/$defs/birForIn" }
       ]
     },

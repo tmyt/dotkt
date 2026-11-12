@@ -1,6 +1,69 @@
 // Generated from docs/bir-cir.schema.json; run scripts/generate-ir-model.py.
 package kotc.bir
 
+data class BirFileDeclaration(
+    val fileClass: String,
+    val hasMain: Boolean,
+    val fields: List<BirFieldDeclaration>,
+    val methods: List<BirFunctionDeclaration>,
+    val properties: List<BirPropertyDeclaration>,
+    val types: List<BirTypeDeclaration>,
+    val refTypes: List<BirRefTypeDeclaration>,
+    val typeAliases: List<SourceTypeAlias>
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"fileClass\":")
+        TypeNodeJson.writeString(fileClass, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"hasMain\":")
+        output.append(hasMain)
+        if (hasField) output.append(','); hasField = true; output.append("\"fields\":")
+        output.append('[')
+        fields.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"methods\":")
+        output.append('[')
+        methods.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"properties\":")
+        output.append('[')
+        properties.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"types\":")
+        output.append('[')
+        types.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"refTypes\":")
+        output.append('[')
+        refTypes.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"typeAliases\":")
+        output.append('[')
+        typeAliases.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        output.append('}')
+    }
+}
+
 data class BirBinaryOperation(
     val op: String,
     val lhs: BirExpression,
@@ -1169,7 +1232,13 @@ data class BirModifiers(
     val isNoinline: Boolean? = null,
     val isCrossinline: Boolean? = null,
     val isContext: Boolean? = null,
-    val isExtensionReceiver: Boolean? = null
+    val isExtensionReceiver: Boolean? = null,
+    val isAnnotation: Boolean? = null,
+    val isFun: Boolean? = null,
+    val isSealed: Boolean? = null,
+    val isValue: Boolean? = null,
+    val isObject: Boolean? = null,
+    val isInner: Boolean? = null
 ) : BirValue {
     override fun writeJson(output: StringBuilder) {
         output.append("{")
@@ -1236,6 +1305,30 @@ data class BirModifiers(
         }
         isExtensionReceiver?.let { value ->
             if (hasField) output.append(','); hasField = true; output.append("\"extensionReceiver\":")
+            output.append(value)
+        }
+        isAnnotation?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"annotation\":")
+            output.append(value)
+        }
+        isFun?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"fun\":")
+            output.append(value)
+        }
+        isSealed?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"sealed\":")
+            output.append(value)
+        }
+        isValue?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"value\":")
+            output.append(value)
+        }
+        isObject?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"object\":")
+            output.append(value)
+        }
+        isInner?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"inner\":")
             output.append(value)
         }
         output.append('}')
@@ -1936,6 +2029,222 @@ data class BirRefTypeDeclaration(
     }
 }
 
+data class BirPropertyDeclaration(
+    val name: String,
+    val type: TypeNode,
+    val kotlinAccessors: List<String>,
+    val propertyAssociation: String,
+    val kotlinStatic: Boolean? = null,
+    val overrides: List<BirOverride>? = null
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"name\":")
+        TypeNodeJson.writeString(name, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"type\":")
+        type.writeJson(output)
+        if (hasField) output.append(','); hasField = true; output.append("\"kotlinAccessors\":")
+        output.append('[')
+        kotlinAccessors.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            TypeNodeJson.writeString(item0, output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"propertyAssociation\":")
+        TypeNodeJson.writeString(propertyAssociation, output)
+        kotlinStatic?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"kotlinStatic\":")
+            output.append(value)
+        }
+        overrides?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"overrides\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        output.append('}')
+    }
+}
+
+data class BirInterfaceDefinition(
+    val name: String,
+    val base: TypeNode?,
+    val interfaces: List<TypeNode>,
+    val fields: List<BirFieldDeclaration>,
+    val ctors: List<BirConstructor>,
+    val methods: List<BirFunctionDeclaration>,
+    val properties: List<BirPropertyDeclaration>,
+    val attrs: List<BirAttribute>,
+    val semanticOwner: String? = null,
+    val vis: String? = null,
+    val mods: BirModifiers? = null,
+    val typeParams: List<TypeParameterDeclaration>? = null
+) : BirTypeDeclaration {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"name\":")
+        TypeNodeJson.writeString(name, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"kind\":")
+        output.append("\"interface\"")
+        semanticOwner?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"semanticOwner\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        vis?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"vis\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        mods?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"mods\":")
+            value.writeJson(output)
+        }
+        typeParams?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"typeParams\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        if (hasField) output.append(','); hasField = true; output.append("\"base\":")
+        if (base == null) output.append("null")
+        else {
+            base.writeJson(output)
+        }
+        if (hasField) output.append(','); hasField = true; output.append("\"interfaces\":")
+        output.append('[')
+        interfaces.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"fields\":")
+        output.append('[')
+        fields.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"ctors\":")
+        output.append('[')
+        ctors.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"methods\":")
+        output.append('[')
+        methods.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"properties\":")
+        output.append('[')
+        properties.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"attrs\":")
+        output.append('[')
+        attrs.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        output.append('}')
+    }
+}
+
+data class BirEnumEntryDeclaration(
+    val name: String,
+    val ordinal: Int,
+    val value: String? = null
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"name\":")
+        TypeNodeJson.writeString(name, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"ordinal\":")
+        output.append(ordinal)
+        value?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"value\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        output.append('}')
+    }
+}
+
+data class BirClrEnumDeclaration(
+    val underlying: TypeNode
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"underlying\":")
+        underlying.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirEnumDefinition(
+    val name: String,
+    val entries: List<BirEnumEntryDeclaration>,
+    val attrs: List<BirAttribute>,
+    val semanticOwner: String? = null,
+    val vis: String? = null,
+    val clrEnum: BirClrEnumDeclaration? = null,
+    val pos: BirDeclarationPosition? = null
+) : BirTypeDeclaration {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"name\":")
+        TypeNodeJson.writeString(name, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"kind\":")
+        output.append("\"enum\"")
+        semanticOwner?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"semanticOwner\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        vis?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"vis\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        clrEnum?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"clrEnum\":")
+            value.writeJson(output)
+        }
+        if (hasField) output.append(','); hasField = true; output.append("\"entries\":")
+        output.append('[')
+        entries.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"attrs\":")
+        output.append('[')
+        attrs.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        pos?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"pos\":")
+            value.writeJson(output)
+        }
+        output.append('}')
+    }
+}
+
 data class BirClassDefinition(
     val name: String,
     val base: TypeNode?,
@@ -1943,10 +2252,28 @@ data class BirClassDefinition(
     val fields: List<BirFieldDeclaration>,
     val ctors: List<BirConstructor>,
     val methods: List<BirFunctionDeclaration>,
+    val generated: Boolean? = null,
     val companionCaptureOwner: String? = null,
     val typeParams: List<TypeParameterDeclaration>? = null,
-    val semanticOwner: String? = null
-) : BirValue {
+    val semanticOwner: String? = null,
+    val isAbstract: Boolean? = null,
+    val vis: String? = null,
+    val mods: BirModifiers? = null,
+    val properties: List<BirPropertyDeclaration>? = null,
+    val attrs: List<BirAttribute>? = null,
+    val pos: BirDeclarationPosition? = null,
+    val staticSemanticOwner: String? = null,
+    val outerTypeParamCount: Int? = null,
+    val outerTypeParamOffset: Int? = null,
+    val kotlinCompanion: BirKotlinCompanion? = null,
+    val inheritedDefaultAccessors: List<BirInheritedDefaultAccessor>? = null,
+    val inheritedDefaultMethods: List<BirInheritedDefaultMethod>? = null,
+    val inheritedClassMethods: List<BirInheritedClassMethod>? = null,
+    val clrEvents: List<BirClrEventBacking>? = null,
+    val clrEventForwarders: List<BirClrEventForwarder>? = null,
+    val enumRich: Boolean? = null,
+    val richEnum: BirRichEnumDeclaration? = null
+) : BirTypeDeclaration {
     override fun writeJson(output: StringBuilder) {
         output.append("{")
         var hasField = false
@@ -1954,8 +2281,10 @@ data class BirClassDefinition(
         TypeNodeJson.writeString(name, output)
         if (hasField) output.append(','); hasField = true; output.append("\"kind\":")
         output.append("\"class\"")
-        if (hasField) output.append(','); hasField = true; output.append("\"generated\":")
-        output.append("true")
+        generated?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"generated\":")
+            output.append(value)
+        }
         if (hasField) output.append(','); hasField = true; output.append("\"base\":")
         if (base == null) output.append("null")
         else {
@@ -2006,6 +2335,383 @@ data class BirClassDefinition(
             item0.writeJson(output)
         }
         output.append(']')
+        isAbstract?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"abstract\":")
+            output.append(value)
+        }
+        vis?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"vis\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        mods?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"mods\":")
+            value.writeJson(output)
+        }
+        properties?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"properties\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        attrs?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"attrs\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        pos?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"pos\":")
+            value.writeJson(output)
+        }
+        staticSemanticOwner?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"staticSemanticOwner\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        outerTypeParamCount?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"outerTypeParamCount\":")
+            output.append(value)
+        }
+        outerTypeParamOffset?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"outerTypeParamOffset\":")
+            output.append(value)
+        }
+        kotlinCompanion?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"kotlinCompanion\":")
+            value.writeJson(output)
+        }
+        inheritedDefaultAccessors?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"inheritedDefaultAccessors\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        inheritedDefaultMethods?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"inheritedDefaultMethods\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        inheritedClassMethods?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"inheritedClassMethods\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        clrEvents?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"clrEvents\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        clrEventForwarders?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"clrEventForwarders\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        enumRich?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"enumRich\":")
+            output.append(value)
+        }
+        richEnum?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"richEnum\":")
+            value.writeJson(output)
+        }
+        output.append('}')
+    }
+}
+
+data class BirKotlinCompanion(
+    val owner: String,
+    val name: String,
+    val visibility: String
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"owner\":")
+        TypeNodeJson.writeString(owner, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"name\":")
+        TypeNodeJson.writeString(name, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"visibility\":")
+        TypeNodeJson.writeString(visibility, output)
+        output.append('}')
+    }
+}
+
+data class BirRichEnumEntry(
+    val name: String,
+    val field: String
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"name\":")
+        TypeNodeJson.writeString(name, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"field\":")
+        TypeNodeJson.writeString(field, output)
+        output.append('}')
+    }
+}
+
+data class BirRichEnumDeclaration(
+    val entries: List<BirRichEnumEntry>,
+    val name: String,
+    val ordinal: String,
+    val values: String,
+    val valueOf: String
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"entries\":")
+        output.append('[')
+        entries.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"name\":")
+        TypeNodeJson.writeString(name, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"ordinal\":")
+        TypeNodeJson.writeString(ordinal, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"values\":")
+        TypeNodeJson.writeString(values, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"valueOf\":")
+        TypeNodeJson.writeString(valueOf, output)
+        output.append('}')
+    }
+}
+
+data class BirInheritedDefaultAccessor(
+    val propertyName: String,
+    val propertyAccessor: String,
+    val params: List<TypeNode>,
+    val ret: TypeNode,
+    val implementation: BirInheritedImplementation,
+    val overrides: List<BirOverride>? = null
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"propertyName\":")
+        TypeNodeJson.writeString(propertyName, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"propertyAccessor\":")
+        TypeNodeJson.writeString(propertyAccessor, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"params\":")
+        output.append('[')
+        params.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"ret\":")
+        ret.writeJson(output)
+        overrides?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"overrides\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        if (hasField) output.append(','); hasField = true; output.append("\"implementation\":")
+        implementation.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirInheritedDefaultMethod(
+    val member: String,
+    val params: List<TypeNode>,
+    val ret: TypeNode,
+    val implementation: BirInheritedImplementation,
+    val overrides: List<BirOverride>? = null
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"member\":")
+        TypeNodeJson.writeString(member, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"params\":")
+        output.append('[')
+        params.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"ret\":")
+        ret.writeJson(output)
+        overrides?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"overrides\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        if (hasField) output.append(','); hasField = true; output.append("\"implementation\":")
+        implementation.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirInheritedClassMethod(
+    val member: String,
+    val params: List<BirParameter>,
+    val ret: TypeNode,
+    val inheritedImplementation: BirInheritedImplementation,
+    val propertyName: String? = null,
+    val propertyAccessor: String? = null,
+    val propertyAssociation: String? = null,
+    val typeParams: List<TypeParameterDeclaration>? = null,
+    val mods: BirModifiers? = null,
+    val overrides: List<BirOverride>? = null
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"member\":")
+        TypeNodeJson.writeString(member, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"params\":")
+        output.append('[')
+        params.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        if (hasField) output.append(','); hasField = true; output.append("\"ret\":")
+        ret.writeJson(output)
+        propertyName?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"propertyName\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        propertyAccessor?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"propertyAccessor\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        propertyAssociation?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"propertyAssociation\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        typeParams?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"typeParams\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        mods?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"mods\":")
+            value.writeJson(output)
+        }
+        overrides?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"overrides\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        if (hasField) output.append(','); hasField = true; output.append("\"inheritedImplementation\":")
+        inheritedImplementation.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirClrEventBacking(
+    val name: String,
+    val isStatic: Boolean,
+    val propertyAssociation: String,
+    val handlerType: TypeNode,
+    val modality: String,
+    val classOverrideOwner: TypeNode? = null,
+    val policyField: String? = null
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"k\":")
+        output.append("\"clrEventBacking\"")
+        if (hasField) output.append(','); hasField = true; output.append("\"name\":")
+        TypeNodeJson.writeString(name, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"static\":")
+        output.append(isStatic)
+        if (hasField) output.append(','); hasField = true; output.append("\"propertyAssociation\":")
+        TypeNodeJson.writeString(propertyAssociation, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"handlerType\":")
+        handlerType.writeJson(output)
+        if (hasField) output.append(','); hasField = true; output.append("\"modality\":")
+        TypeNodeJson.writeString(modality, output)
+        classOverrideOwner?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"classOverrideOwner\":")
+            value.writeJson(output)
+        }
+        policyField?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"policyField\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        output.append('}')
+    }
+}
+
+data class BirClrEventForwarder(
+    val name: String,
+    val propertyAssociation: String,
+    val ownerType: TypeNode,
+    val recv: BirExpression
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"name\":")
+        TypeNodeJson.writeString(name, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"propertyAssociation\":")
+        TypeNodeJson.writeString(propertyAssociation, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"ownerType\":")
+        ownerType.writeJson(output)
+        if (hasField) output.append(','); hasField = true; output.append("\"recv\":")
+        recv.writeJson(output)
+        output.append('}')
+    }
+}
+
+data class BirClrEventAccessor(
+    val kind: String,
+    val event: String
+) : BirStatement() {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"clrEventAccessor\"")
+        output.append(",\"kind\":")
+        TypeNodeJson.writeString(kind, output)
+        output.append(",\"event\":")
+        TypeNodeJson.writeString(event, output)
         output.append('}')
     }
 }
