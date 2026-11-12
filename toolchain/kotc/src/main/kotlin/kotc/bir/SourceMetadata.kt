@@ -10,7 +10,9 @@ data class SourceTypeAlias(
     val underlyingType: SourceType,
     val expandedType: SourceType,
     val annotations: List<SourceAnnotation>
-)
+) : BirValue {
+    override fun writeJson(output: StringBuilder) = SourceMetadataJson.write(this, output)
+}
 
 data class SourceClassifier(
     val packageName: String,

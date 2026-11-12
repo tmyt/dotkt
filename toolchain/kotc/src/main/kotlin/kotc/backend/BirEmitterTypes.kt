@@ -279,7 +279,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 				val semanticArgs = if (t.hasRawType()) sargs.map { TypeNode.Star }
 				else sargs.map(::birTypeProjection)
 				// A local classifier's IR may already include captured arguments, but their order need not match the
-				// captured declaration segment emitted by typeDef. Use that declaration's recorded correspondence.
+				// captured declaration segment emitted by sourceClassDefinition. Use that declaration's recorded correspondence.
 				val all = if (liftedCaps.isEmpty()) semanticArgs else semanticArgs.take(klass.typeParameters.size) + liftedCaps
 				return sourceClassifierType(klass, all)
 			}
@@ -365,11 +365,6 @@ internal fun BirEmitter.mangle(t: TypeNode): String = t.toJson().replace(Regex("
 // The erased / star-projection / Any? fallback type identity. kotc emits the pure Kotlin FQN `kotlin.Any`;
 // bir2cir/ilemit resolve it to System.Object. (Replaces the old bare-string `object` shorthand.)
 internal val BirEmitter.OBJ: TypeNode get() = TypeNode.Fqn("kotlin.Any")
-
-/** Structured-Type JSON for a bare Kotlin/synthetic FQN identity — the ONLY way a type reaches the wire.
- *  Used to spell a KNOWN type-literal (a `kotlin.*` primitive, a `dotkt$*` synthetic) in a hand-built node
- *  template: `"type":${fqnJson("kotlin.Int")}` (never a bare string). */
-internal fun BirEmitter.fqnJson(name: String): String = TypeNode.Fqn(name).toJson()
 
 /** A type-argument's identity. `birType` now UNIFORMLY wraps any nullable core (incl. a nullable type-PARAMETER
  *  `Iterable<T?>` inner `T?`) as `{t:nullable,of:...}`, so this is just `birType`; kept as a named seam for the
@@ -466,9 +461,9 @@ internal fun BirEmitter.nullableValueUnwrapElem(srcType: IrType, useType: IrType
 /** Emit `node` coerced into a slot of the EXPECTED type: unwrap a value-type-nullable (`Int?`) to its
  *  non-null value (`Int`) when the slot demands the bare value — the CLR twin of the JVM backend's implicit
  *  `Integer.intValue()` coercion at an assignment / argument / return, which has NO IR cast node. */
-internal fun BirEmitter.coerceValue(node: IrExpression, expected: IrType): String =
+internal fun BirEmitter.coerceValue(node: IrExpression, expected: IrType): kotc.bir.BirExpression =
 	if (isPreUnwrappedRead(node)) expr(node)
-	else nullableValueUnwrapElem(node.type, expected)?.let { elem -> """{"k":"nullableValue","elem":${str(elem)},"e":${expr(node)}}""" } ?: expr(node)
+	else nullableValueUnwrapElem(node.type, expected)?.let { elem -> kotc.bir.BirNullableValue(elem = elem, e = expr(node)) } ?: expr(node)
 
 /** True if reading `o` already yields the bare non-null VALUE of a value-type-nullable — an IrGetValue whose
  *  `valSubst` substitution was pre-unwrapped to `Nullable<T>.Value` (a `SAFE_CALL` receiver). The unwrap helpers
@@ -574,15 +569,6 @@ internal fun BirEmitter.clrExternalOwner(
  *  keep [clrName] for its returned string. */
 internal fun BirEmitter.isExternalNetType(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): Boolean =
 	clrExternalSemanticOwner(decl) != null && clrExternalOwner(decl) != null
-
-/** JSON for a structured type in a node template — `str(typeNode)` emits the `{t:…}` object (no quotes).
- *  An overload of `str(String)` so every `"type":${str(x)}` site works whether x is a name or a Type. */
-internal fun BirEmitter.str(t: TypeNode): String = t.toJson()
-
-/** JSON strings encode Unicode scalar values, while Kotlin strings retain arbitrary UTF-16 code units. */
-internal fun BirEmitter.stringLiteral(s: String): String {
-	return buildString { kotc.bir.LiteralText.writeJson(s, this) }
-}
 
 internal fun BirEmitter.str(s: String): String {
 	val escaped = buildString(s.length + 2) {

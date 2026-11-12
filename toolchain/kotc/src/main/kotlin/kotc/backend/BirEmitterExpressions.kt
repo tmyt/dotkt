@@ -6,6 +6,7 @@ import kotc.bir.BirThis
 import kotc.bir.BirBreak
 import kotc.bir.BirContinue
 import kotc.bir.BirGoto
+import kotc.bir.*
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
@@ -98,9 +99,9 @@ private fun IrType.hasReifiedRuntimeOperand(): Boolean {
 // against the ref.dll (the no-re-resolution-downstream invariant). Stamped ONLY on the value-node kinds StaticType
 // reads a return/static type from (`local`, `callLocal`, `callStatic`, `callInstance`, `field`, `lateinitGet`, `staticField`);
 // the STRUCTURAL kinds (cast/const/new/conv/arrayGet/…) already carry their own type slot, so they need no stamp.
-// A pass-through arm (e.g. coercion-to-Unit returning its already-stamped argument) begins with `{"sty":` — not a
-// bare `{"k":<kind>` — so the prefix guard skips it and there is no double-stamp.
-internal fun BirEmitter.expr(node: IrExpression): String {
+// A pass-through arm (e.g. coercion-to-Unit returning its already-stamped argument) keeps that argument's `sty`.
+// Presence of the typed fact, not a JSON prefix or property order, prevents a second stamp.
+internal fun BirEmitter.expr(node: IrExpression): BirExpression {
 	// A value the ENCLOSING call's evaluation plan bound (§2.7): every reader renders as that binding's `bindRef` read.
 	planReads[node]?.let { return it }
 	// Only a CALL can supply values that need a plan; everything else renders straight through.
@@ -119,7 +120,7 @@ internal fun BirEmitter.expr(node: IrExpression): String {
 		else memberVisibilityStamped(node, rendered)
 		styStamped(node, withMember)
 	}
-	return plan.wrap(s, birType(node.type).toJson())
+	return plan.wrap(s, birType(node.type))
 }
 
 /**
@@ -129,8 +130,8 @@ internal fun BirEmitter.expr(node: IrExpression): String {
  */
 private fun BirEmitter.memberVisibilityStamped(
 	node: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
-	s: String,
-): String = memberVisibilityStamped(
+	s: BirExpression,
+): BirExpression = memberVisibilityStamped(
 	node.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility ?: return s,
 	s,
 	preserveDeclaration = node is IrCall && node.superQualifierSymbol != null,
@@ -139,9 +140,9 @@ private fun BirEmitter.memberVisibilityStamped(
 /** The callable-reference path is not an [IrFunctionAccessExpression], but carries the same resolved declaration. */
 internal fun BirEmitter.memberVisibilityStamped(
 	target: org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility,
-	s: String,
+	s: BirExpression,
 	preserveDeclaration: Boolean = false,
-): String {
+): BirExpression {
 	// External-member and field emission select the inherited declaration. Ordinary
 	// Kotlin calls retain the accessed owner, whose substituted descriptor frame must
 	// stay paired with that owner. Use the same frontend origin/storage facts here.
@@ -159,47 +160,42 @@ internal fun BirEmitter.memberVisibilityStamped(
 	// including when a default or inline body moves the access into another caller.
 	val accessor = member as? IrSimpleFunction
 	val property = accessor?.correspondingPropertySymbol?.owner
-	val fieldAccess = listOf("field", "staticField", "lateinitGet", "setField", "setFieldExpr", "staticFieldSet")
-		.any { s.startsWith("{\"k\":\"$it\"") }
+	val fieldAccess = s is BirFieldGet || s is BirStaticFieldGet || s is BirLateinitGet ||
+		s is BirFieldSetExpression || s is BirStaticFieldSet
 	if (restricted && fieldAccess && property != null && isClrField(property)) {
 		val fieldType = property.getter?.returnType ?: return s
-		val descriptor = inMemberDeclarationFrame(member) {
-			memberOwnerTypeParamsJson(member) + ",\"memberType\":" + birType(fieldType).toJson()
+		val (parameters, type) = inMemberDeclarationFrame(member) {
+			memberOwnerTypeParameters(member) to birType(fieldType)
 		}
-		return s.dropLast(1) + ",\"memberVisibility\":" + str(visibility) + descriptor + "}"
+		return s.withFieldDeclaration(visibility, parameters, type)
 	}
-	if (!(s.startsWith("{\"k\":\"callInstance\"") || s.startsWith("{\"k\":\"callStatic\"") ||
-			s.startsWith("{\"k\":\"new\"") || s.startsWith("{\"k\":\"newBoundDelegate\""))) return s
-	val (ownerTypeParams, methodTypeParams, declarationFact) = inMemberDeclarationFrame(member) {
-		val ownerTypeParams = memberOwnerTypeParamsJson(member)
-		val methodTypeParams = (member as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.let {
-			if (it.typeParameters.isEmpty()) "" else
-				""","memberMethodTypeParams":${typeParamDeclarationsJson(it.typeParameters)}"""
-		}.orEmpty()
-		val declarationFact = when (member) {
-			is org.jetbrains.kotlin.ir.declarations.IrConstructor -> {
-				// Ordinary same-unit construction already carries the COMPLETE declaration vector, including synthetic
-				// enclosing/capture slots, from the IrConstructorCall arm below. Do not overwrite it with the source-only
-				// regular vector when visibility stamping is also required.
-				if (s.contains("\"memberSignature\"")) "" else {
-					val signature = member.parameters
-						.filter { it.kind == org.jetbrains.kotlin.ir.declarations.IrParameterKind.Regular }
-						.joinToString(",") { birType(it.type).toJson() }
-					",\"memberSignature\":[${signature}]"
-				}
-			}
-			is org.jetbrains.kotlin.ir.declarations.IrFunction -> {
-				val signature = overloadSigField(member)
-					.replaceFirst(",\"sig\":", ",\"memberSignature\":")
-				signature + ",\"memberReturnType\":" + birType(member.returnType).toJson()
-			}
-			else -> ""
+	if (s !is BirCallInstance && s !is BirCallStatic && s !is BirNew && s !is BirNewBoundDelegate) return s
+	return inMemberDeclarationFrame(member) {
+		val ownerParameters = memberOwnerTypeParameters(member)
+		val function = member as? IrFunction
+		val methodParameters = function?.typeParameters?.takeIf { it.isNotEmpty() }?.let(::typeParameterDeclarations)
+		val signature = when (member) {
+			is IrConstructor -> (s as? BirNew)?.memberSignature
+				?: member.parameters.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type) }
+			is IrFunction -> overloadSignature(member)
+			else -> null
 		}
-		Triple(ownerTypeParams, methodTypeParams, declarationFact)
+		val returnType = function?.takeUnless { it is IrConstructor }?.let { birType(it.returnType) }
+		val access = visibility.takeIf { restricted }
+		when (s) {
+			is BirCallInstance -> s.copy(memberVisibility = access, memberOwnerTypeParams = ownerParameters,
+				memberMethodTypeParams = methodParameters, memberSignature = signature, memberReturnType = returnType)
+			is BirCallStatic -> s.copy(memberVisibility = access, memberOwnerTypeParams = ownerParameters,
+				memberMethodTypeParams = methodParameters, memberSignature = signature, memberReturnType = returnType)
+			is BirNewBoundDelegate -> s.copy(memberVisibility = access, memberOwnerTypeParams = ownerParameters,
+				memberMethodTypeParams = methodParameters, memberSignature = signature, memberReturnType = returnType)
+			// A constructor producer already knows its enclosing/capture slots. Keep that complete declaration vector.
+			is BirNew -> s.copy(memberVisibility = access, memberOwnerTypeParams = ownerParameters,
+				memberMethodTypeParams = methodParameters, memberReturnType = returnType,
+				memberSignature = if (member is IrConstructor) s.memberSignature ?: signature else signature)
+			else -> s
+		}
 	}
-	val visibilityFact = if (restricted) ",\"memberVisibility\":" + str(visibility) else ""
-	return s.dropLast(1) + visibilityFact + ownerTypeParams + methodTypeParams +
-		declarationFact + "}"
 }
 
 /** A selected declaration's descriptor never uses substitutions active while rendering its caller. */
@@ -241,33 +237,60 @@ internal fun <T> BirEmitter.inMemberDeclarationFrame(
  * Declaration-form generic facts for a restricted member's semantic owner. These stay in Kotlin vocabulary;
  * bir2cir decides whether the lexical edge needs a CLR UnsafeAccessor and, if so, maps this frame to method slots.
  */
-private fun BirEmitter.memberOwnerTypeParamsJson(
+private fun BirEmitter.memberOwnerTypeParameters(
 	target: org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility,
-): String {
-	val owner = target.parent as? org.jetbrains.kotlin.ir.declarations.IrClass ?: return ""
+): List<TypeParameterDeclaration>? {
+	val owner = target.parent as? org.jetbrains.kotlin.ir.declarations.IrClass ?: return null
 	val params = (innerEnclosingTypeParams(owner) + owner.typeParameters + liftedTypeArgParams[owner].orEmpty()).distinct()
-	return if (params.isEmpty()) "" else ""","memberOwnerTypeParams":${typeParamDeclarationsJson(params)}"""
+	return params.takeIf { it.isNotEmpty() }?.let(::typeParameterDeclarations)
 }
 
 /** Preserve the declaration type as well as visibility: a write value can be a subtype and is not a field signature. */
 internal fun BirEmitter.memberFieldVisibilityStamped(
 	field: org.jetbrains.kotlin.ir.declarations.IrField,
-	s: String,
-): String {
+	s: BirExpression,
+): BirExpression {
 	val visibility = visOf(field)
 	if (visibility != "private" && visibility != "protected" && visibility != "internal") return s
-	if (!(s.startsWith("{\"k\":\"field\"") || s.startsWith("{\"k\":\"lateinitGet\"") ||
-			s.startsWith("{\"k\":\"staticField\"") || s.startsWith("{\"k\":\"setField\"") ||
-			s.startsWith("{\"k\":\"setFieldExpr\"") || s.startsWith("{\"k\":\"staticFieldSet\""))) return s
-	val descriptor = inMemberDeclarationFrame(field) {
-		memberOwnerTypeParamsJson(field) + ",\"memberType\":" + birType(field.type).toJson()
+	if (s !is BirFieldGet && s !is BirStaticFieldGet && s !is BirLateinitGet &&
+		s !is BirFieldSetExpression && s !is BirStaticFieldSet) return s
+	val (parameters, type) = inMemberDeclarationFrame(field) {
+		memberOwnerTypeParameters(field) to birType(field.type)
 	}
-	return s.dropLast(1) + ",\"memberVisibility\":" + str(visibility) + descriptor + "}"
+	return s.withFieldDeclaration(visibility, parameters, type)
+}
+
+private fun BirExpression.withFieldDeclaration(
+	visibility: String, parameters: List<TypeParameterDeclaration>?, type: TypeNode,
+): BirExpression = when (this) {
+	is BirFieldGet -> copy(memberVisibility = visibility, memberOwnerTypeParams = parameters, memberType = type)
+	is BirStaticFieldGet -> copy(memberVisibility = visibility, memberOwnerTypeParams = parameters, memberType = type)
+	is BirLateinitGet -> copy(memberVisibility = visibility, memberOwnerTypeParams = parameters, memberType = type)
+	is BirFieldSetExpression -> copy(memberVisibility = visibility, memberOwnerTypeParams = parameters, memberType = type)
+	is BirStaticFieldSet -> copy(memberVisibility = visibility, memberOwnerTypeParams = parameters, memberType = type)
+	else -> this
+}
+
+internal fun BirEmitter.memberFieldVisibilityStamped(field: org.jetbrains.kotlin.ir.declarations.IrField, node: BirSetField): BirSetField {
+	val visibility = visOf(field)
+	if (visibility != "private" && visibility != "protected" && visibility != "internal") return node
+	val (parameters, type) = inMemberDeclarationFrame(field) {
+		memberOwnerTypeParameters(field) to birType(field.type)
+	}
+	return node.copy(memberVisibility = visibility, memberOwnerTypeParams = parameters, memberType = type)
 }
 
 /** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */
-private fun BirEmitter.styStamped(node: IrExpression, s: String): String =
-	if (styNodePrefixes.any { s.startsWith(it) }) """{"sty":${birType(node.type).toJson()},${s.substring(1)}""" else s
+private fun BirEmitter.styStamped(node: IrExpression, s: BirExpression): BirExpression = when (s) {
+	is BirLocal -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
+	is BirCallLocal -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
+	is BirCallStatic -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
+	is BirCallInstance -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
+	is BirFieldGet -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
+	is BirLateinitGet -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
+	is BirStaticFieldGet -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
+	else -> s
+}
 
 /** The plan's STABILITY test: a const or a read of an immutable non-ref-cell local/parameter re-reads for free and
  *  without side effects, so a binding for it may be inlined at every reader and may move past another value without
@@ -278,12 +301,6 @@ internal fun BirEmitter.isStableValue(e: IrExpression): Boolean =
 		!isRefCell(o) && (o is IrValueParameter || (o as? IrVariable)?.isVar == false)
 	} == true
 
-private val styNodePrefixes = listOf(
-	"""{"k":"callLocal"""",
-	"""{"k":"local"""", """{"k":"callStatic"""", """{"k":"callInstance"""",
-	"""{"k":"field"""", """{"k":"lateinitGet"""", """{"k":"staticField"""",
-)
-
 /**
  * The compiler-authored leading parameter of a Kotlin inner constructor is the selected inner class's immediate
  * enclosing owner. The value supplied for that slot may have a derived static type, but that value type is not the
@@ -291,32 +308,36 @@ private val styNodePrefixes = listOf(
  * [own..., enclosing...]; derive the immediate outer application from that same fact bir2cir uses to close the inner
  * owner, rather than independently re-walking the receiver's supertype graph.
  */
-private fun BirEmitter.innerConstructorOuterSlotJson(
+private fun BirEmitter.innerConstructorOuterSlot(
 	node: IrConstructorCall,
 	innerClass: IrClass?,
-): String? {
+): TypeNode? {
 	if (innerClass?.isInner != true) return null
+	fun broken(message: String): TypeNode? {
+		invariantBroken(node, message)
+		return null
+	}
 	val outerClass = innerClass.parent as? IrClass
-		?: return invariantBroken(node, "an inner constructor's class has no enclosing class")
+		?: return broken("an inner constructor's class has no enclosing class")
 	if (dispatchReceiver(node) == null)
-		return invariantBroken(node, "an inner constructor call has no enclosing-instance receiver")
+		return broken("an inner constructor call has no enclosing-instance receiver")
 	val innerApplication = ownerSpec(innerClass, node.type)
 	val arguments = (innerApplication as? TypeNode.Fqn)?.args.orEmpty()
 	val ownCount = innerClass.typeParameters.size
 	val outerCount = innerEnclosingTypeParams(innerClass).size
 	if (arguments.size != ownCount + outerCount)
-		return invariantBroken(node,
+		return broken(
 			"an inner constructor result does not carry its complete own and enclosing type application")
 	val outerArguments = arguments.drop(ownCount)
 	val outerName = clrName(outerClass) ?: typeName(outerClass)
-	return if (outerArguments.isEmpty()) TypeNode.Fqn(outerName).toJson()
-	else TypeNode.Fqn(outerName, outerArguments).toJson()
+	return if (outerArguments.isEmpty()) TypeNode.Fqn(outerName)
+	else TypeNode.Fqn(outerName, outerArguments)
 }
 
 // Casts are pure type assertions: checking their shared input once before a chain preserves exception order and
 // keeps each cast visible to value-type readers. Safe casts may manufacture null and must remain a boundary;
 // a value already bound by an evaluation plan is likewise consumed through that binding, never re-evaluated.
-private fun BirEmitter.castExpression(node: IrTypeOperatorCall, requireNonNullInput: Boolean = false): String {
+private fun BirEmitter.castExpression(node: IrTypeOperatorCall, requireNonNullInput: Boolean = false): BirExpression {
 	val checked = requireNonNullInput || (node.operator == IrTypeOperator.CAST && needsNonNullCheck(node.typeOperand))
 	val nested = if (checked) (node.argument as? IrTypeOperatorCall)?.takeIf {
 		(it.operator == IrTypeOperator.CAST || it.operator == IrTypeOperator.IMPLICIT_CAST) && planReads[it] == null
@@ -327,12 +348,12 @@ private fun BirEmitter.castExpression(node: IrTypeOperatorCall, requireNonNullIn
 		wrapNonNullValue(original, node.argument.type, "null cannot be cast to a non-null type")
 	else original
 	return nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
-		"""{"k":"nullableValue","elem":${elem.toJson()},"e":$operand}"""
-	} ?: """{"k":"cast","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand()},"e":$operand}"""
+		kotc.bir.BirNullableValue(elem = elem, e = operand)
+	} ?: kotc.bir.BirCast(type = birType(node.typeOperand), reifiedTypeOperand = node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand(), e = operand)
 }
 
-internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
-	is IrConst -> constant(node).toJson()
+internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (node) {
+	is IrConst -> constant(node)
 	is IrGetValue -> {
 		val owner = node.symbol.owner
 		val name = owner.name.asString()
@@ -344,17 +365,17 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// keyed on the cell element type `owner.type` (NOT the smart-cast-narrowed `node.type`, which alone would defeat
 			// the leaf coerceValue). Consumed as `Nullable<T>` (no narrowing) -> the raw field. (#36)
 			isRefCell(owner) -> {
-				val raw = """{"k":"field","ownerType":${refType(owner).toJson()},"recv":${refBase(owner)},"name":"v"}"""
+				val raw = kotc.bir.BirFieldGet(ownerType = refType(owner), recv = refBase(owner), name = "v")
 				val vElem = nullableValueUnwrapElem(owner.type, node.type)
-				if (vElem != null) """{"k":"nullableValue","elem":${vElem.toJson()},"e":$raw}""" else raw
+				if (vElem != null) kotc.bir.BirNullableValue(elem = vElem, e = raw) else raw
 			}
 			captureSubst.containsKey(owner) -> captureSubst[owner]!!
 			selfSubst.containsKey(owner) -> selfSubst[owner]!!   // extension `__self` (by identity, before name-based `<this>`)
 			valSubst.containsKey(owner) -> valSubst[owner]!!
-			name == "<this>" -> BirThis().toJson()
+			name == "<this>" -> BirThis()
 			else -> {
 				val slot = localSlotName(owner)
-				val local = BirLocal(slot, outer = if (isExactOuterValue(node)) true else null).toJson()
+				val local = BirLocal(slot, outer = if (isExactOuterValue(node)) true else null)
 				// Smart-cast narrowing carried directly on the IrGetValue (no IMPLICIT_CAST node — e.g. the `&&`
 				// RHS / a compound condition: `x is Int && x > 10`): the use-site type is narrower than the
 				// declared type, so emit a cast (ilemit unboxes Any->Int / castclass for refs). Without it the
@@ -365,8 +386,8 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				// invalid IL / reads garbage (the C1 smart-cast miscompile). This is the twin of the IMPLICIT_CAST path.
 				val vElem = nullableValueUnwrapElem(owner.type, node.type)
 				// The declared type is the boxed Any token ("object" fallback, or "kotlin.Any" for an Any/Nothing source type).
-				if (vElem != null) """{"k":"nullableValue","elem":${vElem.toJson()},"e":$local}"""
-				else if (ut != dt && dt == OBJ) """{"k":"cast","type":${ut.toJson()},"e":$local}"""
+				if (vElem != null) kotc.bir.BirNullableValue(elem = vElem, e = local)
+				else if (ut != dt && dt == OBJ) kotc.bir.BirCast(type = ut, e = local)
 				else local
 			}
 		}
@@ -376,13 +397,13 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		val parent = entry.parent as? IrClass
 		// Rich enum -> the static singleton field; basic enum -> the selected Kotlin enum-entry identity.
 		if (parent != null && isRichEnum(parent))
-			"""{"k":"staticField","ownerType":${fqnJson(typeName(parent))},"name":${str(entry.name.asString())}}"""
+			kotc.bir.BirStaticFieldGet(ownerType = TypeNode.Fqn(typeName(parent)), name = entry.name.asString())
 		else {
 			val ord = parent?.declarations?.filterIsInstance<IrEnumEntry>()?.indexOf(entry) ?: 0
 			// Use the same declaration-type transport as every other value/signature. In particular, a projected
 			// classifier carries dll2klib's exact external identity; rebuilding it from its Kotlin display name
 			// would lose nested/renamed owners. bir2cir alone resolves the entry's physical constant.
-			kotc.bir.BirEnumValue(birType(node.type), entry.name.asString(), ord).toJson()
+			kotc.bir.BirEnumValue(birType(node.type), entry.name.asString(), ord)
 		}
 	}
 	// `object Foo` reference -> load the singleton `Foo.INSTANCE` static field (item 10). (Projected .NET objects
@@ -395,42 +416,43 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrGetObjectValue -> if (node.symbol.owner.isCompanion) {
 		val companion = node.symbol.owner
 		val owner = companion.parent as IrClass
-		kotc.bir.BirCompanionValue(TypeNode.Fqn(typeName(owner)), TypeNode.Fqn(typeName(companion)), companion.name.asString()).toJson()
+		kotc.bir.BirCompanionValue(TypeNode.Fqn(typeName(owner)), TypeNode.Fqn(typeName(companion)), companion.name.asString())
 	} else
-		"""{"k":"staticField","ownerType":${fqnJson(clrExternalOwner(node.symbol.owner) ?: typeName(node.symbol.owner))},"name":"INSTANCE"}"""
+		kotc.bir.BirStaticFieldGet(ownerType = TypeNode.Fqn(clrExternalOwner(node.symbol.owner) ?: typeName(node.symbol.owner)), name = "INSTANCE")
 	is IrBlock -> blockExpr(node)
 	is IrGetField -> {
 		val staticOwner = staticBackingFieldOwner(node.symbol.owner)
 		val ownerClass = node.symbol.owner.parent as? IrClass
 		val clr = ownerClass?.let { clrName(it) }
-		val recvJson = node.receiver?.let { expr(it) } ?: kotc.bir.BirThis().toJson()
+		val recvJson = node.receiver?.let { expr(it) } ?: kotc.bir.BirThis()
 		val fldName = node.symbol.owner.name.asString()
-		val copyDefault = if (activeDataClassCopyDefault) ",\"dataClassCopyDefault\":true" else ""
-		val generatedEquals = if (activeGeneratedEqualsFieldRead) ",\"generatedEqualsFieldRead\":true" else ""
+		val copyDefault = true.takeIf { activeDataClassCopyDefault }
+		val generatedEquals = true.takeIf { activeGeneratedEqualsFieldRead }
 		// #89: a STATIC backing field (top-level property -> file class; companion property -> enclosing class) ->
 		// a `staticField` load with NO receiver. Reached from the property's OWN custom accessor body reading
 		// `field`; a plain field-only property is read directly at the call site (BirEmitterCalls).
 		if (staticOwner != null) {
 			val lateinit = node.symbol.owner.correspondingPropertySymbol?.owner?.let { isLateinitProperty(it) } == true
 			if (lateinit)
-				"""{"k":"lateinitGet","ownerType":${fqnJson(staticOwner)},"static":true,"name":${str(fldName)}}"""
-			else """{"k":"staticField","ownerType":${fqnJson(staticOwner)},"name":${str(fldName)}}"""
+				kotc.bir.BirLateinitGet(ownerType = TypeNode.Fqn(staticOwner), static = true, name = fldName)
+			else kotc.bir.BirStaticFieldGet(ownerType = TypeNode.Fqn(staticOwner), name = fldName)
 		}
 		// `Throwable.message`/`.cause` are PLAIN Kotlin properties: an app read is an IrCall(get_message) routed by
 		// bir2cir to clrPropGet System.Exception.Message off the @ClrProperty binding (layer purity — no BCL member name
 		// in kotc). A direct backing-FIELD read reaching here is only kotlin.Throwable's own generated getter body in the
 		// stdlib ref build, where `message` is a real field — the plain `field` path below serves it.
 		else if (clr != null)
-			"""{"k":"field","ownerType":${fqnJson(clr)},"recv":$recvJson,"name":${str(fldName)}}"""
+			kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(clr), recv = recvJson, name = fldName)
 		// A `lateinit var` backing-field read -> throw if still uninitialized (null) — proper lateinit semantics.
 		else if (node.symbol.owner.correspondingPropertySymbol?.owner?.let { isLateinitProperty(it) } == true)
-			"""{"k":"lateinitGet","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(fldName)}}"""
+			kotc.bir.BirLateinitGet(ownerType = ownerSpec(ownerClass, node.receiver?.type), recv = recvJson, name = fldName)
 		else
-			"""{"k":"field","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(fldName)}$copyDefault$generatedEquals}"""
+			BirFieldGet(ownerType = ownerSpec(ownerClass, node.receiver?.type), recv = recvJson, name = fldName,
+				dataClassCopyDefault = copyDefault, generatedEqualsFieldRead = generatedEquals)
 	}
 	is IrConstructorCall -> {
 		val klass = node.symbol.owner.parent as? IrClass
-		val innerOuterSlot = innerConstructorOuterSlotJson(node, klass)
+		val innerOuterSlot = innerConstructorOuterSlot(node, klass)
 		// The generic Kotlin array constructor `Array<E>(size) { init }` is semantic BIR array construction. Carry the
 		// frontend element type exactly as supplied, whether concrete or a scoped `tv`; bir2cir owns its physical CLR
 		// representation. Without this node, the call falls through to a bogus `new kotlin.Array(...)` construction.
@@ -447,14 +469,14 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// this call needs an evaluation plan `filledArgs` binds it as a recv-phase binding and the reader below renders
 		// that ONE binding's `bindRef` through the ordinary `expr()`, instead of a second emission of the expression
 		// (which would append a second copy of any lifted lambda in it).
-		val ctorArgs: List<String> = filledArgs(node)
-		val outerArg: String? =
+		val ctorArgs: List<BirExpression> = filledArgs(node)
+		val outerArg: BirExpression? =
 			if ((node.symbol.owner.parent as? IrClass)?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
 		val arrArgs = if (arrElem != null) ctorArgs else emptyList()
 		if (arrElem != null && arrArgs.size == 2)
-			"""{"k":"newArrayInit","elem":${arrElem.toJson()},"size":${arrArgs[0]},"init":${arrArgs[1]}}"""
+			kotc.bir.BirNewArrayInit(elem = arrElem, size = arrArgs[0], init = arrArgs[1])
 		else if (arrElem != null && arrArgs.size == 1)
-			"""{"k":"newArraySized","elem":${arrElem.toJson()},"size":${arrArgs[0]}}"""
+			kotc.bir.BirNewArraySized(elem = arrElem, size = arrArgs[0])
 		else {
 		// A generic .NET type (`Collection<Int>()`) -> a constructed `clrg:` spec; non-generic stays plain.
 		val clr: TypeNode? = klass?.let { clrName(it) }?.let { net ->
@@ -472,38 +494,38 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// construction: the enclosing instance is a leading constructor argument in the CLR representation just as
 			// it is for a same-module declaration. A foreign CLR nested type is never `isInner`, so it keeps its ordinary
 			// declared constructor vector.
-			val externalArgs = (listOfNotNull(outerArg) + ctorArgs).joinToString(",")
+			val externalArgs = listOfNotNull(outerArg) + ctorArgs
 			val ctorSubst = callSiteSubstitutor(node, node.symbol.owner)
 			val externalTypes = (listOfNotNull(innerOuterSlot) + node.symbol.owner.parameters
 				.filter { it.kind == IrParameterKind.Regular }
-				.map { birType(ctorSubst?.substitute(it.type) ?: it.type).toJson() }).joinToString(",")
+				.map { birType(ctorSubst?.substitute(it.type) ?: it.type) })
 			val externalSignature = inMemberDeclarationFrame(node.symbol.owner) {
 				val outer = node.symbol.owner.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }
-					?.let { birType(it.type).toJson() }
+					?.let { birType(it.type) }
 				val regular = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
-					.map { birType(it.type).toJson() }
-				(listOfNotNull(outer) + regular).joinToString(",")
+					.map { birType(it.type) }
+				listOfNotNull(outer) + regular
 			}
 			val identity = declarationIdForPhysicalAllocation(node.symbol.owner)
-				?.let { ""","constructorDeclarationId":${str(it)}""" }.orEmpty()
-			"""{"k":"new","type":${clr.toJson()},"argTypes":[$externalTypes],"args":[$externalArgs],"memberSignature":[$externalSignature]$identity}"""
+			BirNew(type = clr, argTypes = externalTypes, args = externalArgs,
+				memberSignature = externalSignature, constructorDeclarationId = identity)
 		}
 		else {
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
 			val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
-			val args = (listOfNotNull(outerArg) + capArgs + ctorArgs).joinToString(",")
+			val args = listOfNotNull(outerArg) + capArgs + ctorArgs
 			// Carry the complete selected declaration shape, including kotc-authored enclosing/capture slots. These entries
 			// correspond index-for-index with `args`; bir2cir links the exact local constructor and never chooses by arity.
 			val capTypes = klass?.let { localClassCaptures[it] }.orEmpty()
-				.map { str(captureFieldType(it)) }
+				.map { captureFieldType(it) }
 			// Constructor parameter declarations live in the constructed class's generic frame. Close that frame at
 			// this call site before publishing the selected signature: for `class L<U>(u: U); L(0)` the argument slot
 			// is `Int`, not whichever type variable happens to occupy index zero in the enclosing caller. This is the
 			// same callee-to-caller substitution used by default-argument rendering.
 			val ctorSubst = callSiteSubstitutor(node, node.symbol.owner)
 			val regularTypes = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
-				.map { birType(ctorSubst?.substitute(it.type) ?: it.type).toJson() }
-			val ctorArgTypes = (listOfNotNull(innerOuterSlot) + capTypes + regularTypes).joinToString(",")
+				.map { birType(ctorSubst?.substitute(it.type) ?: it.type) }
+			val ctorArgTypes = listOfNotNull(innerOuterSlot) + capTypes + regularTypes
 			// Preserve the frontend-selected OPEN regular-parameter declaration independently from the substituted use-site
 			// vector. The enclosing slot comes from the selected constructor's declared dispatch receiver, not its
 			// caller-relative argument. Include every leading slot index-for-index; this lets bir2cir bind an inner or
@@ -511,20 +533,20 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// owner argument even when the supplied value retains its read-only head view.
 			val ctorMemberSignature = inMemberDeclarationFrame(node.symbol.owner) {
 				val regularMemberTypes = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
-					.map { birType(it.type).toJson() }
+					.map { birType(it.type) }
 				val declaredOuterSlot = node.symbol.owner.parameters
-					.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }?.let { birType(it.type).toJson() }
+					.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }?.let { birType(it.type) }
 				val declaredCaptureTypes = klass?.let { localClassCaptures[it] }.orEmpty()
-					.map { captureFieldType(it).toJson() }
-				(listOfNotNull(declaredOuterSlot) + declaredCaptureTypes + regularMemberTypes).joinToString(",")
+					.map { captureFieldType(it) }
+				listOfNotNull(declaredOuterSlot) + declaredCaptureTypes + regularMemberTypes
 			}
 			// `ownerSpec` names a lifted generic-capturing LOCAL CLASS as its CONSTRUCTED `L<T>` (own args from
 			// `node.type` + the enclosing captured params it recorded in `liftedTypeArgParams`), so a
 			// `fun <T> f(){ class L{ val x:T=t }; L() }` instantiates `L<T>` at each `new` site. A non-generic local
 			// class / any other type keeps the plain identity.
 			val identity = declarationIdForPhysicalAllocation(node.symbol.owner)
-				?.let { ""","constructorDeclarationId":${str(it)}""" }.orEmpty()
-			"""{"k":"new","type":${(klass?.let { ownerSpec(it, node.type) } ?: OBJ).toJson()},"argTypes":[$ctorArgTypes],"args":[$args],"memberSignature":[$ctorMemberSignature]$identity}"""
+			BirNew(type = klass?.let { ownerSpec(it, node.type) } ?: OBJ, argTypes = ctorArgTypes,
+				args = args, memberSignature = ctorMemberSignature, constructorDeclarationId = identity)
 		}
 		}
 	}
@@ -532,11 +554,11 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	// part's static type via StaticType and wraps a collection/Map part in clrCollToString/clrMapToString (Kotlin-style
 	// `[a, b]` / `{a=1, b=2}`, else `"$map"` yields the raw .NET type name) and a NULLABLE part in LibraryKt.toString
 	// (null -> "null", else a null ref appends empty).
-	is IrStringConcatenation -> """{"k":"concat","parts":[${node.arguments.joinToString(",") { expr(it) }}]}"""
+	is IrStringConcatenation -> kotc.bir.BirConcat(parts = node.arguments.map { expr(it) })
 	is IrTypeOperatorCall -> when (node.operator) {
 		// `x is T` (exhaustive when matching) -> isinst + not-null check.
-		IrTypeOperator.INSTANCEOF -> """{"k":"isInst","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}"""
-		IrTypeOperator.NOT_INSTANCEOF -> """{"k":"unaryOp","op":"!","e":{"k":"isInst","type":${birType(node.typeOperand).toJson()},"e":${expr(node.argument)}}}"""
+		IrTypeOperator.INSTANCEOF -> kotc.bir.BirIsInstance(type = birType(node.typeOperand), e = expr(node.argument))
+		IrTypeOperator.NOT_INSTANCEOF -> kotc.bir.BirUnaryOperation(op = "!", e = kotc.bir.BirIsInstance(type = birType(node.typeOperand), e = expr(node.argument)))
 		// `x as T` / smart-cast downcast -> castclass (or unbox for value types). Throws on mismatch.
 		// A value-type-nullable source (`Int?` = `Nullable<T>`) cast to its non-null value (`Int`) must UNWRAP
 		// `Nullable<T>.Value` — `unbox.any int` over a `Nullable<int>` struct is invalid IL / garbage (the C1
@@ -549,8 +571,8 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// (`safeCastValue` = `Nullable<T>`): unsigned is a value type on the CLR, so `x as? UInt` must yield
 			// `Nullable<uint>`, not a boxed reference via `isInstRef` (same #118 class as `!!`/smart-cast).
 			val velem = node.typeOperand.takeIf { it.isPrimitiveOrUnsigned() }?.classFqName?.asString()?.let { TypeNode.Fqn(it) }
-			if (velem != null) """{"k":"safeCastValue","elem":${velem.toJson()},"e":${expr(node.argument)}}"""
-			else """{"k":"isInstRef","type":${birType(node.typeOperand).toJson()},"reifiedTypeOperand":${node.typeOperand.hasReifiedRuntimeOperand()},"e":${expr(node.argument)}}"""
+			if (velem != null) kotc.bir.BirSafeValueCast(elem = velem, e = expr(node.argument))
+			else kotc.bir.BirInstanceOrNull(type = birType(node.typeOperand), reifiedTypeOperand = node.typeOperand.hasReifiedRuntimeOperand(), e = expr(node.argument))
 		}
 		// A fun-interface SAM conversion (`Comparator { a, b -> … }`) -> a synthetic class implementing the interface
 		// (the SAM method = the lambda body), NOT a Func delegate -- a delegate has no `compare` so a call site that
@@ -565,10 +587,10 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrTry -> tryExpr(node)
 	// `T::class` / `Foo::class` -> a System.Type token. For a generic param `T` this is `ldtoken !!0` in the
 	// generic method (CLR reified generics); `Foo::class` is a concrete `ldtoken Foo`.
-	is IrClassReference -> kotc.bir.BirClassReference(birType(node.classType)).toJson()
+	is IrClassReference -> kotc.bir.BirClassReference(birType(node.classType))
 	// `x::class` (runtime class of an instance) -> `x.GetType()` (a System.Type); `.simpleName`/`.qualifiedName`
 	// on the result route to Type.Name/FullName, same as the `T::class` literal path.
-	is IrGetClass -> """{"k":"getType","e":${expr(node.argument)}}"""
+	is IrGetClass -> kotc.bir.BirRuntimeClass(e = expr(node.argument))
 	// `throw` in expression position (e.g. `x ?: throw ...`, `if (c) v else throw ...`): type Nothing,
 	// transfers control so no value reaches the surrounding merge point.
 	is IrThrow -> throwExpr(expr(node.value))
@@ -595,17 +617,17 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		val spliced = inlineReturnSubst[node.returnTargetSymbol]
 		if (spliced != null) {
 			val (res, end) = spliced
-			val goto = kotc.bir.BirGoto(end).toJson()
+			val goto = BirGoto(end)
 			// Unlike the NON-spliced arm below, the value stored into the splice result-local needs NO return-site
 			// coerceValue/wrapNonNullValue: a `return@lambda <value-type-nullable>` into a bare-value slot is only
 			// well-typed via a smart-cast, which Fir2Ir always materializes as a narrowed IrGetValue or an IMPLICIT_CAST
 			// — both already `nullableValue`-unwrapped by expr()'s leaf arms — so node.value is already the bare `Int`;
 			// and a splice target is always a LAMBDA literal, never a postcondition-registered public fn. Verified a
 			// pure no-op across the value-nullable/smart-cast/generic battery (cases/il-inlineretcoerce).
-			val xfer = if (res != null) """{"k":"setLocal","name":${str(res)},"value":${expr(node.value)}},$goto"""
-				else if (node.value is IrGetObjectValue) goto
+			val xfer = if (res != null) listOf(BirSetLocal(res, expr(node.value)), goto)
+				else if (node.value is IrGetObjectValue) listOf(goto)
 				// Unit splice: evaluate a side-effecting return value for its effect, then jump.
-				else """{"k":"exprStmt","expr":${expr(node.value)}},$goto"""
+				else listOf(BirExpressionStatement(expr(node.value)), goto)
 			breakContinueExpr(xfer)
 		}
 		// A genuine NON-LOCAL return stays a raw returnExpr (bir2cir routes it at splice time). For a Unit-returning
@@ -620,10 +642,10 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// which took the branch above.
 			val postMsg = postconditionReturns[node.returnTargetSymbol]
 			val v = if (postMsg != null && !node.value.type.isNothing()) wrapNonNullValue(v0, valueRetType, postMsg) else v0
-			"""{"k":"returnExpr","value":$v}"""
+			kotc.bir.BirReturnExpression(value = v)
 		}
-		else if (node.value is IrGetObjectValue) """{"k":"returnExpr"}"""
-		else breakContinueExpr("""{"k":"exprStmt","expr":${expr(node.value)}},{"k":"return"}""")
+		else if (node.value is IrGetObjectValue) kotc.bir.BirReturnExpression()
+		else breakContinueExpr(listOf(BirExpressionStatement(expr(node.value)), BirReturn()))
 	}
 	// `break`/`continue` used in expression position (`val end = if (c) x else break`, stdlib CharSequence.windowed's
 	// coercedEnd). Kotlin types them `Nothing`: they transfer control, so no value reaches the surrounding merge. We
@@ -651,17 +673,17 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		val spreads = node.elements.filterIsInstance<IrSpreadElement>()
 		val directs = node.elements.filterIsInstance<IrExpression>()
 		when {
-			spreads.isEmpty() -> """{"k":"newArray","elem":${birType(node.varargElementType).toJson()},"elems":[${directs.joinToString(",") { expr(it) }}]}"""
+			spreads.isEmpty() -> kotc.bir.BirNewArray(elem = birType(node.varargElementType), elems = directs.map { expr(it) })
 			// bir2cir owns the physical accumulation and element conversions.
 			else -> {
-				val parts = node.elements.joinToString(",") { e ->
+				val parts = node.elements.map { e ->
 					when (e) {
-						is IrSpreadElement -> """{"spread":true,"e":${expr(e.expression)}}"""
-						is IrExpression -> """{"spread":false,"e":${expr(e)}}"""
-						else -> """{"spread":false,"e":{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}}"""
+						is IrSpreadElement -> BirSpreadPart(true, expr(e.expression))
+						is IrExpression -> BirSpreadPart(false, expr(e))
+						else -> BirSpreadPart(false, BirConstant(TypeNode.Fqn("kotlin.Unit"), BirLiteral.NullLiteral))
 					}
 				}
-				"""{"k":"spreadConcat","elem":${birType(node.varargElementType).toJson()},"parts":[$parts]}"""
+				kotc.bir.BirSpreadConcat(elem = birType(node.varargElementType), parts = parts)
 			}
 		}
 	}

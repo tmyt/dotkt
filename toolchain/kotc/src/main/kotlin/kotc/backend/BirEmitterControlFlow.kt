@@ -1,6 +1,7 @@
 package kotc.backend
 
 import kotc.bir.TypeNode
+import kotc.bir.*
 import org.jetbrains.kotlin.backend.common.collectTailRecursionCalls
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
@@ -84,12 +85,9 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
-/** A loop label (Kotlin `outer@`) as JSON, or null. break/continue target loops by this label. */
-internal fun BirEmitter.labelJson(label: String?): String = label?.let { str(it) } ?: "null"
-
 /** A loop body: a block's statements, or a single bare statement (single-statement loop bodies). */
-internal fun BirEmitter.loopBody(body: IrExpression?): String = when (body) {
-	null -> ""
+internal fun BirEmitter.loopBody(body: IrExpression?): List<BirStatement> = when (body) {
+	null -> emptyList()
 	else -> bodyStmts(body)
 }
 
@@ -97,16 +95,14 @@ internal fun BirEmitter.loopBody(body: IrExpression?): String = when (body) {
  *  EXPRESSION slot (a `break`/`continue` used as an `if`/`when` branch value). The transfer runs first and jumps
  *  away; the `throw null` result is unreachable dead code that gives the valueBlock a well-formed result which
  *  never falls through to the surrounding merge — so the merge keeps only the live branch's type. */
-internal fun BirEmitter.breakContinueExpr(xfer: String): String =
-	valueBlockJson(type = null, stmts = xfer, result = unreachableResultJson())
+internal fun BirEmitter.breakContinueExpr(xfer: List<BirStatement>): BirValueBlock =
+	sourceValueBlock(xfer, BirThrowExpression(nullConstant()))
 
-internal fun BirEmitter.breakContinueExpr(xfer: kotc.bir.BirStatement): String =
-	sourceValueBlock(listOf(xfer), kotc.bir.BirThrowExpression(nullConstant())).toJson()
+internal fun BirEmitter.breakContinueExpr(xfer: BirStatement): BirValueBlock = breakContinueExpr(listOf(xfer))
 
 /** The result of a valueBlock that never falls through (a control transfer already left it): `throw null`, dead code
  *  the surrounding merge must not take a type from. The throw, rather than its null operand, never returns. */
-private fun BirEmitter.unreachableResultJson(): String =
-	kotc.bir.BirThrowExpression(nullConstant()).toJson()
+private fun BirEmitter.unreachableResult(): BirExpression = BirThrowExpression(nullConstant())
 
 /** The standard tail-call optimization: a self-tail-call in a `tailrec` fn becomes a back-jump to the method's
  *  entry after reassigning the parameters to the call's arguments (Kotlin/JVM's own `tailrec` lowering, which our
@@ -116,8 +112,8 @@ private fun BirEmitter.unreachableResultJson(): String =
  *  reading an earlier param — `f(n-1, acc+n)` — is not corrupted by the reassignment), reassign each param (a
  *  `setLocal` on a param name emits `starg`), then `goto` the entry label. The block's result is an unreachable
  *  `throwExpr` (the jump already left), mirroring [breakContinueExpr] — the surrounding `return` never executes. */
-internal fun BirEmitter.tailrecJump(call: IrCall, ctx: BirEmitter.TailrecCtx): String {
-	data class Reassign(val name: String, val tmp: String, val valueJson: String, val type: org.jetbrains.kotlin.ir.types.IrType)
+internal fun BirEmitter.tailrecJump(call: IrCall, ctx: BirEmitter.TailrecCtx): BirValueBlock {
+	data class Reassign(val name: String, val tmp: String, val value: BirExpression, val type: org.jetbrains.kotlin.ir.types.IrType)
 	val reassigns = ArrayList<Reassign>()
 	ctx.fn.parameters.forEachIndexed { i, p ->
 		// The dispatch receiver of a member `tailrec` self-call is the SAME `this` (Kotlin requires it) — never reassigned.
@@ -126,60 +122,59 @@ internal fun BirEmitter.tailrecJump(call: IrCall, ctx: BirEmitter.TailrecCtx): S
 		val name = if (p.kind == IrParameterKind.ExtensionReceiver) extensionReceiverSlotName(ctx.fn) else p.name.asString()
 		reassigns.add(Reassign(name, "__tailrec_${ctx.startLabel}_$i", coerceValue(arg, p.type), p.type))
 	}
-	val stmts = ArrayList<String>()
-	reassigns.forEach { stmts.add("""{"k":"var","name":${str(it.tmp)},"type":${birType(it.type).toJson()},"init":${it.valueJson}}""") }
-	reassigns.forEach { stmts.add("""{"k":"setLocal","name":${str(it.name)},"value":{"k":"local","name":${str(it.tmp)}}}""") }
-	stmts.add(kotc.bir.BirGoto(ctx.startLabel).toJson())
-	return valueBlockJson(type = null, stmts = stmts.joinToString(","), result = unreachableResultJson())
+	val stmts = ArrayList<BirStatement>()
+	reassigns.forEach { stmts.add(BirVariable(name = it.tmp, type = birType(it.type), init = BirField.Value(it.value))) }
+	reassigns.forEach { stmts.add(BirSetLocal(it.name, BirLocal(it.tmp))) }
+	stmts.add(BirGoto(ctx.startLabel))
+	return sourceValueBlock(stmts = stmts, result = unreachableResult())
 }
 
 /** `while(c){B}` -> CFG block: `START: if(!c) goto END; B; goto START; END:`. continue->START, break->END. */
-internal fun BirEmitter.cfgWhile(node: IrWhileLoop): String {
+internal fun BirEmitter.cfgWhile(node: IrWhileLoop): BirBlock {
 	val start = cfgFresh(); val end = cfgFresh()
 	cfgLoopStack.add(Triple(node, start, end))
 	val body = loopBody(node.body)
 	cfgLoopStack.removeAt(cfgLoopStack.size - 1)
-	val parts = ArrayList<String>()
-	parts.add(kotc.bir.BirLabel(start).toJson())
-	sourcePointJson(node.condition)?.let { parts.add(it) }
-	parts.add("""{"k":"brIf","id":$end,"on":false,"cond":${expr(node.condition)}}""")
-	body.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
+	val parts = ArrayList<BirStatement>()
+	parts.add(BirLabel(start))
+	sourcePoint(node.condition)?.let { parts.add(it) }
+	parts.add(BirBranchIf(end, false, expr(node.condition)))
+	parts.addAll(body)
 	parts.add(hiddenSourcePoint)
-	parts.add(kotc.bir.BirGoto(start).toJson())
-	parts.add(kotc.bir.BirLabel(end).toJson())
-	return """{"k":"block","body":[${parts.joinToString(",")}]}"""
+	parts.add(BirGoto(start))
+	parts.add(BirLabel(end))
+	return BirBlock(parts)
 }
 
 /** `do{B}while(c)` -> CFG: `START: B; CONT: if(c) goto START; END:`. continue->CONT, break->END. */
-internal fun BirEmitter.cfgDoWhile(node: IrDoWhileLoop): String {
+internal fun BirEmitter.cfgDoWhile(node: IrDoWhileLoop): BirBlock {
 	val start = cfgFresh(); val cont = cfgFresh(); val end = cfgFresh()
 	cfgLoopStack.add(Triple(node, cont, end))
 	val body = loopBody(node.body)
 	cfgLoopStack.removeAt(cfgLoopStack.size - 1)
-	val parts = ArrayList<String>()
-	parts.add(kotc.bir.BirLabel(start).toJson())
-	body.takeIf { it.isNotEmpty() }?.let { parts.add(it) }
-	parts.add(kotc.bir.BirLabel(cont).toJson())
-	sourcePointJson(node.condition)?.let { parts.add(it) }
-	parts.add("""{"k":"brIf","id":$start,"on":true,"cond":${expr(node.condition)}}""")
-	parts.add(kotc.bir.BirLabel(end).toJson())
-	return """{"k":"block","body":[${parts.joinToString(",")}]}"""
+	val parts = ArrayList<BirStatement>()
+	parts.add(BirLabel(start))
+	parts.addAll(body)
+	parts.add(BirLabel(cont))
+	sourcePoint(node.condition)?.let { parts.add(it) }
+	parts.add(BirBranchIf(start, true, expr(node.condition)))
+	parts.add(BirLabel(end))
+	return BirBlock(parts)
 }
 
 /** A Kotlin `for (x in a..b / array)` -> a BIR counter loop / indexed array loop, or null. */
-internal fun BirEmitter.birForLoop(block: IrBlock): String? {
+internal fun BirEmitter.birForLoop(block: IrBlock): BirStatement? {
 	val iterVar = block.statements.getOrNull(0) as? IrVariable
 	val whileLoop = block.statements.getOrNull(1) as? IrWhileLoop
 	val bodyBlock = whileLoop?.body as? IrBlock
 	val loopVar = bodyBlock?.statements?.getOrNull(0) as? IrVariable
 	if (iterVar == null || bodyBlock == null || loopVar == null) return null
 	val source = (iterVar.initializer as? IrCall)?.let { dispatchReceiver(it) ?: extensionReceiver(it) }
-	val body = bodyBlock.statements.drop(1).joinToString(",") { stmt(it) }
-	val lbl = labelJson(whileLoop.label)
+	val body = bodyBlock.statements.drop(1).flatMap { stmt(it) }
 	// `for (x in array)` -> an indexed loop (avoids the kotlin iterator types). No `elem`: bir2cir derives the
 	// loop-variable element type off the array operand's (now faithful) type.
 	if (source != null && isArrayType(source.type))
-		return """{"k":"forArray","label":$lbl,"var":${str(localSlotName(loopVar))},"array":${expr(source)},"body":[$body]}"""
+		return BirForArray(whileLoop.label, localSlotName(loopVar), expr(source), body)
 	// NON-array for-loops: kotc no longer classifies the source at all — whether it is a counted RANGE, an
 	// `a downTo b` counter, a stdlib collection, a `kotlin.sequences.Sequence`, or a dll2klib-projected .NET
 	// enumerable are each a `kotlin.ranges.*`/`kotlin.collections.*` FQN, a `downTo` operator identity, or a
@@ -197,41 +192,42 @@ internal fun BirEmitter.birForLoop(block: IrBlock): String? {
 	val elem = (source?.type as? IrSimpleType)?.arguments?.firstOrNull()
 		?.let { (it as? IrTypeProjection)?.type }?.let(::birType) ?: birType(loopVar.type)
 	if (source != null)
-		return """{"k":"forIn","label":$lbl,"elem":${str(elem)},"src":${expr(source)},"srcType":${birType(source.type).toJson()},"var":${str(localSlotName(loopVar))},"body":[$body],"fallback":{"k":"block","body":[${block.statements.joinToString(",") { stmt(it) }}]}}"""
+		return BirForIn(whileLoop.label, elem, expr(source), birType(source.type), localSlotName(loopVar),
+			body, BirBlock(block.statements.flatMap { stmt(it) }))
 	return null
 }
 
-internal fun BirEmitter.tryStmt(node: IrTry): String {
-	val catches = node.catches.joinToString(",") { c ->
+internal fun BirEmitter.tryStmt(node: IrTry): BirTry {
+	val catches = node.catches.map { c ->
 		val p = c.catchParameter
 		// Use birType so a USER exception class catches as its own type (`@AppErr`), not `object`
 		// (which degrades to System.Object — an unverifiable catch).
-		"""{"excType":${birType(p.type).toJson()},"var":${str(localSlotName(p))},"body":[${bodyStmts(c.result)}]}"""
+		BirCatch(birType(p.type), localSlotName(p), bodyStmts(c.result))
 	}
-	val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
-	return """{"k":"try","type":${birType(node.type).toJson()},"body":[${bodyStmts(node.tryResult)}],"catches":[$catches]$finally}"""
+	val finally = node.finallyExpression?.let { bodyStmts(it) }
+	return BirTry(birType(node.type), bodyStmts(node.tryResult), catches, finally)
 }
 
-internal fun BirEmitter.bodyStmts(e: IrExpression): String =
+internal fun BirEmitter.bodyStmts(e: IrExpression): List<BirStatement> =
 	// A sole for-loop is itself an IrBlock; preserve it for stmt's structured-loop projection.
-	if (e is IrBlock && e.origin?.toString() != "FOR_LOOP") e.statements.joinToString(",") { stmt(it) } else stmt(e)
+	if (e is IrBlock && e.origin?.toString() != "FOR_LOOP") e.statements.flatMap { stmt(it) } else stmt(e)
 
 /** `try`/`catch` in value position -> a temp local assigned in each branch, returned via a valueBlock. */
-internal fun BirEmitter.tryExpr(node: IrTry): String {
+internal fun BirEmitter.tryExpr(node: IrTry): BirValueBlock {
 	val tv = "dotkt\$tryval${scopeCounter++}"
 	var anyNull = false
 	val (tryBody, tryNull) = assignBranch(node.tryResult, tv)
 	if (tryNull) anyNull = true
-	val catches = node.catches.joinToString(",") { c ->
+	val catches = node.catches.map { c ->
 		val p = c.catchParameter
 		val (body, catchNull) = assignBranch(c.result, tv)
 		if (catchNull) anyNull = true
 		// birType (matching tryStmt) so the catch type stays the Kotlin FQN that bir2cir lowers via @ClrTypeAlias —
 		// a USER exception class catches as its own `@AppErr`, a stdlib one as its BCL alias.
-		"""{"excType":${birType(p.type).toJson()},"var":${str(localSlotName(p))},"body":[$body]}"""
+		BirCatch(birType(p.type), localSlotName(p), body)
 	}
-	val finally = node.finallyExpression?.let { ""","finally":[${bodyStmts(it)}]""" } ?: ""
-	val tryS = """{"k":"try","type":${fqnJson("kotlin.Unit")},"body":[$tryBody],"catches":[$catches]$finally}"""
+	val finally = node.finallyExpression?.let { bodyStmts(it) }
+	val tryS = BirTry(TypeNode.Fqn("kotlin.Unit"), tryBody, catches, finally)
 	// The branches all assign into the shared temp `tv`, so `tv`'s declared type IS this join's Kotlin type.
 	// `joinNullBranch` is the FRONTEND FACT beside it: the frontend resolved the join to a NON-nullable type while
 	// some branch's result may be `null` — the substituted-generic / stdlib-inline-splice shape that drops the `?`
@@ -239,72 +235,51 @@ internal fun BirEmitter.tryExpr(node: IrTry): String {
 	// bir2cir's ValueJoinNullWidening answers it. The fact rides the declaration this emitter just MINTED, which is
 	// what makes it a statement about this join and not a guess about some local that happens to sit nearby.
 	// It also rides the valueBlock ROOT, which carries no type and so widens nothing: that copy is what lets an
-	// ENCLOSING join see this one as a null-yielding branch (see [emittedYieldsNull]). The `result` here is a read of
+	// ENCLOSING join see this one as a null-yielding branch (see [yieldsNullAtJoin]). The `result` here is a read of
 	// the temp, so the root fact cannot be re-derived from it — this join states it directly.
 	val bt = birType(node.type)
 	val nullBranch = bt !is TypeNode.Nullable && anyNull
-	val varFact = if (nullBranch) ""","joinNullBranch":true""" else ""
-	return valueBlockJson(
-		type = null,
-		stmts = """{"k":"var","name":${str(tv)},"type":${bt.toJson()}$varFact},$tryS""",
-		result = kotc.bir.BirLocal(tv).toJson(),
+	return sourceValueBlock(
+		stmts = listOf(BirVariable(tv, bt, joinNullBranch = true.takeIf { nullBranch }), tryS),
+		result = BirLocal(tv),
 		yieldsNull = nullBranch,
 	)
 }
 
-/** Mint a `valueBlock`, stamping `joinNullBranch` on its ROOT exactly when its VALUE may leave an enclosing join null.
- *
- *  A `valueBlock` is the emitter's one PASS-THROUGH wrapper: its statements are side effects and its `result` IS the
- *  node's value, so it yields null exactly when that result does. String-based construction uses this helper;
- *  typed construction uses [sourceValueBlock] with the same root-only rule in [yieldsNullAtJoin]. The `yieldsNull`
- *  override exists for the one producer whose verdict is not readable from `result` — [tryExpr], whose result is a
- *  read of the temp its branches assigned into. */
-internal fun BirEmitter.valueBlockJson(
-	type: String?,
-	stmts: String,
-	result: String,
-	yieldsNull: Boolean = emittedYieldsNull(result),
-): String {
-	val fact = if (yieldsNull) """"joinNullBranch":true,""" else ""
-	val ty = if (type != null) """"type":$type,""" else ""
-	return """{"k":"valueBlock",$fact$ty"stmts":[$stmts],"result":$result}"""
-}
-
 /** Evaluate an authored value at a source boundary without changing the type or evaluation order. */
-internal fun BirEmitter.sourceMarkedValue(node: IrExpression): String {
+internal fun BirEmitter.sourceMarkedValue(node: IrExpression): BirExpression {
 	val value = expr(node)
-	return sourcePointJson(node)?.let { valueBlockJson(type = null, stmts = it, result = value) } ?: value
+	return sourcePoint(node)?.let { sourceValueBlock(stmts = listOf(it), result = value) } ?: value
 }
 
 /** Like [bodyStmts], but the branch's final value-expression is assigned to `tv` (a value already throws/returns
  *  -> emitted as-is). For try-as-expression: each branch leaves its result in the temp. Returns the emitted
  *  statements paired with whether this branch MAY LEAVE THE JOIN NULL — decided on the EMITTED result, because that
- *  is where a nested join's own verdict and the emitter's own `valueBlock` wrapping are visible; [emittedYieldsNull]
+ *  is where a nested join's own verdict and the emitter's own `valueBlock` wrapping are visible; [yieldsNullAtJoin]
  *  states which emitted shapes count. A nullable Nothing literal is a real null value and must be assigned;
  *  only non-null Nothing transfers control without producing a result. */
-internal fun BirEmitter.assignBranch(e: IrExpression, tv: String): Pair<String, Boolean> {
+internal fun BirEmitter.assignBranch(e: IrExpression, tv: String): Pair<List<BirStatement>, Boolean> {
 	// The branch's Kotlin type owns Unit coercion, including empty blocks and declaration-final blocks.
 	// Execute every statement first; only normal completion reaches the explicit Unit result assignment.
 	if (e.type.isUnit()) {
 		val body = bodyStmts(e)
-		val unit = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
-		val result = """{"k":"setLocal","name":${str(tv)},"value":$unit}"""
-		return listOf(body, result).filter { it.isNotEmpty() }.joinToString(",") to false
+		val unit = BirConstant(TypeNode.Fqn("kotlin.Unit"), BirLiteral.NullLiteral)
+		return (body + BirSetLocal(tv, unit)) to false
 	}
 	val stmts = if (e is IrBlock) e.statements else listOf(e)
-	val pre = stmts.dropLast(1).joinToString(",") { stmt(it) }
+	val pre = stmts.dropLast(1).flatMap { stmt(it) }
 	val last = stmts.lastOrNull()
 	var yieldsNull = false
 	val tail = when {
 		last is IrExpression && !last.type.isNothing() -> {
 			val value = expr(last)
-			yieldsNull = emittedYieldsNull(value)
-			"""{"k":"setLocal","name":${str(tv)},"value":$value}"""
+			yieldsNull = value.yieldsNullAtJoin()
+			listOf(BirSetLocal(tv, value))
 		}
 		last != null -> stmt(last)
-		else -> ""
+		else -> emptyList()
 	}
-	return listOf(pre, tail).filter { it.isNotEmpty() }.joinToString(",") to yieldsNull
+	return (pre + tail) to yieldsNull
 }
 
 /**
@@ -312,25 +287,25 @@ internal fun BirEmitter.assignBranch(e: IrExpression, tv: String): Pair<String, 
  * `brIf NEXT (!cond); body; goto END; NEXT:`; the else body falls through to `END:`. Expression-position
  * if/when keep the value form (`ternary`, via expr). Mixes freely with CFG loops (break/return inside work).
  */
-internal fun BirEmitter.cfgWhen(node: IrWhen): String {
+internal fun BirEmitter.cfgWhen(node: IrWhen): BirBlock {
 	val end = cfgFresh()
-	val parts = ArrayList<String>()
+	val parts = ArrayList<BirStatement>()
 	for (br in node.branches) {
 		val isElse = (br.condition as? IrConst)?.value == true
 		if (isElse) {
-			stmt(br.result).takeIf { it.isNotEmpty() }?.let { parts.add(it) }
+			parts.addAll(stmt(br.result))
 		} else {
 			val next = cfgFresh()
-			sourcePointJson(br.condition)?.let { parts.add(it) }
-			parts.add("""{"k":"brIf","id":$next,"on":false,"cond":${expr(br.condition)}}""")
-			stmt(br.result).takeIf { it.isNotEmpty() }?.let { parts.add(it) }
+			sourcePoint(br.condition)?.let { parts.add(it) }
+			parts.add(BirBranchIf(next, false, expr(br.condition)))
+			parts.addAll(stmt(br.result))
 			parts.add(hiddenSourcePoint)
-			parts.add(kotc.bir.BirGoto(end).toJson())
-			parts.add(kotc.bir.BirLabel(next).toJson())
+			parts.add(BirGoto(end))
+			parts.add(BirLabel(next))
 		}
 	}
-	parts.add(kotc.bir.BirLabel(end).toJson())
-	return """{"k":"block","body":[${parts.joinToString(",")}]}"""
+	parts.add(BirLabel(end))
+	return BirBlock(parts)
 }
 
 /**
@@ -345,7 +320,7 @@ internal fun BirEmitter.cfgWhen(node: IrWhen): String {
  * Returns (varStmtJson or null-if-stable, useJson). Only safe where the expression is suspension-free —
  * expression position is; a suspend call there just renders plainly with `"suspendCall":true` for bir2cir.
  */
-internal fun BirEmitter.bindOnce(init: IrExpression, type: IrType, prefix: String): Pair<String?, String> {
+internal fun BirEmitter.bindOnce(init: IrExpression, type: IrType, prefix: String): Pair<BirVariable?, BirExpression> {
 	if (isStableValue(init)) return null to expr(init)
 	val tv = "$prefix${scopeCounter++}"
 	// A FLEXIBLE/PLATFORM generic-param subject `T!` (`{t:oblivious,of:tv}`, a .NET generic's un-annotated member, #8)
@@ -359,11 +334,11 @@ internal fun BirEmitter.bindOnce(init: IrExpression, type: IrType, prefix: Strin
 	// generic's `!T` member must stay `!T` there), so its subject-temp erasure still has no bir2cir counterpart.
 	val bt = birType(type)
 	val vt = if (bt is TypeNode.Oblivious && bt.of is TypeNode.Tv) OBJ else bt
-	return """{"k":"var","name":${str(tv)},"type":${vt.toJson()},"init":${expr(init)}}""" to
-		kotc.bir.BirLocal(tv).toJson()
+	return kotc.bir.BirVariable(name = tv, type = vt, init = kotc.bir.BirField.Value(expr(init))) to
+		kotc.bir.BirLocal(tv)
 }
 
-internal fun BirEmitter.blockExpr(block: IrBlock): String {
+internal fun BirEmitter.blockExpr(block: IrBlock): BirExpression {
 	// `object : I { … }` -> a synthetic named class (lifted) + `new`. Instance fields are real fields;
 	// captured outer values (incl. the enclosing `this`) become extra ctor params / capture fields.
 	if (block.origin?.toString() == "OBJECT_LITERAL") {
@@ -381,36 +356,35 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 				return invariantBroken(block, "an object expression writes a captured outer variable that was not " +
 					"promoted to a heap ref-cell")
 			// Capturing an ENCLOSING TYPE PARAMETER (`fun <T> mk(v:T) = object : Box<T> { ... }`, or an inlined object
-			// whose supertype/captures resolve to the enclosing `T`): typeDef makes the synthesized class GENERIC over
+			// whose supertype/captures resolve to the enclosing `T`): sourceClassDefinition makes the synthesized class GENERIC over
 			// the params its members reference (reified CLR generics), recording them in `liftedTypeArgNames`. The `new`
 			// site must then INSTANTIATE it with the enclosing args — bracket those `gp:` tokens onto the constructed type
 			// (they resolve at THIS site, i.e. the enclosing method/type scope). Mirrors newClosure/newSam's `typeArgs`.
 			val capPairs = captureFieldPairs(anon, captured)
 			// Save any PRIOR binding for each captured decl: when this object literal is nested inside a capturing
 			// closure/object that captures the SAME outer var (`element`), the enclosing frame already bound it to
-			// its OWN field. Blindly `remove`ing after typeDef would clobber that, so the capture VALUE below would
+			// its OWN field. Blindly `remove`ing after sourceClassDefinition would clobber that, so the capture VALUE below would
 			// mis-render as a bare `local element` (the enclosing `this.element` is out of scope at the `new` site ->
 			// ilemit "load unknown var"). Restore the prior binding instead — mirrors the closure path (lambda()).
 			val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
 			capPairs.forEach { (decl, fname) ->
-				captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
+				captureSubst[decl] = kotc.bir.BirFieldGet(ownerType = TypeNode.Fqn(cname), recv = kotc.bir.BirThis(), name = fname)
 			}
 			localClassCaptures[anon] = captured
-			liftedTypes.add(typeDef(anon, capPairs, captureEnclosingGenerics = true, generated = true))
+			liftedTypes.add(sourceClassDefinition(anon, capPairs, captureEnclosingGenerics = true, generated = true))
 			capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 			// Instantiate the flattened generic anon with the captured params rendered in THIS (enclosing) scope
 			// (`liftedCaptureArgs` honors any active inline `typeArgSubst`, else the enclosing `tv`) — shared with the
 			// var-slot birType / member-access ownerSpec so all three name the SAME `dotkt$objN<T>`.
 			val liftedCaps = liftedCaptureArgs(anon)
 			// Capture values are evaluated in the OUTER context (this frame's captureSubst restored above).
-			val capArgs = captured.joinToString(",") { capValueExpr(it) }
-			val capArgTypes = capPairs.joinToString(",") { (decl, _) -> str(captureFieldType(decl)) }
+			val capArgs = captured.map { capValueExpr(it) }
+			val capArgTypes = capPairs.map { (decl, _) -> captureFieldType(decl) }
 			val newType = if (liftedCaps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, liftedCaps)
 			val construction = block.statements.lastOrNull() as? IrConstructorCall
 				?: return invariantBroken(block, "an object literal has no selected constructor call")
 			val identity = declarationIdForPhysicalAllocation(construction.symbol.owner)
-				?.let { ""","constructorDeclarationId":${str(it)}""" }.orEmpty()
-			return """{"k":"new","type":${newType.toJson()},"argTypes":[$capArgTypes],"args":[$capArgs]$identity}"""
+			return BirNew(newType, capArgs, argTypes = capArgTypes, constructorDeclarationId = identity)
 		}
 	}
 	// `when (subject)` lowers to `{ val tmp = subject; WHEN }` in expression position. The subject is bound
@@ -445,23 +419,23 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			// `nullableWrap` would `newobj Nullable<T>(Nullable<T>)` (ilemit EmitNativeClrNullableWrap over an
 			// already-nullable value) -> InvalidProgram. Emit the member verbatim in the present arm instead.
 			val memberAlreadyNullable = nullableElem(whenExpr.branches.last().result.type) != null
-			fun present(member: String) =
-				if (memberAlreadyNullable) member else """{"k":"nullableWrap","elem":${str(elem)},"e":$member}"""
-			val core: String
+			fun present(member: BirExpression): BirExpression =
+				if (memberAlreadyNullable) member else kotc.bir.BirNullableWrap(elem = elem, e = member)
+			val core: BirExpression
 			if (recvElem != null) {
-				valSubst[key] = """{"k":"nullableValue","elem":${str(recvElem)},"e":$subj}"""
+				valSubst[key] = kotc.bir.BirNullableValue(elem = recvElem, e = subj)
 				valSubstUnwrapped.add(key)   // receiver already reads .Value -> the value-nullable unwrap helpers must not re-wrap
 				val member = expr(whenExpr.branches.last().result)
-				core = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${str(recvElem)},"e":$subj},"then":${present(member)},"else":${kotc.bir.BirNullableNull(elem).toJson()}}"""
+				core = kotc.bir.BirConditional(cond = kotc.bir.BirNullableHasValue(elem = recvElem, e = subj), thenValue = present(member), elseValue = kotc.bir.BirNullableNull(elem))
 			} else {
 				valSubst[key] = subj
 				val nullCheck = expr(whenExpr.branches.first().condition)
 				val member = expr(whenExpr.branches.last().result)
-				core = """{"k":"cond","cond":$nullCheck,"then":${kotc.bir.BirNullableNull(elem).toJson()},"else":${present(member)}}"""
+				core = kotc.bir.BirConditional(cond = nullCheck, thenValue = kotc.bir.BirNullableNull(elem), elseValue = present(member))
 			}
 			restore()
 			return if (subjVar == null) core
-			else valueBlockJson(type = birType(block.type).toJson(), stmts = subjVar, result = core)
+			else sourceValueBlock(type = birType(block.type), stmts = listOf(subjVar), result = core)
 		}
 		// `nv ?: d` where nv is a Nullable<T> -> evaluate once, then HasValue ? Value : d.
 		if (origin == IrStatementOrigin.ELVIS) nullableElem(tmp.type)?.let { elem ->
@@ -470,11 +444,11 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 			// ELVIS lowers to `when { tmp == null -> fallback; else -> tmp }`:
 			// branches[0].result is the fallback; branches.last() is tmp (ignored — we read .Value).
 			val elseResult = expr(whenExpr.branches.first().result)
-			val nvLoc = kotc.bir.BirLocal(nv).toJson()
-			return valueBlockJson(
+			val nvLoc = kotc.bir.BirLocal(nv)
+			return sourceValueBlock(
 				type = null,
-				stmts = """{"k":"var","name":${str(nv)},"type":${TypeNode.Nullable(elem).toJson()},"init":$init}""",
-				result = """{"k":"cond","cond":{"k":"nullableHasValue","elem":${elem.toJson()},"e":$nvLoc},"then":{"k":"nullableValue","elem":${elem.toJson()},"e":$nvLoc},"else":$elseResult}""",
+				stmts = listOf(BirVariable(name = nv, type = TypeNode.Nullable(elem), init = BirField.Value(init))),
+				result = kotc.bir.BirConditional(cond = kotc.bir.BirNullableHasValue(elem = elem, e = nvLoc), thenValue = kotc.bir.BirNullableValue(elem = elem, e = nvLoc), elseValue = elseResult),
 			)
 		}
 		val (subjVar, subj) = bindOnce(tmp.initializer!!, tmp.type, "__subj")
@@ -484,29 +458,29 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 		// The wrapping valueBlock carries the when's result type: the old bare `cond` surfaced it (ternary's
 		// "type"), and bir2cir's call-arg type inference sniffs the argument node's type field.
 		return if (subjVar == null) result
-		else valueBlockJson(type = birType(whenExpr.type).toJson(), stmts = subjVar, result = result)
+		else sourceValueBlock(type = birType(whenExpr.type), stmts = listOf(subjVar), result = result)
 	}
 	val last = block.statements.lastOrNull()
 	// After the specialized paths, a Unit-valued block executes every statement and produces Unit.
 	// A Nothing tail never produces that value, even if IR gives its enclosing block the Unit type;
 	// retain the terminal expression below. Physical Unit representation belongs to bir2cir.
-	if (block.type.isUnit() && !(last is IrExpression && last.type.isNothing())) return valueBlockJson(
-		type = birType(block.type).toJson(),
+	if (block.type.isUnit() && !(last is IrExpression && last.type.isNothing())) return sourceValueBlock(
+		type = birType(block.type),
 		stmts = bodyStmts(block),
-		result = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}""",
+		result = BirConstant(TypeNode.Fqn("kotlin.Unit"), BirLiteral.NullLiteral),
 		yieldsNull = false,
 	)
 	// A value or terminal block: emit its preceding statements, then the last expression.
 	// e.g. `{ counter++ }` lowers to `{ val <unary> = counter; counter = counter + 1; <unary> }` — dropping the
 	// leading statements would lose the temp + the assignment.
 	if (block.statements.size > 1 && last is IrExpression) {
-		val pre = block.statements.dropLast(1).joinToString(",") { stmt(it) }
-		return valueBlockJson(type = null, stmts = pre, result = expr(last))
+		val pre = block.statements.dropLast(1).flatMap { stmt(it) }
+		return sourceValueBlock(stmts = pre, result = expr(last))
 	}
-	return (last as? IrExpression)?.let { expr(it) } ?: """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
+	return (last as? IrExpression)?.let { expr(it) } ?: BirConstant(TypeNode.Fqn("kotlin.Unit"), BirLiteral.NullLiteral)
 }
 
-internal fun BirEmitter.ternary(node: IrWhen): String {
+internal fun BirEmitter.ternary(node: IrWhen): BirExpression {
 	// Fold right-to-left into nested conditionals. The branches carry the when's result type, so a value-type
 	// nullable result (`Int?`) gets its `T`/`null` branches coerced to Nullable<T> at emit (see EmitCond).
 	// GOTCHA: an inlined `takeIf` etc. yields `if (c) x else null` whose joined type is a value primitive with
@@ -518,51 +492,19 @@ internal fun BirEmitter.ternary(node: IrWhen): String {
 	// (it does for a VALUE join, where the alternative is a null reference stored over an `int`; a reference join
 	// keeps its type, since a reference holds null already). The verdict is taken on the EMITTED result, because
 	// that is where a nested join's own verdict and this emitter's own `valueBlock` wrapping are visible —
-	// [emittedYieldsNull] states exactly which emitted shapes count. Each branch result is emitted exactly once.
+	// [yieldsNullAtJoin] states exactly which emitted shapes count. Each branch result is emitted exactly once.
 	val authored = node.origin == IrStatementOrigin.IF || node.origin == IrStatementOrigin.WHEN
 	val branches = node.branches.map { b ->
 		Triple((b.condition as? IrConst)?.value == true, b.condition,
 			if (authored) sourceMarkedValue(b.result) else expr(b.result))
 	}
-	val nullBranch = branches.any { emittedYieldsNull(it.third) }
+	val nullBranch = branches.any { it.third.yieldsNullAtJoin() }
 	val bt = birType(node.type)
-	val ty = bt.toJson()
-	val joinFact = if (nullBranch && bt !is TypeNode.Nullable) """"joinNullBranch":true,""" else ""
-	var acc = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
+	val joinFact = true.takeIf { nullBranch && bt !is TypeNode.Nullable }
+	var acc: BirExpression = BirConstant(TypeNode.Fqn("kotlin.Unit"), BirLiteral.NullLiteral)
 	for ((isElse, cond, result) in branches.asReversed()) {
 		acc = if (isElse) result
-		else """{"k":"cond",$joinFact"type":$ty,"cond":${expr(cond)},"then":$result,"else":$acc}"""
+		else BirConditional(expr(cond), result, acc, joinNullBranch = joinFact, type = bt)
 	}
 	return acc
 }
-
-/** True iff an emitted branch VALUE may leave its join null — the compositional half of `joinNullBranch`.
- *
- *  A bare `null` const is the leaf case. The other case is a node that already decided it is one and says so on its
- *  ROOT: a NESTED JOIN (`if (a) (if (b) v else null) else w` shows the outer join a `cond` for its `then`, never a
- *  null const, and if only the inner widened, the inner's `Nullable<V>` would flow into a bare `V` join), or a
- *  `valueBlock` — the emitter's one PASS-THROUGH wrapper, which yields whatever its `result` yields. The string
- *  frontier [valueBlockJson] keeps this fact FIRST after `k` so this remains a ROOT test rather than a search.
- *  Keep this rule aligned with the typed [yieldsNullAtJoin] until the string frontier is removed. A fact buried
- *  anywhere deeper belongs to a join
- *  that is not this branch's value and must not arm anything here.
- *
- *  THE RULE FOR WHAT ELSE IS TRANSPARENT, and it is short: nothing. The widening this arms only ever matters at a
- *  VALUE join, and at a value join the branch's static type IS that value type — so the only emitted forms that can
- *  leave a null in the slot are the ones carrying no value of that type at all (a `null` const, whose Kotlin type is
- *  `Nothing?`) and the pass-through of such a form. Every other wrapper the emitter can put around a `null` PRODUCES
- *  A VALUE of the wrapped-to type instead: a `cast` (`x as T`, IMPLICIT_CAST) asserts the branch has the join's own
- *  type, so at a value join it unboxes to a real value or throws — `if (c) 1 else (null as Int)` throws
- *  NullReferenceException, it does not answer null; `nullableValue` unwraps to a bare `V`, and
- *  `safeCastValue`/`nullableWrap` build a `Nullable<V>` struct, never a null reference; `isInstRef` can answer null
- *  but only at a REFERENCE join, which never widens. Seeing through those would over-stamp the fact and widen a join
- *  that never holds a null. */
-internal fun BirEmitter.emittedYieldsNull(emitted: String): Boolean =
-	isEmittedNullConst(emitted) ||
-		emitted.startsWith("""{"k":"cond","joinNullBranch":true""") ||
-		emitted.startsWith("""{"k":"valueBlock","joinNullBranch":true""")
-
-/** True if an EMITTED BIR expression is a bare `null` const — `{"k":"const",…,"value":null}` (a
- *  `void`/`kotlin.Nothing`-typed null). Used to spot a `when`/`if` branch that yields `null`. */
-internal fun BirEmitter.isEmittedNullConst(emitted: String): Boolean =
-	emitted.startsWith("""{"k":"const",""") && emitted.endsWith(""","value":null}""")

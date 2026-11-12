@@ -27,6 +27,8 @@ def outputs(root, definitions):
 
     def shape_type(field):
         field = non_null(field)
+        if field.get("x-dotkt-kotlin-json-type"):
+            return "TypeNode"
         if "$ref" in field:
             ref = field["$ref"].removeprefix("#/$defs/")
             return "TypeNode" if ref == "type" else definitions[ref]["x-dotkt-model"]["name"]
@@ -42,6 +44,8 @@ def outputs(root, definitions):
         if nullable(field):
             return [indent + f'if ({value} == null) output.append("null")', indent + "else {",
                     *write(non_null(field), value, indent + "    ", depth), indent + "}"]
+        if field.get("x-dotkt-kotlin-json-type"):
+            return [indent + f"TypeNodeJson.writeString({value}.toJson(), output)"]
         if "$ref" in field:
             return [indent + f"{value}.writeJson(output)"]
         if field.get("type") == "array":
@@ -59,7 +63,7 @@ def outputs(root, definitions):
     for shape in selected:
         info = shape["x-dotkt-model"]
         is_node = info["domain"] == "birCore"
-        fields = [(key, field) for key, field in shape["properties"].items() if key != "k"]
+        fields = [(key, field) for key, field in shape["properties"].items() if key != "k" or not is_node]
         required = set(shape["required"])
         if shape.get("additionalProperties") is not False:
             raise ValueError("BIR source records must explicitly account for every field")
@@ -84,17 +88,24 @@ def outputs(root, definitions):
                 value_type += "?" if optional or nullable(field) else ""
                 default = " = null" if optional else ""
             parameters.append(f"    val {name}: {value_type}{default}")
-        bases = ["Bir" + info["role"].capitalize()] if is_node else info.get("interfaces", ["BirValue"])
-        lines += [f'data class {info["name"]}(', ",\n".join(parameters),
-                  ") : " + ", ".join(bases) + " {",
-                  "    override fun writeJson(output: StringBuilder) {"]
+        bases = ["Bir" + info["role"].capitalize() + "()"] if is_node else info.get("interfaces", ["BirValue"])
+        if parameters:
+            lines += [f'data class {info["name"]}(', ",\n".join(parameters),
+                      ") : " + ", ".join(bases) + " {"]
+        else:
+            lines += [f'data object {info["name"]} : ' + ", ".join(bases) + " {"]
+        lines += ["    override fun writeJson(output: StringBuilder) {"]
         opening = '{"k":' + json.dumps(tag) if is_node else "{"
         lines += ["        output.append(" + json.dumps(opening) + ")"]
+        if not is_node:
+            lines += ["        var hasField = false"]
         for index, (key, field) in enumerate(fields):
             optional = key not in required
             name = field.get("x-dotkt-kotlin-name", key)
             prefix = ("," if is_node or index else "") + json.dumps(key) + ":"
-            append_key = "output.append(" + json.dumps(prefix) + ")"
+            append_key = ("output.append(" + json.dumps(prefix) + ")" if is_node else
+                          "if (hasField) output.append(','); hasField = true; output.append(" +
+                          json.dumps(json.dumps(key) + ":") + ")")
             if key in required and "const" in field:
                 lines += ["        " + append_key,
                           "        output.append(" + json.dumps(json.dumps(field["const"])) + ")"]

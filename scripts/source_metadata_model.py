@@ -56,17 +56,22 @@ def outputs(root, schema):
     header = "// Generated from docs/kotlin-typealias.schema.json; run scripts/generate-ir-model.py."
     model = [header, "package kotc.bir", ""]
     writer = [header, "package kotc.bir", "", "internal object SourceMetadataJson {",
-              "    fun encode(value: SourceTypeAlias): String = buildString { writeSourceTypeAlias(value, this) }", ""]
+              "    fun encode(value: SourceTypeAlias): String = buildString { write(value, this) }",
+              "    fun write(value: SourceTypeAlias, output: StringBuilder) = writeSourceTypeAlias(value, output)", ""]
 
     def declaration(name, definition, parent=None, indent=""):
         fields = [f'val {key}: {type_name(shape)}' + ("? = null" if optional else "")
                   for key, shape, optional in parameters(definition)]
-        suffix = f" : {parent}" if parent else ""
+        info = definition.get("x-dotkt-model", {})
+        parents = ([parent] if parent else []) + info.get("interfaces", [])
+        suffix = " : " + ", ".join(parents) if parents else ""
         if fields:
             model.append(f'{indent}data class {name}(\n' + ",\n".join(f"{indent}    {field}" for field in fields)
                          + f"\n{indent}){suffix}")
         else:
             model.append(f"{indent}data object {name}{suffix}")
+        if "jsonWriter" in info:
+            model[-1] += " {\n" + indent + "    override fun writeJson(output: StringBuilder) = " + info["jsonWriter"] + "(this, output)\n" + indent + "}"
 
     def write_value(shape, expression, indent):
         if shape.get("x-dotkt-codec") == "literalText":

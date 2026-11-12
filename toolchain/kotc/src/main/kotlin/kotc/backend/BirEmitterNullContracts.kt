@@ -1,6 +1,7 @@
 package kotc.backend
 
 import kotc.bir.TypeNode
+import kotc.bir.BirStatement
 import kotc.bir.BirConstant
 import kotc.bir.BirConditionalBranch
 import kotc.bir.BirIf
@@ -98,8 +99,6 @@ private fun BirEmitter.ownerIsNamed(fn: IrFunction): Boolean {
 internal fun nullConstant(): BirConstant =
 	BirConstant(TypeNode.Nullable(TypeNode.Fqn("kotlin.Nothing")), BirLiteral.NullLiteral)
 
-internal fun BirEmitter.nullConstJson(): String = nullConstant().toJson()
-
 /** The already-bound value is read, never evaluated again, on either non-null path. */
 internal fun nonNullResult(value: BirLocal, failure: BirExpression, nullableElement: TypeNode? = null): BirConditional =
 	if (nullableElement != null) BirConditional(
@@ -136,15 +135,15 @@ internal fun parameterNullCheck(parameterName: String, message: String): BirIf {
  * the extension receiver, but that is a JVM-ism the CLR companion representation makes unsound — a deliberate DotKt
  * deviation (docs/dotkt-semantics.md).
  */
-internal fun BirEmitter.preconditionChecks(fn: IrFunction): List<String> {
+internal fun BirEmitter.preconditionChecks(fn: IrFunction): List<BirStatement> {
 	if (!isPublicSurface(fn) || !ownerIsNamed(fn) || fn.isInline) return emptyList()
 	val ownerMethod = fn.fqNameWhenAvailable?.asString() ?: fn.name.asString()
-	val out = ArrayList<String>()
+	val out = ArrayList<BirStatement>()
 	for (p in fn.parameters) {
 		if (p.kind != IrParameterKind.Regular) continue             // receivers/context params -> skip (see kdoc)
 		if (!needsNonNullCheck(p.type)) continue
 		val msg = "Parameter specified as non-null is null: $ownerMethod, parameter ${p.name.asString()}"
-		out.add(parameterNullCheck(p.name.asString(), msg).toJson())
+		out.add(parameterNullCheck(p.name.asString(), msg))
 	}
 	return out
 }
@@ -177,13 +176,12 @@ internal fun <T> BirEmitter.withReturnPostcondition(fn: IrSimpleFunction, emit: 
  * Used by explicit checked casts and public return postconditions. The compiler-only name cannot alias a source
  * parameter; source locals already use their declaration-owned slots.
  */
-internal fun BirEmitter.wrapNonNullValue(valueJson: String, valueType: IrType, message: String): String {
+internal fun BirEmitter.wrapNonNullValue(value: kotc.bir.BirExpression, valueType: IrType, message: String): kotc.bir.BirValueBlock {
 	val nv = "dotkt\$nonNullValue${scopeCounter++}"
 	val nvLoc = BirLocal(nv)
 	val throwNpe = BirThrowExpression(newExc("kotlin.NullPointerException", message))
-	return valueBlockJson(
-		type = null,
-		stmts = """{"k":"var","name":${str(nv)},"type":${birType(valueType).toJson()},"init":$valueJson}""",
-		result = nonNullResult(nvLoc, throwNpe).toJson(),
+	return sourceValueBlock(
+		stmts = listOf(kotc.bir.BirVariable(name = nv, type = birType(valueType), init = kotc.bir.BirField.Value(value))),
+		result = nonNullResult(nvLoc, throwNpe),
 	)
 }
