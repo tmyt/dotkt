@@ -11,6 +11,7 @@ from bir_lowering_models import outputs
 from bir_core_models import outputs as source_outputs
 from bir_messagepack import outputs as binary_outputs
 from bir_kotlin_messagepack import outputs as source_binary_outputs
+from bir_dom_frontier import outputs as dom_frontier_outputs
 
 
 class PhaseCompositionTests(unittest.TestCase):
@@ -34,10 +35,12 @@ class PhaseCompositionTests(unittest.TestCase):
         model = "\n".join(outputs(ROOT, self.definitions).values())
         binary = "\n".join(binary_outputs(ROOT, self.definitions).values())
         source = "\n".join(source_binary_outputs(ROOT, self.definitions).values())
+        frontier = "\n".join(dom_frontier_outputs(ROOT, self.definitions).values())
         self.assertIn("OptionalField<int> CurrentTransportFact", model)
         self.assertIn('case "currentTransportFact":', binary)
         self.assertIn("value.CurrentTransportFact.IsPresent", binary)
         self.assertIn("value.currentTransportFact?.let", source)
+        self.assertIn('CurrentTransportFact = Field<int>(fields, "currentTransportFact"', frontier)
 
     def test_consumed_node_fact_requires_a_type(self):
         self.definitions["cirNewClrNode"]["x-dotkt-model"]["sourceConsumed"].append("untypedCurrentFact")

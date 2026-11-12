@@ -389,10 +389,10 @@ static partial class SuspendColdLowering
             var innerTry = new JsonObject
             {
                 ["k"] = "try",
-                ["type"] = o["type"]?.DeepClone(),
                 ["body"] = (o["body"] as JsonArray)?.DeepClone() ?? new JsonArray(),
                 ["catches"] = newCatches,
             };
+            if (o.TryGetPropertyValue("type", out var tryType)) innerTry["type"] = tryType?.DeepClone();
 
             if (o["finally"] is not JsonArray fin || fin.Count == 0)
             {
@@ -415,14 +415,15 @@ static partial class SuspendColdLowering
             foreach (var t in tail) protectedBody.Add(t);
             if (!HasOwnSuspension(fin))
             {
-                result.Add(new JsonObject
+                var outerTry = new JsonObject
                 {
                     ["k"] = "try",
-                    ["type"] = o["type"]?.DeepClone(),
                     ["body"] = protectedBody,
                     ["catches"] = new JsonArray(),
                     ["finally"] = fin.DeepClone(),
-                });
+                };
+                if (o.TryGetPropertyValue("type", out var outerType)) outerTry["type"] = outerType?.DeepClone();
+                result.Add(outerTry);
                 return;
             }
 
@@ -481,10 +482,9 @@ static partial class SuspendColdLowering
                     protectedBody, returningName, returnValueName, returnValueType, routeLabel);
             }
 
-            result.Add(new JsonObject
+            var protectedTry = new JsonObject
             {
                 ["k"] = "try",
-                ["type"] = tryType?.DeepClone(),
                 ["body"] = protectedBody,
                 ["catches"] = new JsonArray
                 {
@@ -502,7 +502,9 @@ static partial class SuspendColdLowering
                         },
                     },
                 },
-            });
+            };
+            if (tryType != null) protectedTry["type"] = tryType.DeepClone();
+            result.Add(protectedTry);
             result.Add(Label(routeLabel));
             foreach (var st in fin) result.Add(st?.DeepClone());
 

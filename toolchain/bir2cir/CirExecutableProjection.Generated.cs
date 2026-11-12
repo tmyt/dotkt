@@ -1030,7 +1030,8 @@ static partial class CirDeclarationProjection
 
     static CirPropertyGet ReadCirPropertyGet(JsonNode node)
     {
-        CheckFields(node, ["k", "type", "static", "member", "accessor", "dispatch", "recv", "memberRef", "volatile", "localAccessor", "accessorOwner", "sig", "calleeParams", "clrOwnerResolved", "name", "ret", "super"]);
+        CheckFields(node, ["k", "type", "static", "member", "accessor", "dispatch", "recv", "memberRef", "volatile", "localAccessor", "accessorOwner", "sig", "calleeParams", "clrOwnerResolved", "name", "ret", "super", "sty"]);
+        CheckSourceStamp(node);
         return new CirPropertyGet
         {
             Type = TypeJson.Read(node["type"]!),

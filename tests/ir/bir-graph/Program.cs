@@ -33,8 +33,17 @@ static void Same(string json, BirGraphValue graph, string? context = null)
         source.AsObject().Remove("typeAliases");
         graph = file with { TypeAliases = default };
     }
-    if (!LogicalBirValue.Equal(source, graph.ToDom()))
+    var dom = graph.ToDom();
+    if (!LogicalBirValue.Equal(source, dom))
         throw new Exception($"The temporary owning-pass frontier changed a logical value: {context ?? "inline sample"}");
+    BirGraphValue? restored = graph switch {
+        BirGraphNode => BirGraphDom.ReadNode(dom),
+        BirFileDeclaration => BirGraphDom.ReadBirFileDeclaration(dom),
+        _ => null,
+    };
+    if (restored is not null && !LogicalBirValue.Equal(source,
+        JsonNode.Parse(Write(restored), documentOptions: BirJson.DocOptions)))
+        throw new Exception($"The direct owning-pass entry changed a logical value: {context ?? "inline sample"}");
 }
 
 var samples = XDocument.Load(args[0]).Descendants("system-out")
@@ -110,6 +119,14 @@ var independent = (BirCallInline)original.Rewrite(value => value);
 independent.Args.Value[1] = new BirLocal { Name = "independent" };
 if (((BirLocal)original.Args.Value[1]!).Name.Value != "before")
     throw new Exception("Independent executable mutation leaked through a shared child array");
+var childSlots = new List<BirGraphSlot>();
+independent.VisitChildSlots(childSlots.Add);
+childSlots.Single().Replace(new BirLocal { Name = "slot-replacement", Sty = frame });
+if (((BirLocal)childSlots.Single().Value).Name.Value != "slot-replacement"
+    || ((BirLocal)independent.Args.Value[1]!).Name.Value != "slot-replacement"
+    || original.Args.Value[0] != null || independent.Args.Value[0] != null
+    || ((BirLocal)original.Args.Value[1]!).Name.Value != "before" || independent.RetType.Value != frame)
+    throw new Exception("Typed live child replacement lost its role, ownership, null slot or exact frame");
 
 var absent = BirGraphJson.ReadFile(Encoding.UTF8.GetBytes("{\"fileClass\":\"Probe\"}"));
 var present = BirGraphJson.ReadFile(Encoding.UTF8.GetBytes("{\"fileClass\":\"Probe\",\"fields\":null,\"methods\":[]}"));
@@ -143,7 +160,18 @@ try
 catch (FormatException) { }
 
 var opaque = new BirAttribute {
-    Args = new IBirAttributeValue[] { new BirOpaqueBytes { Bytes = new byte[] { 0, 255, 0xd8, 0, 17 } } },
+    Args = new IBirAttributeValue[] {
+        new BirOpaqueBytes { Bytes = new byte[] { 0, 255, 0xd8, 0, 17 } },
+        new BirAttributeLiteral(),
+        new BirAttributeLiteral { Value = new BirLiteral.NullLiteral() },
+        new BirAttributeLiteral { Type = new TypeNode.Fqn("System.UInt64"),
+            Value = new BirLiteral.UnsignedIntegerLiteral(ulong.MaxValue) },
+        new BirAttributeLiteral { Type = new TypeNode.Fqn("System.Single"),
+            Value = new Float32Literal(unchecked((int)0xffc01234)) },
+        new BirAttributeLiteral { Type = new TypeNode.Fqn("System.String"),
+            Value = new BirLiteral.TextLiteral("\ud800x\udfff") },
+        new BirConstant { Value = new BirLiteral.BooleanLiteral(true) },
+    },
 };
 var seenBytes = 0;
 opaque.Rewrite(value => { if (value is BirOpaqueBytes) seenBytes++; return value; });
@@ -153,9 +181,145 @@ using (var stream = new MemoryStream(Write(opaque)))
     var reader = new Utf8JsonReader(stream.ToArray());
     reader.Read();
     var copy = BirGraphJson.ReadBirAttribute(ref reader);
-    if (!((BirOpaqueBytes)copy.Args.Value[0]).Bytes.Value.SequenceEqual(((BirOpaqueBytes)opaque.Args.Value[0]).Bytes.Value))
-        throw new Exception("Opaque bytes changed at the graph boundary");
+    Same(Encoding.UTF8.GetString(Write(opaque)), copy, "metadata argument domains");
+    Same(Encoding.UTF8.GetString(Write(opaque)), BirGraphDom.ReadBirAttribute(opaque.ToDom()),
+        "direct metadata frontier");
+    var file = new BirFileDeclaration { Attrs = new[] { opaque } };
+    Same(Encoding.UTF8.GetString(Write(file)), BirFileCodec.Decode(BirFileCodec.Encode(file)),
+        "metadata MessagePack");
+    if (copy.Args.Value[1] is not BirAttributeLiteral { Value.IsPresent: false }
+        || copy.Args.Value[2] is not BirAttributeLiteral { Value.HasValue: true, Value.Value: BirLiteral.NullLiteral })
+        throw new Exception("Missing metadata value was conflated with a null literal");
 }
+
+// A lambda's construction operands execute in the enclosing frame, but its body,
+// returns and labels do not. Reuse the same witness for every deferred body form.
+BirConstant FrameNumber(int value) => new() {
+    Type = new TypeNode.Fqn("System.Int32"), Value = new BirLiteral.IntegerLiteral(value),
+};
+IBirStatement[] DeferredBody() => new IBirStatement[] {
+    new BirLabel { Id = 0 },
+    new BirTry { Body = new IBirStatement[] { new BirReturn { Value = FrameNumber(7) } },
+        Finally = new IBirStatement[] { new BirReturn { Value = FrameNumber(8) } } },
+};
+IBirExpression CallerReturn() => new BirReturnExpression { Value = FrameNumber(6) };
+JsonObject FindConstruction(JsonNode node, string kind)
+{
+    if (node is JsonObject obj)
+    {
+        if (obj["k"]?.GetValue<string>() == kind) return obj;
+        foreach (var pair in obj)
+            if (pair.Value != null && FindConstruction(pair.Value, kind) is { } found) return found;
+    }
+    else if (node is JsonArray values)
+        foreach (var value in values)
+            if (value != null && FindConstruction(value, kind) is { } found) return found;
+    return null!;
+}
+foreach (var expression in new BirGraphNode[] {
+    new BirNewSuspendLambda {
+        Params = Array.Empty<BirLambdaParameter>(), Captures = Array.Empty<BirCaptureDescriptor>(),
+        CapValues = new IBirExpression?[] { CallerReturn() }, Body = DeferredBody(), TypeFrame = "dense",
+        _suspendDeclarationTypeArgs = new TypeNode[] { frame }, Sty = new TypeNode.Fn(true, frame, Array.Empty<TypeNode>()),
+    },
+    new BirInlineLambda { Params = Array.Empty<BirLambdaParameter>(), Body = DeferredBody(), Result = FrameNumber(0),
+        Captures = new[] { new BirInlineCapture { Name = "value", Value = OptionalField<IBirExpression>.Of(CallerReturn()) } } },
+    new BirNewClosure { Captures = new[] { CallerReturn() }, SynthClass = new BirClosureDefinition {
+        Params = Array.Empty<BirLambdaParameter>(), Ret = new TypeNode.Fqn("System.Int32"), Body = DeferredBody(),
+    } },
+})
+{
+    var before = expression.ToDom();
+    var body = expression is BirNewClosure ? before["synthClass"]!["body"] : before["body"];
+    var source = new JsonArray(new BirLabel { Id = 0 }.ToDom(), new BirTry {
+        Body = new IBirStatement[] { new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of((IBirExpression)expression) } },
+        Finally = new IBirStatement[] { new BirReturn { Value = FrameNumber(9) } },
+    }.ToDom());
+    var file = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
+        Body = new IBirStatement[] { new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of((IBirExpression)expression) } },
+    } } };
+    Same(Encoding.UTF8.GetString(Write(file)), BirFileCodec.Decode(BirFileCodec.Encode(file)), "deferred frame codec");
+    EscapingFinallyLowering.Apply(new[] { source }, TypeNode.Write(new TypeNode.Fqn("System.Int32")), null!, false);
+    var after = FindConstruction(source, expression.Tag);
+    var actualBody = expression is BirNewClosure ? after["synthClass"]!["body"] : after["body"];
+    if (!JsonNode.DeepEquals(body, actualBody))
+        throw new Exception($"Enclosing cleanup rewrote a deferred {expression.Tag} frame");
+    var caller = expression switch {
+        BirNewSuspendLambda => after["capValues"]![0],
+        BirInlineLambda => after["captures"]![0]!["value"],
+        _ => after["captures"]![0],
+    };
+    if (caller?["k"]?.GetValue<string>() != "valueBlock")
+        throw new Exception($"Caller construction operand escaped cleanup routing: {expression.Tag}");
+    if (expression is BirNewSuspendLambda && (after["typeFrame"]?.GetValue<string>() != "dense"
+        || !JsonNode.DeepEquals(before["_suspendDeclarationTypeArgs"], after["_suspendDeclarationTypeArgs"])
+        || !JsonNode.DeepEquals(before["sty"], after["sty"])))
+        throw new Exception("Pre-suspend cleanup lost the declaration-to-caller generic frame");
+}
+var closureLoop = new BirWhile { Label = "inner", Cond = new BirConstant { Value = new BirLiteral.BooleanLiteral(false) },
+    Body = new IBirStatement[] { new BirBreak { Label = "inner" } } };
+var closureFrame = new BirClosureDefinition { Params = Array.Empty<BirLambdaParameter>(), Ret = new TypeNode.Fqn("System.Int32"),
+    Body = new IBirStatement[] { closureLoop, new BirReturn { Value = FrameNumber(1) } } };
+TypedProtectedRegions.Apply(closureFrame, null!);
+if (!closureLoop.LoopId.HasValue || closureLoop.Label.IsPresent
+    || closureLoop.Body.Value[0] is not BirBreak { LoopId.HasValue: true, Label.IsPresent: false })
+    throw new Exception("A closure definition did not receive its own physical transfer frame");
+Console.WriteLine("Typed execution frames: three deferred body forms retain private returns/labels and caller capture evaluation; generic frames/codecs and closure admission OK");
+
+var signatureSnapshot = SourceTypeVector.ReadFrozenText("[{\"t\":\"tv\",\"scope\":\"method\",\"i\":1}]");
+var phaseFacts = new BirFileDeclaration {
+    Methods = new[] { new BirFunctionDeclaration { Body = new IBirStatement[] {
+        new BirExpressionStatement { Expr = new BirNativeStatic {
+            Sty = frame, SuspendCall = false, _capturedGenericResult = frame,
+            _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
+            ResolvedMemberParams = new TypeNode[] { frame }, ResolvedMemberReturn = frame,
+            _resolvedMethodTypeParams = new[] { new BirTypeParameter { Name = "T", SpecialConstraints = new[] { "class" } } },
+        } },
+        new BirExpressionStatement { Expr = new BirGenericStatic {
+            Sty = frame, SuspendCall = false, _capturedGenericResult = frame,
+            _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
+        } },
+        new BirExpressionStatement { Expr = new BirNativeInstance {
+            SuspendCall = false, _capturedGenericResult = frame,
+            _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
+        } },
+        new BirExpressionStatement { Expr = new BirPropertyGet {
+            _foreignDeclarationSignature = signatureSnapshot, Sty = frame, _capturedGenericResult = frame,
+            _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
+        } },
+        new BirExpressionStatement { Expr = new BirPropertySet {
+            Sty = frame, _capturedGenericResult = frame,
+            _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
+        } },
+        new BirExpressionStatement { Expr = new BirCallStatic { NullableWitnessCount = 2 } },
+        new BirExpressionStatement { Expr = new BirNewClr { MemberSignature = new TypeNode[] { frame } } },
+        new BirExpressionStatement { Expr = new BirValueBlock { Sty = frame } },
+        new BirExpressionStatement { Expr = new BirNewList { Sty = frame } },
+        new BirExpressionStatement { Expr = new BirObjectMethod { Sty = frame } },
+        new BirExpressionStatement { Expr = new BirThis { Outer = true } },
+        new BirExpressionStatement { Expr = new BirNewClosure { DotktDelegateSlot = frame } },
+        new BirExpressionStatement { Expr = new BirNewDelegate { DotktDelegateSlot = frame } },
+        new BirExpressionStatement { Expr = new BirNewBoundDelegate { DotktDelegateSlot = frame } },
+        new BirExpressionStatement { Expr = new BirBoundClrDelegate { DotktDelegateSlot = frame } },
+        new BirExpressionStatement { Expr = new BirClrStaticDelegate { DotktDelegateSlot = frame } },
+        new BirExpressionStatement { Expr = new BirNewSuspendLambda {
+            Captures = new[] { new BirCaptureDescriptor {
+                Name = "value", Type = new TypeNode.Fqn("object"), KotlinType = frame,
+                NullableGeneric = new TypeNode.Nullable(frame), NullableFlags = new[] { 2 },
+            } },
+        } },
+    } } },
+    Types = new IBirTypeDeclaration[] { new BirClassDefinition {
+        Kind = "class", ClrEvents = new[] { new BirClrEventBacking {
+            K = "clrEventDecl", Name = "Changed", DelegateType = new TypeNode.Fqn("System.Action"),
+        } },
+    } },
+};
+var phaseJson = Encoding.UTF8.GetString(Write(phaseFacts));
+Same(phaseJson, BirGraphJson.ReadFile(Write(phaseFacts)), "current signature/event/witness facts");
+Same(phaseJson, BirFileCodec.Decode(BirFileCodec.Encode(phaseFacts)), "current phase metadata binary");
+if (signatureSnapshot.Types[0] != frame)
+    throw new Exception("Frozen foreign signature is not a typed declaration-frame vector");
 
 var defaults = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
     Mods = new BirModifiers { Suspend = true },
