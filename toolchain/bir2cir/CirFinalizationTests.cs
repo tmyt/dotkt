@@ -28,6 +28,27 @@ static class CirFinalizationTests
                     throw new InvalidOperationException("A delegate return lost its frame or void representation");
             }
 
+        // Exercise the production projection seam before the reference-only
+        // rewrite, including source numeric tokens rather than prebuilt scalars.
+        foreach (var sourceType in new[] { "kotlin.Float", "kotlin.Double" })
+        foreach (var literal in new[] { "0.5", "-1.25", "-0.0", "1e-30" })
+        {
+            var source = System.Text.Json.Nodes.JsonNode.Parse($$$"""
+                {"fileClass":"FractionalReference","hasMain":false,"types":[],"methods":[],
+                 "fields":[{"name":"fraction","type":{"t":"fqn","name":"{{{sourceType}}}"},
+                  "init":{"k":"const","type":{"t":"fqn","name":"{{{sourceType}}}"},"value":{{{literal}}}}}]}
+                """)!;
+            var projected = CirDeclarationProjection.ReadCirFileDeclaration(source);
+            var reference = RefBodySquash.LowerLiteralPlaceholders(projected);
+            if (reference.Fields[0].Init.Value is not CirConstant {
+                Type: TypeNode.Fqn { Name: "System.Object" }, Value: AttributeArgument.NullValue })
+                throw new InvalidOperationException("A reference numeric token did not reach placeholder lowering");
+            var scalar = ((CirConstant)projected.Fields[0].Init.Value).Value;
+            if (sourceType == "kotlin.Float" ? scalar is not AttributeArgument.Float32Value
+                : scalar is not AttributeArgument.Float64Value)
+                throw new InvalidOperationException("A reference numeric token lost its scalar width before rewriting");
+        }
+
         var facade = new TypeNode.Fqn("kotlin.Int");
         var frame = new TypeNode.Tv("method", 1);
         var bytes = new byte[] { 0, 255, 0xd8, 0, 17 };
@@ -46,7 +67,9 @@ static class CirFinalizationTests
         var field = new CirField { Name = "slot", Type = facade, Init = Literal(), Constant = new AttributeArgument.Int32Value(19) };
         var file = new CirFileDeclaration { FileClass = "PhysicalTail", HasMain = false, Fields = [field], Methods = [method],
             Types = [new CirTypeDeclaration { Name = "Nested", Kind = CirTypeKind.Class,
-                Fields = new[] { field }, Ctors = new[] { constructor }, Methods = new[] { method }, Attrs = new[] { attribute } }] };
+                Fields = new[] { field }, Ctors = new[] { constructor,
+                    constructor with { BaseArgs = OptionalField<ICirExpression[]>.Null, ThisArgs = new ICirExpression[] { Literal() } } },
+                Methods = new[] { method }, Attrs = new[] { attribute } }] };
         var lowered = RefBodySquash.LowerLiteralPlaceholders(file);
         if (lowered.Fields[0].Init.Value is not CirConstant { Type: TypeNode.Fqn { Name: "System.Object" }, Value: AttributeArgument.NullValue }
             || file.Fields[0].Init.Value is not CirConstant { Type: TypeNode.Fqn { Name: "kotlin.Int" }, Value: AttributeArgument.Int32Value { Value: 42 } })
@@ -57,6 +80,8 @@ static class CirFinalizationTests
             return node;
         });
         if (remaining != 0 || lowered.Types[0].Ctors.Value[0].ThisArgs.IsNull != true
+            || lowered.Types[0].Ctors.Value[1].ThisArgs.Value[0] is not CirConstant {
+                Type: TypeNode.Fqn { Name: "System.Object" }, Value: AttributeArgument.NullValue }
             || lowered.Methods[0].Ret != frame || lowered.Methods[0].Params[0].Type != facade
             || lowered.Methods[0].Params[0].Default.Value is not AttributeArgument.Int32Value { Value: 7 }
             || lowered.Fields[0].Constant.Value is not AttributeArgument.Int32Value { Value: 19 }

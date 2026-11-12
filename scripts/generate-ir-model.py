@@ -736,7 +736,7 @@ def executable_models(definitions):
                     expression = "physicalType"
                 if name == "CirConstant" and field_name == "value":
                     expression = ('node.AsObject().ContainsKey("value") ? '
-                                  '(IScalarValue)AttributeProjection.Literal(node["value"], physicalType) '
+                                  'ProjectExecutableLiteral(node["value"], physicalType) '
                                   ': throw new FormatException()')
             else:
                 annotations += ["JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)"]

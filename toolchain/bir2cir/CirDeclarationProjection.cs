@@ -7,6 +7,15 @@ using DotKt.Cir;
 // Generated declaration and executable readers follow schema roles; opaque source payloads stay bytes.
 static partial class CirDeclarationProjection
 {
+    static IScalarValue ProjectExecutableLiteral(JsonNode? literal, TypeNode slot)
+    {
+        // Reference images retain Kotlin facade signature types. Decode their
+        // numeric values using the same scalar representation map as metadata,
+        // before the reference-only body rewrite replaces them with null.
+        var scalarType = BirTypeLowering.LowerType(slot, refBuild: true, force: true, typeArg: false);
+        return (IScalarValue)AttributeProjection.Literal(literal, scalarType);
+    }
+
     static void CheckSourceStamp(JsonNode node)
     {
         if (TypeJson.Read(node["sty"]) is not TypeNode stamp) return;

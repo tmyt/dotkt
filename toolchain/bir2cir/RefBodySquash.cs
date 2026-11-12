@@ -22,8 +22,8 @@ using DotKt.Cir;
 static class RefBodySquash
 {
     // Metadata-only primitive facades are reference classes, not native literal stack types. Historically
-    // ilemit's constant switch implicitly emitted null for these slots. State that physical placeholder here,
-    // after type lowering, instead of making a typed scalar codec turn a facade into a native primitive.
+    // ilemit's constant switch implicitly emitted null for these slots. Scalar projection preserves the literal
+    // value first; this reference-only pass then replaces executable facade values with physical null placeholders.
     // Source semantics remain in the previously captured Kotlin metadata; this image is never executed.
     public static CirFileDeclaration LowerLiteralPlaceholders(CirFileDeclaration root)
     {

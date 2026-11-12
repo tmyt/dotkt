@@ -38,11 +38,25 @@ public static class ExecutableSelfTest
         ((CirFor)copied.Body[3]).Body[0] = new CirReturn();
         if (((CirFor)root.Body[3]).Body[0] is not CirExpressionStatement)
             throw new InvalidOperationException("Executable rewriting shared a mutable child array");
-        var replaced = (CirBlock)root.Rewrite(node => node is CirLocal { Name: "n" } local
+        var replaced = (CirBlock)root.Rewrite(node => node is CirLocal { Name: "n" or "failure" } local
             ? local with { Name = "replacement" } : node);
-        if (CirExecutableWalk.DescendantsAndSelf(replaced).OfType<CirLocal>().Any(local => local.Name == "n")
+        if (CirExecutableWalk.DescendantsAndSelf(replaced).OfType<CirLocal>().Any(local => local.Name is "n" or "failure")
+            || ((CirTry)replaced.Body[4]).Catches[0].Body[0] is not CirThrow { Value: CirLocal { Name: "replacement" } }
             || !CirExecutableWalk.DescendantsAndSelf(root).OfType<CirLocal>().Any(local => local.Name == "n"))
             throw new InvalidOperationException("Typed rewriting missed a catch/value-block child or changed the original");
+        var branch = new CirIf { Branches = [new CirConditionalBranch {
+            Cond = new CirLocal { Name = "condition" },
+            Body = [new CirReturn { Value = new CirLocal { Name = "branchValue" } }] }] };
+        ICirNode Rename(ICirNode node) => node is CirLocal local ? local with { Name = "rewritten" } : node;
+        var changedBranch = (CirIf)branch.Rewrite(Rename);
+        var spread = new CirSpreadPart { Spread = true, E = new CirLocal { Name = "spreadValue" } };
+        var changedSpread = spread.RewriteChildren(node => ((CirNode)node).Rewrite(Rename));
+        if (changedBranch.Branches[0].Cond.Value is not CirLocal { Name: "rewritten" }
+            || changedBranch.Branches[0].Body[0] is not CirReturn { Value.Value: CirLocal { Name: "rewritten" } }
+            || branch.Branches[0].Cond.Value is not CirLocal { Name: "condition" }
+            || changedSpread.E is not CirLocal { Name: "rewritten" } || !changedSpread.Spread
+            || spread.E is not CirLocal { Name: "spreadValue" })
+            throw new InvalidOperationException("Typed rewriting missed an auxiliary branch/spread edge or changed its input");
         var decoded = JsonSerializer.Deserialize<ICirStatement>(encoded, AttributeJson.Options) as CirBlock
             ?? throw new InvalidOperationException("Executable role codec lost the concrete root");
         if (JsonSerializer.Serialize<ICirStatement>(decoded, AttributeJson.Options) != encoded
