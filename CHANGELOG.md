@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- Add direct typed BIR MessagePack files, selectable with `-P plugin:dotkt:bir-format=msgpack` or SDK `DotKtBirFormat`; JSON remains the default inspection format.
 - Add direct typed CIR MessagePack files, selectable with `--cir-format=msgpack` or SDK `DotKtCirFormat`; JSON remains the default inspection format.
 - Carry cross-module default expressions in compiler-generated metadata with an explicit codec and byte-array payload, sharing the inline carrier codec and preserving nested defaults and source ownership.
 

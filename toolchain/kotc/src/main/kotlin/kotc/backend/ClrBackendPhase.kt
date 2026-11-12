@@ -45,6 +45,7 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 			?: configuration?.get(CLIConfigurationKeys.METADATA_DESTINATION_DIRECTORY)
 			?: File("build/clr-out").also { it.mkdirs() }
 		outputDir.mkdirs()
+		val format = configuration.get(kotc.bir.BirFileCodec.outputFormat) ?: kotc.bir.BirFileFormat.JSON
 
 		val messageCollector = configuration?.get(
 			org.jetbrains.kotlin.config.CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
@@ -68,16 +69,15 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 			var baseName = File(irFile.fileEntry.name).name.removeSuffix(".kt")
 			val seen = usedNames.merge(baseName, 1) { a, b -> a + b }!!
 			if (seen > 1) baseName = "${baseName}__$seen"
-			val birFile = try {
-				bir.emitFile(irFile, typeAliases[File(irFile.fileEntry.name).canonicalPath].orEmpty())
+			try {
+				val birFile = bir.emitFile(irFile, typeAliases[File(irFile.fileEntry.name).canonicalPath].orEmpty())
+				if (birFile != null) kotc.bir.BirFileCodec.write(File(outputDir, "$baseName.bir.${format.extension}"), birFile, format)
 			} catch (e: Throwable) {
 				crashed = true
 				messageCollector?.report(
 					org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity.ERROR,
 					"BIR emit crashed for ${irFile.fileEntry.name}: ${e.javaClass.simpleName}: ${e.message}")
-				null
 			}
-			if (birFile != null) File(outputDir, "$baseName.bir.json").writeText(buildString { birFile.writeJson(this) })
 		}
 
 		// An unsupported construct was reported (with source location), or a file crashed -> fail the compile here, so the

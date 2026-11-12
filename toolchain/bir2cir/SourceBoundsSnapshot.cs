@@ -15,11 +15,17 @@ sealed class SourceBoundsSnapshot
     internal SourceBoundsSnapshot Merge(IReadOnlyDictionary<int, TypeNode[]> additions) => new(facts.Merge(additions));
 
     internal static SourceBoundsSnapshot Read(ref Utf8JsonReader reader)
+        => FromFacts(SourceTypeFacts.Read(ref reader));
+
+    internal static SourceBoundsSnapshot ReadFrozenText(string text) => FromFacts(SourceTypeFacts.ReadFrozenText(text));
+
+    static SourceBoundsSnapshot FromFacts(SourceTypeFacts facts)
     {
-        var facts = SourceTypeFacts.Read(ref reader);
         if (!facts.IsBoundsOnly) throw new FormatException();
         return new SourceBoundsSnapshot(facts);
     }
+
+    internal string FrozenText => facts.FrozenText;
 
     internal static void Write(Utf8JsonWriter writer, SourceBoundsSnapshot value) => SourceTypeFacts.Write(writer, value.facts);
     internal static JsonNode ToDom(SourceBoundsSnapshot value) => SourceTypeFacts.ToDom(value.facts);

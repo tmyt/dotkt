@@ -12,6 +12,8 @@ public static class CirMessagePack
 {
     public static CirFileDeclaration Read(ref MessagePackReader reader) => Read_cirFile(ref reader);
     public static void Write(ref MessagePackWriter writer, CirFileDeclaration value) => Write_cirFile(ref writer, value, 0);
+    public static TypeNode ReadType(ref MessagePackReader reader) => Read_type(ref reader);
+    public static void WriteType(ref MessagePackWriter writer, TypeNode value, int depth = 0) => Write_type(ref writer, value, depth);
 
     private static CirFileDeclaration Read_cirFile(ref MessagePackReader reader)
     {

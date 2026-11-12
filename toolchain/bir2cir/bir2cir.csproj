@@ -16,6 +16,7 @@
     <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
     <Compile Include="../bir-common/BirLiteral.cs" Link="BirLiteral.cs" />
     <Compile Include="../bir-common/BirLiteral.Json.cs" Link="BirLiteral.Json.cs" />
+    <Compile Include="../bir-common/BirLiteral.MessagePack.Generated.cs" Link="BirLiteral.MessagePack.Generated.cs" />
     <Compile Include="../bir-common/BirFloatingLiteral.Generated.cs" Link="BirFloatingLiteral.Generated.cs" />
     <Compile Include="../bir-common/TypeNode.Model.Generated.cs" Link="TypeNode.Model.Generated.cs" />
     <Compile Include="../bir-common/TypeNode.Json.Generated.cs" Link="TypeNode.Json.Generated.cs" />

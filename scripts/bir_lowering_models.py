@@ -8,7 +8,45 @@ import copy
 import json
 
 
-def outputs(root, definitions):
+def base(field):
+    if isinstance(field.get("type"), list):
+        return {**field, "type": next(kind for kind in field["type"] if kind != "null")}
+    choices = field.get("oneOf", [])
+    if {"type": "null"} in choices:
+        return next(item for item in choices if item != {"type": "null"})
+    return field
+
+
+def is_nullable(field):
+    return (isinstance(field.get("type"), list) and "null" in field["type"]
+            or {"type": "null"} in field.get("oneOf", []))
+
+
+def refkey(field):
+    return base(field).get("$ref", "").removeprefix("#/$defs/")
+
+
+def csharp_type(field, shapes):
+    field = base(field)
+    if field.get("x-dotkt-csharp-type"):
+        return field["x-dotkt-csharp-type"]
+    if field.get("x-dotkt-kotlin-json-type"):
+        return "TypeNode"
+    key = refkey(field)
+    if key:
+        special = {"type": "TypeNode", "literalValue": "BirLiteral", "birSourceTypeAlias": "SourceTypeAlias",
+                   "birExpressionNode": "IBirExpression", "birStatementNode": "IBirStatement",
+                   "birTypeDeclaration": "IBirTypeDeclaration", "loweringAttributeValue": "IBirAttributeValue"}
+        return special[key] if key in special else shapes[key]["x-dotkt-model"]["name"]
+    if field.get("type") == "array":
+        return csharp_type(field["items"], shapes) + ("?" if is_nullable(field["items"]) else "") + "[]"
+    kind = field.get("type", "string" if "enum" in field else None)
+    if "const" in field:
+        kind = {str: "string", int: "integer", bool: "boolean"}[type(field["const"])]
+    return {"string": "string", "integer": "int", "boolean": "bool"}[kind]
+
+
+def compose_shapes(definitions):
     aliases = {
         "cirExpressionNode": "birExpressionNode", "cirStatementNode": "birStatementNode",
         "cirExpression": "birExpressionNode",
@@ -110,21 +148,6 @@ def outputs(root, definitions):
         value = {"$ref": "#/$defs/loweringAttributeValue"}
         shapes[owner]["properties"][field] = {"type": "array", "items": value} if field == "args" else value
 
-    def base(field):
-        if isinstance(field.get("type"), list):
-            return {**field, "type": next(kind for kind in field["type"] if kind != "null")}
-        choices = field.get("oneOf", [])
-        if {"type": "null"} in choices:
-            return next(item for item in choices if item != {"type": "null"})
-        return field
-
-    def is_nullable(field):
-        return (isinstance(field.get("type"), list) and "null" in field["type"]
-                or {"type": "null"} in field.get("oneOf", []))
-
-    def refkey(field):
-        return base(field).get("$ref", "").removeprefix("#/$defs/")
-
     def signature(field):
         field = base(field)
         if field.get("x-dotkt-kotlin-json-type"):
@@ -168,24 +191,14 @@ def outputs(root, definitions):
                 if signature(shapes[target]["properties"][key]) != signature(value) and key not in explicit:
                     raise ValueError(f"Unaccounted declaration phase type: {target}.{key}")
 
+    return shapes
+
+
+def outputs(root, definitions):
+    shapes = compose_shapes(definitions)
+
     def cs(field):
-        field = base(field)
-        if field.get("x-dotkt-csharp-type"):
-            return field["x-dotkt-csharp-type"]
-        if field.get("x-dotkt-kotlin-json-type"):
-            return "TypeNode"
-        key = refkey(field)
-        if key:
-            special = {"type": "TypeNode", "literalValue": "BirLiteral", "birSourceTypeAlias": "SourceTypeAlias",
-                       "birExpressionNode": "IBirExpression", "birStatementNode": "IBirStatement",
-                       "birTypeDeclaration": "IBirTypeDeclaration", "loweringAttributeValue": "IBirAttributeValue"}
-            return special[key] if key in special else shapes[key]["x-dotkt-model"]["name"]
-        if field.get("type") == "array":
-            return cs(field["items"]) + ("?" if is_nullable(field["items"]) else "") + "[]"
-        kind = field.get("type", "string" if "enum" in field else None)
-        if "const" in field:
-            kind = {str: "string", int: "integer", bool: "boolean"}[type(field["const"])]
-        return {"string": "string", "integer": "int", "boolean": "bool"}[kind]
+        return csharp_type(field, shapes)
 
     def member(key):
         return key[:1].upper() + key[1:]

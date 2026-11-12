@@ -9,6 +9,7 @@ public static class SourceMetadataMessagePack
 {
     public static SourceTypeAlias Read(ref MessagePackReader reader) => ReadSourceTypeAlias(ref reader);
     public static void Write(ref MessagePackWriter writer, SourceTypeAlias value) => WriteSourceTypeAlias(ref writer, value, 0);
+    public static void Write(ref MessagePackWriter writer, SourceTypeAlias value, int depth) => WriteSourceTypeAlias(ref writer, value, depth);
 
     private static SourceTypeAlias ReadSourceTypeAlias(ref MessagePackReader reader)
     {

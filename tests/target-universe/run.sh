@@ -32,6 +32,15 @@ dotnet build "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
     -p:BaseIntermediateOutputPath="$OUT/obj/" \
     -p:BaseOutputPath="$OUT/bin/" >/dev/null
 
+# Configuration validation must fail before invoking the compiler, even on an incremental build.
+if invalid_out="$(dotnet msbuild "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
+    -t:DotKtComputeCompileOptions -p:Configuration=Release -p:DotKtBirFormat=invalid \
+    -p:BaseIntermediateOutputPath="$OUT/obj/" -p:BaseOutputPath="$OUT/bin/" 2>&1)"; then
+    die "SDK accepted an unknown BIR format"
+fi
+grep -qF 'DotKtBirFormat must be json or msgpack.' <<<"$invalid_out" \
+    || die "invalid BIR format did not produce its configuration diagnostic"
+
 probe_dir="$OUT/bin/Release/net10.0"
 raw="$OUT/TargetUniverseProbe.raw.dll"
 cp "$probe_dir/TargetUniverseProbe.dll" "$raw"
@@ -69,6 +78,30 @@ for format in MsgPack json; do
     [[ -f "$OUT/obj/Release/net10.0/cir/.stamp.${format,,}" ]] || die "CIR format stamp was not refreshed"
     [[ "$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")" == "$bir_stamp" ]] || die "CIR codec change recompiled Kotlin"
     [[ "$(dotnet "$probe_dir/TargetUniverseProbe.dll")" == target-universe ]] || die "SDK CIR $format runtime differs"
+done
+
+# BIR transport is a frontend output choice. Switching it recompiles Kotlin,
+# replaces the old format cohort and retains identical deterministic output.
+for format in MsgPack json; do
+    prior_bir_stamp="$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")"
+    dotnet build "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
+        -c Release --no-restore -v:q --nologo -p:Deterministic=true -p:DotKtBirFormat="$format" -p:DotKtCirFormat="$format" \
+        -p:BaseIntermediateOutputPath="$OUT/obj/" -p:BaseOutputPath="$OUT/bin/" >/dev/null
+    [[ "$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")" != "$prior_bir_stamp" ]] || die "BIR codec change did not recompile Kotlin"
+    [[ -f "$OUT/obj/Release/net10.0/bir/TargetUniverseProbe.bir.${format,,}" ]] || die "SDK did not select the BIR writer"
+    if [[ "${format,,}" == msgpack ]]; then old_format=json; else old_format=msgpack; fi
+    [[ -z "$(find "$OUT/obj/Release/net10.0/bir" -maxdepth 1 -name "*.bir.$old_format" -print -quit)" ]] || die "Stale BIR format survived recompilation"
+    [[ "$(dotnet "$probe_dir/TargetUniverseProbe.dll")" == target-universe ]] || die "SDK BIR $format runtime differs"
+    cmp "$raw" "$probe_dir/TargetUniverseProbe.dll" || die "BIR codecs changed deterministic CIL/metadata"
+    if [[ "${format,,}" == msgpack ]]; then
+        stable_bir_stamp="$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")"
+        stable_cir_stamp="$(stat -c '%y' "$OUT/obj/Release/net10.0/cir/.stamp.msgpack")"
+        dotnet build "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
+            -c Release --no-restore -v:q --nologo -p:Deterministic=true -p:DotKtBirFormat=msgpack -p:DotKtCirFormat=msgpack \
+            -p:BaseIntermediateOutputPath="$OUT/obj/" -p:BaseOutputPath="$OUT/bin/" >/dev/null
+        [[ "$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")" == "$stable_bir_stamp" ]] || die "Unchanged binary BIR recompiled Kotlin"
+        [[ "$(stat -c '%y' "$OUT/obj/Release/net10.0/cir/.stamp.msgpack")" == "$stable_cir_stamp" ]] || die "Unchanged binary CIR reran lowering"
+    fi
 done
 
 dotnet run --project "$ROOT/tests/target-universe/MetadataProbe.csproj" -c Release -- \

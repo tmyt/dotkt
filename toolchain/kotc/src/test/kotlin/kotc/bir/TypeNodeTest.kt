@@ -3,6 +3,7 @@ package kotc.bir
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
+import kotlin.test.assertFailsWith
 import kotc.backend.BirEmitter
 import kotc.backend.constant
 import kotc.backend.parameterNullCheck
@@ -21,6 +22,37 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.types.Variance
 
 class TypeNodeTest {
+    private fun reportBinaryFile(file: BirFileDeclaration) {
+        val encoder = java.util.Base64.getEncoder()
+        val json = buildString { file.writeJson(this) }.toByteArray(Charsets.UTF_8)
+        println("IR_BIR_BINARY_SAMPLE ${encoder.encodeToString(json)} ${encoder.encodeToString(BirFileCodec.encode(file))}")
+    }
+
+    private fun reportBinaryNode(node: BirNode) {
+        val body = if (node is BirStatement) listOf(node) else listOf(BirExpressionStatement(node as BirExpression))
+        reportBinaryFile(BirFileDeclaration("BinarySampleKt", false, emptyList(),
+            listOf(BirFunctionDeclaration(emptyList(), TypeNode.Fqn("kotlin.Unit"), body, name = "sample")),
+            emptyList(), emptyList(), emptyList(), emptyList()))
+    }
+
+    @Test
+    fun binaryFileKeepsSourceAliasMetadataAndGenericFrames() {
+        val parameter = SourceType.ParameterType(0, false, false, false, emptyList(), emptyList())
+        val alias = SourceTypeAlias("sample", emptyList(), "Alias", "public",
+            listOf(SourceTypeParameter(0, "T", "invariant", emptyList(), emptyList())), parameter, parameter,
+            listOf(SourceAnnotation(SourceClassifier("sample", emptyList(), "Tag"),
+                listOf(SourceAnnotationArgument("text", SourceAnnotationValue.StringValue(false, "日本\u0000\uD800"))))))
+        val frame = TypeNode.Tv("method", 0)
+        val method = BirFunctionDeclaration(listOf(BirParameter("value", frame)), frame,
+            listOf(BirReturn(BirLocal("value", sty = frame))), name = "identity", declarationId = "selected-id",
+            typeParams = listOf(TypeParameterDeclaration("T", constraints = listOf(TypeNode.Fqn("kotlin.Any")))))
+        reportBinaryFile(BirFileDeclaration("BinaryMetadataKt", false, emptyList(), listOf(method),
+            emptyList(), emptyList(), emptyList(), listOf(alias)))
+        org.msgpack.core.MessagePack.newDefaultBufferPacker().use { packer ->
+            assertFailsWith<IllegalArgumentException> { BirMessagePack.write(alias, packer, 1023) }
+        }
+    }
+
     @Test
     fun declarationModelsKeepDefaultsAttributesAndIdentityFactsTyped() {
         val frame = TypeNode.Tv("method", 0)
@@ -94,6 +126,7 @@ class TypeNodeTest {
             BirForArray(null, "item", value, carrier.body),
             BirStackGet(BirLocal("ptr"), BirLocal("len"), value, frame))) {
             println("IR_BIR_CORE_SAMPLE ${sample.toJson()}")
+            reportBinaryNode(sample)
         }
     }
 
@@ -283,6 +316,7 @@ class TypeNodeTest {
             val constant = emitter.constant(IrConstImpl.float(0, 1, type, Float.fromBits(bits)))
             assertEquals(Float32Literal(bits), constant.value)
             println("IR_BIR_LITERAL_SAMPLE ${constant.toJson()}")
+            reportBinaryNode(constant)
         }
         for (bits in listOf(0L, Long.MIN_VALUE, 0x7ff0000000000000L, 0xfff0000000000000uL.toLong(),
             0x7ff0123456789abcL, 0xfff8123456789abcuL.toLong(), 1L)) {
@@ -290,6 +324,7 @@ class TypeNodeTest {
             val constant = emitter.constant(IrConstImpl.double(0, 1, type, Double.fromBits(bits)))
             assertEquals(Float64Literal(bits), constant.value)
             println("IR_BIR_LITERAL_SAMPLE ${constant.toJson()}")
+            reportBinaryNode(constant)
         }
         val samples = listOf(
             TypeNode.Nullable(TypeNode.Fqn("kotlin.Any")) to IrConstImpl.constNull(0, 1, type),
@@ -307,6 +342,7 @@ class TypeNodeTest {
             val constant = emitter.constant(sample)
             assertEquals(sourceType, constant.type)
             println("IR_BIR_LITERAL_SAMPLE ${constant.toJson()}")
+            reportBinaryNode(constant)
         }
     }
 

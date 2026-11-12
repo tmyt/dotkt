@@ -59,6 +59,16 @@ object ClrMetadataConfigurationUpdater : ConfigurationUpdater<K2MetadataCompiler
 		configuration: CompilerConfiguration,
 	) {
 		val arguments = input.arguments
+		val formatPrefix = "plugin:dotkt:bir-format="
+		val formatOptions = arguments.pluginOptions.orEmpty().filter { it.startsWith(formatPrefix) }
+		val formatName = formatOptions.singleOrNull()?.removePrefix(formatPrefix) ?: "json"
+		val format = kotc.bir.BirFileFormat.entries.singleOrNull { it.extension == formatName }
+		if (formatOptions.size > 1 || format == null) {
+			configuration.getNotNull(CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY).report(
+				org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity.ERROR,
+				"Specify one BIR format: -P plugin:dotkt:bir-format=json|msgpack",
+			)
+		} else configuration.put(kotc.bir.BirFileCodec.outputFormat, format)
 		configuration.languageVersionSettings = ClrPlatformLanguageVersionSettings(configuration.languageVersionSettings)
 		val commonSources = arguments.commonSources?.toSet() ?: emptySet()
 		val hmppModuleStructure = configuration.get(CommonConfigurationKeys.HMPP_MODULE_STRUCTURE)
