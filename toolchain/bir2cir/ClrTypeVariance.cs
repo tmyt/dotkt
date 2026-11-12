@@ -194,7 +194,19 @@ static class ClrTypeVariance
                         method["ret"] ??= TypeJson.Fqn("void");
                         method["params"] ??= new JsonArray();
                     }
-            return CirDeclarationProjection.ReadCirFileDeclaration(root);
+            var projected = CirDeclarationProjection.ReadCirFileDeclaration(root);
+            var sources = root["types"].AsArray().OfType<JsonObject>()
+                .ToDictionary(type => Str(type["name"]), StringComparer.Ordinal);
+            foreach (var type in projected.Types)
+            {
+                var before = ClrVarianceFacts.FromDom(sources[type.Name]);
+                var after = ClrVarianceFacts.FromCir(type);
+                if (before.Kind != after.Kind || before.CapturedCount != after.CapturedCount
+                    || !before.Parameters.SequenceEqual(after.Parameters)
+                    || !before.Occurrences.SequenceEqual(after.Occurrences))
+                    throw new InvalidOperationException($"Variance fact projections disagree for {type.Name}");
+            }
+            return projected;
         }
 
         const string declarations = """
