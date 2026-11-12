@@ -1,6 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // A singleton-class enum has the same Kotlin comparison contract as a native CLR enum. Give it a real
 // compiler-owned comparison face so dispatch works without an impossible System.Enum bound or taking over a
@@ -34,26 +37,23 @@ static class RichEnumComparisonSynthesis
             var suffix = 0;
             string name;
             do { name = "$enumComparison$" + suffix++; } while (names.Contains(name));
-            JsonObject Ordinal(JsonObject receiver) => new() {
-                ["k"] = "field", ["ownerType"] = TypeJson.Fqn(owner), ["name"] = ordinal, ["recv"] = receiver,
+            BirFieldGet Ordinal(IBirExpression receiver) => new() {
+                OwnerType = new TypeNode.Fqn(owner), Name = ordinal, Recv = OptionalField<IBirExpression>.Of(receiver),
             };
-            methods.Add(new JsonObject {
-                ["name"] = name, ["static"] = false, ["virtual"] = true, ["override"] = false,
-                ["abstract"] = false, ["vis"] = "private", ["generated"] = true,
-                [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
-                ["params"] = new JsonArray(new JsonObject { ["name"] = "other", ["type"] = TypeJson.Fqn("kotlin.Any") }),
-                ["ret"] = TypeJson.Fqn("kotlin.Int"),
-                ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = new JsonObject {
-                    ["k"] = "binOp", ["op"] = "-",
-                    ["lhs"] = Ordinal(new JsonObject { ["k"] = "this" }),
-                    ["rhs"] = Ordinal(new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn(owner),
-                        ["e"] = new JsonObject { ["k"] = "local", ["name"] = "other" } }),
-                } }),
-                ["clrInterfaceImpls"] = new JsonArray(new JsonObject {
-                    ["owner"] = TypeJson.Fqn(Face), ["member"] = "compareEnumTo", ["arity"] = 0,
-                    ["params"] = new JsonArray(TypeJson.Fqn("kotlin.Any")), ["ret"] = TypeJson.Fqn("kotlin.Int"),
-                }),
-            });
+            methods.Add(new BirFunctionDeclaration {
+                Name = name, Static = false, Virtual = true, Override = false,
+                Abstract = false, Vis = "private", Generated = true, PhysicalSlotBridge = true,
+                Params = new[] { new BirParameter { Name = "other", Type = new TypeNode.Fqn("kotlin.Any") } },
+                Ret = new TypeNode.Fqn("kotlin.Int"),
+                Body = new IBirStatement[] { new BirReturn { Value = new BirBinaryOperation {
+                    Op = "-", Lhs = Ordinal(new BirThis()),
+                    Rhs = Ordinal(new BirCast { Type = new TypeNode.Fqn(owner), E = new BirLocal { Name = "other" } }),
+                } } },
+                ClrInterfaceImpls = new[] { new BirMethodImpl {
+                    Owner = new TypeNode.Fqn(Face), Member = "compareEnumTo", Arity = 0,
+                    Params = new TypeNode[] { new TypeNode.Fqn("kotlin.Any") }, Ret = new TypeNode.Fqn("kotlin.Int"),
+                } },
+            }.ToDom());
         }
     }
 }

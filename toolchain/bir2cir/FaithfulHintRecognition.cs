@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Select the CLR representation of Kotlin rendering and floating-point ordering.
 // kotc supplies ordinary Kotlin operations, not helper names or representation
@@ -14,9 +16,9 @@ using DotKt.Bir;
 // Shared recognition primitives used by BOTH this pass and PrimitiveOperatorLowering's EQEQ arm.
 static class FaithfulHints
 {
-    static Action<JsonObject> _bindHelper;
+    static Func<BirCallStatic, BirCallStatic> _bindHelper;
 
-    internal static void WithHelperBinding(Action<JsonObject> bind, Action lower)
+    internal static void WithHelperBinding(Func<BirCallStatic, BirCallStatic> bind, Action lower)
     {
         var previous = _bindHelper;
         _bindHelper = bind;
@@ -144,6 +146,32 @@ static class FaithfulHints
                 TypeJson.Fqn(method.Contains("Float", StringComparison.Ordinal) ? "kotlin.Float" : "kotlin.Double"),
             }, null);
 
+    internal static BirCallStatic FloatCall(string method, IBirExpression a, IBirExpression b)
+    {
+        TypeNode floating = new TypeNode.Fqn(method.Contains("Float", StringComparison.Ordinal)
+            ? "kotlin.Float" : "kotlin.Double");
+        var call = new BirCallStatic {
+            Owner = new TypeNode.Fqn(Numbers), Method = method,
+            Sig = new[] { floating, floating }, Args = new[] { a, b },
+        };
+        return _bindHelper?.Invoke(call) ?? call;
+    }
+
+    // The remaining DOM producers cross only the binding-fact boundary, not their executable arguments.
+    internal static void BindHelper(JsonObject call, Func<BirCallStatic, BirCallStatic> bind)
+    {
+        var arguments = call["typeArgs"] as JsonArray;
+        var facts = new BirCallStatic {
+            Owner = TypeJson.Read(call["owner"]), Method = call["method"].GetValue<string>(),
+            Sig = ((JsonArray)call["sig"]).Select(TypeJson.Read).ToArray(),
+            TypeArgs = arguments == null ? default : OptionalField<TypeNode[]>.Of(arguments.Select(TypeJson.Read).ToArray()),
+        };
+        var bound = bind(facts);
+        call[DeclarationIdentityBinding.Key] = bound.DeclarationId.Value;
+        if (bound.TypeArgs.HasValue)
+            call["typeArgs"] = new JsonArray(bound.TypeArgs.Value.Select(TypeJson.Write).ToArray());
+    }
+
     // Null-safe `Any?.toString()` (renders null as "null") on kotlin.LibraryKt (NO type-args).
     public static JsonObject LibraryToString(JsonNode op) =>
         Helper(Library, "toString", new JsonArray { op.DeepClone() },
@@ -168,7 +196,7 @@ static class FaithfulHints
             ["args"] = args,
         };
         if (typeArgs != null) o["typeArgs"] = typeArgs;
-        _bindHelper?.Invoke(o);
+        if (_bindHelper != null) BindHelper(o, _bindHelper);
         return o;
     }
 

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Kotlin Comparable admits both a generic CLR comparison implementation and native CLR enums,
 // which only implement non-generic IComparable. A CLR generic constraint cannot express that union.
@@ -12,7 +14,6 @@ static class ComparableRepresentationLowering
     static readonly TypeNode Object = new TypeNode.Fqn("kotlin.Any");
     static readonly TypeNode Result = new TypeNode.Fqn("kotlin.Int");
     static readonly TypeNode Parameter = new TypeNode.Tv("method", 0);
-    static JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
     static JsonObject Cast(TypeNode type, JsonNode value) => new() {
         ["k"] = "cast", ["type"] = TypeJson.Write(type), ["e"] = value,
     };
@@ -73,7 +74,7 @@ static class ComparableRepresentationLowering
                 used = true;
             }
             Rewrite(root);
-            if (used && inserted.Add(owner)) methods.Add(Helper(helperName, identity));
+            if (used && inserted.Add(owner)) methods.Add(Helper(helperName, identity).ToDom());
             if (!referenceBuild) EraseBounds(root);
         }
     }
@@ -106,88 +107,69 @@ static class ComparableRepresentationLowering
             .SingleOrDefault();
     }
 
-    static JsonObject Helper(string name, string identity)
+    static BirFunctionDeclaration Helper(string name, string identity)
     {
         var generic = new TypeNode.Fqn("System.IComparable`1", new[] { Parameter });
         var enumFace = new TypeNode.Fqn(RichEnumComparisonSynthesis.Face);
-        JsonObject Compare(TypeNode owner, TypeNode argument) => new() {
-            ["k"] = "clrInstance", ["type"] = TypeJson.Write(owner), ["method"] = "CompareTo",
-            ["recv"] = Cast(owner, Local("receiver")), ["argTypes"] = new JsonArray(TypeJson.Write(argument)),
-            ["args"] = new JsonArray(Cast(argument, Local("other"))), ["ret"] = TypeJson.Write(Result),
+        BirLocal Read(string local) => new() { Name = local };
+        BirCast Convert(TypeNode type, IBirExpression value) => new() { Type = type, E = OptionalField<IBirExpression>.Of(value) };
+        BirIsInstance Is(TypeNode type, IBirExpression value) => new() { Type = type, E = OptionalField<IBirExpression>.Of(value) };
+        BirConditional Choose(IBirExpression condition, IBirExpression yes, IBirExpression no) => new() {
+            Type = Result, Cond = OptionalField<IBirExpression>.Of(condition),
+            Then = OptionalField<IBirExpression>.Of(yes), Else = OptionalField<IBirExpression>.Of(no),
         };
-        JsonObject CompareNativeEnum() => new() {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.EnumRuntimeKt"),
-            ["method"] = "kotlinEnumCompareTo", ["sig"] = new JsonArray(TypeJson.Write(Object), TypeJson.Write(Object)),
-            ["args"] = new JsonArray(Cast(Object, Local("receiver")), Cast(Object, Local("other"))), ["ret"] = TypeJson.Write(Result),
+        BirNativeInstance Compare(TypeNode owner, TypeNode argument) => new() {
+            Type = owner, Method = "CompareTo", Recv = Convert(owner, Read("receiver")),
+            ArgTypes = new[] { argument }, Args = new IBirExpression[] { Convert(argument, Read("other")) }, Ret = Result,
         };
-        JsonObject CompareErased() => new() {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.comparisons.ComparisonsKt"),
-            ["method"] = "clrErasedCompareTo",
-            ["sig"] = new JsonArray(TypeJson.Write(Object), TypeJson.Write(new TypeNode.Nullable(Object))),
-            ["args"] = new JsonArray(Cast(Object, Local("receiver")), Cast(new TypeNode.Nullable(Object), Local("other"))),
-            ["ret"] = TypeJson.Write(Result),
+        BirCallStatic CompareNativeEnum() => new() {
+            Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.EnumRuntimeKt"), Method = "kotlinEnumCompareTo",
+            Sig = new[] { Object, Object },
+            Args = new IBirExpression[] { Convert(Object, Read("receiver")), Convert(Object, Read("other")) }, Ret = Result,
         };
-        JsonObject FloatingComparison(string primitive, string method, JsonNode otherwise)
+        BirCallStatic CompareErased() => new() {
+            Owner = new TypeNode.Fqn("kotlin.comparisons.ComparisonsKt"), Method = "clrErasedCompareTo",
+            Sig = new[] { Object, new TypeNode.Nullable(Object) },
+            Args = new IBirExpression[] { Convert(Object, Read("receiver")), Convert(new TypeNode.Nullable(Object), Read("other")) },
+            Ret = Result,
+        };
+        BirConditional FloatingComparison(string primitive, string method, IBirExpression otherwise)
         {
             var floating = new TypeNode.Fqn(primitive);
-            JsonObject IsFloating(JsonNode value) => new() {
-                ["k"] = "isInst", ["type"] = TypeJson.Write(floating), ["e"] = value,
-            };
             var comparison = FaithfulHints.FloatCall(method,
-                Cast(floating, Local("receiver")), Cast(floating, Cast(Object, Local("other"))));
-            comparison["ret"] = TypeJson.Write(Result);
-            comparison["sty"] = TypeJson.Write(Result);
-            return new JsonObject {
-                ["k"] = "cond", ["type"] = TypeJson.Write(Result),
-                ["cond"] = new JsonObject {
-                    ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
-                    ["cond"] = IsFloating(Local("receiver")),
-                    ["then"] = IsFloating(Cast(Object, Local("other"))),
-                    ["else"] = new JsonObject {
-                        ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = false,
+                Convert(floating, Read("receiver")), Convert(floating, Convert(Object, Read("other"))));
+            return Choose(new BirConditional {
+                    Type = new TypeNode.Fqn("kotlin.Boolean"),
+                    Cond = Is(floating, Read("receiver")),
+                    Then = Is(floating, Convert(Object, Read("other"))),
+                    Else = new BirConstant {
+                        Type = new TypeNode.Fqn("kotlin.Boolean"), Value = new BirLiteral.BooleanLiteral(false),
                     },
-                },
-                ["then"] = comparison, ["else"] = otherwise,
-            };
+                }, comparison with { Ret = Result, Sty = Result }, otherwise);
         }
-        var helper = new JsonObject {
-            ["name"] = name, [DeclarationIdentityBinding.Key] = identity,
-            ["static"] = true, ["vis"] = "public", ["generated"] = true,
-            ["virtual"] = false, ["override"] = false, ["abstract"] = false,
-            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }), ["ret"] = TypeJson.Write(Result),
-            ["attrs"] = new JsonArray(new JsonObject {
-                ["attr"] = TypeJson.Fqn("System.Runtime.CompilerServices.CompilerGeneratedAttribute"), ["args"] = new JsonArray(),
-            }),
-            ["params"] = new JsonArray(
-                new JsonObject { ["name"] = "receiver", ["type"] = TypeJson.Write(Object) },
-                new JsonObject { ["name"] = "other", ["type"] = TypeJson.Write(Parameter) }),
-            ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = new JsonObject {
-                ["k"] = "cond", ["type"] = TypeJson.Write(Result),
-                ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Write(enumFace), ["e"] = Local("receiver") },
-                ["then"] = new JsonObject {
-                    ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(enumFace), ["method"] = "compareEnumTo", ["virtual"] = true,
-                    ["recv"] = Cast(enumFace, Local("receiver")), ["sig"] = new JsonArray(TypeJson.Write(Object)),
-                    ["args"] = new JsonArray(Cast(Object, Local("other"))), ["ret"] = TypeJson.Write(Result),
-                },
-                ["else"] = new JsonObject {
-                    ["k"] = "cond", ["type"] = TypeJson.Write(Result),
-                    ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Write(generic), ["e"] = Local("receiver") },
-                    ["then"] = Compare(generic, Parameter), ["else"] = new JsonObject {
-                        ["k"] = "cond", ["type"] = TypeJson.Write(Result),
-                        ["cond"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Fqn("System.Enum"), ["e"] = Local("receiver") },
-                        ["then"] = CompareNativeEnum(),
-                        ["else"] = CompareErased(),
-                    },
-                },
-            } }),
-        };
+        var dispatch = Choose(Is(enumFace, Read("receiver")), new BirCallInstance {
+            OwnerType = enumFace, Method = "compareEnumTo", Virtual = true,
+            Recv = Convert(enumFace, Read("receiver")), Sig = new[] { Object },
+            Args = new IBirExpression[] { Convert(Object, Read("other")) }, Ret = Result,
+        }, Choose(Is(generic, Read("receiver")), Compare(generic, Parameter),
+            Choose(Is(new TypeNode.Fqn("System.Enum"), Read("receiver")), CompareNativeEnum(), CompareErased())));
         // Kotlin's floating total order precedes native interface dispatch. Both
         // operands must have the same floating type; all other slot selection and
         // invalid-argument behavior remains with the existing native paths.
-        var result = helper["body"][0].AsObject();
-        result["value"] = FloatingComparison("kotlin.Double", "clrDoubleCompare",
-            FloatingComparison("kotlin.Float", "clrFloatCompare", result["value"].DeepClone()));
-        return helper;
+        return new BirFunctionDeclaration {
+            Name = name, DeclarationId = identity, Static = true, Vis = "public", Generated = true,
+            Virtual = false, Override = false, Abstract = false,
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Ret = Result,
+            Attrs = new[] { new BirAttribute {
+                Attr = new TypeNode.Fqn("System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
+                Args = Array.Empty<IBirAttributeValue>(),
+            } },
+            Params = new[] { new BirParameter { Name = "receiver", Type = Object }, new BirParameter { Name = "other", Type = Parameter } },
+            Body = new IBirStatement[] { new BirReturn {
+                Value = FloatingComparison("kotlin.Double", "clrDoubleCompare",
+                    FloatingComparison("kotlin.Float", "clrFloatCompare", dispatch)),
+            } },
+        };
     }
 
     static void EraseBounds(JsonNode node)
@@ -233,6 +215,24 @@ static class ComparableRepresentationLowering
 
     internal static void SelfTest()
     {
+        var boundHelpers = new List<BirCallStatic>();
+        BirFunctionDeclaration typedHelper = null;
+        FaithfulHints.WithHelperBinding(call => {
+            boundHelpers.Add(call);
+            return call with { DeclarationId = "selected:" + call.Method.Value };
+        }, () => typedHelper = Helper("typedComparison", "typed-comparison"));
+        var typedDispatch = (BirConditional)((BirReturn)typedHelper.Body.Value.Single()).Value.Value;
+        if (typedHelper.DeclarationId.Value != "typed-comparison"
+            || typedHelper.TypeParams.Value.Single().Name.Value != "T"
+            || boundHelpers.Count != 2
+            || boundHelpers.Any(call => call.TypeArgs.IsPresent || call.Sig.Value.Length != 2
+                || call.Args.Value.Length != 2 || call.DeclarationId.IsPresent)
+            || ((BirCallStatic)typedDispatch.Then.Value).DeclarationId.Value != "selected:clrDoubleCompare"
+            || ((BirCallStatic)((BirConditional)typedDispatch.Else.Value).Then.Value).DeclarationId.Value
+                != "selected:clrFloatCompare"
+            || FaithfulHints.FloatCall("clrDoubleCompare", new BirLocal { Name = "a" },
+                new BirLocal { Name = "b" }).DeclarationId.IsPresent)
+            throw new InvalidOperationException("Typed comparison construction lost its scoped declaration binding or frame");
         var first = JsonNode.Parse("""
         {"fileClass":"Comparisons","methods":[{"name":"first","static":true,
          "typeParams":[{"name":"T","constraints":[{"t":"fqn","name":"kotlin.Comparable",
@@ -330,6 +330,7 @@ static class ComparableRepresentationLowering
             || TypeJson.OwnerName(enumRoot["types"][0]["base"]) != "DotKt.Runtime.CompilerServices.KotlinEnumComparable"
             || enumRoot["types"][0]["ctors"][0]["baseArgs"] is not JsonArray { Count: 0 }
             || enumRoot["types"][0]["ctors"][0]["delegationSig"] is not JsonArray { Count: 0 }
+            || !KotlinPropertyAccessors.IsPhysicalSlotBridge(enumBridge.AsObject())
             || Text(enumBridge["clrInterfaceImpls"][0]["member"]) != "compareEnumTo")
             throw new InvalidOperationException("Enum comparison lost the shared value view or the producer's ordinal map");
         Console.WriteLine("[comparable representation] self-test OK (shared facade, evaluation, source bounds, generic-first dispatch, inherited owner frame)");
