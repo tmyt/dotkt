@@ -50,6 +50,9 @@ internal interface IBirExpression : IBirAttributeValue;
 internal interface IBirStatement;
 internal interface IBirTypeDeclaration;
 internal interface IBirAttributeValue;
+// A saved source graph is metadata, not another live source declaration for
+// declaration-level capture or representation passes to reinterpret.
+internal interface IBirExecutablePayload;
 
 internal static partial class BirGraphJson
 {

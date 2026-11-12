@@ -1182,6 +1182,43 @@ internal static class BirGraphDom
         };
     }
 
+    internal static BirInlinePayload ReadBirInlinePayload(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "v": break;
+                case "fqn": break;
+                case "owner": break;
+                case "fileClass": break;
+                case "recv": break;
+                case "static": break;
+                case "typeParams": break;
+                case "params": break;
+                case "ret": break;
+                case "body": break;
+                case "lifted": break;
+                case "declarationId": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirInlinePayload at {source.GetPath()}");
+            }
+        return new BirInlinePayload
+        {
+            V = Field<int>(fields, "v", value => value!.GetValue<int>()),
+            Fqn = Field<string>(fields, "fqn", value => value!.GetValue<string>()),
+            Owner = Field<string>(fields, "owner", value => value!.GetValue<string>()),
+            FileClass = Field<string>(fields, "fileClass", value => value!.GetValue<string>()),
+            Recv = Field<string>(fields, "recv", value => value!.GetValue<string>()),
+            Static = Field<bool>(fields, "static", value => value!.GetValue<bool>()),
+            TypeParams = Field<BirTypeParameter[]>(fields, "typeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
+            Params = Field<BirParameter[]>(fields, "params", value => ((JsonArray)value!).Select(item0 => ReadBirParameter(item0!)).ToArray()),
+            Ret = Field<TypeNode>(fields, "ret", value => TypeNode.Read(value) ?? throw new FormatException()),
+            Body = Field<IBirStatement[]>(fields, "body", value => ((JsonArray)value!).Select(item0 => ReadBirStatement(item0!)).ToArray()),
+            Lifted = Field<BirFunctionDeclaration[]>(fields, "lifted", value => ((JsonArray)value!).Select(item0 => ReadBirFunctionDeclaration(item0!)).ToArray()),
+            DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
+        };
+    }
+
     internal static BirAttributeNamedArgument ReadBirAttributeNamedArgument(JsonNode source)
     {
         var fields = source.AsObject();
@@ -1249,6 +1286,7 @@ internal static class BirGraphDom
                 case "attrs": break;
                 case "functionSignatureType": break;
                 case "kotlinType": break;
+                case "nullableGeneric": break;
                 case "nominalParameterSignatureIdentity": break;
                 case "genericParameterSignatureBounds": break;
                 case "nullableFlags": break;
@@ -1268,6 +1306,7 @@ internal static class BirGraphDom
             Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             FunctionSignatureType = Field<TypeNode>(fields, "functionSignatureType", value => TypeNode.Read(value) ?? throw new FormatException()),
             KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableGeneric = Field<TypeNode>(fields, "nullableGeneric", value => TypeNode.Parse(value!.GetValue<string>())),
             NominalParameterSignatureIdentity = Field<TypeNode>(fields, "nominalParameterSignatureIdentity", value => TypeNode.Read(value) ?? throw new FormatException()),
             GenericParameterSignatureBounds = Field<TypeNode[]>(fields, "genericParameterSignatureBounds", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             NullableFlags = Field<int[]>(fields, "nullableFlags", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
@@ -1398,6 +1437,8 @@ internal static class BirGraphDom
                 case "_syntheticTypeArgs": break;
                 case "_physicalDeclarationSignature": break;
                 case "retKotlinType": break;
+                case "nullableGenericRet": break;
+                case "nullableGenericSuspendRet": break;
                 case "declarationSourceName": break;
                 case "methodTypeParameterBoundsPre": break;
                 case "kotlinPropertyAccessorCarrier": break;
@@ -1459,6 +1500,8 @@ internal static class BirGraphDom
             _syntheticTypeArgs = Field<TypeNode[]>(fields, "_syntheticTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             _physicalDeclarationSignature = Field<bool>(fields, "_physicalDeclarationSignature", value => value!.GetValue<bool>()),
             RetKotlinType = Field<TypeNode>(fields, "retKotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableGenericRet = Field<TypeNode>(fields, "nullableGenericRet", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableGenericSuspendRet = Field<TypeNode>(fields, "nullableGenericSuspendRet", value => TypeNode.Parse(value!.GetValue<string>())),
             DeclarationSourceName = Field<string>(fields, "declarationSourceName", value => value!.GetValue<string>()),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
             KotlinPropertyAccessorCarrier = Field<EventPropertySourceFacts>(fields, "kotlinPropertyAccessorCarrier", value => ReadEventPropertySourceFacts(value!)),
@@ -1561,6 +1604,7 @@ internal static class BirGraphDom
                 case "companionSetterDeclarationId": break;
                 case "constant": break;
                 case "kotlinType": break;
+                case "nullableGeneric": break;
                 case "nullableFlags": break;
                 case "suspendFnType": break;
                 case "pos": break;
@@ -1594,6 +1638,7 @@ internal static class BirGraphDom
             CompanionSetterDeclarationId = Field<string>(fields, "companionSetterDeclarationId", value => value!.GetValue<string>()),
             Constant = Field<BirLiteral>(fields, "constant", value => BirLiteral.Read(value), semanticNull: true),
             KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableGeneric = Field<TypeNode>(fields, "nullableGeneric", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableFlags = Field<int[]>(fields, "nullableFlags", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             SuspendFnType = Field<TypeNode>(fields, "suspendFnType", value => TypeNode.Read(value) ?? throw new FormatException()),
             Pos = Field<BirDeclarationPosition>(fields, "pos", value => ReadBirDeclarationPosition(value!)),
@@ -1634,6 +1679,7 @@ internal static class BirGraphDom
                 case "kotlinStatic": break;
                 case "overrides": break;
                 case "kotlinType": break;
+                case "nullableGeneric": break;
                 case "get": break;
                 case "getSig": break;
                 case "getRet": break;
@@ -1660,6 +1706,7 @@ internal static class BirGraphDom
             KotlinStatic = Field<bool>(fields, "kotlinStatic", value => value!.GetValue<bool>()),
             Overrides = Field<BirOverride[]>(fields, "overrides", value => ((JsonArray)value!).Select(item0 => ReadBirOverride(item0!)).ToArray()),
             KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableGeneric = Field<TypeNode>(fields, "nullableGeneric", value => TypeNode.Parse(value!.GetValue<string>())),
             Get = Field<string>(fields, "get", value => value!.GetValue<string>()),
             GetSig = Field<TypeNode[]>(fields, "getSig", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             GetRet = Field<TypeNode>(fields, "getRet", value => TypeNode.Read(value) ?? throw new FormatException()),
@@ -2256,6 +2303,7 @@ internal static class BirGraphDom
                 case "typeParams": break;
                 case "semanticOwner": break;
                 case "methodTypeParameterBoundsPre": break;
+                case "kotlinSupertypesPre": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirClosureDefinition at {source.GetPath()}");
             }
         return new BirClosureDefinition
@@ -2268,6 +2316,7 @@ internal static class BirGraphDom
             TypeParams = Field<BirTypeParameter[]>(fields, "typeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             SemanticOwner = Field<string>(fields, "semanticOwner", value => value!.GetValue<string>()),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
+            KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
         };
     }
 

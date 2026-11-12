@@ -10,6 +10,10 @@
     <Compile Include="$(DotKtSharedIrDirectory)/TypeNode.Model.Generated.cs" Link="TypeNode.Model.Generated.cs" />
     <Compile Include="$(DotKtSharedIrDirectory)/TypeNode.Json.Generated.cs" Link="TypeNode.Json.Generated.cs" />
     <Compile Include="$(DotKtSharedIrDirectory)/BirJson.cs" Link="BirJson.cs" />
+    <Compile Include="$(DotKtSharedIrDirectory)/BirCarrier.MessagePack.cs" Link="BirCarrier.MessagePack.cs" />
     <Compile Include="$(DotKtSharedIrDirectory)/../dll2klib/MetadataAttributes.cs" Link="MetadataAttributes.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MessagePack" Version="[3.1.12]" />
   </ItemGroup>
 </Project>

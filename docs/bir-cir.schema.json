@@ -21,8 +21,19 @@
     "sourceTypeFacts": {
       "type": "object", "properties": {
         "base": { "$ref": "#/$defs/type" }, "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } },
-        "bounds": { "type": "object", "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/type" } } }
+        "bounds": { "type": "object", "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/type" } } },
+        "nullableFrame": { "$ref": "#/$defs/nullableRepresentationFrame" }
       }, "additionalProperties": false
+    },
+    "nullableRepresentationFrame": {
+      "type": "object", "properties": {
+        "sourceArity": { "type": "integer", "minimum": 0 },
+        "nullable": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "storage": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "nullableStorage": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "order": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+      },
+      "required": ["sourceArity", "nullable", "storage", "nullableStorage", "order"], "additionalProperties": false
     },
     "sourceTypeFactsText": {
       "type": "string", "x-dotkt-csharp-type": "SourceTypeFacts", "x-dotkt-csharp-codec": "SourceTypeFacts",
@@ -393,6 +404,21 @@
       "properties": { "index": { "type": "integer" }, "body": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["index", "body"], "additionalProperties": false
     },
+    "birInlinePayload": {
+      "type": "object", "x-dotkt-model": { "name": "BirInlinePayload", "domain": "birLoweringValues", "executablePayload": true },
+      "properties": {
+        "v": { "type": "integer" }, "fqn": { "type": "string" }, "owner": { "type": "string" },
+        "fileClass": { "type": ["string", "null"] }, "recv": { "type": "string" }, "static": { "type": "boolean" },
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/birParameter" } },
+        "ret": { "$ref": "#/$defs/type" },
+        "body": { "type": "array", "items": { "$ref": "#/$defs/birStatementNode" } },
+        "lifted": { "type": "array", "items": { "$ref": "#/$defs/birFunctionDeclaration" } },
+        "declarationId": { "type": "string" }
+      },
+      "required": ["v", "fqn", "owner", "fileClass", "recv", "static", "typeParams", "params", "ret", "body", "lifted"],
+      "additionalProperties": false
+    },
     "birAttributeNamedArgument": {
       "type": "object", "x-dotkt-model": { "name": "BirAttributeNamedArgument", "domain": "birCoreValues" },
       "properties": { "kind": { "type": "string" }, "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "value": { "$ref": "#/$defs/birExpressionNode" } },
@@ -413,6 +439,7 @@
       "type": "object", "x-dotkt-model": { "name": "BirParameter", "domain": "birCoreValues", "loweringSourceFields": ["default"], "loweringProperties": {
         "functionSignatureType": { "$ref": "#/$defs/type" },
         "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "nullableGeneric": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "nominalParameterSignatureIdentity": { "$ref": "#/$defs/type" },
         "genericParameterSignatureBounds": { "type": "array", "items": { "$ref": "#/$defs/type" } }
       } },
@@ -451,6 +478,8 @@
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": {
         "_physicalDeclarationSignature": { "type": "boolean" },
         "retKotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "nullableGenericRet": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "nullableGenericSuspendRet": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "declarationSourceName": { "type": "string" },
         "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
         "kotlinPropertyAccessorCarrier": { "$ref": "#/$defs/eventPropertySourceFacts" },
@@ -491,7 +520,8 @@
     },
     "birFieldDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFieldDeclaration", "domain": "birCoreValues", "loweringProperties": {
-        "constant": { "$ref": "#/$defs/literalValue" }, "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true }
+        "constant": { "$ref": "#/$defs/literalValue" }, "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "nullableGeneric": { "type": "string", "x-dotkt-kotlin-json-type": true }
       } },
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "static": { "type": "boolean", "x-dotkt-kotlin-name": "isStatic" },
@@ -514,7 +544,8 @@
     },
     "birPropertyDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirPropertyDeclaration", "domain": "birCoreValues", "loweringProperties": {
-        "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true }
+        "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "nullableGeneric": { "type": "string", "x-dotkt-kotlin-json-type": true }
       } },
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
@@ -667,7 +698,10 @@
       "required": ["name", "type"], "additionalProperties": false
     },
     "birClosureDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirClosureDefinition", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirClosureDefinition", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": {
+        "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
+        "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }
+      } },
       "properties": {
         "name": { "type": "string" }, "fields": { "type": "array", "items": { "$ref": "#/$defs/birCaptureDescriptor" } },
         "params": { "type": "array", "items": { "$ref": "#/$defs/birLambdaParameter" } }, "ret": { "$ref": "#/$defs/type" },

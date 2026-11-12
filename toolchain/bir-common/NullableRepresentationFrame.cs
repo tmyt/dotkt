@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace DotKt.Bir;
@@ -186,6 +187,57 @@ internal sealed class NullableRepresentationFrame
         if (physicalArguments.Count != PhysicalArity)
             throw new ArgumentException("Physical generic arity does not match nullable representation frame");
         return Enumerable.Range(0, SourceArity).Select(index => physicalArguments[SourcePosition(index)]).ToArray();
+    }
+
+    public void WriteJson(Utf8JsonWriter writer)
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber("sourceArity", SourceArity);
+        void Indices(string name, IReadOnlyList<int> values)
+        {
+            writer.WriteStartArray(name);
+            foreach (var value in values) writer.WriteNumberValue(value);
+            writer.WriteEndArray();
+        }
+        Indices("nullable", NullableIndices);
+        Indices("storage", StorageIndices);
+        Indices("nullableStorage", NullableStorageIndices);
+        Indices("order", PhysicalOrder);
+        writer.WriteEndObject();
+    }
+
+    public static NullableRepresentationFrame ReadJson(ref Utf8JsonReader reader)
+    {
+        if (reader.TokenType != JsonTokenType.StartObject) throw new FormatException();
+        int? arity = null;
+        int[]? nullable = null, storage = null, nullableStorage = null, order = null;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        static int[] Indices(ref Utf8JsonReader input)
+        {
+            if (input.TokenType != JsonTokenType.StartArray) throw new FormatException();
+            var values = new List<int>();
+            while (input.Read() && input.TokenType != JsonTokenType.EndArray) values.Add(input.GetInt32());
+            if (input.TokenType != JsonTokenType.EndArray) throw new FormatException();
+            return values.ToArray();
+        }
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName) throw new FormatException();
+            var name = reader.GetString()!;
+            if (!seen.Add(name) || !reader.Read()) throw new FormatException();
+            switch (name)
+            {
+                case "sourceArity": arity = reader.GetInt32(); break;
+                case "nullable": nullable = Indices(ref reader); break;
+                case "storage": storage = Indices(ref reader); break;
+                case "nullableStorage": nullableStorage = Indices(ref reader); break;
+                case "order": order = Indices(ref reader); break;
+                default: throw new FormatException();
+            }
+        }
+        if (reader.TokenType != JsonTokenType.EndObject || arity == null || nullable == null
+            || storage == null || nullableStorage == null || order == null) throw new FormatException();
+        return new NullableRepresentationFrame(arity.Value, nullable, order, storage, nullableStorage);
     }
 
     public JsonObject ToJson() => new()

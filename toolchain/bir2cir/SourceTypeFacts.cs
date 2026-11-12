@@ -13,24 +13,27 @@ using DotKt.Bir;
 // Text is emitted only for the frozen metadata leaf at the remaining DOM frontier.
 sealed class SourceTypeFacts
 {
-    enum Part { Base, Interfaces, Bounds }
+    enum Part { Base, Interfaces, Bounds, NullableFrame }
     readonly Part[] order;
     internal static readonly SourceTypeFacts Empty = new(null, null, new Dictionary<int, TypeNode[]>(), Array.Empty<Part>());
     internal TypeNode Base { get; }
     internal IReadOnlyList<TypeNode> Interfaces { get; }
     internal IReadOnlyDictionary<int, TypeNode[]> Bounds { get; }
+    internal NullableRepresentationFrame NullableFrame { get; }
     internal bool IsBoundsOnly => order.Length == 1 && order[0] == Part.Bounds;
 
     internal SourceTypeFacts(IReadOnlyDictionary<int, TypeNode[]> bounds)
         : this(null, null, bounds, new[] { Part.Bounds }) { }
 
     SourceTypeFacts(TypeNode baseType, IReadOnlyList<TypeNode> interfaces,
-        IReadOnlyDictionary<int, TypeNode[]> bounds, IReadOnlyList<Part> order)
+        IReadOnlyDictionary<int, TypeNode[]> bounds, IReadOnlyList<Part> order,
+        NullableRepresentationFrame nullableFrame = null)
     {
         Base = baseType;
         Interfaces = interfaces?.ToArray();
         Bounds = new ReadOnlyDictionary<int, TypeNode[]>(bounds.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray()));
         this.order = order.ToArray();
+        NullableFrame = nullableFrame;
     }
 
     internal SourceTypeFacts Merge(IReadOnlyDictionary<int, TypeNode[]> bounds) => Merge(null, null, bounds);
@@ -56,7 +59,7 @@ sealed class SourceTypeFacts
             if (!parts.Contains(Part.Bounds)) parts.Add(Part.Bounds);
             foreach (var pair in bounds) mergedBounds.TryAdd(pair.Key, pair.Value);
         }
-        return new SourceTypeFacts(Base ?? baseType, mergedInterfaces, mergedBounds, parts);
+        return new SourceTypeFacts(Base ?? baseType, mergedInterfaces, mergedBounds, parts, NullableFrame);
     }
 
     internal static SourceTypeFacts Read(ref Utf8JsonReader reader)
@@ -70,12 +73,14 @@ sealed class SourceTypeFacts
         TypeNode baseType = null;
         TypeNode[] interfaces = null;
         var bounds = new Dictionary<int, TypeNode[]>();
+        NullableRepresentationFrame nullableFrame = null;
         var parts = new List<Part>();
         while (inner.Read() && inner.TokenType != JsonTokenType.EndObject)
         {
             if (inner.TokenType != JsonTokenType.PropertyName) throw new FormatException();
             var part = inner.GetString() switch {
                 "base" => Part.Base, "interfaces" => Part.Interfaces, "bounds" => Part.Bounds,
+                "nullableFrame" => Part.NullableFrame,
                 _ => throw new FormatException(),
             };
             if (parts.Contains(part) || !inner.Read()) throw new FormatException();
@@ -84,6 +89,7 @@ sealed class SourceTypeFacts
             {
                 case Part.Base: baseType = TypeNode.ReadJson(ref inner); break;
                 case Part.Interfaces: interfaces = Types(ref inner); break;
+                case Part.NullableFrame: nullableFrame = NullableRepresentationFrame.ReadJson(ref inner); break;
                 case Part.Bounds:
                     if (inner.TokenType != JsonTokenType.StartObject) throw new FormatException();
                     while (inner.Read() && inner.TokenType != JsonTokenType.EndObject)
@@ -97,7 +103,7 @@ sealed class SourceTypeFacts
             }
         }
         if (inner.TokenType != JsonTokenType.EndObject || inner.Read()) throw new FormatException();
-        return new SourceTypeFacts(baseType, interfaces, bounds, parts);
+        return new SourceTypeFacts(baseType, interfaces, bounds, parts, nullableFrame);
     }
 
     static TypeNode[] Types(ref Utf8JsonReader reader)
@@ -126,6 +132,8 @@ sealed class SourceTypeFacts
                         writer.WriteStartArray("interfaces");
                         foreach (var edge in Interfaces) TypeNode.WriteJson(writer, edge);
                         writer.WriteEndArray(); break;
+                    case Part.NullableFrame:
+                        writer.WritePropertyName("nullableFrame"); NullableFrame.WriteJson(writer); break;
                     case Part.Bounds:
                         writer.WriteStartObject("bounds");
                         foreach (var (index, constraints) in Bounds)
@@ -183,6 +191,17 @@ sealed class SourceTypeFacts
         if (methodReader.Read() || methodRoundtrip.Bounds[0][0] != snapshot.Bounds[0][0]
             || SourceBoundsSnapshot.ToDom(methodRoundtrip).GetValue<string>() != SourceBoundsSnapshot.ToDom(methodBounds).GetValue<string>())
             throw new InvalidOperationException("Method bounds lost their bounds-only contract or earliest source frame");
-        Console.WriteLine("[source type facts] self-test OK (typed edges/bounds, first-writer wins, input isolation, exact leaf codec)");
+        const string framed = """{"bounds":{"0":[]},"nullableFrame":{"sourceArity":2,"nullable":[1],"storage":[0],"nullableStorage":[1],"order":[3,0,2,1,4]}}""";
+        var saved = ReadFrozenText(framed);
+        var extended = saved.Merge(new Dictionary<int, TypeNode[]> { [1] = new[] { new TypeNode.Fqn("System.Object") } });
+        if (saved.FrozenText != framed || !ReferenceEquals(saved.NullableFrame, extended.NullableFrame)
+            || saved.NullableFrame.SourceArity != 2 || saved.NullableFrame.SourcePosition(0) != 1
+            || saved.NullableFrame.SourcePosition(1) != 3
+            || !saved.NullableFrame.NullableIndices.SequenceEqual(new[] { 1 })
+            || !saved.NullableFrame.StorageIndices.SequenceEqual(new[] { 0 })
+            || !saved.NullableFrame.NullableStorageIndices.SequenceEqual(new[] { 1 })
+            || !saved.NullableFrame.PhysicalOrder.SequenceEqual(new[] { 3, 0, 2, 1, 4 }))
+            throw new InvalidOperationException("Source type facts lost the saved nullable/storage correspondence");
+        Console.WriteLine("[source type facts] self-test OK (typed edges/bounds, first-writer wins, input isolation, exact leaf codec, saved nullable/storage frames)");
     }
 }
