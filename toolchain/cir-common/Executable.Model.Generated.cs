@@ -104,6 +104,9 @@ public abstract partial record CirNode : ICirNode
 {
     [JsonIgnore] public abstract string Tag { get; }
     [JsonIgnore] public abstract IEnumerable<ICirNode> Children { get; }
+    public abstract CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite);
+    public CirNode Rewrite(Func<ICirNode, ICirNode> rewrite) =>
+        (CirNode)rewrite(RewriteChildren(child => ((CirNode)child).Rewrite(rewrite)));
 }
 
 public sealed partial record CirSourceSpan : ICirChildren
@@ -125,6 +128,9 @@ public sealed partial record CirSourceSpan : ICirChildren
             yield break;
         }
     }
+    public CirSourceSpan RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirConditionalBranch : ICirChildren
@@ -150,6 +156,11 @@ public sealed partial record CirConditionalBranch : ICirChildren
             yield break;
         }
     }
+    public CirConditionalBranch RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Cond = Cond.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Cond.Value)) : Cond,
+        Body = Body.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirCatchClause : ICirChildren
@@ -171,6 +182,10 @@ public sealed partial record CirCatchClause : ICirChildren
             yield break;
         }
     }
+    public CirCatchClause RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Body = Body.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirSpreadPart : ICirChildren
@@ -187,6 +202,10 @@ public sealed partial record CirSpreadPart : ICirChildren
             yield break;
         }
     }
+    public CirSpreadPart RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirPhysicalEnumValue : ICirChildren
@@ -204,6 +223,9 @@ public sealed partial record CirPhysicalEnumValue : ICirChildren
             yield break;
         }
     }
+    public CirPhysicalEnumValue RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirSourcePoint : CirNode, ICirStatement
@@ -218,6 +240,9 @@ public sealed partial record CirSourcePoint : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirVariable : CirNode, ICirStatement
@@ -240,6 +265,10 @@ public sealed partial record CirVariable : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Init = Init.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Init.Value)) : Init,
+    };
 }
 
 public sealed partial record CirSetLocal : CirNode, ICirStatement
@@ -257,6 +286,10 @@ public sealed partial record CirSetLocal : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Value = (ICirExpression)rewrite(Value),
+    };
 }
 
 public sealed partial record CirReturn : CirNode, ICirStatement
@@ -275,6 +308,10 @@ public sealed partial record CirReturn : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Value = Value.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Value.Value)) : Value,
+    };
 }
 
 public sealed partial record CirThrow : CirNode, ICirStatement
@@ -290,6 +327,10 @@ public sealed partial record CirThrow : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Value = (ICirExpression)rewrite(Value),
+    };
 }
 
 public sealed partial record CirTry : CirNode, ICirStatement
@@ -325,6 +366,12 @@ public sealed partial record CirTry : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Body = Body.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+        Catches = Catches.Select(item0 => item0.RewriteChildren(rewrite)).ToArray(),
+        Finally = Finally.HasValue ? OptionalField<ICirStatement[]>.Of(Finally.Value.Select(item0 => (ICirStatement)rewrite(item0)).ToArray()) : Finally,
+    };
 }
 
 public sealed partial record CirExpressionStatement : CirNode, ICirStatement
@@ -340,6 +387,10 @@ public sealed partial record CirExpressionStatement : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Expr = (ICirExpression)rewrite(Expr),
+    };
 }
 
 public sealed partial record CirWhile : CirNode, ICirStatement
@@ -363,6 +414,11 @@ public sealed partial record CirWhile : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Cond = (ICirExpression)rewrite(Cond),
+        Body = Body.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirIf : CirNode, ICirStatement
@@ -381,6 +437,10 @@ public sealed partial record CirIf : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Branches = Branches.Select(item0 => item0.RewriteChildren(rewrite)).ToArray(),
+    };
 }
 
 public sealed partial record CirFor : CirNode, ICirStatement
@@ -413,6 +473,12 @@ public sealed partial record CirFor : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        From = (ICirExpression)rewrite(From),
+        To = (ICirExpression)rewrite(To),
+        Body = Body.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirForArray : CirNode, ICirStatement
@@ -440,6 +506,11 @@ public sealed partial record CirForArray : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Array = (ICirExpression)rewrite(Array),
+        Body = Body.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirForRange : CirNode, ICirStatement
@@ -473,6 +544,11 @@ public sealed partial record CirForRange : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Range = (ICirExpression)rewrite(Range),
+        Body = Body.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirBlock : CirNode, ICirStatement
@@ -491,6 +567,10 @@ public sealed partial record CirBlock : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Body = Body.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirBreak : CirNode, ICirStatement
@@ -507,6 +587,9 @@ public sealed partial record CirBreak : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirContinue : CirNode, ICirStatement
@@ -523,6 +606,9 @@ public sealed partial record CirContinue : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirLabel : CirNode, ICirStatement
@@ -537,6 +623,9 @@ public sealed partial record CirLabel : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirGoto : CirNode, ICirStatement
@@ -553,6 +642,9 @@ public sealed partial record CirGoto : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirBranchIf : CirNode, ICirStatement
@@ -574,6 +666,10 @@ public sealed partial record CirBranchIf : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Cond = (ICirExpression)rewrite(Cond),
+    };
 }
 
 public sealed partial record CirConstant : CirNode, ICirExpression
@@ -590,6 +686,9 @@ public sealed partial record CirConstant : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirLocal : CirNode, ICirExpression
@@ -604,6 +703,9 @@ public sealed partial record CirLocal : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirThis : CirNode, ICirExpression
@@ -616,6 +718,9 @@ public sealed partial record CirThis : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirBinary : CirNode, ICirExpression
@@ -636,6 +741,11 @@ public sealed partial record CirBinary : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Lhs = (ICirExpression)rewrite(Lhs),
+        Rhs = (ICirExpression)rewrite(Rhs),
+    };
 }
 
 public sealed partial record CirUnary : CirNode, ICirExpression
@@ -653,6 +763,10 @@ public sealed partial record CirUnary : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirConvert : CirNode, ICirExpression
@@ -670,6 +784,10 @@ public sealed partial record CirConvert : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirCast : CirNode, ICirExpression
@@ -687,6 +805,10 @@ public sealed partial record CirCast : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirArrayLength : CirNode, ICirExpression
@@ -702,6 +824,10 @@ public sealed partial record CirArrayLength : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Array = (ICirExpression)rewrite(Array),
+    };
 }
 
 public sealed partial record CirValueBlock : CirNode, ICirExpression
@@ -725,6 +851,11 @@ public sealed partial record CirValueBlock : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Stmts = Stmts.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+        Result = (ICirExpression)rewrite(Result),
+    };
 }
 
 public sealed partial record CirReturnExpression : CirNode, ICirExpression
@@ -743,6 +874,10 @@ public sealed partial record CirReturnExpression : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Value = Value.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Value.Value)) : Value,
+    };
 }
 
 public sealed partial record CirThrowExpression : CirNode, ICirExpression
@@ -758,6 +893,10 @@ public sealed partial record CirThrowExpression : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Value = (ICirExpression)rewrite(Value),
+    };
 }
 
 public sealed partial record CirNewArray : CirNode, ICirExpression
@@ -778,6 +917,10 @@ public sealed partial record CirNewArray : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Elems = Elems.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirNewArraySized : CirNode, ICirExpression
@@ -795,6 +938,10 @@ public sealed partial record CirNewArraySized : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Size = (ICirExpression)rewrite(Size),
+    };
 }
 
 public sealed partial record CirNewArrayInitialized : CirNode, ICirExpression
@@ -819,6 +966,11 @@ public sealed partial record CirNewArrayInitialized : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Size = (ICirExpression)rewrite(Size),
+        Init = (ICirExpression)rewrite(Init),
+    };
 }
 
 public sealed partial record CirArrayGet : CirNode, ICirExpression
@@ -839,6 +991,11 @@ public sealed partial record CirArrayGet : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Array = (ICirExpression)rewrite(Array),
+        Index = (ICirExpression)rewrite(Index),
+    };
 }
 
 public sealed partial record CirArraySet : CirNode, ICirExpression
@@ -862,6 +1019,12 @@ public sealed partial record CirArraySet : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Array = (ICirExpression)rewrite(Array),
+        Index = (ICirExpression)rewrite(Index),
+        Value = (ICirExpression)rewrite(Value),
+    };
 }
 
 public sealed partial record CirNewList : CirNode, ICirExpression
@@ -886,6 +1049,10 @@ public sealed partial record CirNewList : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Elems = Elems.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirSpreadConcat : CirNode, ICirExpression
@@ -914,6 +1081,10 @@ public sealed partial record CirSpreadConcat : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Parts = Parts.Select(item0 => item0.RewriteChildren(rewrite)).ToArray(),
+    };
 }
 
 public sealed partial record CirSafeCastValue : CirNode, ICirExpression
@@ -933,6 +1104,10 @@ public sealed partial record CirSafeCastValue : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirNullableNull : CirNode, ICirExpression
@@ -947,6 +1122,9 @@ public sealed partial record CirNullableNull : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirNullableWrap : CirNode, ICirExpression
@@ -966,6 +1144,10 @@ public sealed partial record CirNullableWrap : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirNullableHasValue : CirNode, ICirExpression
@@ -985,6 +1167,10 @@ public sealed partial record CirNullableHasValue : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirNullableValue : CirNode, ICirExpression
@@ -1004,6 +1190,10 @@ public sealed partial record CirNullableValue : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirIsInstance : CirNode, ICirExpression
@@ -1029,6 +1219,11 @@ public sealed partial record CirIsInstance : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+        NullWitness = NullWitness.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(NullWitness.Value)) : NullWitness,
+    };
 }
 
 public sealed partial record CirIsInstanceReference : CirNode, ICirExpression
@@ -1046,6 +1241,10 @@ public sealed partial record CirIsInstanceReference : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirClassReference : CirNode, ICirExpression
@@ -1060,6 +1259,9 @@ public sealed partial record CirClassReference : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirGetType : CirNode, ICirExpression
@@ -1075,6 +1277,10 @@ public sealed partial record CirGetType : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirDefault : CirNode, ICirExpression
@@ -1089,6 +1295,9 @@ public sealed partial record CirDefault : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirConditional : CirNode, ICirExpression
@@ -1112,6 +1321,12 @@ public sealed partial record CirConditional : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Cond = (ICirExpression)rewrite(Cond),
+        Then = (ICirExpression)rewrite(Then),
+        Else = (ICirExpression)rewrite(Else),
+    };
 }
 
 public sealed partial record CirObjectEqual : CirNode, ICirExpression
@@ -1130,6 +1345,11 @@ public sealed partial record CirObjectEqual : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Lhs = (ICirExpression)rewrite(Lhs),
+        Rhs = (ICirExpression)rewrite(Rhs),
+    };
 }
 
 public sealed partial record CirNew : CirNode, ICirExpression
@@ -1156,6 +1376,10 @@ public sealed partial record CirNew : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Args = Args.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirNewClr : CirNode, ICirExpression
@@ -1178,6 +1402,10 @@ public sealed partial record CirNewClr : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Args = Args.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirCallStatic : CirNode, ICirExpression
@@ -1214,6 +1442,10 @@ public sealed partial record CirCallStatic : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Args = Args.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirCallInstance : CirNode, ICirExpression
@@ -1255,6 +1487,11 @@ public sealed partial record CirCallInstance : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+        Args = Args.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirConstrainedCall : CirNode, ICirExpression
@@ -1294,6 +1531,11 @@ public sealed partial record CirConstrainedCall : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+        Args = Args.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirGenericStatic : CirNode, ICirExpression
@@ -1320,6 +1562,10 @@ public sealed partial record CirGenericStatic : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Args = Args.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirGenericInstance : CirNode, ICirExpression
@@ -1353,6 +1599,11 @@ public sealed partial record CirGenericInstance : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+        Args = Args.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirStaticField : CirNode, ICirExpression
@@ -1373,6 +1624,9 @@ public sealed partial record CirStaticField : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirClrStaticField : CirNode, ICirExpression
@@ -1387,6 +1641,9 @@ public sealed partial record CirClrStaticField : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirStaticFieldSet : CirNode, ICirExpression
@@ -1410,6 +1667,10 @@ public sealed partial record CirStaticFieldSet : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Value = (ICirExpression)rewrite(Value),
+    };
 }
 
 public sealed partial record CirFieldRead : CirNode, ICirExpression
@@ -1451,6 +1712,10 @@ public sealed partial record CirFieldRead : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+    };
 }
 
 public sealed partial record CirFieldStore : CirNode, ICirStatement
@@ -1493,6 +1758,11 @@ public sealed partial record CirFieldStore : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+        Value = (ICirExpression)rewrite(Value),
+    };
 }
 
 public sealed partial record CirFieldStoreExpression : CirNode, ICirExpression
@@ -1535,6 +1805,11 @@ public sealed partial record CirFieldStoreExpression : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+        Value = (ICirExpression)rewrite(Value),
+    };
 }
 
 public sealed partial record CirLateinitGet : CirNode, ICirExpression
@@ -1572,6 +1847,12 @@ public sealed partial record CirLateinitGet : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Value = Value.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Value.Value)) : Value,
+        Exception = (ICirExpression)rewrite(Exception),
+        Recv = Recv.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Recv.Value)) : Recv,
+    };
 }
 
 public sealed partial record CirByRefLoad : CirNode, ICirExpression
@@ -1596,6 +1877,10 @@ public sealed partial record CirByRefLoad : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Ptr = Ptr.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Ptr.Value)) : Ptr,
+    };
 }
 
 public sealed partial record CirByRefOf : CirNode, ICirExpression
@@ -1611,6 +1896,10 @@ public sealed partial record CirByRefOf : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Inner = (ICirExpression)rewrite(Inner),
+    };
 }
 
 public sealed partial record CirByRefStore : CirNode, ICirExpression
@@ -1638,6 +1927,11 @@ public sealed partial record CirByRefStore : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Ptr = Ptr.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Ptr.Value)) : Ptr,
+        Value = (ICirExpression)rewrite(Value),
+    };
 }
 
 public sealed partial record CirEventAccessorBody : CirNode, ICirStatement
@@ -1666,6 +1960,9 @@ public sealed partial record CirEventAccessorBody : CirNode, ICirStatement
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirEventAdd : CirNode, ICirExpression
@@ -1707,6 +2004,11 @@ public sealed partial record CirEventAdd : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = Recv.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Recv.Value)) : Recv,
+        Handler = (ICirExpression)rewrite(Handler),
+    };
 }
 
 public sealed partial record CirEventRemove : CirNode, ICirExpression
@@ -1748,6 +2050,11 @@ public sealed partial record CirEventRemove : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = Recv.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Recv.Value)) : Recv,
+        Handler = (ICirExpression)rewrite(Handler),
+    };
 }
 
 public sealed partial record CirNativeInstance : CirNode, ICirExpression
@@ -1789,6 +2096,11 @@ public sealed partial record CirNativeInstance : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+        Args = Args.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirNativeStatic : CirNode, ICirExpression
@@ -1825,6 +2137,10 @@ public sealed partial record CirNativeStatic : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Args = Args.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirPropertyGet : CirNode, ICirExpression
@@ -1865,6 +2181,10 @@ public sealed partial record CirPropertyGet : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = Recv.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Recv.Value)) : Recv,
+    };
 }
 
 public sealed partial record CirPropertySet : CirNode, ICirExpression
@@ -1908,6 +2228,11 @@ public sealed partial record CirPropertySet : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = Recv.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Recv.Value)) : Recv,
+        Value = (ICirExpression)rewrite(Value),
+    };
 }
 
 public sealed partial record CirConcat : CirNode, ICirExpression
@@ -1926,6 +2251,10 @@ public sealed partial record CirConcat : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Parts = Parts.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirDelegateInvoke : CirNode, ICirExpression
@@ -1951,6 +2280,11 @@ public sealed partial record CirDelegateInvoke : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+        Args = Args.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirEnumBits : CirNode, ICirExpression
@@ -1970,6 +2304,10 @@ public sealed partial record CirEnumBits : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirEnumOrdinal : CirNode, ICirExpression
@@ -1989,6 +2327,10 @@ public sealed partial record CirEnumOrdinal : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        E = (ICirExpression)rewrite(E),
+    };
 }
 
 public sealed partial record CirEnumParse : CirNode, ICirExpression
@@ -2006,6 +2348,10 @@ public sealed partial record CirEnumParse : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Arg = (ICirExpression)rewrite(Arg),
+    };
 }
 
 public sealed partial record CirEnumValue : CirNode, ICirExpression
@@ -2026,6 +2372,9 @@ public sealed partial record CirEnumValue : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirEnumValues : CirNode, ICirExpression
@@ -2042,6 +2391,9 @@ public sealed partial record CirEnumValues : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirForEach : CirNode, ICirStatement, ICirExpression
@@ -2079,6 +2431,11 @@ public sealed partial record CirForEach : CirNode, ICirStatement, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Src = (ICirExpression)rewrite(Src),
+        Body = Body.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirBoundClrDelegate : CirNode, ICirExpression
@@ -2118,6 +2475,10 @@ public sealed partial record CirBoundClrDelegate : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+    };
 }
 
 public sealed partial record CirBoundDelegate : CirNode, ICirExpression
@@ -2155,6 +2516,10 @@ public sealed partial record CirBoundDelegate : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+    };
 }
 
 public sealed partial record CirClosure : CirNode, ICirExpression
@@ -2183,6 +2548,10 @@ public sealed partial record CirClosure : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Captures = Captures.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirClrStaticDelegate : CirNode, ICirExpression
@@ -2217,6 +2586,9 @@ public sealed partial record CirClrStaticDelegate : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirDelegate : CirNode, ICirExpression
@@ -2247,6 +2619,9 @@ public sealed partial record CirDelegate : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }
 
 public sealed partial record CirSam : CirNode, ICirExpression
@@ -2269,6 +2644,10 @@ public sealed partial record CirSam : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Captures = Captures.Select(item0 => (ICirExpression)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirObjectMethod : CirNode, ICirExpression
@@ -2292,6 +2671,11 @@ public sealed partial record CirObjectMethod : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Recv = (ICirExpression)rewrite(Recv),
+        Arg = Arg.HasValue ? OptionalField<ICirExpression>.Of((ICirExpression)rewrite(Arg.Value)) : Arg,
+    };
 }
 
 public sealed partial record CirRepeat : CirNode, ICirStatement, ICirExpression
@@ -2317,6 +2701,11 @@ public sealed partial record CirRepeat : CirNode, ICirStatement, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Count = (ICirExpression)rewrite(Count),
+        Body = Body.Select(item0 => (ICirStatement)rewrite(item0)).ToArray(),
+    };
 }
 
 public sealed partial record CirStackAllocate : CirNode, ICirExpression
@@ -2334,6 +2723,10 @@ public sealed partial record CirStackAllocate : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Count = (ICirExpression)rewrite(Count),
+    };
 }
 
 public sealed partial record CirStackSpan : CirNode, ICirExpression
@@ -2354,6 +2747,11 @@ public sealed partial record CirStackSpan : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Ptr = (ICirExpression)rewrite(Ptr),
+        Len = (ICirExpression)rewrite(Len),
+    };
 }
 
 public sealed partial record CirStackGet : CirNode, ICirExpression
@@ -2377,6 +2775,12 @@ public sealed partial record CirStackGet : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Index = (ICirExpression)rewrite(Index),
+        Len = (ICirExpression)rewrite(Len),
+        Ptr = (ICirExpression)rewrite(Ptr),
+    };
 }
 
 public sealed partial record CirStackSet : CirNode, ICirExpression
@@ -2403,6 +2807,13 @@ public sealed partial record CirStackSet : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+        Index = (ICirExpression)rewrite(Index),
+        Len = (ICirExpression)rewrite(Len),
+        Ptr = (ICirExpression)rewrite(Ptr),
+        Value = (ICirExpression)rewrite(Value),
+    };
 }
 
 public sealed partial record CirUnsupportedExpression : CirNode, ICirExpression
@@ -2417,4 +2828,7 @@ public sealed partial record CirUnsupportedExpression : CirNode, ICirExpression
             yield break;
         }
     }
+    public override CirNode RewriteChildren(Func<ICirNode, ICirNode> rewrite) => this with
+    {
+    };
 }

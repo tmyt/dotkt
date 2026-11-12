@@ -199,3 +199,18 @@ if (args.Length > 1)
     if (corpus == 0) throw new Exception("No actual compiler BIR was selected");
 }
 Console.WriteLine($"Owning BIR graph: {core} Kotlin node / {scalars} scalar samples, {authored} authored / {corpus} actual inputs; presence, structural rewrite, default freeze OK");
+
+var cirGraphs = 0;
+if (args.Length > 2)
+{
+    foreach (var file in File.ReadAllLines(args[2]).Distinct(StringComparer.Ordinal))
+    {
+        var originalCir = DeclarationJson.ReadFile(file);
+        var copiedCir = CirBodyRewrite.RewriteCirFileDeclaration(originalCir, node => node);
+        if (DeclarationJson.Write(originalCir) != DeclarationJson.Write(copiedCir))
+            throw new Exception("Typed CIR executable rewriting changed an actual graph: " + file);
+        cirGraphs++;
+    }
+    if (cirGraphs == 0) throw new Exception("No actual compiler CIR was selected for typed rewriting");
+}
+Console.WriteLine($"Typed CIR executable rewrite: {cirGraphs} actual graphs preserved declarations, frames, opaque metadata and ordered children");

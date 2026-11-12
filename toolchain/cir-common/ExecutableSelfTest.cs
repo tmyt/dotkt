@@ -31,6 +31,18 @@ public static class ExecutableSelfTest
             "throw", "local", "sourcePoint" };
         CheckBinary(root);
         var encoded = JsonSerializer.Serialize<ICirStatement>(root, AttributeJson.Options);
+        var copied = (CirBlock)root.Rewrite(node => node);
+        if (JsonSerializer.Serialize<ICirStatement>(copied, AttributeJson.Options) != encoded
+            || !CirExecutableWalk.DescendantsAndSelf(copied).Select(node => node.Tag).SequenceEqual(tags))
+            throw new InvalidOperationException("Typed executable rewrite changed presence, ordered operands or source positions");
+        ((CirFor)copied.Body[3]).Body[0] = new CirReturn();
+        if (((CirFor)root.Body[3]).Body[0] is not CirExpressionStatement)
+            throw new InvalidOperationException("Executable rewriting shared a mutable child array");
+        var replaced = (CirBlock)root.Rewrite(node => node is CirLocal { Name: "n" } local
+            ? local with { Name = "replacement" } : node);
+        if (CirExecutableWalk.DescendantsAndSelf(replaced).OfType<CirLocal>().Any(local => local.Name == "n")
+            || !CirExecutableWalk.DescendantsAndSelf(root).OfType<CirLocal>().Any(local => local.Name == "n"))
+            throw new InvalidOperationException("Typed rewriting missed a catch/value-block child or changed the original");
         var decoded = JsonSerializer.Deserialize<ICirStatement>(encoded, AttributeJson.Options) as CirBlock
             ?? throw new InvalidOperationException("Executable role codec lost the concrete root");
         if (JsonSerializer.Serialize<ICirStatement>(decoded, AttributeJson.Options) != encoded

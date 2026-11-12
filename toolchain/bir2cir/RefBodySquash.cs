@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Cir;
 
 // REFERENCE-build body squashing. The pure-Kotlin reference stdlib (DotKt.Private.Stdlib.dll) is a METADATA-ONLY
 // surface: every declaration keeps its full signature/type/supertype/generic/attribute metadata, but its BODY is
@@ -24,41 +25,18 @@ static class RefBodySquash
     // ilemit's constant switch implicitly emitted null for these slots. State that physical placeholder here,
     // after type lowering, instead of making a typed scalar codec turn a facade into a native primitive.
     // Source semantics remain in the previously captured Kotlin metadata; this image is never executed.
-    public static void LowerLiteralPlaceholders(JsonNode root)
+    public static CirFileDeclaration LowerLiteralPlaceholders(CirFileDeclaration root)
     {
-        void Executable(JsonNode node)
+        return CirBodyRewrite.RewriteCirFileDeclaration(root, node =>
         {
-            if (node is JsonObject expression)
+            if (node is CirConstant { Type: TypeNode.Fqn facade } constant)
             {
-                if (expression["k"]?.GetValue<string>() == "const")
-                {
-                    var type = TypeJson.Read(expression["type"]);
-                    var native = BirTypeLowering.LowerType(type, refBuild: true, force: true, typeArg: false);
-                    if (type is TypeNode.Fqn facade && native is TypeNode.Fqn physical && facade.Name != physical.Name)
-                    {
-                        expression["type"] = TypeJson.Fqn("System.Object");
-                        expression["value"] = null;
-                    }
-                    return;
-                }
-                foreach (var child in expression.Select(pair => pair.Value)) Executable(child);
+                var native = BirTypeLowering.LowerType(facade, refBuild: true, force: true, typeArg: false);
+                if (native is TypeNode.Fqn physical && facade.Name != physical.Name)
+                    return constant with { Type = new TypeNode.Fqn("System.Object"), Value = new AttributeArgument.NullValue() };
             }
-            else if (node is JsonArray sequence)
-                foreach (var child in sequence) Executable(child);
-        }
-        void Container(JsonNode node)
-        {
-            if (node is not JsonObject container) return;
-            foreach (var key in new[] { "methods", "ctors" })
-                if (container[key] is JsonArray members)
-                    foreach (var member in members.OfType<JsonObject>())
-                        foreach (var body in new[] { "body", "preStmts", "baseArgs", "thisArgs" }) Executable(member[body]);
-            if (container["fields"] is JsonArray fields)
-                foreach (var field in fields.OfType<JsonObject>()) Executable(field["init"]);
-            if (container["types"] is JsonArray types)
-                foreach (var type in types) Container(type);
-        }
-        Container(root);
+            return node;
+        });
     }
 
     public static void Squash(JsonNode root)

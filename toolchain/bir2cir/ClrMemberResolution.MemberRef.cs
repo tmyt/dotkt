@@ -223,7 +223,7 @@ static partial class ClrMemberResolution
     /// off a Kotlin program, and a member the compiler names is still a member of another assembly: it gets
     /// the same complete identity, resolved here once, instead of a hand-written owner and an empty vector.
     /// </summary>
-    internal static JsonNode ParameterlessBaseCtorRef(ReferenceMetadataIndex refs, string ownerFqn)
+    internal static MemberRefNode ParameterlessBaseCtorRef(ReferenceMetadataIndex refs, string ownerFqn)
     {
         // One index per run, and this resolves against the SAME one every other site used. Assign it rather
         // than coalescing: `??=` would say "only if nobody set it", which is the opposite of the invariant —
@@ -239,7 +239,7 @@ static partial class ClrMemberResolution
         if (ctors.Count != 1)
             throw new InvalidOperationException(
                 $"bir2cir: '{ownerFqn}' has {ctors.Count} parameterless constructors; a synthesized delegation needs exactly one");
-        return MemberRefJson(ctors[0], MemberRefNode.Kinds.Ctor, open, Array.Empty<TypeNode>());
+        return MemberRefOf(ctors[0], MemberRefNode.Kinds.Ctor, open, Array.Empty<TypeNode>());
     }
 
     internal static MemberRefNode FieldRefOf(FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
