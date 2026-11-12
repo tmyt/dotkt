@@ -204,9 +204,16 @@ static class ComparableRepresentationLowering
     }
 
     // Authored sparse self-test inputs cross the same typed consumer boundary.
-    internal static JsonObject[] ApplyFixtures(IEnumerable<JsonNode> roots, bool referenceBuild) =>
-        Apply(roots.Select(root => BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(root.ToJsonString(BirJson.Writer)))).ToArray(), referenceBuild)
-            .Select(root => root.ToDom()).ToArray();
+    internal static JsonObject[] ApplyFixtures(IEnumerable<JsonNode> roots, bool referenceBuild)
+    {
+        var inputs = roots.Select(root => BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(root.ToJsonString(BirJson.Writer)))).ToArray();
+        var before = inputs.Select(input => input.ToDom()).ToArray();
+        var outputs = Apply(inputs, referenceBuild);
+        for (var index = 0; index < inputs.Length; index++)
+            if (!JsonNode.DeepEquals(before[index], inputs[index].ToDom()))
+                throw new InvalidOperationException("Comparison rewrote its caller-owned typed input graph");
+        return outputs.Select(root => root.ToDom()).ToArray();
+    }
 
     internal static void SelfTest()
     {
@@ -219,6 +226,34 @@ static class ComparableRepresentationLowering
             nameof(BirInheritedImplementation), nameof(BirMethodImpl) }))
             throw new InvalidOperationException("Audit comparable bound erasure for the current declaration families");
         SourceBoundsSnapshot.SelfTest();
+        var comparable = new TypeNode.Fqn("kotlin.Comparable", new TypeNode[] { new TypeNode.Tv("method", 0) });
+        var sibling = new TypeNode.Fqn("Sibling");
+        var parameters = new[] {
+            new BirTypeParameter { Name = "T", Constraints = new TypeNode[] { comparable, sibling } },
+            new BirTypeParameter { Name = "U", Constraints = new TypeNode[] { sibling } },
+        };
+        foreach (var (declaration, carrier) in new (BirGraphValue, string)[] {
+            (new BirFunctionDeclaration { TypeParams = parameters }, "methodTypeParameterBoundsPre"),
+            (new BirClassDefinition { Kind = "class", TypeParams = parameters }, "kotlinSupertypesPre"),
+            (new BirInterfaceDefinition { Kind = "interface", TypeParams = parameters }, "kotlinSupertypesPre"),
+            (new BirEnumDefinition { Kind = "enum", TypeParams = parameters }, "kotlinSupertypesPre"),
+            (new BirClosureDefinition { TypeParams = parameters }, "methodTypeParameterBoundsPre"),
+            (new BirRefTypeDeclaration { TypeParams = parameters }, "methodTypeParameterBoundsPre"),
+            (new BirInheritedClassMethod { TypeParams = parameters }, "methodTypeParameterBoundsPre"),
+            (new BirInheritedImplementation { Kind = "method", TypeParams = parameters }, "kotlinSupertypesPre"),
+            (new BirMethodImpl { TypeParams = parameters }, "methodTypeParameterBoundsPre"),
+        })
+        {
+            var before = declaration.ToDom();
+            var erased = EraseBounds(declaration).ToDom();
+            var bounds = JsonNode.Parse(erased[carrier].GetValue<string>())["bounds"];
+            var wrong = carrier == "kotlinSupertypesPre" ? "methodTypeParameterBoundsPre" : "kotlinSupertypesPre";
+            if (erased.ContainsKey(wrong) || erased["typeParams"][0]["constraints"].AsArray().Count != 1
+                || !JsonNode.DeepEquals(bounds["0"], before["typeParams"][0]["constraints"])
+                || !JsonNode.DeepEquals(bounds["1"], before["typeParams"][1]["constraints"])
+                || !JsonNode.DeepEquals(before, declaration.ToDom()))
+                throw new InvalidOperationException("Source bound carrier/ownership changed for " + declaration.GetType().Name);
+        }
         var boundHelpers = new List<BirCallStatic>();
         BirFunctionDeclaration typedHelper = null;
         FaithfulHints.WithHelperBinding(call => {
@@ -255,10 +290,7 @@ static class ComparableRepresentationLowering
         var otherBounds = first["methods"][0]["typeParams"][1]["constraints"].DeepClone();
         first["methods"].AsArray().Add(new JsonObject { ["name"] = "$comparableDispatch$0", ["generated"] = false,
             ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("kotlin.Unit"), ["body"] = new JsonArray() });
-        var originalFirst = first.DeepClone();
         var rewrittenFixtures = ApplyFixtures(new JsonNode[] { first, second }, referenceBuild: false);
-        if (!JsonNode.DeepEquals(first, originalFirst))
-            throw new InvalidOperationException("Typed comparison rewrote its caller-owned source input");
         first = rewrittenFixtures[0]; second = rewrittenFixtures[1];
         var helpers = new[] { first, second }.SelectMany(root => root["methods"].AsArray().OfType<JsonObject>())
             .Where(method => method["generated"]?.GetValue<bool>() == true
@@ -330,7 +362,8 @@ static class ComparableRepresentationLowering
             throw new InvalidOperationException("Comparison contract changed explicit super presence");
         var enumRoot = JsonNode.Parse("""
         {"fileClass":"EnumComparisons","types":[{"name":"RichOrder","kind":"class","interfaces":[],
-          "methods":[],"ctors":[{"params":[],"baseArgs":null,"thisArgs":null,"body":[]}],
+          "methods":[],"ctors":[{"params":[],"baseArgs":null,"thisArgs":null,"delegationDeclarationId":"replace-base-target","body":[]},
+          {"params":[],"baseArgs":null,"thisArgs":[],"delegationSig":[],"delegationDeclarationId":"retain-this-target","body":[]}],
           "richEnum":{"ordinal":"selectedOrdinalField"}}],"methods":[]}
         """).AsObject();
         enumRoot = ApplyFixtures(new JsonNode[] { enumRoot }, referenceBuild: false)[0];
@@ -344,6 +377,10 @@ static class ComparableRepresentationLowering
             || TypeJson.OwnerName(enumRoot["types"][0]["base"]) != "DotKt.Runtime.CompilerServices.KotlinEnumComparable"
             || enumRoot["types"][0]["ctors"][0]["baseArgs"] is not JsonArray { Count: 0 }
             || enumRoot["types"][0]["ctors"][0]["delegationSig"] is not JsonArray { Count: 0 }
+            || enumRoot["types"][0]["ctors"][0].AsObject().ContainsKey("delegationDeclarationId")
+            || enumRoot["types"][0]["ctors"][1]["baseArgs"] != null
+            || enumRoot["types"][0]["ctors"][1]["thisArgs"] is not JsonArray { Count: 0 }
+            || Text(enumRoot["types"][0]["ctors"][1]["delegationDeclarationId"]) != "retain-this-target"
             || !KotlinPropertyAccessors.IsPhysicalSlotBridge(enumBridge.AsObject())
             || Text(enumBridge["clrInterfaceImpls"][0]["member"]) != "compareEnumTo")
             throw new InvalidOperationException("Enum comparison lost the shared value view or the producer's ordinal map");
