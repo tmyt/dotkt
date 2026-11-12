@@ -1882,7 +1882,6 @@ internal sealed record BirParameter : BirGraphValue
     public OptionalField<int> CtxFnType { get; init; }
     public OptionalField<TypeNode> SharedCellType { get; init; }
     public OptionalField<BirAttribute[]> Attrs { get; init; }
-    public OptionalField<TypeNode> KotlinType { get; init; }
     public OptionalField<TypeNode> NominalParameterSignatureIdentity { get; init; }
     public OptionalField<TypeNode[]> GenericParameterSignatureBounds { get; init; }
     public OptionalField<int[]> NullableFlags { get; init; }
@@ -1913,7 +1912,6 @@ internal sealed record BirParameter : BirGraphValue
         WriteOptional(writer, "ctxFnType", CtxFnType, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "sharedCellType", SharedCellType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "attrs", Attrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
-        WriteOptional(writer, "kotlinType", KotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nominalParameterSignatureIdentity", NominalParameterSignatureIdentity, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "genericParameterSignatureBounds", GenericParameterSignatureBounds, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "nullableFlags", NullableFlags, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
@@ -1932,7 +1930,6 @@ internal sealed record BirParameter : BirGraphValue
         if (CtxFnType.IsPresent) result["ctxFnType"] = CtxFnType.IsNull ? null : JsonValue.Create(CtxFnType.Value);
         if (SharedCellType.IsPresent) result["sharedCellType"] = SharedCellType.IsNull ? null : TypeNode.Write(SharedCellType.Value);
         if (Attrs.IsPresent) result["attrs"] = Attrs.IsNull ? null : new JsonArray(Attrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
-        if (KotlinType.IsPresent) result["kotlinType"] = KotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(KotlinType.Value));
         if (NominalParameterSignatureIdentity.IsPresent) result["nominalParameterSignatureIdentity"] = NominalParameterSignatureIdentity.IsNull ? null : TypeNode.Write(NominalParameterSignatureIdentity.Value);
         if (GenericParameterSignatureBounds.IsPresent) result["genericParameterSignatureBounds"] = GenericParameterSignatureBounds.IsNull ? null : new JsonArray(GenericParameterSignatureBounds.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (NullableFlags.IsPresent) result["nullableFlags"] = NullableFlags.IsNull ? null : new JsonArray(NullableFlags.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());

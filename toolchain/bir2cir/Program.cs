@@ -188,6 +188,9 @@ sealed class Pipeline
         var captured = DeclarationSignatureIdentity.Capture(TakeSources());
         for (var index = 0; index < captured.Length; index++) captured[index] = SourceOwnerClosure.Apply(captured[index]);
         captured = ComparableRepresentationLowering.Apply(captured, referenceBuild);
+        // Keep the selected declaration's Kotlin spelling and signature before
+        // physical shaping can rename accessors, companion cores or suspend entries.
+        // Later metadata must not reconstruct them from get_/set_ or CLR names.
         var signatures = new SourceDeclarationSignatures();
         captured = signatures.Capture(captured);
         var files = new List<BirFile>();
@@ -240,8 +243,6 @@ sealed class Pipeline
     {
         var birFiles = module.Files;
         var birRoots = birFiles.Select(b => b.Root).ToList();
-        // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
-        // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = module.Signatures;
         var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild);
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;

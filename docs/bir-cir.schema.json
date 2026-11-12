@@ -349,7 +349,6 @@
     },
     "birParameter": {
       "type": "object", "x-dotkt-model": { "name": "BirParameter", "domain": "birCoreValues", "loweringSourceFields": ["default"], "loweringProperties": {
-        "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "nominalParameterSignatureIdentity": { "$ref": "#/$defs/type" },
         "genericParameterSignatureBounds": { "type": "array", "items": { "$ref": "#/$defs/type" } }
       } },

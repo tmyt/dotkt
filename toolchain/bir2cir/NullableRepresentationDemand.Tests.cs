@@ -420,7 +420,7 @@ static partial class NullableRepresentationDemand
             ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "N" }), ["params"] = new JsonArray(),
             ["ret"] = TypeJson.Write(new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("method", 1) })),
             [DeclarationIdentityBinding.SemanticSignatureKey] = new JsonObject {
-                ["params"] = new JsonArray(), ["ret"] = TypeJson.Write(sourceResult),
+                ["params"] = new JsonArray(TypeJson.Fqn("kotlin.Int")), ["ret"] = TypeJson.Fqn("kotlin.Unit"),
             },
             [NullableRepresentationTypes.MethodFrameKey] = frame.ToJson().ToJsonString(),
         };
@@ -448,6 +448,7 @@ static partial class NullableRepresentationDemand
             || typePayload["bounds"] == null
             || !JsonNode.DeepEquals(methodPayload[NullableRepresentationFrame.MetadataKey], frame.ToJson())
             || TypeJson.Read(methodPayload["signature"]["ret"]) != sourceResult
+            || methodPayload["signature"]["params"] is not JsonArray { Count: 0 }
             || owner[KotlinSupertypesRecord.PreKey] != null || method[NullableRepresentationTypes.MethodFrameKey] != null)
             throw new InvalidOperationException("Nullable representation metadata lost source facts or leaked transient frames");
         RoundtripMetadata.StripRuntimeAttrs(runtime);

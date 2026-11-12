@@ -95,14 +95,13 @@ sealed class SourceDeclarationSignatures
                 if (!method.Params.HasValue || !method.Ret.HasValue)
                     throw new InvalidOperationException($"declaration identity '{id}' has no complete semantic signature");
                 var signature = new SourceDeclarationSignature(method.Params.Value.Select(parameter =>
-                    parameter.KotlinType.OrDefault() ?? parameter.Type.OrDefault()
+                    parameter.Type.OrDefault()
                         ?? throw new InvalidOperationException($"declaration identity '{id}' has an untyped parameter"))
                     .ToArray(), method.Ret.Value).Rewrite(type => type);
                 if (signatures.TryGetValue(id, out var prior) && !prior.SameContent(signature))
                     throw new InvalidOperationException($"declaration identity '{id}' has conflicting semantic signatures");
                 signatures[id] = signature;
-                return method with { DeclarationSourceName = method.DeclarationSourceName.HasValue
-                    ? method.DeclarationSourceName : method.Name };
+                return method with { DeclarationSourceName = method.Name };
             }).ToArray();
 
         // Source type declarations are flat; nested ownership is a later phase
@@ -151,7 +150,7 @@ sealed class SourceDeclarationSignatures
         var facts = new SourceDeclarationSignatures();
         BirFunctionDeclaration Method(string id) => new() {
             Name = "selected", DeclarationId = id,
-            Params = new[] { new BirParameter { Type = new TypeNode.Fqn("object"), KotlinType = named } }, Ret = variable,
+            Params = new[] { new BirParameter { Type = named } }, Ret = variable,
         };
         var local = Method("body-local");
         var top = Method("top") with { Body = new IBirStatement[] { new BirLocalFunction { Decl = local } } };
@@ -159,7 +158,7 @@ sealed class SourceDeclarationSignatures
             FileClass = "sample.File", Methods = new[] { top, new BirFunctionDeclaration { Name = "no-id" } },
             Types = new IBirTypeDeclaration[] {
                 new BirClassDefinition { Methods = new[] { Method("class") } },
-                new BirInterfaceDefinition { Methods = new[] { Method("interface") with { DeclarationSourceName = "authored" } } },
+                new BirInterfaceDefinition { Methods = new[] { Method("interface") } },
                 new BirEnumDefinition { Methods = new[] { Method("enum") } },
             },
         };
@@ -167,7 +166,7 @@ sealed class SourceDeclarationSignatures
         var captured = facts.Capture(new[] { original })[0];
         if (!JsonNode.DeepEquals(before, original.ToDom()) || captured.Methods.Value[0].DeclarationSourceName.Value != "selected"
             || captured.Methods.Value[1].DeclarationSourceName.IsPresent
-            || ((BirInterfaceDefinition)captured.Types.Value[1]).Methods.Value[0].DeclarationSourceName.Value != "authored"
+            || ((BirInterfaceDefinition)captured.Types.Value[1]).Methods.Value[0].DeclarationSourceName.Value != "selected"
             || facts.TryGetValue("body-local", out _))
             throw new InvalidOperationException("Source signature owner/name capture changed scope or input ownership");
         foreach (var id in new[] { "top", "class", "interface", "enum" })
