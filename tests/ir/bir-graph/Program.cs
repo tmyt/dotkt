@@ -33,8 +33,17 @@ static void Same(string json, BirGraphValue graph, string? context = null)
         source.AsObject().Remove("typeAliases");
         graph = file with { TypeAliases = default };
     }
-    if (!LogicalBirValue.Equal(source, graph.ToDom()))
+    var dom = graph.ToDom();
+    if (!LogicalBirValue.Equal(source, dom))
         throw new Exception($"The temporary owning-pass frontier changed a logical value: {context ?? "inline sample"}");
+    BirGraphValue? restored = graph switch {
+        BirGraphNode => BirGraphDom.ReadNode(dom),
+        BirFileDeclaration => BirGraphDom.ReadBirFileDeclaration(dom),
+        _ => null,
+    };
+    if (restored is not null && !LogicalBirValue.Equal(source,
+        JsonNode.Parse(Write(restored), documentOptions: BirJson.DocOptions)))
+        throw new Exception($"The direct owning-pass entry changed a logical value: {context ?? "inline sample"}");
 }
 
 var samples = XDocument.Load(args[0]).Descendants("system-out")
@@ -110,6 +119,14 @@ var independent = (BirCallInline)original.Rewrite(value => value);
 independent.Args.Value[1] = new BirLocal { Name = "independent" };
 if (((BirLocal)original.Args.Value[1]!).Name.Value != "before")
     throw new Exception("Independent executable mutation leaked through a shared child array");
+var childSlots = new List<BirGraphSlot>();
+independent.VisitChildSlots(childSlots.Add);
+childSlots.Single().Replace(new BirLocal { Name = "slot-replacement", Sty = frame });
+if (((BirLocal)childSlots.Single().Value).Name.Value != "slot-replacement"
+    || ((BirLocal)independent.Args.Value[1]!).Name.Value != "slot-replacement"
+    || original.Args.Value[0] != null || independent.Args.Value[0] != null
+    || ((BirLocal)original.Args.Value[1]!).Name.Value != "before" || independent.RetType.Value != frame)
+    throw new Exception("Typed live child replacement lost its role, ownership, null slot or exact frame");
 
 var absent = BirGraphJson.ReadFile(Encoding.UTF8.GetBytes("{\"fileClass\":\"Probe\"}"));
 var present = BirGraphJson.ReadFile(Encoding.UTF8.GetBytes("{\"fileClass\":\"Probe\",\"fields\":null,\"methods\":[]}"));
@@ -143,7 +160,18 @@ try
 catch (FormatException) { }
 
 var opaque = new BirAttribute {
-    Args = new IBirAttributeValue[] { new BirOpaqueBytes { Bytes = new byte[] { 0, 255, 0xd8, 0, 17 } } },
+    Args = new IBirAttributeValue[] {
+        new BirOpaqueBytes { Bytes = new byte[] { 0, 255, 0xd8, 0, 17 } },
+        new BirAttributeLiteral(),
+        new BirAttributeLiteral { Value = new BirLiteral.NullLiteral() },
+        new BirAttributeLiteral { Type = new TypeNode.Fqn("System.UInt64"),
+            Value = new BirLiteral.UnsignedIntegerLiteral(ulong.MaxValue) },
+        new BirAttributeLiteral { Type = new TypeNode.Fqn("System.Single"),
+            Value = new Float32Literal(unchecked((int)0xffc01234)) },
+        new BirAttributeLiteral { Type = new TypeNode.Fqn("System.String"),
+            Value = new BirLiteral.TextLiteral("\ud800x\udfff") },
+        new BirConstant { Value = new BirLiteral.BooleanLiteral(true) },
+    },
 };
 var seenBytes = 0;
 opaque.Rewrite(value => { if (value is BirOpaqueBytes) seenBytes++; return value; });
@@ -153,8 +181,15 @@ using (var stream = new MemoryStream(Write(opaque)))
     var reader = new Utf8JsonReader(stream.ToArray());
     reader.Read();
     var copy = BirGraphJson.ReadBirAttribute(ref reader);
-    if (!((BirOpaqueBytes)copy.Args.Value[0]).Bytes.Value.SequenceEqual(((BirOpaqueBytes)opaque.Args.Value[0]).Bytes.Value))
-        throw new Exception("Opaque bytes changed at the graph boundary");
+    Same(Encoding.UTF8.GetString(Write(opaque)), copy, "metadata argument domains");
+    Same(Encoding.UTF8.GetString(Write(opaque)), BirGraphDom.ReadBirAttribute(opaque.ToDom()),
+        "direct metadata frontier");
+    var file = new BirFileDeclaration { Attrs = new[] { opaque } };
+    Same(Encoding.UTF8.GetString(Write(file)), BirFileCodec.Decode(BirFileCodec.Encode(file)),
+        "metadata MessagePack");
+    if (copy.Args.Value[1] is not BirAttributeLiteral { Value.IsPresent: false }
+        || copy.Args.Value[2] is not BirAttributeLiteral { Value.HasValue: true, Value.Value: BirLiteral.NullLiteral })
+        throw new Exception("Missing metadata value was conflated with a null literal");
 }
 
 var defaults = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {

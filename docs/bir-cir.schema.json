@@ -51,6 +51,17 @@
       "properties": { "argument": { "type": "integer" }, "slots": { "type": "array", "items": { "type": "integer" } } },
       "required": ["argument", "slots"], "additionalProperties": false
     },
+    "birOpaqueBytes": {
+      "type": "object", "x-dotkt-model": { "name": "BirOpaqueBytes", "domain": "birLoweringValues", "attributeValue": true },
+      "properties": { "bytes": { "type": "string", "x-dotkt-csharp-type": "byte[]" } },
+      "required": ["bytes"], "additionalProperties": false
+    },
+    "birAttributeLiteral": {
+      "type": "object", "x-dotkt-model": { "name": "BirAttributeLiteral", "domain": "birLoweringValues", "attributeValue": true },
+      "description": "A phase-owned metadata literal, not an executable constant. An absent value denotes an unencodable metadata value; a present null denotes a null literal.",
+      "properties": { "value": { "$ref": "#/$defs/literalValue" }, "type": { "$ref": "#/$defs/type" } },
+      "required": [], "additionalProperties": false
+    },
 
     "birSourceTypeAlias": { "$ref": "kotlin-typealias.schema.json", "x-dotkt-model": { "name": "SourceTypeAlias" } },
     "birTypeDeclaration": {
@@ -58,7 +69,12 @@
       "oneOf": [{ "$ref": "#/$defs/birClassDefinition" }, { "$ref": "#/$defs/birInterfaceDefinition" }, { "$ref": "#/$defs/birEnumDefinition" }]
     },
     "birFileDeclaration": {
-      "type": "object", "x-dotkt-model": { "name": "BirFileDeclaration", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirFileDeclaration", "domain": "birCoreValues", "loweringProperties": {
+        "assemblyAttrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } },
+        "attrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } },
+        "wellKnownRefs": { "type": "object", "additionalProperties": { "$ref": "#/$defs/memberRef" }, "x-dotkt-csharp-type": "PhysicalMemberTable", "x-dotkt-csharp-codec": "PhysicalMemberTable" },
+        "pos": { "$ref": "#/$defs/birDeclarationPosition" }
+      } },
       "properties": {
         "fileClass": { "type": "string" }, "hasMain": { "type": "boolean" },
         "fields": { "type": "array", "items": { "$ref": "#/$defs/birFieldDeclaration" } },
@@ -118,7 +134,7 @@
       "required": ["k", "op", "lhs", "rhs"], "additionalProperties": false
     },
     "birCast": {
-      "type": "object", "x-dotkt-model": { "name": "BirCast", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirCast", "domain": "birCore", "role": "expression", "loweringProperties": { "_physicalDeclarationSignature": { "type": "boolean" }, "_exactBridgeCast": { "type": "boolean" }, "functionValueRestoration": { "type": "boolean" } } },
       "properties": { "k": { "const": "cast" }, "type": { "$ref": "#/$defs/type" }, "reifiedTypeOperand": { "type": "boolean" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "type", "e"], "additionalProperties": false
     },
@@ -148,7 +164,7 @@
       "required": ["k", "e"], "additionalProperties": false
     },
     "birNullableWrap": {
-      "type": "object", "x-dotkt-model": { "name": "BirNullableWrap", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirNullableWrap", "domain": "birCore", "role": "expression", "loweringProperties": { "_physicalDeclarationSignature": { "type": "boolean" } } },
       "properties": { "k": { "const": "nullableWrap" }, "elem": { "$ref": "#/$defs/type" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "elem", "e"], "additionalProperties": false
     },
@@ -245,6 +261,10 @@
     },
     "birCallStatic": {
       "type": "object", "x-dotkt-model": { "name": "BirCallStatic", "domain": "birCore", "role": "expression", "loweringProperties": {
+        "dotktKotlinSigId": { "type": "integer" },
+        "dotktDeclarationIdentityBound": { "type": "boolean" },
+        "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" },
+        "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } },
         "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" }
       } },
@@ -266,7 +286,10 @@
     },
     "birCallInstance": {
       "type": "object", "x-dotkt-model": { "name": "BirCallInstance", "domain": "birCore", "role": "expression", "loweringProperties": {
-        "_erasedConstraintDispatch": { "type": "boolean" },
+        "dotktDeclarationIdentityBound": { "type": "boolean" },
+        "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" },
+        "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "_erasedConstraintDispatch": { "type": "boolean" }, "_exactExistentialBridgeOwnerCall": { "type": "boolean" },
         "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } },
         "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" }
       } },
@@ -370,7 +393,9 @@
       "required": ["kind", "name", "type", "value"], "additionalProperties": false
     },
     "birAttribute": {
-      "type": "object", "x-dotkt-model": { "name": "BirAttribute", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirAttribute", "domain": "birCoreValues", "loweringProperties": {
+        "attrExternal": { "type": "boolean" }, "attrAssembly": { "type": "string" }, "memberRef": { "$ref": "#/$defs/memberRef" }
+      } },
       "properties": {
         "attr": { "$ref": "#/$defs/type" }, "attrClr": { "type": "boolean" },
         "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "args": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
@@ -380,6 +405,7 @@
     },
     "birParameter": {
       "type": "object", "x-dotkt-model": { "name": "BirParameter", "domain": "birCoreValues", "loweringSourceFields": ["default"], "loweringProperties": {
+        "functionSignatureType": { "$ref": "#/$defs/type" },
         "kotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "nominalParameterSignatureIdentity": { "$ref": "#/$defs/type" },
         "genericParameterSignatureBounds": { "type": "array", "items": { "$ref": "#/$defs/type" } }
@@ -417,6 +443,7 @@
     },
     "birFunctionDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "loweringProperties": {
+        "_physicalDeclarationSignature": { "type": "boolean" },
         "retKotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "declarationSourceName": { "type": "string" },
         "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
@@ -521,7 +548,7 @@
       "required": ["name", "kind", "entries", "attrs"], "additionalProperties": false
     },
     "birClassDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["clrEvents"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringKinds": ["struct", "delegate"], "loweringSourceFields": ["clrEvents"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "class" }, "generated": { "const": true }, "base": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
         "companionCaptureOwner": { "type": "string" },
@@ -650,7 +677,7 @@
       "required": ["k", "closureType", "captures", "method", "funcType", "synthClass"], "additionalProperties": false
     },
     "birNewDelegate": {
-      "type": "object", "x-dotkt-model": { "name": "BirNewDelegate", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirNewDelegate", "domain": "birCore", "role": "expression", "loweringProperties": { "dotktDeclarationIdentityBound": { "type": "boolean" } } },
       "properties": {
         "k": { "const": "newDelegate" }, "method": { "type": "string" }, "funcType": { "$ref": "#/$defs/type" },
         "sig": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } },
@@ -759,7 +786,7 @@
       "required": ["k", "callee", "owner", "pc", "ga", "typeArgs", "recvs", "args", "retType", "paramSig"], "additionalProperties": false
     },
     "birNewBoundDelegate": {
-      "type": "object", "x-dotkt-model": { "name": "BirNewBoundDelegate", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirNewBoundDelegate", "domain": "birCore", "role": "expression", "loweringProperties": { "dotktDeclarationIdentityBound": { "type": "boolean" } } },
       "properties": {
         "k": { "const": "newBoundDelegate" }, "ownerType": { "$ref": "#/$defs/type" }, "method": { "type": "string" }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "virtual": { "type": "boolean" }, "recv": { "$ref": "#/$defs/birExpressionNode" }, "funcType": { "$ref": "#/$defs/type" }, "anySlot": { "type": "boolean" },
@@ -857,7 +884,7 @@
       "required": ["k", "elem", "e"], "additionalProperties": false
     },
     "birNullableValue": {
-      "type": "object", "x-dotkt-model": { "name": "BirNullableValue", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirNullableValue", "domain": "birCore", "role": "expression", "loweringProperties": { "_physicalDeclarationSignature": { "type": "boolean" } } },
       "properties": { "k": { "const": "nullableValue" }, "elem": { "$ref": "#/$defs/type" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "elem", "e"], "additionalProperties": false
     },
@@ -1673,7 +1700,7 @@
       "required": ["k", "expr"], "additionalProperties": false
     },
     "cirWhile": {
-      "type": "object", "x-dotkt-model": { "name": "CirWhile", "domain": "cirExecutable", "roles": ["statement"] },
+      "type": "object", "x-dotkt-model": { "name": "CirWhile", "domain": "cirExecutable", "roles": ["statement"], "loweringProperties": { "label": { "type": "string" } } },
       "properties": { "k": { "const": "while" }, "cond": { "$ref": "#/$defs/cirExpressionNode" }, "body": { "type": "array", "items": { "$ref": "#/$defs/cirStatementNode" } }, "loopId": { "type": "integer" } },
       "required": ["k", "cond", "body", "loopId"], "additionalProperties": false
     },
@@ -1693,7 +1720,7 @@
       "required": ["k", "var", "array", "elem", "body", "loopId"], "additionalProperties": false
     },
     "cirForRange": {
-      "type": "object", "x-dotkt-model": { "name": "CirForRange", "domain": "cirExecutable", "roles": ["statement"] },
+      "type": "object", "x-dotkt-model": { "name": "CirForRange", "domain": "cirExecutable", "roles": ["statement"], "loweringProperties": { "label": { "type": "string" } } },
       "properties": { "k": { "const": "forRange" }, "var": { "type": "string" }, "range": { "$ref": "#/$defs/cirExpressionNode" }, "accessOwner": { "$ref": "#/$defs/type" }, "firstM": { "type": "string" }, "lastM": { "type": "string" }, "stepM": { "type": "string" }, "body": { "type": "array", "items": { "$ref": "#/$defs/cirStatementNode" } }, "loopId": { "type": "integer" } },
       "required": ["k", "var", "range", "accessOwner", "firstM", "lastM", "stepM", "body", "loopId"], "additionalProperties": false
     },
@@ -1932,7 +1959,7 @@
       }, "required": ["k", "method", "ownerType", "recv", "args"], "additionalProperties": false
     },
     "cirConstrainedCallNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirConstrainedCall", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["virtual", "argTypes"], "sourceProperties": { "declarationId": { "type": "string" }, "virtual": { "type": "boolean" }, "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } } } },
+      "type": "object", "x-dotkt-model": { "name": "CirConstrainedCall", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["virtual", "argTypes"], "loweringProperties": { "dotktDeclarationIdentityBound": { "type": "boolean" }, "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } } }, "sourceProperties": { "declarationId": { "type": "string" }, "virtual": { "type": "boolean" }, "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } } } },
       "properties": {
         "k": { "const": "constrainedCall" }, "method": { "type": "string" }, "iface": { "$ref": "#/$defs/type" }, "recvType": { "$ref": "#/$defs/type" },
         "calleeRet": { "$ref": "#/$defs/type" }, "calleeParams": { "type": "array", "items": { "$ref": "#/$defs/type" } },
@@ -2052,12 +2079,12 @@
       "required": ["k", "type", "method", "args"], "additionalProperties": false
     },
     "cirPropertyGetNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirPropertyGet", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": { "_erasedConstraintDispatch": { "type": "boolean" } }, "sourceConsumed": ["clrOwnerResolved", "name", "ret", "super"], "sourceProperties": { "clrOwnerResolved": { "type": "boolean" }, "name": { "type": "string" }, "ret": { "$ref": "#/$defs/type" }, "super": { "type": "boolean" } } },
+      "type": "object", "x-dotkt-model": { "name": "CirPropertyGet", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": { "_erasedConstraintDispatch": { "type": "boolean" }, "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" }, "declarationId": { "type": "string" } }, "sourceConsumed": ["clrOwnerResolved", "name", "ret", "super"], "sourceProperties": { "clrOwnerResolved": { "type": "boolean" }, "name": { "type": "string" }, "ret": { "$ref": "#/$defs/type" }, "super": { "type": "boolean" } } },
       "properties": { "k": { "const": "clrPropGet" }, "type": { "$ref": "#/$defs/type" }, "static": { "type": "boolean" }, "member": { "type": "string", "enum": ["accessor", "field"] }, "accessor": { "type": "string" }, "dispatch": { "type": "string", "enum": ["call", "callvirt", "constrained"] }, "recv": { "$ref": "#/$defs/cirExpressionNode" }, "memberRef": { "$ref": "#/$defs/memberRef" }, "volatile": { "type": "boolean" }, "localAccessor": { "type": "boolean" }, "accessorOwner": { "$ref": "#/$defs/type" }, "sig": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "calleeParams": { "type": "array", "items": { "$ref": "#/$defs/type" } } },
       "required": ["k", "type", "static", "member"], "additionalProperties": false
     },
     "cirPropertySetNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirPropertySet", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": { "_erasedConstraintDispatch": { "type": "boolean" } }, "sourceConsumed": ["clrOwnerResolved", "name", "super"], "sourceProperties": { "clrOwnerResolved": { "type": "boolean" }, "name": { "type": "string" }, "super": { "type": "boolean" } } },
+      "type": "object", "x-dotkt-model": { "name": "CirPropertySet", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": { "_erasedConstraintDispatch": { "type": "boolean" }, "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" }, "declarationId": { "type": "string" } }, "sourceConsumed": ["clrOwnerResolved", "name", "super"], "sourceProperties": { "clrOwnerResolved": { "type": "boolean" }, "name": { "type": "string" }, "super": { "type": "boolean" } } },
       "properties": { "k": { "const": "clrPropSet" }, "type": { "$ref": "#/$defs/type" }, "static": { "type": "boolean" }, "member": { "type": "string", "enum": ["accessor", "field"] }, "accessor": { "type": "string" }, "dispatch": { "type": "string", "enum": ["call", "callvirt", "constrained"] }, "recv": { "$ref": "#/$defs/cirExpressionNode" }, "value": { "$ref": "#/$defs/cirExpressionNode" }, "memberRef": { "$ref": "#/$defs/memberRef" }, "volatile": { "type": "boolean" }, "localAccessor": { "type": "boolean" }, "accessorOwner": { "$ref": "#/$defs/type" }, "sig": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "calleeParams": { "type": "array", "items": { "$ref": "#/$defs/type" } } },
       "required": ["k", "type", "static", "member", "value"], "additionalProperties": false
     },
@@ -2090,7 +2117,7 @@
       "properties": { "k": { "const": "enumValues" }, "type": { "$ref": "#/$defs/type" }, "values": { "type": "array", "items": { "$ref": "#/$defs/cirPhysicalEnumValue" } } }, "required": ["k", "type"], "additionalProperties": false
     },
     "cirForEachNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirForEach", "domain": "cirExecutable", "roles": ["statement", "expression"] },
+      "type": "object", "x-dotkt-model": { "name": "CirForEach", "domain": "cirExecutable", "roles": ["statement", "expression"], "loweringProperties": { "label": { "type": "string" } } },
       "properties": { "k": { "const": "forEachInline" }, "elem": { "$ref": "#/$defs/type" }, "src": { "$ref": "#/$defs/cirExpressionNode" }, "var": { "type": "string" }, "body": { "type": "array", "items": { "$ref": "#/$defs/cirStatementNode" } }, "loopId": { "type": "integer" }, "enumerableGetRef": { "$ref": "#/$defs/memberRef" }, "enumerableGetErasedRef": { "$ref": "#/$defs/memberRef" }, "currentRef": { "$ref": "#/$defs/memberRef" }, "currentErasedRef": { "$ref": "#/$defs/memberRef" }, "moveNextRef": { "$ref": "#/$defs/memberRef" } },
       "required": ["k", "elem", "src", "var", "body", "loopId", "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef"], "additionalProperties": false
     },

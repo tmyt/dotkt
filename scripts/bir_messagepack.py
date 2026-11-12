@@ -1,6 +1,6 @@
 """Direct typed BIR transport over the existing owning phase composition."""
 import json
-from bir_lowering_models import base, compose_shapes, csharp_type, is_nullable, refkey
+from bir_lowering_models import base, compose_shapes, csharp_type, declaration_cases, is_nullable, refkey
 
 
 def outputs(root, definitions):
@@ -15,6 +15,7 @@ def outputs(root, definitions):
     def read(field):
         field = base(field)
         if codec := field.get("x-dotkt-csharp-codec"):
+            if field.get("type") == "object": return f"{codec}.ReadMessagePack(ref reader)"
             return f"{codec}.ReadFrozenText(IrMessagePack.ReadString(ref reader))"
         if cs(field) == "byte[]":
             return "reader.ReadBytes()?.ToArray() ?? throw new FormatException()"
@@ -38,6 +39,8 @@ def outputs(root, definitions):
     def write(field, value, depth="depth + 1", indent="            ", nesting=0):
         field = base(field)
         if codec := field.get("x-dotkt-csharp-codec"):
+            if field.get("type") == "object":
+                return [indent + f"{codec}.WriteMessagePack(ref writer, {value}, {depth});"]
             return [indent + f"IrMessagePack.WriteString(ref writer, {value}.FrozenText);"]
         if cs(field) == "byte[]": return [indent + f"writer.Write({value});"]
         if field.get("x-dotkt-kotlin-json-type"):
@@ -108,13 +111,15 @@ def outputs(root, definitions):
         lines += [f"    internal static IBir{role} ReadBir{role}(ref MessagePackReader reader) => ReadNode(ref reader) as IBir{role} ?? throw new FormatException();",
                   f"    internal static void WriteBir{role}(ref MessagePackWriter writer, IBir{role} value, int depth) => WriteNode(ref writer, (BirGraphNode)value, depth);", ""]
     lines += ["    internal static IBirAttributeValue ReadBirAttributeValue(ref MessagePackReader reader) =>",
-              '        HasProperty(reader, "bytes") ? ReadBirOpaqueBytes(ref reader) : ReadBirExpression(ref reader);',
+              '        HasProperty(reader, "k") ? ReadBirExpression(ref reader) :',
+              '        HasProperty(reader, "bytes") ? ReadBirOpaqueBytes(ref reader) : ReadBirAttributeLiteral(ref reader);',
               "    internal static void WriteBirAttributeValue(ref MessagePackWriter writer, IBirAttributeValue value, int depth)", "    {",
               "        if (value is BirOpaqueBytes bytes) WriteBirOpaqueBytes(ref writer, bytes, depth);",
+              "        else if (value is BirAttributeLiteral literal) WriteBirAttributeLiteral(ref writer, literal, depth);",
               "        else WriteBirExpression(ref writer, (IBirExpression)value, depth);", "    }", "",
               "    internal static IBirTypeDeclaration ReadBirTypeDeclaration(ref MessagePackReader reader) => Discriminator(reader, \"kind\") switch", "    {",
-              '        "class" => ReadBirClassDefinition(ref reader),', '        "interface" => ReadBirInterfaceDefinition(ref reader),',
-              '        "enum" => ReadBirEnumDefinition(ref reader),', "        _ => throw new FormatException(),", "    };",
+              *[f'        {json.dumps(kind)} => Read{name}(ref reader),' for kind, name in declaration_cases(definitions)],
+              "        _ => throw new FormatException(),", "    };",
               "    internal static void WriteBirTypeDeclaration(ref MessagePackWriter writer, IBirTypeDeclaration value, int depth)", "    {", "        switch (value)", "        {",
               "            case BirClassDefinition node: WriteBirClassDefinition(ref writer, node, depth); break;",
               "            case BirInterfaceDefinition node: WriteBirInterfaceDefinition(ref writer, node, depth); break;",
