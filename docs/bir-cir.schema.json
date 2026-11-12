@@ -338,7 +338,10 @@
       "required": ["attr", "argTypes", "args"], "additionalProperties": false
     },
     "birParameter": {
-      "type": "object", "x-dotkt-model": { "name": "BirParameter", "domain": "birCoreValues", "loweringSourceFields": ["default"] },
+      "type": "object", "x-dotkt-model": { "name": "BirParameter", "domain": "birCoreValues", "loweringSourceFields": ["default"], "loweringProperties": {
+        "nominalParameterSignatureIdentity": { "$ref": "#/$defs/type" },
+        "genericParameterSignatureBounds": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+      } },
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "outer": { "type": "boolean" },
         "mods": { "$ref": "#/$defs/birModifiers" }, "default": { "$ref": "#/$defs/birExpressionNode", "x-dotkt-kotlin-name": "defaultValue" },
@@ -371,7 +374,9 @@
       "required": ["f"], "additionalProperties": false
     },
     "birFunctionDeclaration": {
-      "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "loweringProperties": {
+        "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
+      } },
       "properties": {
         "name": { "type": "string" }, "sourceName": { "type": "string" }, "static": { "type": "boolean", "x-dotkt-kotlin-name": "isStatic" },
         "override": { "type": "boolean", "x-dotkt-kotlin-name": "isOverride" }, "virtual": { "type": "boolean", "x-dotkt-kotlin-name": "isVirtual" }, "generated": { "type": "boolean" },
@@ -505,7 +510,9 @@
       "required": ["entries", "name", "ordinal", "values", "valueOf"], "additionalProperties": false
     },
     "birInheritedDefaultAccessor": {
-      "type": "object", "x-dotkt-model": { "name": "BirInheritedDefaultAccessor", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirInheritedDefaultAccessor", "domain": "birCoreValues", "loweringProperties": {
+        "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
+      } },
       "properties": {
         "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" }, "params": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "ret": { "$ref": "#/$defs/type" }, "overrides": { "type": "array", "items": { "$ref": "#/$defs/birOverride" } }, "implementation": { "$ref": "#/$defs/birInheritedImplementation" }
@@ -513,7 +520,9 @@
       "required": ["propertyName", "propertyAccessor", "params", "ret", "implementation"], "additionalProperties": false
     },
     "birInheritedDefaultMethod": {
-      "type": "object", "x-dotkt-model": { "name": "BirInheritedDefaultMethod", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirInheritedDefaultMethod", "domain": "birCoreValues", "loweringProperties": {
+        "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
+      } },
       "properties": {
         "member": { "type": "string" }, "params": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "ret": { "$ref": "#/$defs/type" },
         "overrides": { "type": "array", "items": { "$ref": "#/$defs/birOverride" } }, "implementation": { "$ref": "#/$defs/birInheritedImplementation" }
@@ -521,7 +530,9 @@
       "required": ["member", "params", "ret", "implementation"], "additionalProperties": false
     },
     "birInheritedClassMethod": {
-      "type": "object", "x-dotkt-model": { "name": "BirInheritedClassMethod", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirInheritedClassMethod", "domain": "birCoreValues", "loweringProperties": {
+        "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
+      } },
       "properties": {
         "member": { "type": "string" }, "params": { "type": "array", "items": { "$ref": "#/$defs/birParameter" } }, "ret": { "$ref": "#/$defs/type" },
         "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" }, "propertyAssociation": { "type": "string" },
@@ -635,7 +646,10 @@
       "required": ["k", "type", "event", "static", "super", "args"], "additionalProperties": false
     },
     "birLambdaParameter": {
-      "type": "object", "x-dotkt-model": { "name": "BirLambdaParameter", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirLambdaParameter", "domain": "birCoreValues", "loweringProperties": {
+        "nominalParameterSignatureIdentity": { "$ref": "#/$defs/type" },
+        "genericParameterSignatureBounds": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+      } },
       "properties": { "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" } },
       "required": ["name", "type"], "additionalProperties": false
     },

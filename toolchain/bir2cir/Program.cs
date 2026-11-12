@@ -161,20 +161,28 @@ sealed class Pipeline
 
     static List<BirFile> LoadBirFiles(IReadOnlyList<string> inputs)
     {
-        var files = new List<BirFile>();
+        var inputsWithSources = new List<(string Path, DotKt.Bir.Lowering.BirFileDeclaration Source, SuspendShapeAnalysis Suspend)>();
         foreach (var input in inputs)
         {
             var path = Path.GetFullPath(input);
             var source = DefaultBirCarrier.FreezeSourceDefaults(BirInputJson.Read(File.ReadAllBytes(path)));
             var suspend = SuspendShapeAnalyzer.Analyze(source);
+            inputsWithSources.Add((path, source, suspend));
+        }
+
+        var captured = DeclarationSignatureIdentity.Capture(inputsWithSources.Select(file => file.Source));
+        var files = new List<BirFile>();
+        for (var index = 0; index < inputsWithSources.Count; index++)
+        {
+            var source = captured[index];
             // The remaining passes still own DOM graphs. Construct that frontier
             // directly; never serialize/reparse the typed input between passes.
             var root = (source with { TypeAliases = default }).ToDom();
             RoundtripMetadata.FreezeTypeAliases(root, source.TypeAliases.OrDefault() ?? []);
             files.Add(new BirFile(
-                path,
+                inputsWithSources[index].Path,
                 root,
-                suspend));
+                inputsWithSources[index].Suspend));
         }
 
         return files;
@@ -211,7 +219,6 @@ sealed class Pipeline
     List<CirFile> TransformFiles(IReadOnlyList<BirFile> birFiles, ReferenceMetadataIndex refs)
     {
         var birRoots = birFiles.Select(b => b.Root).ToList();
-        DeclarationSignatureIdentity.Capture(birRoots);
         ComparableRepresentationLowering.Apply(birRoots, _options.RefBuild);
         // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.

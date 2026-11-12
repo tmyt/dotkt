@@ -5,6 +5,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Kotlin overloads can have identical CLR value signatures while
 // their nominal parameter types or generic parameter bounds remain distinct.
@@ -16,7 +18,7 @@ static class DeclarationSignatureIdentity
     const string OverrideEdgesKey = "signatureOverrideDeclarations";
     internal const string AllocatedKey = "declarationSignatureAllocation";
     internal const string AllocationMetadataKey = "signatureAllocation";
-    static readonly Dictionary<string, JsonObject> Markers = new(StringComparer.Ordinal);
+    static readonly Dictionary<string, BirClassDefinition> Markers = new(StringComparer.Ordinal);
     static readonly HashSet<(bool Required, string Owner, int Arity)> ReferencedModifiers = new();
     static readonly Dictionary<string, List<(JsonObject Descriptor, bool IsInterface)>> PhysicalSlots = new(StringComparer.Ordinal);
     static string MarkerOwner;
@@ -42,53 +44,84 @@ static class DeclarationSignatureIdentity
             slots.Add((descriptor.DeepClone().AsObject(), isInterface));
     }
 
-    public static void Capture(IEnumerable<JsonNode> roots)
+    public static BirFileDeclaration[] Capture(IEnumerable<BirFileDeclaration> roots)
     {
         Markers.Clear();
         ReferencedModifiers.Clear();
         PhysicalSlots.Clear();
-        var rootList = roots.ToArray();
-        void Walk(JsonNode node, string owner)
+        BirGraphValue Walk(BirGraphValue node, string owner)
         {
-            if (node is JsonObject obj)
+            owner = node switch
             {
-                if (obj["methods"] is JsonArray && Text(obj["name"]) is string declarationOwner)
-                    owner = declarationOwner;
-                if (obj["params"] is JsonArray parameters)
-                {
-                    if (obj["overrides"] is JsonArray overrides)
-                        obj[OverrideEdgesKey] = new JsonArray(overrides.OfType<JsonObject>()
-                            .Select(edge => Text(edge[DeclarationIdentityBinding.Key])).Where(id => id != null)
-                            .Select(id => (JsonNode)JsonValue.Create(id)).ToArray());
-                    foreach (var parameter in parameters.OfType<JsonObject>())
-                    {
-                        if (TypeJson.Read(parameter["type"]) is not TypeNode logicalType) continue;
-                        MarkerOwner = owner;
-                        parameter[NominalKey] = TypeJson.Write(Encode(logicalType));
-                        var variables = obj["typeParams"] as JsonArray;
-                        var bounds = MethodVariables(logicalType)
-                            .Distinct().OrderBy(index => index)
-                            .Where(index => index >= 0 && variables != null && index < variables.Count)
-                            .SelectMany(index => variables[index] is JsonObject declaration
-                                && declaration["constraints"] is JsonArray constraints
-                                ? constraints.Select(TypeJson.Read).Select(Encode)
-                                : Enumerable.Empty<TypeNode>()).ToArray();
-                        if (bounds.Length > 0)
-                            parameter[BoundsKey] = new JsonArray(bounds.Select(TypeJson.Write).ToArray());
-                    }
-                }
-                foreach (var child in obj.Select(pair => pair.Value).ToArray()) Walk(child, owner);
-            }
-            else if (node is JsonArray array)
-                foreach (var child in array) Walk(child, owner);
+                BirClassDefinition { Methods.HasValue: true, Name.HasValue: true } type => type.Name.Value,
+                BirInterfaceDefinition { Methods.HasValue: true, Name.HasValue: true } type => type.Name.Value,
+                BirEnumDefinition { Methods.HasValue: true, Name.HasValue: true } type => type.Name.Value,
+                _ => owner,
+            };
+            MarkerOwner = owner;
+            node = node switch
+            {
+                BirFunctionDeclaration method => method with {
+                    Params = CaptureParameters(method.Params, method.TypeParams),
+                    SignatureOverrideDeclarations = method.Params.HasValue && method.Overrides.HasValue
+                        ? OverrideIds(method.Overrides.Value) : method.SignatureOverrideDeclarations,
+                },
+                BirConstructor constructor => constructor with { Params = CaptureParameters(constructor.Params, default) },
+                BirClassDefinition type => type with { Params = CaptureParameters(type.Params, type.TypeParams) },
+                BirInterfaceDefinition type => type with { Params = CaptureParameters(type.Params, type.TypeParams) },
+                BirEnumDefinition type => type with { Params = CaptureParameters(type.Params, type.TypeParams) },
+                BirInheritedClassMethod method => method with {
+                    Params = CaptureParameters(method.Params, method.TypeParams),
+                    SignatureOverrideDeclarations = method.Params.HasValue && method.Overrides.HasValue
+                        ? OverrideIds(method.Overrides.Value) : method.SignatureOverrideDeclarations,
+                },
+                BirInheritedDefaultAccessor accessor => accessor with {
+                    SignatureOverrideDeclarations = accessor.Params.HasValue && accessor.Overrides.HasValue
+                        ? OverrideIds(accessor.Overrides.Value) : accessor.SignatureOverrideDeclarations,
+                },
+                BirInheritedDefaultMethod method => method with {
+                    SignatureOverrideDeclarations = method.Params.HasValue && method.Overrides.HasValue
+                        ? OverrideIds(method.Overrides.Value) : method.SignatureOverrideDeclarations,
+                },
+                BirClosureDefinition closure => closure with { Params = CaptureParameters(closure.Params, closure.TypeParams) },
+                BirNewSuspendLambda lambda => lambda with { Params = CaptureParameters(lambda.Params, lambda.TypeParams) },
+                BirInlineLambda lambda => lambda with { Params = CaptureParameters(lambda.Params, default) },
+                _ => node,
+            };
+            return node.RewriteChildren(child => Walk(child, owner));
         }
-        foreach (var root in rootList) Walk(root, Text((root as JsonObject)?["fileClass"]));
-        if (rootList.FirstOrDefault() is JsonObject first)
-        {
-            if (first["types"] is not JsonArray types) first["types"] = types = new JsonArray();
-            foreach (var marker in Markers.Values) types.Add(marker.DeepClone());
-        }
+        var rootList = roots.Select(root => (BirFileDeclaration)Walk(root, root.FileClass.OrDefault())).ToArray();
+        if (rootList.Length != 0)
+            rootList[0] = rootList[0] with { Types = rootList[0].Types.OrEmpty().Concat(Markers.Values).ToArray() };
+        return rootList;
     }
+
+    static string[] OverrideIds(BirOverride[] overrides) => overrides.Select(edge => edge.DeclarationId.OrDefault())
+        .Where(id => id != null).ToArray();
+
+    static TypeNode[] CaptureBounds(TypeNode type, OptionalField<BirTypeParameter[]> variables) => MethodVariables(type)
+        .Distinct().OrderBy(index => index).Where(index => index >= 0 && variables.HasValue && index < variables.Value.Length)
+        .SelectMany(index => variables.Value[index].Constraints.OrEmpty().Select(Encode)).ToArray();
+
+    static OptionalField<BirParameter[]> CaptureParameters(OptionalField<BirParameter[]> parameters,
+        OptionalField<BirTypeParameter[]> variables) => !parameters.HasValue ? parameters
+        : parameters.Value.Select(parameter => {
+            if (!parameter.Type.HasValue) return parameter;
+            var nominal = Encode(parameter.Type.Value);
+            var bounds = CaptureBounds(parameter.Type.Value, variables);
+            return parameter with { NominalParameterSignatureIdentity = nominal,
+                GenericParameterSignatureBounds = bounds.Length == 0 ? parameter.GenericParameterSignatureBounds : bounds };
+        }).ToArray();
+
+    static OptionalField<BirLambdaParameter[]> CaptureParameters(OptionalField<BirLambdaParameter[]> parameters,
+        OptionalField<BirTypeParameter[]> variables) => !parameters.HasValue ? parameters
+        : parameters.Value.Select(parameter => {
+            if (!parameter.Type.HasValue) return parameter;
+            var nominal = Encode(parameter.Type.Value);
+            var bounds = CaptureBounds(parameter.Type.Value, variables);
+            return parameter with { NominalParameterSignatureIdentity = nominal,
+                GenericParameterSignatureBounds = bounds.Length == 0 ? parameter.GenericParameterSignatureBounds : bounds };
+        }).ToArray();
 
     public static void RemoveCapturedFacts(JsonNode node)
     {
@@ -435,13 +468,12 @@ static class DeclarationSignatureIdentity
             MarkerOwner + "|" + meaning + ":" + arguments.Length)));
         var name = "DotKt.Runtime.CompilerServices.$Signature$" + digest;
         if (!Markers.ContainsKey(name))
-            Markers[name] = new JsonObject {
-                ["kind"] = "class", ["name"] = name, ["vis"] = "private", ["generated"] = true,
-                ["base"] = TypeJson.Fqn("System.Object"), ["mods"] = new JsonObject { ["sealed"] = true },
-                ["typeParams"] = new JsonArray(Enumerable.Range(0, arguments.Length).Select(index =>
-                    (JsonNode)new JsonObject { ["name"] = "T" + index,
-                        ["specialConstraints"] = new JsonArray("allowsRefStruct") }).ToArray()),
-                ["methods"] = new JsonArray(), ["fields"] = new JsonArray(),
+            Markers[name] = new BirClassDefinition {
+                Kind = "class", Name = name, Vis = "private", Generated = true,
+                Base = new TypeNode.Fqn("System.Object"), Mods = new BirModifiers { Sealed = true },
+                TypeParams = Enumerable.Range(0, arguments.Length).Select(index =>
+                    new BirTypeParameter { Name = "T" + index, SpecialConstraints = new[] { "allowsRefStruct" } }).ToArray(),
+                Methods = Array.Empty<BirFunctionDeclaration>(), Fields = Array.Empty<BirFieldDeclaration>(),
             };
         return new TypeNode.Fqn(name, arguments.Length == 0 ? null : arguments);
     }
@@ -451,8 +483,68 @@ static class DeclarationSignatureIdentity
     static bool Flag(JsonNode node) => (node as JsonValue)?.TryGetValue<bool>(out var value) == true && value;
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
 
+    static void SelfTestTypedCapture()
+    {
+        var methodFrame = new TypeNode.Tv("method", 0);
+        var ownerFrame = new TypeNode.Tv("type", 0);
+        var bytes = new byte[] { 0, 255, 0xd8, 17 };
+        var parameter = new BirParameter { Name = "value", Type = methodFrame, Attrs = new[] {
+            new BirAttribute { Args = new IBirAttributeValue[] { new BirOpaqueBytes { Bytes = bytes } } },
+        } };
+        var lambdaParameter = new BirLambdaParameter { Name = "value", Type = methodFrame };
+        var variables = new[] { new BirTypeParameter { Name = "M", Constraints = new TypeNode[] { ownerFrame } } };
+        var inline = new BirInlineLambda { Params = new[] { lambdaParameter } };
+        var suspend = new BirNewSuspendLambda { Params = new[] { lambdaParameter }, TypeParams = variables };
+        var closure = new BirNewClosure { SynthClass = new BirClosureDefinition {
+            Params = new[] { lambdaParameter }, TypeParams = variables } };
+        var method = new BirFunctionDeclaration { Name = "keep", DeclarationId = "selected", Params = new[] { parameter },
+            TypeParams = variables, Overrides = new[] { new BirOverride { DeclarationId = "first" },
+                new BirOverride(), new BirOverride { DeclarationId = "second" } },
+            Body = new IBirStatement[] { new BirExpressionStatement { Expr = inline },
+                new BirExpressionStatement { Expr = suspend }, new BirExpressionStatement { Expr = closure } } };
+        var constructor = new BirConstructor { Params = new[] { parameter } };
+        var type = new BirClassDefinition { Name = "TypedCaptureOwner", Kind = "class",
+            Methods = new[] { method }, Ctors = new[] { constructor } };
+        var source = new BirFileDeclaration { FileClass = "TypedCaptureFile", Methods = new[] { method },
+            Types = new IBirTypeDeclaration[] { type } };
+        var captured = Capture(new[] { source })[0];
+        var fileMethod = captured.Methods.Value[0];
+        var ownedType = (BirClassDefinition)captured.Types.Value[0];
+        var capturedMethod = ownedType.Methods.Value[0];
+        var slot = capturedMethod.Params.Value[0];
+        if (slot.NominalParameterSignatureIdentity.Value is not TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "method", I: 0 }] }
+            || slot.GenericParameterSignatureBounds.Value[0] is not TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "type", I: 0 }] }
+            || capturedMethod.DeclarationId.Value != "selected"
+            || !capturedMethod.SignatureOverrideDeclarations.Value.SequenceEqual(new[] { "first", "second" })
+            || ((TypeNode.Fqn)fileMethod.Params.Value[0].NominalParameterSignatureIdentity.Value).Name
+                == ((TypeNode.Fqn)slot.NominalParameterSignatureIdentity.Value).Name
+            || ownedType.Ctors.Value[0].Params.Value[0].GenericParameterSignatureBounds.IsPresent)
+            throw new InvalidOperationException("Typed signature capture changed a declaration/owner/method frame or override identity");
+        var capturedInline = (BirInlineLambda)((BirExpressionStatement)capturedMethod.Body.Value[0]).Expr.Value;
+        var capturedSuspend = (BirNewSuspendLambda)((BirExpressionStatement)capturedMethod.Body.Value[1]).Expr.Value;
+        var capturedClosure = ((BirNewClosure)((BirExpressionStatement)capturedMethod.Body.Value[2]).Expr.Value).SynthClass.Value;
+        if (!capturedInline.Params.Value[0].NominalParameterSignatureIdentity.HasValue
+            || capturedInline.Params.Value[0].GenericParameterSignatureBounds.IsPresent
+            || !capturedSuspend.Params.Value[0].GenericParameterSignatureBounds.HasValue
+            || !capturedClosure.Params.Value[0].GenericParameterSignatureBounds.HasValue
+            || parameter.NominalParameterSignatureIdentity.IsPresent || lambdaParameter.NominalParameterSignatureIdentity.IsPresent
+            || source.Types.Value.Length != 1 || ReferenceEquals(method.Params.Value, capturedMethod.Params.Value)
+            || !((BirOpaqueBytes)slot.Attrs.Value[0].Args.Value[0]).Bytes.Value.SequenceEqual(bytes)
+            || captured.Types.Value.Skip(1).OfType<BirClassDefinition>().Any(marker =>
+                marker.Vis.Value != "private" || !marker.Generated.Value || !marker.Mods.Value.Sealed.Value
+                || marker.TypeParams.Value.Any(variable => !variable.SpecialConstraints.Value.SequenceEqual(new[] { "allowsRefStruct" }))))
+            throw new InvalidOperationException("Typed signature capture lost a lambda/constructor edge, source ownership or frozen metadata");
+        Console.WriteLine("[typed signature capture] self-test OK (owner/method frames, bounds, overrides, lambda families, frozen metadata)");
+    }
+
     public static void SelfTest()
     {
+        SelfTestTypedCapture();
+        // Fixtures enter the same typed capture path as the driver; only the
+        // downstream signature-allocation tests still consume the DOM frontier.
+        static JsonObject CaptureFixture(JsonNode source) => Capture(new[] {
+            BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(source.ToJsonString(JsonOptions.Indented))),
+        })[0].ToDom();
         var source = JsonNode.Parse("""
         {"fileClass":"BoundSignatureProbe","types":[],"methods":[
           {"name":"keep","declarationId":"comparable","typeParams":[{"name":"C","constraints":[
@@ -467,7 +559,7 @@ static class DeclarationSignatureIdentity
         JsonArray ProjectMode(bool referenceBuild)
         {
             var root = source.DeepClone();
-            Capture(new[] { root });
+            root = CaptureFixture(root);
             ComparableRepresentationLowering.Apply(new[] { root }, referenceBuild);
             var plan = Plan(new[] { root });
             if (plan.Count != 2) throw new InvalidOperationException("Upper-bound overloads were not allocated");
@@ -528,7 +620,7 @@ static class DeclarationSignatureIdentity
           {"name":"keep","declarationId":"second","params":[{"name":"value","type":
             {"t":"fqn","name":"Probe.SecondAlias"}}],"ret":{"t":"fqn","name":"void"},"body":[]}]}
         """);
-        Capture(new[] { aliases });
+        aliases = CaptureFixture(aliases);
         var sourceCarrier = aliases.DeepClone();
         RemoveCapturedFacts(sourceCarrier);
         if (sourceCarrier["methods"].AsArray().Any(method => method["params"][0][NominalKey] != null))
@@ -575,7 +667,10 @@ static class DeclarationSignatureIdentity
                 new JsonObject { ["name"] = "VirtualSignatureBody", ["kind"] = "class",
                     ["interfaces"] = new JsonArray(TypeJson.Fqn("VirtualSignatureSlot")),
                     ["methods"] = implementations, ["ctors"] = constructors }) };
-        Capture(new[] { virtualRoot });
+        virtualRoot = CaptureFixture(virtualRoot);
+        slots = virtualRoot["types"][0]["methods"].AsArray();
+        implementations = virtualRoot["types"][1]["methods"].AsArray();
+        constructors = virtualRoot["types"][1]["ctors"].AsArray();
         foreach (var method in slots.Concat(implementations).Concat(constructors))
             method["params"][0]["type"] = TypeJson.Fqn("System.Object");
         var virtualPlan = Plan(new[] { virtualRoot });
@@ -609,7 +704,7 @@ static class DeclarationSignatureIdentity
              "params":[{"name":"value","type":{"t":"fqn","name":"LogicalRight"}}],
              "ret":{"t":"fqn","name":"System.String"}}]}]}
         """).AsObject();
-        Capture(new[] { implicitRoot });
+        implicitRoot = CaptureFixture(implicitRoot);
         var implicitSlot = implicitRoot["types"][0]["methods"][0].AsObject();
         var implicitBodies = implicitRoot["types"][1]["methods"].AsArray();
         RecordSelectedImplementationSlot(implicitBodies[0].AsObject(), implicitSlot);
