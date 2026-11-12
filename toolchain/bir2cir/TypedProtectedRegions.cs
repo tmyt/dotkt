@@ -29,6 +29,10 @@ static class TypedProtectedRegions
                 Process(parts, new TypeNode.Fqn("void"), references);
                 node.VisitChildren(child => Frames(child, references, true));
                 return;
+            case BirClosureDefinition { Params.HasValue: true, Body.HasValue: true } closure:
+                Process(Statements(closure.Body.Value), closure.Ret.Value, references);
+                node.VisitChildren(child => Frames(child, references, true));
+                return;
             case BirFieldDeclaration { Init.HasValue: true } field when !inFrame:
                 Process(new[] { new BirGraphSlot(() => (BirGraphValue)field.Init.Value,
                     value => field.Init = OptionalField<IBirExpression>.Of((IBirExpression)value)) },
@@ -74,9 +78,8 @@ static class TypedProtectedRegions
         }
         void DropLabels(BirGraphValue node)
         {
-            if (IsFrame(node)) return;
             if (Shape(node) is { } loop) loop.DropLabel();
-            node.VisitChildren(DropLabels);
+            node.VisitCurrentFrameSlots(child => DropLabels(child.Value));
         }
         foreach (var part in parts) DropLabels(part.Value);
     }
@@ -94,7 +97,6 @@ static class TypedProtectedRegions
         Dictionary<int, IBirStatement[][]> labels, List<Edge> edges)
     {
         var node = slot.Value;
-        if (IsFrame(node)) return;
         if (node is BirLabel labelNode && edges == null) labels.Add(labelNode.Id.Value, region);
         if (edges != null)
         {
@@ -134,7 +136,7 @@ static class TypedProtectedRegions
             loops.RemoveAt(loops.Count - 1);
             return;
         }
-        node.VisitChildSlots(child => Visit(child, region, loops, labels, edges));
+        node.VisitCurrentFrameSlots(child => Visit(child, region, loops, labels, edges));
 
         void InRegion(OptionalField<IBirStatement[]> body)
         {
@@ -143,10 +145,6 @@ static class TypedProtectedRegions
             foreach (var child in Statements(body.Value)) Visit(child, path, loops, labels, edges);
         }
     }
-
-    internal static bool IsFrame(BirGraphValue node) => node is
-        BirFunctionDeclaration { Params.HasValue: true, Body.HasValue: true } or
-        BirConstructor { Params.HasValue: true, Body.HasValue: true };
 
     internal static bool IsPrefix(IBirStatement[][] prefix, IBirStatement[][] path) => prefix.Length <= path.Length
         && prefix.Select((body, index) => ReferenceEquals(body, path[index])).All(equal => equal);

@@ -2610,6 +2610,9 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrBaseImpls.HasValue) { for (var index0 = 0; index0 < ClrBaseImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrBaseImpls.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)ClrBaseImpls.Value[at0]!, replacement => ClrBaseImpls.Value[at0] = (BirMethodImpl)replacement)); } }
         if (Pinvoke.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Pinvoke.Value!, replacement => Pinvoke = OptionalField<BirPInvoke>.Of((BirPInvoke)replacement))); }
     }
+    public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)rewrite((BirGraphValue)item0)).ToArray()) : Params,
@@ -2794,6 +2797,9 @@ internal sealed record BirConstructor : BirGraphValue
         if (BaseCtorRef.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)BaseCtorRef.Value!, replacement => BaseCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (PreStmts.HasValue) { for (var index0 = 0; index0 < PreStmts.Value.Length; index0++) { var at0 = index0; var child0 = PreStmts.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)PreStmts.Value[at0]!, replacement => PreStmts.Value[at0] = (IBirStatement)replacement)); } }
         if (Pos.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
+    }
+    public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)
+    {
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -4223,6 +4229,9 @@ internal sealed record BirClosureDefinition : BirGraphValue
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
     }
+    public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Fields = Fields.HasValue ? OptionalField<BirCaptureDescriptor[]>.Of(Fields.Value.Select(item0 => (BirCaptureDescriptor)rewrite((BirGraphValue)item0)).ToArray()) : Fields,
@@ -4399,6 +4408,10 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
     public OptionalField<TypeNode> FuncType { get; set; }
     public OptionalField<string> ExternalCompanionOwner { get; set; }
     public OptionalField<string> CompanionCaptureOwner { get; set; }
+    public OptionalField<string> TypeFrame { get; set; }
+    public OptionalField<TypeNode[]> _suspendDeclarationTypeArgs { get; set; }
+    public OptionalField<TypeNode> Sty { get; set; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Captures.HasValue) { foreach (var item0 in Captures.Value) { visit((BirGraphValue)item0); } }
@@ -4414,6 +4427,10 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
         if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirLambdaParameter)replacement)); } }
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+    }
+    public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)
+    {
+        if (CapValues.HasValue) { for (var index0 = 0; index0 < CapValues.Value.Length; index0++) { var at0 = index0; var child0 = CapValues.Value[at0]; if (child0 is not null) { visit(new BirGraphSlot(() => (BirGraphValue)CapValues.Value[at0]!, replacement => CapValues.Value[at0] = (IBirExpression)replacement)); } } }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -4438,6 +4455,9 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
         WriteOptional(writer, "funcType", FuncType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "externalCompanionOwner", ExternalCompanionOwner, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "companionCaptureOwner", CompanionCaptureOwner, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "typeFrame", TypeFrame, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "_suspendDeclarationTypeArgs", _suspendDeclarationTypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "sty", Sty, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -4455,6 +4475,9 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
         if (FuncType.IsPresent) result["funcType"] = FuncType.IsNull ? null : TypeNode.Write(FuncType.Value);
         if (ExternalCompanionOwner.IsPresent) result["externalCompanionOwner"] = ExternalCompanionOwner.IsNull ? null : JsonValue.Create(ExternalCompanionOwner.Value);
         if (CompanionCaptureOwner.IsPresent) result["companionCaptureOwner"] = CompanionCaptureOwner.IsNull ? null : JsonValue.Create(CompanionCaptureOwner.Value);
+        if (TypeFrame.IsPresent) result["typeFrame"] = TypeFrame.IsNull ? null : JsonValue.Create(TypeFrame.Value);
+        if (_suspendDeclarationTypeArgs.IsPresent) result["_suspendDeclarationTypeArgs"] = _suspendDeclarationTypeArgs.IsNull ? null : new JsonArray(_suspendDeclarationTypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (Sty.IsPresent) result["sty"] = Sty.IsNull ? null : TypeNode.Write(Sty.Value);
         return result;
     }
 }
@@ -4671,6 +4694,10 @@ internal sealed record BirInlineLambda : BirGraphNode, IBirExpression, IBirAttri
         if (Captures.HasValue) { for (var index0 = 0; index0 < Captures.Value.Length; index0++) { var at0 = index0; var child0 = Captures.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Captures.Value[at0]!, replacement => Captures.Value[at0] = (BirInlineCapture)replacement)); } }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
         if (Result.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Result.Value!, replacement => Result = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)
+    {
+        if (Captures.HasValue) { for (var index0 = 0; index0 < Captures.Value.Length; index0++) { var at0 = index0; var child0 = Captures.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Captures.Value[at0]!, replacement => Captures.Value[at0] = (BirInlineCapture)replacement)); } }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {

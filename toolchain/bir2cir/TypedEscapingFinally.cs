@@ -15,8 +15,7 @@ static class TypedEscapingFinally
         var tries = new List<BirGraphSlot>();
         void Collect(BirGraphSlot slot)
         {
-            if (IsFrame(slot.Value)) return;
-            slot.Value.VisitChildSlots(Collect);
+            slot.Value.VisitCurrentFrameSlots(Collect);
             if (slot.Value is BirTry) tries.Add(slot);
         }
         foreach (var part in parts) Collect(part);
@@ -38,7 +37,7 @@ static class TypedEscapingFinally
         void Walk(BirGraphValue node)
         {
             if (node is BirLabel label) ids.Add(label.Id.Value);
-            node.VisitChildren(Walk);
+            node.VisitCurrentFrameSlots(child => Walk(child.Value));
         }
         foreach (var part in parts) Walk(part.Value);
         return ids;

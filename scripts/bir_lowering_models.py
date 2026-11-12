@@ -367,6 +367,15 @@ def outputs(root, definitions):
                 prop = member(field)
                 model += [f"        if ({prop}.HasValue) {{ {slots(value, prop + '.Value', target=prop, optional=True)} }}"]
         model += ["    }"]
+        if "executionFrame" in info:
+            model += ["    public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)", "    {"]
+            for field in info["executionFrame"]:
+                value = shape["properties"][field]
+                if not is_child(value):
+                    raise ValueError(f"Current-frame operand is not a child: {name}.{field}")
+                prop = member(field)
+                model += [f"        if ({prop}.HasValue) {{ {slots(value, prop + '.Value', target=prop, optional=True)} }}"]
+            model += ["    }"]
         model += ["    public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with", "    {"]
         for field, value in fields:
             if is_child(value):

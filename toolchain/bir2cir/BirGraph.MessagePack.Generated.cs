@@ -12559,11 +12559,14 @@ internal static class BirGraphMessagePack
         OptionalField<TypeNode> field8 = default;
         OptionalField<string> field9 = default;
         OptionalField<string> field10 = default;
+        OptionalField<string> field11 = default;
+        OptionalField<TypeNode[]> field12 = default;
+        OptionalField<TypeNode> field13 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 11); if (IrMessagePack.ReadString(ref reader) != "newSuspendLambda") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 14); if (IrMessagePack.ReadString(ref reader) != "newSuspendLambda") throw new FormatException(); break;
                 case "arity":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
@@ -12608,6 +12611,18 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 10);
                     field10 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
+                case "typeFrame":
+                    Seen(ref seen, 1UL << 11);
+                    field11 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "_suspendDeclarationTypeArgs":
+                    Seen(ref seen, 1UL << 12);
+                    field12 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "sty":
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -12625,13 +12640,16 @@ internal static class BirGraphMessagePack
             FuncType = field8,
             ExternalCompanionOwner = field9,
             CompanionCaptureOwner = field10,
+            TypeFrame = field11,
+            _suspendDeclarationTypeArgs = field12,
+            Sty = field13,
         };
     }
 
     internal static void WriteBirNewSuspendLambda(ref MessagePackWriter writer, BirNewSuspendLambda value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Arity.IsPresent ? 1 : 0) + (value.Captures.IsPresent ? 1 : 0) + (value.CapValues.IsPresent ? 1 : 0) + (value.Params.IsPresent ? 1 : 0) + (value.SuspendRet.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.FuncType.IsPresent ? 1 : 0) + (value.ExternalCompanionOwner.IsPresent ? 1 : 0) + (value.CompanionCaptureOwner.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Arity.IsPresent ? 1 : 0) + (value.Captures.IsPresent ? 1 : 0) + (value.CapValues.IsPresent ? 1 : 0) + (value.Params.IsPresent ? 1 : 0) + (value.SuspendRet.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.FuncType.IsPresent ? 1 : 0) + (value.ExternalCompanionOwner.IsPresent ? 1 : 0) + (value.CompanionCaptureOwner.IsPresent ? 1 : 0) + (value.TypeFrame.IsPresent ? 1 : 0) + (value._suspendDeclarationTypeArgs.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("newSuspendLambda");
         if (value.Arity.IsPresent)
@@ -12765,6 +12783,38 @@ internal static class BirGraphMessagePack
             else
             {
                 IrMessagePack.WriteString(ref writer, value.CompanionCaptureOwner.Value);
+            }
+        }
+        if (value.TypeFrame.IsPresent)
+        {
+            writer.Write("typeFrame");
+            if (value.TypeFrame.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.TypeFrame.Value);
+            }
+        }
+        if (value._suspendDeclarationTypeArgs.IsPresent)
+        {
+            writer.Write("_suspendDeclarationTypeArgs");
+            if (value._suspendDeclarationTypeArgs.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value._suspendDeclarationTypeArgs.Value.Length);
+                foreach (var item0 in value._suspendDeclarationTypeArgs.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.Sty.IsPresent)
+        {
+            writer.Write("sty");
+            if (value.Sty.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.Sty.Value, depth + 1);
             }
         }
     }

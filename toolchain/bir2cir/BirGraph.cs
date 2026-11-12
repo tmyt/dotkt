@@ -15,6 +15,9 @@ internal abstract record BirGraphValue
     public virtual TypeNode? ResultTypeStamp => null;
     public abstract void VisitChildren(Action<BirGraphValue> visit);
     public abstract void VisitChildSlots(Action<BirGraphSlot> visit);
+    // Construction operands execute in the caller; a nested declaration's body
+    // does not. The maintained frame profile generates the latter overrides.
+    public virtual void VisitCurrentFrameSlots(Action<BirGraphSlot> visit) => VisitChildSlots(visit);
     public void Visit(Action<BirGraphValue> visit)
     {
         Action<BirGraphValue> walk = null!;

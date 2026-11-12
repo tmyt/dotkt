@@ -442,7 +442,7 @@
       "required": ["f"], "additionalProperties": false
     },
     "birFunctionDeclaration": {
-      "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "loweringProperties": {
+      "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": {
         "_physicalDeclarationSignature": { "type": "boolean" },
         "retKotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "declarationSourceName": { "type": "string" },
@@ -469,7 +469,7 @@
       "required": ["params", "ret", "body"], "additionalProperties": false
     },
     "birConstructor": {
-      "type": "object", "x-dotkt-model": { "name": "BirConstructor", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirConstructor", "domain": "birCoreValues", "executionFrame": [] },
       "properties": {
         "params": { "type": "array", "items": { "$ref": "#/$defs/birParameter" } },
         "baseArgs": { "oneOf": [{ "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } }, { "type": "null" }] },
@@ -657,7 +657,7 @@
       "required": ["name", "type"], "additionalProperties": false
     },
     "birClosureDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirClosureDefinition", "domain": "birCoreValues", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirClosureDefinition", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
       "properties": {
         "name": { "type": "string" }, "fields": { "type": "array", "items": { "$ref": "#/$defs/birCaptureDescriptor" } },
         "params": { "type": "array", "items": { "$ref": "#/$defs/birLambdaParameter" } }, "ret": { "$ref": "#/$defs/type" },
@@ -687,7 +687,9 @@
       "required": ["k", "method", "funcType"], "additionalProperties": false
     },
     "birNewSuspendLambda": {
-      "type": "object", "x-dotkt-model": { "name": "BirNewSuspendLambda", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirNewSuspendLambda", "domain": "birCore", "role": "expression", "executionFrame": ["capValues"], "loweringProperties": {
+        "typeFrame": { "type": "string" }, "_suspendDeclarationTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "sty": { "$ref": "#/$defs/type" }
+      } },
       "properties": {
         "k": { "const": "newSuspendLambda" }, "arity": { "type": "integer" },
         "captures": { "type": "array", "items": { "$ref": "#/$defs/birCaptureDescriptor" } },
@@ -741,7 +743,7 @@
       "required": ["name", "type"], "additionalProperties": false
     },
     "birInlineLambda": {
-      "type": "object", "x-dotkt-model": { "name": "BirInlineLambda", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirInlineLambda", "domain": "birCore", "role": "expression", "executionFrame": ["captures"] },
       "properties": {
         "k": { "const": "inlineLambda" }, "params": { "type": "array", "items": { "$ref": "#/$defs/birLambdaParameter" } },
         "captures": { "type": "array", "items": { "$ref": "#/$defs/birInlineCapture" } },

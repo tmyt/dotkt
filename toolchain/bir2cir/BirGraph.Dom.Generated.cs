@@ -2343,6 +2343,9 @@ internal static class BirGraphDom
                 case "funcType": break;
                 case "externalCompanionOwner": break;
                 case "companionCaptureOwner": break;
+                case "typeFrame": break;
+                case "_suspendDeclarationTypeArgs": break;
+                case "sty": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirNewSuspendLambda at {source.GetPath()}");
             }
         return new BirNewSuspendLambda
@@ -2358,6 +2361,9 @@ internal static class BirGraphDom
             FuncType = Field<TypeNode>(fields, "funcType", value => TypeNode.Read(value) ?? throw new FormatException()),
             ExternalCompanionOwner = Field<string>(fields, "externalCompanionOwner", value => value!.GetValue<string>()),
             CompanionCaptureOwner = Field<string>(fields, "companionCaptureOwner", value => value!.GetValue<string>()),
+            TypeFrame = Field<string>(fields, "typeFrame", value => value!.GetValue<string>()),
+            _suspendDeclarationTypeArgs = Field<TypeNode[]>(fields, "_suspendDeclarationTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 
