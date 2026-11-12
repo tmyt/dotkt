@@ -59,6 +59,8 @@ static class ExecutableBirCodec
                 new BirParameter { Name = "text", Type = text, Attrs = new[] { DefaultBirCarrier.Create(1, sourceDefault) } } },
             Ret = frame, Body = new IBirStatement[] { new BirReturn { Value = new BirLocal { Name = "value", Sty = frame } } },
             Lifted = new[] { new BirFunctionDeclaration { Name = "lifted", Static = true, Generated = true,
+                NullableRepresentationFrame = new NullableRepresentationFrame(2, new[] { 1 },
+                    new[] { 3, 0, 2, 1, 4 }, new[] { 0 }, new[] { 1 }),
                 Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.Double"),
                 Body = new IBirStatement[] { new BirReturn { Value = new BirConstant {
                     Type = new TypeNode.Fqn("kotlin.Double"), Value = new Float64Literal(unchecked((long)0xfff800000000002aUL)) } } } } },
@@ -69,6 +71,9 @@ static class ExecutableBirCodec
             if (!JsonNode.DeepEquals(restored.ToDom(), source.ToDom()) || !SameInline(restored, source)
                 || restored.Ret.Value != frame || !restored.FileClass.IsNull)
                 throw new InvalidOperationException("Executable carrier lost frames, values or presence");
+            if (!restored.Lifted.Value[0].NullableRepresentationFrame.Value.PhysicalOrder
+                .SequenceEqual(new[] { 3, 0, 2, 1, 4 }))
+                throw new InvalidOperationException("Executable carrier lost its lifted method frame");
             var first = restored.ToDom();
             var second = restored.ToDom();
             first["body"][0]["value"]["name"] = "changed";
@@ -77,6 +82,19 @@ static class ExecutableBirCodec
             var defaultBody = (BirGraphValue)ReadExpression(codec, EncodeExpression(codec, sourceDefault));
             if (!JsonNode.DeepEquals(defaultBody.ToDom(), sourceDefault.ToDom()))
                 throw new InvalidOperationException("Default codec changed UTF16 or source facts");
+        }
+        var preparedCall = new BirCallInline {
+            Recvs = new BirInlineReceivers { DispatchOwnerTypeArgs = new TypeNode[] { frame } },
+            PreparedDefaults = new IBirExpression[] { null, new BirLocal { Name = "earlier", Sty = frame } },
+        };
+        foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1 })
+        {
+            var prepared = (BirCallInline)ReadExpression(codec,
+                EncodeExpressionDom(codec, preparedCall.ToDom()));
+            if (prepared.Recvs.Value.DispatchOwnerTypeArgs.Value[0] != frame
+                || prepared.PreparedDefaults.Value.Length != 2 || prepared.PreparedDefaults.Value[0] != null
+                || prepared.PreparedDefaults.Value[1] is not BirLocal { Name.Value: "earlier" })
+                throw new InvalidOperationException("Executable carrier lost prepared default or dispatch owner facts");
         }
         var outgoing = source.ToDom();
         MaterializedBirPayload.HideSourceSpans(outgoing);

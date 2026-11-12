@@ -1,7 +1,7 @@
-import base64
 import json
 import sys
 from pathlib import Path
+from carrier_inspection import executable_payload
 
 
 def walk(value):
@@ -16,12 +16,12 @@ def walk(value):
 
 polymorphic = sys.argv[1] == "--polymorphic"
 paths = sys.argv[2:] if polymorphic else sys.argv[1:]
-producer, bir, cir = [json.loads(Path(path).read_text()) for path in paths]
+producer, bir, cir = [json.loads(Path(path).read_text()) for path in paths[:3]]
 method, = [method for method in producer["methods"] if method.get("name") == "inlineSequenceIndex"]
 attribute, = [attribute for attribute in method.get("attrs", [])
               if attribute.get("attr", {}).get("name") == "DotKt.Runtime.CompilerServices.KotlinInlineAttribute"]
-assert attribute["args"][0]["value"] == "bir-json/1", "missing selected inline codec"
-assert json.loads(base64.b64decode(attribute["args"][1]["bytes"])).get("body"), "missing producer inline body"
+payload = executable_payload(attribute, paths[3])
+assert payload.get("body"), "missing producer inline body"
 assert any(node.get("k") == "callInline" and node.get("callee", {}).get("name", "").endswith(".inlineSequenceIndex")
            for node in walk(bir)), "consumer stopped exercising the imported inline declaration"
 method_name = ("importedInlineReceiversAdaptStringsAndRetainCustomSequences" if polymorphic else

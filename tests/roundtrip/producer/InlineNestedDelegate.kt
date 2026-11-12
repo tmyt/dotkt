@@ -14,6 +14,23 @@ inline fun <T> applyViaGenericNestedDelegate(value: T, block: (T) -> T): T {
     return block(identity(value))
 }
 
+inline fun <T> applyViaNullableResult(value: T, block: (List<T?>) -> T?): T? {
+    val produce: (T) -> List<T?> = { listOf(it) }
+    return block(produce(value))
+}
+
+inline fun <T> applyViaNullableArgument(values: List<T?>, block: (T?) -> T?): T? {
+    val consume: (List<T?>) -> T? = { it.firstOrNull() }
+    return block(consume(values))
+}
+
+fun <T> nullableSingleton(value: T): List<T?> = listOf(value)
+
+inline fun <T> applyViaNullableReference(value: T, block: (List<T?>) -> T?): T? {
+    val produce: (T) -> List<T?> = ::nullableSingleton
+    return block(produce(value))
+}
+
 inline fun applyViaTransitivelyNestedDelegate(value: Int, block: (Int) -> Int): Int {
     val outer: (Int) -> Int = { n ->
         val inner: (Int) -> Int = { it * 3 }

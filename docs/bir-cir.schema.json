@@ -5,7 +5,7 @@
   "description": "The compiler's internal interchange contract. Source BIR (kotc→bir2cir) and physical CLR CIR (bir2cir→ilemit) have distinct phase-owned definitions maintained here. Typed records and codecs are generated from those definitions. The source-node profile is still partial during migration; it is not yet a closed reader for every BIR producer. Internal ABI compatibility across compiler versions is not promised.",
 
   "type": "object",
-  "$comment": "A BIR/CIR file is a compilation unit. CARRIER (§0) is OUT OF SCOPE for this document schema: inline payloads and suspend fn-types are not document roots — they ride as CLR attributes on the EMITTED assembly ([KotlinInline(string version, byte[] content)] / [KotlinSuspendFunctionType(...)], codec version 'bir-json/1'). A decoded [KotlinInline] content is the §0 payload object {v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}; its body nodes, types, and lifted method declarations use this schema's vocabulary. [KotlinSuspendFunctionType] decodes to a $defs/type (an fn with suspend:true). The attribute ctor and inline-payload envelope live in spec §0, not here.",
+  "$comment": "A BIR/CIR file is a compilation unit. Executable inline/default carriers use codec bir-msgpack/1; their owning models share this schema's phase vocabulary. KotlinInline's envelope is the birInlinePayload definition. Other metadata carriers such as KotlinSuspendFunctionType still use bir-json/1. Attribute constructors and carrier placement live in spec §0.",
   "properties": {
     "typeAliases": { "type": "array", "items": { "$ref": "kotlin-typealias.schema.json" }, "description": "BIR-only actualized Kotlin alias declarations, encoded opaquely into CIR assemblyAttrs before physical lowering" },
     "assemblyAttrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" }, "description": "CIR assembly attribute applications, emitted literally after local constructors receive metadata tokens" },
@@ -482,6 +482,7 @@
         "nullableGenericSuspendRet": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "declarationSourceName": { "type": "string" },
         "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
+        "nullableRepresentationFrame": { "type": "string", "x-dotkt-csharp-type": "NullableRepresentationFrame", "x-dotkt-csharp-codec": "DotKt.Bir.NullableRepresentationFrame", "x-dotkt-json-content": "#/$defs/nullableRepresentationFrame" },
         "kotlinPropertyAccessorCarrier": { "$ref": "#/$defs/eventPropertySourceFacts" },
         "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
       } },
@@ -816,12 +817,16 @@
       "required": ["k", "ptr", "len", "elem"], "additionalProperties": false
     },
     "birInlineReceivers": {
-      "type": "object", "x-dotkt-model": { "name": "BirInlineReceivers", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirInlineReceivers", "domain": "birCoreValues", "loweringProperties": {
+        "dispatchOwnerTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+      } },
       "properties": { "extension": { "$ref": "#/$defs/birExpressionNode" }, "dispatch": { "$ref": "#/$defs/birExpressionNode" }, "dispatchTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } } },
       "required": [], "additionalProperties": false
     },
     "birCallInline": {
-      "type": "object", "x-dotkt-model": { "name": "BirCallInline", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirCallInline", "domain": "birCore", "role": "expression", "loweringProperties": {
+        "preparedDefaults": { "type": "array", "items": { "oneOf": [{ "$ref": "#/$defs/birExpressionNode" }, { "type": "null" }] } }
+      } },
       "properties": {
         "k": { "const": "callInline" }, "callee": { "$ref": "#/$defs/type" }, "owner": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
         "pc": { "type": "integer" }, "ga": { "type": "integer" }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } },

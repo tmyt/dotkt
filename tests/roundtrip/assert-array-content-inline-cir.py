@@ -1,6 +1,6 @@
-import base64
 import json
 import sys
+from carrier_inspection import executable_payload
 
 
 def walk(node):
@@ -18,7 +18,7 @@ def read(path):
         return json.load(stream)
 
 
-producer, consumer_bir, consumer_cir = map(read, sys.argv[1:])
+producer, consumer_bir, consumer_cir = map(read, sys.argv[1:4])
 wrappers = {"inlineDeepEquals", "inlineDeepHash", "inlineDeepString",
             "inlineFloatContents", "inlineDoubleContents"}
 methods = [method for method in producer["methods"] if method.get("name") in wrappers]
@@ -28,8 +28,7 @@ for method in methods:
     payloads = [attr for attr in method.get("attrs", []) if attr.get("attr", {}).get("name") ==
                 "DotKt.Runtime.CompilerServices.KotlinInlineAttribute"]
     assert len(payloads) == 1, f"{method['name']} lost its actual inline payload"
-    assert payloads[0]["args"][0]["value"] == "bir-json/1", "unexpected inline codec"
-    payload = json.loads(base64.b64decode(payloads[0]["args"][1]["bytes"]))
+    payload = executable_payload(payloads[0], sys.argv[4])
     assert payload.get("body"), f"{method['name']} has no inline body"
 calls = {node.get("callee", {}).get("name", "").rsplit(".", 1)[-1]
          for node in walk(consumer_bir) if node.get("k") == "callInline"}

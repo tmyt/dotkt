@@ -135,8 +135,9 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   order; a newly introduced setter over a `val` has no inherited setter declaration and is not widened with its getter.
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
   codec identifier. `bir-json/1` represents structured UTF-8 JSON; `bir-msgpack/1` represents MessagePack maps
-  with the same logical keys and values. Source alias carriers currently emit MessagePack; other carriers
-  still emit JSON until their typed codecs migrate. Neither identifier is a compiler-compatibility promise.
+  with the same logical keys and values. Source alias and executable inline/default carriers emit MessagePack;
+  remaining non-executable carriers emit JSON until their typed codecs migrate. Neither identifier is a
+  compiler-compatibility promise.
 - `BirCarrier` entry points select the declared codec. Typed binary domains supply their JSON and MessagePack
   callbacks through `BirCarrier.MessagePack.cs`; the remaining domains use JSON-only overloads in `TypeNode.cs`
   until they migrate. Unsupported identifiers fail with `NotSupportedException`, never silent mis-decoding.
@@ -157,7 +158,7 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   attribute applications. The `bir2cir` cross-module splice and `dll2klib` decoders use the same codec.
 - A decoded `[KotlinInline]` content is the current payload object
   `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}`. The numeric `v` identifies the inline
-  payload contract independently of the carrier's `codec/schema-version` identifier (`bir-json/1`). `body` is the raw BIR body.
+  payload contract independently of the carrier's `codec/schema-version` identifier (`bir-msgpack/1`). `body` is the raw BIR body.
   `lifted` is the transitive closure of raw, compiler-generated file-class method declarations reached by
   `newDelegate` edges from `body`; every entry MUST carry `generated:true`, `static:true`, `params`, `ret`,
   and `body`. `fileClass` is the declaration identity those carried delegate edges originally target.

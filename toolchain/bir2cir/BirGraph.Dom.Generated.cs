@@ -1441,6 +1441,7 @@ internal static class BirGraphDom
                 case "nullableGenericSuspendRet": break;
                 case "declarationSourceName": break;
                 case "methodTypeParameterBoundsPre": break;
+                case "nullableRepresentationFrame": break;
                 case "kotlinPropertyAccessorCarrier": break;
                 case "signatureOverrideDeclarations": break;
                 case "retAttrs": break;
@@ -1504,6 +1505,7 @@ internal static class BirGraphDom
             NullableGenericSuspendRet = Field<TypeNode>(fields, "nullableGenericSuspendRet", value => TypeNode.Parse(value!.GetValue<string>())),
             DeclarationSourceName = Field<string>(fields, "declarationSourceName", value => value!.GetValue<string>()),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
+            NullableRepresentationFrame = Field<NullableRepresentationFrame>(fields, "nullableRepresentationFrame", value => DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(value!.GetValue<string>())),
             KotlinPropertyAccessorCarrier = Field<EventPropertySourceFacts>(fields, "kotlinPropertyAccessorCarrier", value => ReadEventPropertySourceFacts(value!)),
             SignatureOverrideDeclarations = Field<string[]>(fields, "signatureOverrideDeclarations", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<string>()).ToArray()),
             RetAttrs = Field<BirAttribute[]>(fields, "retAttrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
@@ -2653,6 +2655,7 @@ internal static class BirGraphDom
                 case "extension": break;
                 case "dispatch": break;
                 case "dispatchTypeArgs": break;
+                case "dispatchOwnerTypeArgs": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirInlineReceivers at {source.GetPath()}");
             }
         return new BirInlineReceivers
@@ -2660,6 +2663,7 @@ internal static class BirGraphDom
             Extension = Field<IBirExpression>(fields, "extension", value => ReadBirExpression(value!)),
             Dispatch = Field<IBirExpression>(fields, "dispatch", value => ReadBirExpression(value!)),
             DispatchTypeArgs = Field<TypeNode[]>(fields, "dispatchTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            DispatchOwnerTypeArgs = Field<TypeNode[]>(fields, "dispatchOwnerTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
         };
     }
 
@@ -2682,6 +2686,7 @@ internal static class BirGraphDom
                 case "semanticOwner": break;
                 case "companionReceiver": break;
                 case "declarationId": break;
+                case "preparedDefaults": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirCallInline at {source.GetPath()}");
             }
         return new BirCallInline
@@ -2698,6 +2703,7 @@ internal static class BirGraphDom
             SemanticOwner = Field<string>(fields, "semanticOwner", value => value!.GetValue<string>()),
             CompanionReceiver = Field<TypeNode>(fields, "companionReceiver", value => TypeNode.Parse(value!.GetValue<string>())),
             DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
+            PreparedDefaults = Field<IBirExpression?[]>(fields, "preparedDefaults", value => ((JsonArray)value!).Select(item0 => item0 is null ? null : ReadBirExpression(item0!)).ToArray()),
         };
     }
 

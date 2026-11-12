@@ -2,6 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -248,6 +250,29 @@ internal sealed class NullableRepresentationFrame
         ["nullableStorage"] = new JsonArray(NullableStorageIndices.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
         ["order"] = new JsonArray(PhysicalOrder.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
     };
+
+    public string FrozenText
+    {
+        get
+        {
+            using var content = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(content)) WriteJson(writer);
+            return Encoding.UTF8.GetString(content.ToArray());
+        }
+    }
+
+    public static NullableRepresentationFrame ReadFrozenText(string text)
+    {
+        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(text));
+        if (!reader.Read()) throw new FormatException();
+        var frame = ReadJson(ref reader);
+        if (reader.Read()) throw new FormatException();
+        return frame;
+    }
+
+    public static NullableRepresentationFrame Read(ref Utf8JsonReader reader) => ReadFrozenText(reader.GetString()!);
+    public static void Write(Utf8JsonWriter writer, NullableRepresentationFrame value) => writer.WriteStringValue(value.FrozenText);
+    public static JsonNode ToDom(NullableRepresentationFrame value) => JsonValue.Create(value.FrozenText)!;
 
     public static NullableRepresentationFrame Read(JsonNode node)
     {
