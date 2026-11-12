@@ -29,6 +29,7 @@ cd "$ROOT" || exit 1
 PY="${PYTHON:-python3}"
 
 "$PY" scripts/generate-ir-model.py --check || exit 1
+"$PY" tests/ir/test-bir-graph-model.py || exit 1
 "$PY" tests/ir/test-typealias-schema.py || exit 1
 "$PY" tests/ir/test-generic-receiver-schema.py || exit 1
 "$PY" tests/ir/test-valueblock-schema.py || exit 1

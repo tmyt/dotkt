@@ -23,9 +23,18 @@ static Utf8JsonReader Reader(string json)
 
 static void Same(string json, BirGraphValue graph)
 {
-    if (!JsonNode.DeepEquals(JsonNode.Parse(json, documentOptions: BirJson.DocOptions),
+    var source = JsonNode.Parse(json, documentOptions: BirJson.DocOptions)!;
+    if (!JsonNode.DeepEquals(source,
         JsonNode.Parse(Write(graph), documentOptions: BirJson.DocOptions)))
         throw new Exception("Owning BIR graph changed a logical value");
+    // Exercise the actual production seam too, not only the debug JSON writer.
+    if (graph is BirFileDeclaration file)
+    {
+        source.AsObject().Remove("typeAliases");
+        graph = file with { TypeAliases = default };
+    }
+    if (!JsonNode.DeepEquals(source, graph.ToDom()))
+        throw new Exception("The temporary owning-pass frontier changed a logical value");
 }
 
 var samples = XDocument.Load(args[0]).Descendants("system-out")
@@ -59,6 +68,9 @@ foreach (var line in samples)
     scalars++;
 }
 if (scalars != 23) throw new Exception($"Expected 23 actual Kotlin scalar samples, got {scalars}");
+var nullReader = Reader("{\"k\":\"const\",\"value\":null}");
+if (BirGraphJson.ReadNode(ref nullReader) is not BirConstant { Value.HasValue: true, Value.Value: BirLiteral.NullLiteral })
+    throw new Exception("A semantic null literal was decoded as an untyped null field");
 
 var negativeZeroReader = Reader("-0");
 if (BirLiteral.ReadJson(ref negativeZeroReader) is not BirLiteral.RealLiteral zero
@@ -79,6 +91,10 @@ if (original.Args.Value[0] is not null || rewritten.Args.Value[0] is not null
     || ((BirLocal)rewritten.Args.Value[1]!).Name.Value != "after"
     || rewritten.RetType.Value != frame || ReferenceEquals(original.Args.Value, rewritten.Args.Value))
     throw new Exception("A typed rewrite lost a null slot/frame or mutated the input graph");
+var independent = (BirCallInline)original.Rewrite(value => value);
+independent.Args.Value[1] = new BirLocal { Name = "independent" };
+if (((BirLocal)original.Args.Value[1]!).Name.Value != "before")
+    throw new Exception("Independent executable mutation leaked through a shared child array");
 
 var absent = BirGraphJson.ReadFile(Encoding.UTF8.GetBytes("{\"fileClass\":\"Probe\"}"));
 var present = BirGraphJson.ReadFile(Encoding.UTF8.GetBytes("{\"fileClass\":\"Probe\",\"fields\":null,\"methods\":[]}"));
@@ -132,6 +148,12 @@ var carrier = parameter.Attrs.Value[0].ToDom();
 if (!JsonNode.DeepEquals(DefaultBirCarrier.Decode(carrier),
     ((BirGraphValue)defaults.Methods.Value[0].Params.Value[0].DefaultBir.Value.Body.Value).ToDom()))
     throw new Exception("The typed source default changed its frame or float payload while freezing");
+
+var enumMethods = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+    new BirEnumDefinition { Kind = "enum", Methods = defaults.Methods.Value },
+} };
+if (SuspendShapeAnalyzer.Analyze(enumMethods).FunctionCount != 1)
+    throw new Exception("The intermediate enum declaration lost its suspend-method inventory");
 
 // A lowered const field still holds a BIR literal until final CIR declaration
 // projection chooses its physical Constant-table value. Do not admit the final

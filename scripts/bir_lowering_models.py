@@ -11,6 +11,7 @@ import json
 def outputs(root, definitions):
     aliases = {
         "cirExpressionNode": "birExpressionNode", "cirStatementNode": "birStatementNode",
+        "cirExpression": "birExpressionNode",
         "cirConditionalBranch": "birBranch", "birConditionalBranch": "birBranch",
         "birElseBranch": "birBranch", "cirCatchClause": "birCatch",
         "cirSourceSpan": "sourceSpan", "cirSpreadPart": "birSpreadPart",
@@ -119,6 +120,49 @@ def outputs(root, definitions):
 
     def refkey(field):
         return base(field).get("$ref", "").removeprefix("#/$defs/")
+
+    def signature(field):
+        field = base(field)
+        if field.get("x-dotkt-kotlin-json-type"):
+            return "frozen-type"
+        if key := refkey(field):
+            return "string" if "enum" in definitions.get(key, {}) else ("ref", key)
+        if field.get("type") == "array":
+            return ("array", signature(field["items"]))
+        if "const" in field:
+            return {str: "string", int: "integer", bool: "boolean"}[type(field["const"])]
+        return field.get("type", "string" if "enum" in field else None)
+
+    # Fail generation on a newly unaccounted phase difference. These two shapes
+    # deliberately remain source-only at the current input frontier: assembly
+    # attributes are frozen/created afterwards; final attribute binding supplies
+    # external identity. No physical file/attribute reader uses these aliases.
+    omitted_at_input = {
+        "cirFile": {"assemblyAttrs", "attrs", "wellKnownRefs", "pos"},
+        "cirAttributeApplication": {"attrExternal", "attrAssembly", "memberRef"},
+    }
+    for physical, source in aliases.items():
+        if "properties" not in definitions.get(physical, {}) or source not in shapes:
+            continue
+        missing = definitions[physical]["properties"].keys() - shapes[source]["properties"].keys()
+        if missing != omitted_at_input.get(physical, set()):
+            raise ValueError(f"Unaccounted input-profile omission: {physical}: {sorted(missing)}")
+    by_tag = {shape["properties"]["k"]["const"]: shape for shape in shapes.values()
+              if shape["x-dotkt-model"].get("domain") == "birCore"}
+    for shape in definitions.values():
+        info = shape.get("x-dotkt-model", {}) if isinstance(shape, dict) else {}
+        if info.get("domain") != "cirExecutable":
+            continue
+        tag = shape["properties"]["k"]["const"]
+        if missing := set(info.get("sourceConsumed", [])) - by_tag[tag]["properties"].keys():
+            raise ValueError(f"Untyped consumed phase fields: {tag}: {sorted(missing)}")
+    for physical, targets in declarations.items():
+        for target in targets:
+            info = shapes[target]["x-dotkt-model"]
+            explicit = set(info.get("loweringProperties", {})) | set(info.get("loweringSourceFields", []))
+            for key, value in normalize(definitions[physical])["properties"].items():
+                if signature(shapes[target]["properties"][key]) != signature(value) and key not in explicit:
+                    raise ValueError(f"Unaccounted declaration phase type: {target}.{key}")
 
     def cs(field):
         field = base(field)
@@ -276,8 +320,11 @@ def outputs(root, definitions):
         for index, (field, value) in enumerate(fields):
             prop, typ = member(field), cs(value)
             expr = read(value)
+            decoded = f"OptionalField<{typ}>.Of({expr})"
+            if refkey(value) != "literalValue":
+                decoded = f"reader.TokenType == JsonTokenType.Null ? OptionalField<{typ}>.Null : {decoded}"
             codec += [f"                case {json.dumps(field)}:", f"                    Seen(ref seen, 1UL << {index});",
-                      f"                    field{index} = reader.TokenType == JsonTokenType.Null ? OptionalField<{typ}>.Null : OptionalField<{typ}>.Of({expr});", "                    break;"]
+                      f"                    field{index} = {decoded};", "                    break;"]
         codec += ["                default: throw new FormatException($\"Unknown lowering field {key}\");", "            }", "        }",
                   "        Require(reader, JsonTokenType.EndObject);", f"        return new {name}", "        {"]
         codec += [f"            {member(field)} = field{index}," for index, (field, _) in enumerate(fields)]

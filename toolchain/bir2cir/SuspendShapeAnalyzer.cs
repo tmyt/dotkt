@@ -13,7 +13,7 @@ sealed class SuspendShapeAnalyzer
             var methods = type switch {
                 BirClassDefinition value => value.Methods.OrEmpty(),
                 BirInterfaceDefinition value => value.Methods.OrEmpty(),
-                BirEnumDefinition => [],
+                BirEnumDefinition value => value.Methods.OrEmpty(),
                 _ => throw new System.InvalidOperationException(),
             };
             count += methods.Count(method => method.Mods.OrDefault()?.Suspend.OrDefault() == true);

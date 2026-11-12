@@ -37,17 +37,6 @@ static class DefaultBirCarrier
         },
     };
 
-    internal static JsonObject Create(int index, JsonNode body) => new()
-    {
-        ["attr"] = TypeJson.Fqn(AttributeName),
-        ["argTypes"] = new JsonArray(TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.String"),
-            new JsonObject { ["t"] = "array", ["elem"] = TypeJson.Fqn("System.Byte") }),
-        ["args"] = new JsonArray(
-            new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = index },
-            new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.String"), ["value"] = BirCarrier.JsonV1 },
-            new JsonObject { ["bytes"] = Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, body)) }),
-    };
-
     internal static bool IsCarrier(JsonObject node) => TypeJson.OwnerName(node["attr"]) == AttributeName;
 
     internal static JsonNode Decode(JsonObject attribute) => BirCarrier.DecodeBody(

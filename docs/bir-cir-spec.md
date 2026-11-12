@@ -16,7 +16,12 @@ typed and preserve absence, explicit null, and values while individual passes
 establish their phase-owned facts; it is not a replacement for the kotc output
 profile or the final CIR invariants. `sourceProperties` and `loweringProperties`
 on model annotations specify intermediate facts omitted from final physical or
-source-only profiles. No arbitrary extension-data field bag is part of the IR.
+source-only profiles. `loweringSourceFields` marks deliberate source-vocabulary
+retention where a final declaration field changes meaning. Generation rejects
+unaccounted declaration type conflicts, untyped consumed node fields, and new
+unaccounted alias-profile omissions. The current file/annotation input profiles
+deliberately exclude physical assembly attributes and resolved attribute identity;
+those are produced after the input frontier. No arbitrary field bag is part of the IR.
 
 Input construction, suspend declaration inventory, and source-default freezing
 own this graph. Remaining DOM-based passes currently receive a direct one-way
