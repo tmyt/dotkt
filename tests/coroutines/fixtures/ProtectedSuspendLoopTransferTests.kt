@@ -83,6 +83,22 @@ suspend fun protectedSuspendOverrideTrace(): String {
 
 class ProtectedSuspendLoopTransferTests {
     @TestAttribute
+    fun deferredSuspendReturnDoesNotEscapeIntoEnclosingFinally() {
+        var deferred: suspend () -> Int = { 0 }
+        suspend fun outer(): Int {
+            try {
+                deferred = { Task.Delay(1).await(); 7 }
+                Task.Delay(1).await()
+                return 1
+            } finally {
+                return 9
+            }
+        }
+        assertEquals(9, blockOn { outer() })
+        assertEquals(7, blockOn { deferred() })
+    }
+
+    @TestAttribute
     fun innerCleanupCancelsCompletionBeforeOuterSuspendingCleanup() {
         suspend fun replaceReturn(): Int {
             try {

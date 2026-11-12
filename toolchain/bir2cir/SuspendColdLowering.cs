@@ -1958,10 +1958,10 @@ static partial class SuspendColdLowering
             var tryNode = new JsonObject
             {
                 ["k"] = "try",
-                ["type"] = o["type"]?.DeepClone(),
                 ["body"] = body2,
                 ["catches"] = catches,
             };
+            if (o.TryGetPropertyValue("type", out var tryType)) tryNode["type"] = tryType?.DeepClone();
             if (o["finally"] is JsonArray fin)
             {
                 var finOut = new List<JsonNode>();

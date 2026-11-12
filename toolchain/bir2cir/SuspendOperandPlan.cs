@@ -490,6 +490,21 @@ static partial class SuspendColdLowering
             if (st is JsonObject sv && Str(sv["k"]) == "var" && Str(sv["name"]) is string vn) materialised.Add(vn);
         var lowered = CallEvalLowering.Substitute(reader, repl);
 
+        // The ordered descriptor also covers statement-position field stores.
+        // Materializing their operands must keep the store in a statement list,
+        // not make it the expression-valued result of a valueBlock. Expression
+        // stores have their own setFieldExpr kind and retain the value path below.
+        if (Str(o["k"]) == "setField")
+        {
+            stmts.Add(terminalAt >= 0
+                ? new JsonObject { ["k"] = "exprStmt", ["expr"] = lowered }
+                : lowered);
+            o.Clear();
+            o["k"] = "block";
+            o["body"] = stmts;
+            return;
+        }
+
         // The block's value is what the node's value was: the truncated node's declared result type, or the
         // lowered node's own. Rewritten IN PLACE, because the node's parent holds this object.
         var type0 = typer.Of(o, locals);

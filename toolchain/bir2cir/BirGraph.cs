@@ -14,6 +14,10 @@ internal abstract record BirGraphValue
 {
     public virtual TypeNode? ResultTypeStamp => null;
     public abstract void VisitChildren(Action<BirGraphValue> visit);
+    public abstract void VisitChildSlots(Action<BirGraphSlot> visit);
+    // Construction operands execute in the caller; a nested declaration's body
+    // does not. The maintained frame profile generates the latter overrides.
+    public virtual void VisitCurrentFrameSlots(Action<BirGraphSlot> visit) => VisitChildSlots(visit);
     public void Visit(Action<BirGraphValue> visit)
     {
         Action<BirGraphValue> walk = null!;
@@ -22,7 +26,7 @@ internal abstract record BirGraphValue
     }
     public abstract BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite);
     public abstract void WriteJson(Utf8JsonWriter writer);
-    // Temporary one-way frontier to the not-yet-migrated owning passes. It builds
+    // Temporary frontier to the not-yet-migrated owning passes. It builds
     // nodes directly: no serialized child, parse, or generic extension-data bag.
     public abstract JsonObject ToDom();
     public BirGraphValue Rewrite(Func<BirGraphValue, BirGraphValue> rewrite)
@@ -32,6 +36,14 @@ internal abstract record BirGraphValue
 internal abstract record BirGraphNode : BirGraphValue
 {
     public abstract string Tag { get; }
+}
+
+// A short-lived address into an owning typed graph, not a string-key property
+// view. Generated setters retain each declared child role. Replacements change
+// the owning occurrence; use Rewrite when taking an independent graph snapshot.
+internal readonly record struct BirGraphSlot(Func<BirGraphValue> Read, Action<BirGraphValue> Replace)
+{
+    public BirGraphValue Value => Read();
 }
 
 internal interface IBirExpression : IBirAttributeValue;
