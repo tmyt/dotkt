@@ -11,6 +11,7 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Collections.Immutable;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 using DotKt.Toolchain;
 
 internal delegate bool ValueTypeOracle(TypeNode.Fqn type);
@@ -2515,13 +2516,29 @@ sealed partial class ReferenceMetadataIndex
         ordinalField = null;
         return false;
     }
-    public JsonArray OwnerTypeParamDeclarations(string ownerFqn)
+    string OwnerTypeParamDeclarationText(string ownerFqn)
     {
         if (ownerFqn == null) return null;
-        var value = _ownerTypeParamDeclarations.GetValueOrDefault(ownerFqn)
+        return _ownerTypeParamDeclarations.GetValueOrDefault(ownerFqn)
             ?? _ownerTypeParamDeclarations.GetValueOrDefault(StripGenericArity(ownerFqn))
             ?? _ownerTypeParamDeclarations.GetValueOrDefault(StripGenericArity(DottedFqn(ownerFqn)));
-        return value == null ? null : JsonNode.Parse(value) as JsonArray;
+    }
+
+    public JsonArray OwnerTypeParamDeclarations(string ownerFqn) => OwnerTypeParamDeclarationText(ownerFqn) is { } text
+        ? JsonNode.Parse(text) as JsonArray : null;
+
+    readonly Dictionary<string, IReadOnlyList<BirTypeParameter>> sourceOwnerParameters = new(StringComparer.Ordinal);
+    internal IReadOnlyList<BirTypeParameter> SourceOwnerTypeParameters(string ownerFqn)
+    {
+        if (OwnerTypeParamDeclarationText(ownerFqn) is not { } text) return null;
+        if (sourceOwnerParameters.TryGetValue(text, out var cached)) return cached;
+        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(text), new JsonReaderOptions { MaxDepth = BirJson.MaxDepth });
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray) throw new FormatException();
+        var values = new List<BirTypeParameter>();
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+            values.Add(BirGraphJson.ReadBirTypeParameter(ref reader));
+        if (reader.TokenType != JsonTokenType.EndArray || reader.Read()) throw new FormatException();
+        return sourceOwnerParameters[text] = values.AsReadOnly();
     }
 
     // Proof obligations come from the shipped declaration, not the Kotlin reference surface. In particular,

@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // A Kotlin capture is not its upper bound's CLR generic construction. Preserve that source fact before
 // representation lowering, then forward the already-selected declaration in the captured runtime frame.
@@ -19,53 +21,129 @@ static class CapturedGenericInvocation
     static readonly Dictionary<string, NullableRepresentationFrame> _methodWitnessFrames = new(StringComparer.Ordinal);
     static bool _flattenMissingOwners;
 
-    public static void PreserveSourceFacts(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
+    public static BirFileDeclaration[] PreserveSourceFacts(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         _next = 0;
         _parameterWitnesses.Clear();
         _methodWitnessFrames.Clear();
-        var locals = SupertypeGraph.Collect(roots);
-        foreach (var root in roots) Visit(root);
-
-        void Visit(JsonNode node)
+        var locals = new Dictionary<string, IReadOnlyList<BirTypeParameter>>(StringComparer.Ordinal);
+        foreach (var owner in roots.SelectMany(root => root.Types.OrEmpty()))
         {
-            if (node is JsonArray array) { foreach (var child in array) Visit(child); return; }
-            if (node is not JsonObject obj) return;
-            if (Str(obj["k"]) is "callStatic" or "callInstance"
-                && obj["typeArgs"] is JsonArray { Count: > 0 }
-                && obj["suspendCall"]?.GetValue<bool>() != true
-                && obj["args"] is JsonArray args
-                && (obj["sig"] ?? obj["shapeTypes"]) is JsonArray signature)
-            {
-                var captures = new JsonArray();
-                for (var i = 0; i < args.Count && i < signature.Count; i++)
-                {
-                    if (TypeJson.Read(signature[i]) is not TypeNode.Fqn { Args: { } formalArgs } formal
-                        || NodeType.Of(args[i]) is not TypeNode.Fqn { Args: { } actualArgs } actual
-                        || formal.Name != actual.Name || formalArgs.Length != actualArgs.Length) continue;
-                    var parameters = locals.TryGetValue(formal.Name, out var local)
-                        ? local.Node["typeParams"] as JsonArray : refs.OwnerTypeParamDeclarations(formal.Name);
-                    var frame = local == null && refs.NullableTypeFrames.TryGetValue(formal.Name, out var referencedFrame)
-                        ? referencedFrame : null;
-                    if (parameters == null || (frame?.SourceArity ?? parameters.Count) != formalArgs.Length) continue;
-                    var slots = formalArgs.Select((type, slot) => type is TypeNode.Tv { Scope: "method" }
-                            && actualArgs[slot] is TypeNode.Star
-                            && Str((parameters[frame?.SourcePosition(slot) ?? slot] as JsonObject)?["variance"])
-                                is not ("in" or "out") ? ((TypeNode.Tv)type).I : -1)
-                        .Where(slot => slot >= 0).Distinct().ToArray();
-                    if (slots.Length == 0) continue;
-                    captures.Add(new JsonObject { ["argument"] = i,
-                        ["slots"] = new JsonArray(slots.Select(slot => (JsonNode)JsonValue.Create(slot)).ToArray()) });
-                }
-                if (captures.Count > 0)
-                {
-                    obj[ArgumentKey] = captures;
-                    if (obj[DeclarationIdentityBinding.Key] is JsonNode identity) obj[TargetKey] = identity.DeepClone();
-                    if (NodeType.Stamp(obj) is TypeNode result) obj[ResultKey] = TypeJson.Write(result);
-                }
-            }
-            foreach (var child in obj.ToList()) Visit(child.Value);
+            var (name, parameters) = owner switch {
+                BirClassDefinition value => (value.Name, value.TypeParams),
+                BirInterfaceDefinition value => (value.Name, value.TypeParams),
+                BirEnumDefinition value => (value.Name, value.TypeParams),
+                _ => throw new InvalidOperationException("Unaccounted captured-source owner: " + owner.GetType().Name),
+            };
+            if (name.HasValue) locals[name.Value] = parameters.OrDefault();
         }
+        return roots.Select(root => (BirFileDeclaration)root.Rewrite(Visit)).ToArray();
+
+        CapturedGenericArgument[] Capture(IBirExpression[] arguments, TypeNode[] signature)
+        {
+            var captures = new List<CapturedGenericArgument>();
+            for (var index = 0; index < arguments.Length && index < signature.Length; index++)
+            {
+                if (signature[index] is not TypeNode.Fqn { Args: { } formalArgs } formal
+                    || BirNodeType.Of(arguments[index] as BirGraphNode) is not TypeNode.Fqn { Args: { } actualArgs } actual
+                    || formal.Name != actual.Name || formalArgs.Length != actualArgs.Length) continue;
+                var local = locals.TryGetValue(formal.Name, out var localParameters);
+                var parameters = local ? localParameters : refs.SourceOwnerTypeParameters(formal.Name);
+                var frame = !local && refs.NullableTypeFrames.TryGetValue(formal.Name, out var referencedFrame)
+                    ? referencedFrame : null;
+                if (parameters == null || (frame?.SourceArity ?? parameters.Count) != formalArgs.Length) continue;
+                var slots = formalArgs.Select((type, slot) => type is TypeNode.Tv { Scope: "method" }
+                        && actualArgs[slot] is TypeNode.Star
+                        && parameters[frame?.SourcePosition(slot) ?? slot].Variance.OrDefault() is not ("in" or "out")
+                        ? ((TypeNode.Tv)type).I : -1)
+                    .Where(slot => slot >= 0).Distinct().ToArray();
+                if (slots.Length != 0) captures.Add(new CapturedGenericArgument { Argument = index, Slots = slots });
+            }
+            return captures.ToArray();
+        }
+
+        BirGraphValue Visit(BirGraphValue node)
+        {
+            switch (node)
+            {
+                case BirCallStatic call when call.TypeArgs.OrDefault() is { Length: > 0 }
+                    && !call.SuspendCall.OrDefault() && call.Args.HasValue
+                    && (call.Sig.OrDefault() ?? call.ShapeTypes.OrDefault()) is { } signature:
+                    var staticCaptures = Capture(call.Args.Value, signature);
+                    return staticCaptures.Length == 0 ? call : call with {
+                        _capturedGenericArgument = staticCaptures,
+                        _capturedGenericTarget = call.DeclarationId.HasValue ? call.DeclarationId : call._capturedGenericTarget,
+                        _capturedGenericResult = call.ResultTypeStamp is { } staticResult ? staticResult : call._capturedGenericResult,
+                    };
+                case BirCallInstance call when call.TypeArgs.OrDefault() is { Length: > 0 }
+                    && !call.SuspendCall.OrDefault() && call.Args.HasValue
+                    && (call.Sig.OrDefault() ?? call.ShapeTypes.OrDefault()) is { } signature:
+                    var instanceCaptures = Capture(call.Args.Value, signature);
+                    return instanceCaptures.Length == 0 ? call : call with {
+                        _capturedGenericArgument = instanceCaptures,
+                        _capturedGenericTarget = call.DeclarationId.HasValue ? call.DeclarationId : call._capturedGenericTarget,
+                        _capturedGenericResult = call.ResultTypeStamp is { } instanceResult ? instanceResult : call._capturedGenericResult,
+                    };
+                default: return node;
+            }
+        }
+    }
+
+    internal static void SelfTestSourceFacts()
+    {
+        var references = ReferenceMetadataIndex.SourceCaptureTestIndex();
+        var integer = new TypeNode.Fqn("kotlin.Int");
+        var methodArguments = Enumerable.Repeat<TypeNode>(integer, 8).ToArray();
+        TypeNode.Fqn Formal(string name, params int[] indices) => new(name,
+            indices.Select(index => (TypeNode)new TypeNode.Tv("method", index)).ToArray());
+        BirConstant Actual(string name, int arity) => new() { Type = new TypeNode.Fqn(name,
+            Enumerable.Range(0, arity).Select(_ => (TypeNode)new TypeNode.Star()).ToArray()) };
+        var call = new BirCallStatic { Method = "selected", TypeArgs = methodArguments,
+            Sig = new TypeNode[] { Formal("Local", 1, 2, 1), Formal("external.Frame", 4, 7) },
+            Args = new IBirExpression[] { Actual("Local", 3), Actual("external.Frame", 2) },
+            DeclarationId = "selected-declaration", Sty = new TypeNode.Tv("method", 3), Ret = integer };
+        var parameters = new[] { new BirTypeParameter { Name = "T" },
+            new BirTypeParameter { Name = "O", Variance = "out" }, new BirTypeParameter { Name = "U" } };
+        var instance = new BirCallInstance { Method = "selected", TypeArgs = methodArguments,
+            ShapeTypes = call.Sig, Args = call.Args, DeclarationId = call.DeclarationId, Sty = call.Sty };
+        var input = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Name = "Local", Kind = "class", TypeParams = parameters },
+        }, Methods = new[] { new BirFunctionDeclaration { Name = "caller", Body = new IBirStatement[] {
+            new BirExpressionStatement { Expr = call }, new BirExpressionStatement { Expr = instance },
+            new BirExpressionStatement { Expr = call with { SuspendCall = true } },
+            new BirExpressionStatement { Expr = call with { Sig = System.Array.Empty<TypeNode>(), ShapeTypes = call.Sig } },
+        } } } };
+        var result = PreserveSourceFacts(new[] { input }, references).Single();
+        var body = result.Methods.Value[0].Body.Value;
+        var captured = (BirCallStatic)((BirExpressionStatement)body[0]).Expr.Value;
+        var instanceResult = (BirCallInstance)((BirExpressionStatement)body[1]).Expr.Value;
+        var arguments = captured._capturedGenericArgument.Value;
+        if (arguments.Length != 2 || arguments[0].Argument.Value != 0 || arguments[1].Argument.Value != 1
+            || !arguments[0].Slots.Value.SequenceEqual(new[] { 1 }) || !arguments[1].Slots.Value.SequenceEqual(new[] { 7 })
+            || captured._capturedGenericTarget.Value != "selected-declaration"
+            || captured._capturedGenericResult.Value != new TypeNode.Tv("method", 3)
+            || !instanceResult._capturedGenericArgument.Value[1].Slots.Value.SequenceEqual(new[] { 7 })
+            || instanceResult._capturedGenericTarget.Value != "selected-declaration"
+            || ((BirCallStatic)((BirExpressionStatement)body[2]).Expr.Value)._capturedGenericArgument.IsPresent
+            || ((BirCallStatic)((BirExpressionStatement)body[3]).Expr.Value)._capturedGenericArgument.IsPresent
+            || call._capturedGenericArgument.IsPresent || instance._capturedGenericArgument.IsPresent)
+            throw new InvalidOperationException("Typed capture facts changed argument slots, variance, declaration or generic frames");
+        var localShadow = input with { Types = new IBirTypeDeclaration[] {
+            input.Types.Value[0],
+            new BirInterfaceDefinition { Name = "external.Frame", Kind = "interface", TypeParams = new[] {
+                new BirTypeParameter { Name = "O", Variance = "out" }, new BirTypeParameter { Name = "T", Variance = "out" },
+            } },
+        } };
+        var shadow = (BirCallStatic)((BirExpressionStatement)PreserveSourceFacts(new[] { localShadow }, references)
+            .Single().Methods.Value[0].Body.Value[0]).Expr.Value;
+        if (shadow._capturedGenericArgument.Value.Length != 1 || shadow._capturedGenericArgument.Value[0].Argument.Value != 0)
+            throw new InvalidOperationException("Reference variance replaced an authoritative local declaration");
+        var reader = new System.Text.Json.Utf8JsonReader(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(captured.ToDom()));
+        if (!reader.Read()) throw new InvalidOperationException();
+        var roundtrip = BirGraphJson.ReadBirCallStatic(ref reader);
+        if (reader.Read() || !JsonNode.DeepEquals(captured.ToDom(), roundtrip.ToDom()))
+            throw new InvalidOperationException("Typed capture metadata lost presence or slot vectors at the codec boundary");
+        Console.WriteLine("[captured source facts] self-test OK (local/reference variance, permuted frame, exact IDs/stamps, shape precedence, source isolation)");
     }
 
     // Snapshot allocated constructor arguments before ordinary value slots become existential carriers.

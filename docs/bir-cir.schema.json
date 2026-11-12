@@ -46,6 +46,11 @@
         "inherited": { "type": "boolean" }
       }, "required": ["name", "kind", "association"], "additionalProperties": false
     },
+    "capturedGenericArgument": {
+      "type": "object", "x-dotkt-model": { "name": "CapturedGenericArgument", "domain": "birLoweringValues" },
+      "properties": { "argument": { "type": "integer" }, "slots": { "type": "array", "items": { "type": "integer" } } },
+      "required": ["argument", "slots"], "additionalProperties": false
+    },
 
     "birSourceTypeAlias": { "$ref": "kotlin-typealias.schema.json", "x-dotkt-model": { "name": "SourceTypeAlias" } },
     "birTypeDeclaration": {
@@ -239,7 +244,10 @@
       "required": ["owner", "member", "kind", "arity"], "additionalProperties": false
     },
     "birCallStatic": {
-      "type": "object", "x-dotkt-model": { "name": "BirCallStatic", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirCallStatic", "domain": "birCore", "role": "expression", "loweringProperties": {
+        "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } },
+        "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" }
+      } },
       "properties": {
         "companionCall": { "type": "boolean" },
         "k": { "const": "callStatic" }, "owner": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
@@ -257,7 +265,11 @@
       "required": ["k", "method", "args"], "additionalProperties": false
     },
     "birCallInstance": {
-      "type": "object", "x-dotkt-model": { "name": "BirCallInstance", "domain": "birCore", "role": "expression", "loweringProperties": { "_erasedConstraintDispatch": { "type": "boolean" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirCallInstance", "domain": "birCore", "role": "expression", "loweringProperties": {
+        "_erasedConstraintDispatch": { "type": "boolean" },
+        "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } },
+        "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" }
+      } },
       "properties": {
         "companionCall": { "type": "boolean" },
         "k": { "const": "callInstance" }, "ownerType": { "$ref": "#/$defs/type" }, "virtual": { "type": "boolean" },
