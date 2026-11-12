@@ -385,6 +385,7 @@
     },
     "birFunctionDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "loweringProperties": {
+        "declarationSourceName": { "type": "string" },
         "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceBoundsSnapshotText" },
         "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
       } },

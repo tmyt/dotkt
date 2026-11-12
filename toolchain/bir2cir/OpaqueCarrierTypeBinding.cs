@@ -15,7 +15,7 @@ static class OpaqueCarrierTypeBinding
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, JsonObject> semanticSignatures = null)
+        SourceDeclarationSignatures semanticSignatures = null)
     {
         var declarations = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         var fileClasses = new HashSet<string>(StringComparer.Ordinal);
@@ -78,9 +78,11 @@ static class OpaqueCarrierTypeBinding
             if (nestedPhysical.Count > 0) RewriteCarrierSlots(root, nestedPhysical);
             BindSourceRecords(root, nestedPhysical, refs);
         }
-        if (semanticSignatures != null)
-            foreach (var signature in semanticSignatures.Values)
-                BindSourcePayload(signature, nestedPhysical, refs);
+        semanticSignatures?.RewriteClassifiers(type => {
+            if (nestedPhysical.TryGetValue(type.Name, out var local)) return type with { Name = local };
+            return refs.TryExactPhysicalTypeName(type.Name, type.Args?.Length ?? 0, out var exact)
+                && exact != null && exact.Contains('+') ? type with { Name = exact } : type;
+        });
     }
 
     // Source carriers are captured before ownership lowering so they retain source nullability, stars, Kotlin inner
