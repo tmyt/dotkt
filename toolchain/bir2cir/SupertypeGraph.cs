@@ -27,8 +27,9 @@ using DotKt.Cir;
 // the descriptor resolvable; a pass that only needs the NAME simply ignores the arguments.
 static class SupertypeGraph
 {
-    // A type DECLARED IN THIS COMPILATION, indexed by its BIR name. `Node`/`Methods` are the live JSON, so a pass
-    // that rewrites a declaration rewrites the tree.
+    // A type DECLARED IN THIS COMPILATION, indexed by its BIR name. Collect supplies
+    // live Node/Methods for mutable DOM consumers; CollectSource supplies only the
+    // typed declaration shape used by source reachability, with no DOM pointers.
     public sealed class Def
     {
         public string Name;

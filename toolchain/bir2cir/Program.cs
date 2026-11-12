@@ -133,13 +133,13 @@ sealed class Pipeline
         Directory.CreateDirectory(_options.OutDir);
 
         var refs = ReferenceMetadataIndex.Build(_options.CompileReferences);
-        var module = LoadBirFiles(_options.Inputs, _options.RefBuild, refs);
-        var birFiles = module.Files;
         // Fail-loud: a ref.dll scan swallows load/type failures into Diagnostics (so ONE malformed type never aborts the
         // whole scan). Surface them here — a silent ref-scan miss otherwise surfaces as a distant EntryPointNotFound/NRE
         // with no "ref scan failed" signal. An empty Diagnostics stays silent (the happy path prints nothing).
         var diagnostics = refs.Diagnostics.ToList();
         foreach (var d in diagnostics) Console.Error.WriteLine($"bir2cir: WARNING ref-scan diagnostic: {d}");
+        var module = LoadBirFiles(_options.Inputs, _options.RefBuild, refs);
+        var birFiles = module.Files;
         var cirFiles = TransformFiles(module, refs);
         if (_options.ReflectionRestricted
             && (ForeignStarProjectionBinding.UsedRuntimeFallback || StarProjectionLowering.UsedRuntimeFallback))

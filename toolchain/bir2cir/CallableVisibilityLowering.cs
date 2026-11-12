@@ -48,7 +48,9 @@ static class CallableVisibilityLowering
             ArgTypes = new TypeNode[] { text, new TypeNode.Array(new TypeNode.Fqn("System.Byte")) },
             Args = new IBirAttributeValue[] {
                 new BirConstant { Type = text, Value = new BirLiteral.TextLiteral(BirCarrier.JsonV1) },
-                new BirOpaqueBytes { Bytes = JsonSerializer.SerializeToUtf8Bytes(new { visibility = source }) },
+                new BirOpaqueBytes { Bytes = BirCarrier.EncodeBody(BirCarrier.JsonV1, source, (writer, value) => {
+                    writer.WriteStartObject(); writer.WriteString("visibility", value); writer.WriteEndObject();
+                }) },
             },
         }).ToArray();
     }
@@ -72,12 +74,6 @@ static class CallableVisibilityLowering
         return roots.Select(root => root with {
             Methods = Map(root.Methods, method), Fields = Map(root.Fields, field), Types = Map(root.Types, Owner),
         }).ToArray();
-    }
-
-    public static void Preserve(JsonObject declaration)
-    {
-        var visibility = declaration["vis"]?.GetValue<string>() ?? "public";
-        if (visibility != "public") RoundtripMetadata.PreserveCallableVisibility(declaration, visibility);
     }
 
     static void Promote(JsonObject declaration)
