@@ -20,7 +20,6 @@ static class ComparableRepresentationLowering
 
     internal static void Apply(IReadOnlyList<JsonNode> roots, bool referenceBuild)
     {
-        ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(roots);
         RichEnumComparisonSynthesis.Apply(roots);
         var helperNames = roots.OfType<JsonObject>().Where(root => Text(root["fileClass"]) != null)
             .GroupBy(root => Text(root["fileClass"])).ToDictionary(group => group.Key, group => {

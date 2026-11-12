@@ -81,6 +81,7 @@ static class Bir2Cir
                 ClrMemberResolution.NullableSlotComparisonSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
                 ConstrainedTypeParameterReceiverBinding.AritySnapshotSelfTest();
+                SourceOwnerClosureTests.Run();
                 StdlibSubstituteTypeParams.SelfTest();
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
                 ComparableRepresentationLowering.SelfTest();
@@ -186,7 +187,7 @@ sealed class Pipeline
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
-            var source = captured[index];
+            var source = SourceOwnerClosure.Apply(captured[index]);
             captured[index] = null;
             // The remaining passes still own DOM graphs. Construct that frontier
             // directly; never serialize/reparse the typed input between passes.

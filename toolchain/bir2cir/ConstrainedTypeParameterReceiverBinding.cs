@@ -38,6 +38,8 @@ using DotKt.Bir;
 // accessor from a public field. Resolved virtual accessors take the same constrained-call path; non-virtual class
 // accessors receive the explicit constraint conversion their exact MemberRef requires. Fields remain field operations.
 //
+// SourceOwnerClosure performs the initial source-input closing on owning BIR;
+// the APIs here also close owners in the later expanded/erased physical frames.
 // A locally declared NON-generic owner (`Tagged`) is closed already and needs neither phase. When no route
 // yields a closed owner the node is left untouched — this pass never guesses an instantiation, the same
 // conservatism InheritedMemberOwnerBinding applies to overload resolution.

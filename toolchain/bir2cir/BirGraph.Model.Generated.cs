@@ -17,6 +17,14 @@ internal sealed record BirFileDeclaration : BirGraphValue
     public OptionalField<IBirTypeDeclaration[]> Types { get; init; }
     public OptionalField<BirRefTypeDeclaration[]> RefTypes { get; init; }
     public OptionalField<SourceTypeAlias[]> TypeAliases { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Fields.HasValue) { foreach (var item0 in Fields.Value) { visit((BirGraphValue)item0); } }
+        if (Methods.HasValue) { foreach (var item0 in Methods.Value) { visit((BirGraphValue)item0); } }
+        if (Properties.HasValue) { foreach (var item0 in Properties.Value) { visit((BirGraphValue)item0); } }
+        if (Types.HasValue) { foreach (var item0 in Types.Value) { visit((BirGraphValue)item0); } }
+        if (RefTypes.HasValue) { foreach (var item0 in RefTypes.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Fields = Fields.HasValue ? OptionalField<BirFieldDeclaration[]>.Of(Fields.Value.Select(item0 => (BirFieldDeclaration)rewrite((BirGraphValue)item0)).ToArray()) : Fields,
@@ -59,6 +67,11 @@ internal sealed record BirBinaryOperation : BirGraphNode, IBirExpression, IBirAt
     public OptionalField<string> Op { get; init; }
     public OptionalField<IBirExpression> Lhs { get; init; }
     public OptionalField<IBirExpression> Rhs { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Lhs.HasValue) { visit((BirGraphValue)Lhs.Value); }
+        if (Rhs.HasValue) { visit((BirGraphValue)Rhs.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Lhs = Lhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Lhs.Value)) : Lhs,
@@ -91,6 +104,11 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     public OptionalField<bool> ReifiedTypeOperand { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
     public OptionalField<TypeNode> Sty { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -124,6 +142,11 @@ internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<IBirExpression> E { get; init; }
     public OptionalField<bool> NullMatches { get; init; }
     public OptionalField<IBirExpression> NullWitness { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+        if (NullWitness.HasValue) { visit((BirGraphValue)NullWitness.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -157,6 +180,10 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<bool> ReifiedTypeOperand { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -187,6 +214,11 @@ internal sealed record BirSafeValueCast : BirGraphNode, IBirExpression, IBirAttr
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
     public OptionalField<BirMemberReference> CtorRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+        if (CtorRef.HasValue) { visit((BirGraphValue)CtorRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -216,6 +248,10 @@ internal sealed record BirConcat : BirGraphNode, IBirExpression, IBirAttributeVa
 {
     public override string Tag => "concat";
     public OptionalField<IBirExpression[]> Parts { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Parts.HasValue) { foreach (var item0 in Parts.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Parts = Parts.HasValue ? OptionalField<IBirExpression[]>.Of(Parts.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Parts,
@@ -240,6 +276,10 @@ internal sealed record BirRuntimeClass : BirGraphNode, IBirExpression, IBirAttri
 {
     public override string Tag => "getType";
     public OptionalField<IBirExpression> E { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -266,6 +306,11 @@ internal sealed record BirNullableWrap : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
     public OptionalField<BirMemberReference> CtorRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+        if (CtorRef.HasValue) { visit((BirGraphValue)CtorRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -297,6 +342,11 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<IBirExpression> Array { get; init; }
     public OptionalField<IBirExpression> Index { get; init; }
     public OptionalField<TypeNode> Elem { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Array.HasValue) { visit((BirGraphValue)Array.Value); }
+        if (Index.HasValue) { visit((BirGraphValue)Index.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Array.Value)) : Array,
@@ -329,6 +379,12 @@ internal sealed record BirArraySet : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<IBirExpression> Index { get; init; }
     public OptionalField<IBirExpression> Value { get; init; }
     public OptionalField<TypeNode> Elem { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Array.HasValue) { visit((BirGraphValue)Array.Value); }
+        if (Index.HasValue) { visit((BirGraphValue)Index.Value); }
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Array.Value)) : Array,
@@ -361,6 +417,10 @@ internal sealed record BirArrayLength : BirGraphNode, IBirExpression, IBirAttrib
 {
     public override string Tag => "arrayLen";
     public OptionalField<IBirExpression> Array { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Array.HasValue) { visit((BirGraphValue)Array.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Array.Value)) : Array,
@@ -386,6 +446,10 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     public override string Tag => "newArray";
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<IBirExpression[]> Elems { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Elems.HasValue) { foreach (var item0 in Elems.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Elems = Elems.HasValue ? OptionalField<IBirExpression[]>.Of(Elems.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Elems,
@@ -413,6 +477,10 @@ internal sealed record BirNewArraySized : BirGraphNode, IBirExpression, IBirAttr
     public override string Tag => "newArraySized";
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<IBirExpression> Size { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Size.HasValue) { visit((BirGraphValue)Size.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Size = Size.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Size.Value)) : Size,
@@ -443,6 +511,12 @@ internal sealed record BirNewArrayInit : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<IBirExpression> Init { get; init; }
     public OptionalField<BirMemberReference> InvokeRef { get; init; }
     public OptionalField<TypeNode> FuncType { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Size.HasValue) { visit((BirGraphValue)Size.Value); }
+        if (Init.HasValue) { visit((BirGraphValue)Init.Value); }
+        if (InvokeRef.HasValue) { visit((BirGraphValue)InvokeRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Size = Size.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Size.Value)) : Size,
@@ -477,6 +551,10 @@ internal sealed record BirSpreadPart : BirGraphValue
 {
     public OptionalField<bool> Spread { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -506,6 +584,14 @@ internal sealed record BirSpreadConcat : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<BirMemberReference> AddRef { get; init; }
     public OptionalField<BirMemberReference> AddRangeRef { get; init; }
     public OptionalField<BirMemberReference> ToArrayRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Parts.HasValue) { foreach (var item0 in Parts.Value) { visit((BirGraphValue)item0); } }
+        if (CtorRef.HasValue) { visit((BirGraphValue)CtorRef.Value); }
+        if (AddRef.HasValue) { visit((BirGraphValue)AddRef.Value); }
+        if (AddRangeRef.HasValue) { visit((BirGraphValue)AddRangeRef.Value); }
+        if (ToArrayRef.HasValue) { visit((BirGraphValue)ToArrayRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Parts = Parts.HasValue ? OptionalField<BirSpreadPart[]>.Of(Parts.Value.Select(item0 => (BirSpreadPart)rewrite((BirGraphValue)item0)).ToArray()) : Parts,
@@ -544,6 +630,9 @@ internal sealed record BirDefaultValue : BirGraphNode, IBirExpression, IBirAttri
 {
     public override string Tag => "default";
     public OptionalField<TypeNode> Type { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -568,6 +657,10 @@ internal sealed record BirEnumName : BirGraphNode, IBirExpression, IBirAttribute
     public override string Tag => "enumName";
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -596,6 +689,11 @@ internal sealed record BirEnumOrdinal : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<IBirExpression> E { get; init; }
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<BirPhysicalEnumValue[]> Values { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+        if (Values.HasValue) { foreach (var item0 in Values.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -626,6 +724,10 @@ internal sealed record BirEnumParse : BirGraphNode, IBirExpression, IBirAttribut
     public override string Tag => "enumParse";
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<IBirExpression> Arg { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Arg.HasValue) { visit((BirGraphValue)Arg.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Arg = Arg.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Arg.Value)) : Arg,
@@ -655,6 +757,11 @@ internal sealed record BirObjectMethod : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<IBirExpression> Recv { get; init; }
     public OptionalField<IBirExpression> Arg { get; init; }
     public OptionalField<bool> AnySlot { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Arg.HasValue) { visit((BirGraphValue)Arg.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -691,6 +798,10 @@ internal sealed record BirCallBinding : BirGraphValue
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<string> Role { get; init; }
     public OptionalField<IBirExpression> Expr { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Expr.HasValue) { visit((BirGraphValue)Expr.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Expr.Value)) : Expr,
@@ -728,6 +839,11 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<string> SemanticOwner { get; init; }
     public OptionalField<BirCallBinding[]> Bindings { get; init; }
     public OptionalField<IBirExpression> Expr { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Bindings.HasValue) { foreach (var item0 in Bindings.Value) { visit((BirGraphValue)item0); } }
+        if (Expr.HasValue) { visit((BirGraphValue)Expr.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Bindings = Bindings.HasValue ? OptionalField<BirCallBinding[]>.Of(Bindings.Value.Select(item0 => (BirCallBinding)rewrite((BirGraphValue)item0)).ToArray()) : Bindings,
@@ -758,6 +874,9 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
 internal sealed record BirDefaultArgument : BirGraphNode, IBirExpression, IBirAttributeValue
 {
     public override string Tag => "defaultArg";
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -782,6 +901,9 @@ internal sealed record BirOverride : BirGraphValue
     public OptionalField<string> Kind { get; init; }
     public OptionalField<int> Arity { get; init; }
     public OptionalField<string> DeclarationId { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -843,6 +965,14 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<BirMemberReference> MemberRef { get; init; }
     public OptionalField<TypeNode> DynRet { get; init; }
     public OptionalField<bool> Virtual { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault() ?? DynRet.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberMethodTypeParams.HasValue) { foreach (var item0 in MemberMethodTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Args,
@@ -964,12 +1094,23 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<BirTypeParameter[]> MemberMethodTypeParams { get; init; }
     public OptionalField<TypeNode[]> MemberSignature { get; init; }
     public OptionalField<TypeNode> MemberReturnType { get; init; }
+    public OptionalField<bool> _erasedConstraintDispatch { get; init; }
     public OptionalField<TypeNode> CalleeRet { get; init; }
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     public OptionalField<BirMemberReference> MemberRef { get; init; }
     public OptionalField<bool> ClrOwnerResolved { get; init; }
     public OptionalField<bool> Static { get; init; }
     public OptionalField<bool> _physicalDeclarationSignature { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault() ?? DynRet.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { visit((BirGraphValue)item0); } }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberMethodTypeParams.HasValue) { foreach (var item0 in MemberMethodTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -1014,6 +1155,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         WriteOptional(writer, "memberMethodTypeParams", MemberMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "_erasedConstraintDispatch", _erasedConstraintDispatch, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "calleeRet", CalleeRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -1057,6 +1199,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (MemberMethodTypeParams.IsPresent) result["memberMethodTypeParams"] = MemberMethodTypeParams.IsNull ? null : new JsonArray(MemberMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
+        if (_erasedConstraintDispatch.IsPresent) result["_erasedConstraintDispatch"] = _erasedConstraintDispatch.IsNull ? null : JsonValue.Create(_erasedConstraintDispatch.Value);
         if (CalleeRet.IsPresent) result["calleeRet"] = CalleeRet.IsNull ? null : TypeNode.Write(CalleeRet.Value);
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
@@ -1077,6 +1220,11 @@ internal sealed record BirCallLocal : BirGraphNode, IBirExpression, IBirAttribut
     public OptionalField<TypeNode> Ret { get; init; }
     public OptionalField<TypeNode> Sty { get; init; }
     public OptionalField<bool> SuspendCall { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Args,
@@ -1134,6 +1282,13 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<TypeNode[]> Sig { get; init; }
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -1212,6 +1367,12 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<TypeNode> MemberType { get; init; }
     public OptionalField<BirMemberReference> FieldRef { get; init; }
     public OptionalField<bool> Volatile { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (FieldRef.HasValue) { visit((BirGraphValue)FieldRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
@@ -1276,6 +1437,14 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
     public OptionalField<TypeNode[]> Sig { get; init; }
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     public OptionalField<TypeNode> Ret { get; init; }
+    public override TypeNode? ResultTypeStamp => Ret.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -1350,6 +1519,12 @@ internal sealed record BirStaticFieldSet : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<TypeNode> MemberType { get; init; }
     public OptionalField<BirMemberReference> FieldRef { get; init; }
     public OptionalField<bool> Volatile { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (FieldRef.HasValue) { visit((BirGraphValue)FieldRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Value.Value)) : Value,
@@ -1406,6 +1581,15 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<IBirExpression> Exception { get; init; }
     public OptionalField<BirMemberReference> FieldRef { get; init; }
     public OptionalField<bool> Volatile { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+        if (Exception.HasValue) { visit((BirGraphValue)Exception.Value); }
+        if (FieldRef.HasValue) { visit((BirGraphValue)FieldRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -1460,6 +1644,10 @@ internal sealed record BirLateinitIsInitialized : BirGraphNode, IBirExpression, 
     public OptionalField<string> LateinitDeclarationId { get; init; }
     public OptionalField<TypeNode> OwnerType { get; init; }
     public OptionalField<IBirExpression> Recv { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -1512,6 +1700,9 @@ internal sealed record BirModifiers : BirGraphValue
     public OptionalField<bool> Enum { get; init; }
     public OptionalField<bool> Const { get; init; }
     public OptionalField<bool> Lateinit { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -1583,6 +1774,10 @@ internal sealed record BirDefaultBody : BirGraphValue
 {
     public OptionalField<int> Index { get; init; }
     public OptionalField<IBirExpression> Body { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Body.HasValue) { visit((BirGraphValue)Body.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Body = Body.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Body.Value)) : Body,
@@ -1609,6 +1804,10 @@ internal sealed record BirAttributeNamedArgument : BirGraphValue
     public OptionalField<string> Name { get; init; }
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<IBirAttributeValue> Value { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Value = Value.HasValue ? OptionalField<IBirAttributeValue>.Of((IBirAttributeValue)rewrite((BirGraphValue)Value.Value)) : Value,
@@ -1640,6 +1839,11 @@ internal sealed record BirAttribute : BirGraphValue
     public OptionalField<TypeNode[]> ArgTypes { get; init; }
     public OptionalField<IBirAttributeValue[]> Args { get; init; }
     public OptionalField<BirAttributeNamedArgument[]> NamedArgs { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (NamedArgs.HasValue) { foreach (var item0 in NamedArgs.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Args = Args.HasValue ? OptionalField<IBirAttributeValue[]>.Of(Args.Value.Select(item0 => (IBirAttributeValue)rewrite((BirGraphValue)item0)).ToArray()) : Args,
@@ -1682,6 +1886,13 @@ internal sealed record BirParameter : BirGraphValue
     public OptionalField<TypeNode[]> GenericParameterSignatureBounds { get; init; }
     public OptionalField<int[]> NullableFlags { get; init; }
     public OptionalField<TypeNode> SuspendFnType { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Mods.HasValue) { visit((BirGraphValue)Mods.Value); }
+        if (Default.HasValue) { visit((BirGraphValue)Default.Value); }
+        if (DefaultBir.HasValue) { visit((BirGraphValue)DefaultBir.Value); }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)rewrite((BirGraphValue)Mods.Value)) : Mods,
@@ -1732,6 +1943,11 @@ internal sealed record BirDefaultCarrier : BirGraphNode, IBirExpression, IBirAtt
     public override string Tag => "defaultCarrier";
     public OptionalField<IBirExpression> Expr { get; init; }
     public OptionalField<BirFunctionDeclaration[]> Lifted { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Expr.HasValue) { visit((BirGraphValue)Expr.Value); }
+        if (Lifted.HasValue) { foreach (var item0 in Lifted.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Expr.Value)) : Expr,
@@ -1760,6 +1976,10 @@ internal sealed record BirLocalFunction : BirGraphNode, IBirStatement
     public override string Tag => "localFun";
     public OptionalField<string> Id { get; init; }
     public OptionalField<BirFunctionDeclaration> Decl { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Decl.HasValue) { visit((BirGraphValue)Decl.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Decl = Decl.HasValue ? OptionalField<BirFunctionDeclaration>.Of((BirFunctionDeclaration)rewrite((BirGraphValue)Decl.Value)) : Decl,
@@ -1790,6 +2010,10 @@ internal sealed record BirInheritedImplementation : BirGraphValue
     public OptionalField<int> Arity { get; init; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; init; }
     public OptionalField<TypeNode[]> Sig { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : TypeParams,
@@ -1823,6 +2047,9 @@ internal sealed record BirDeclarationPosition : BirGraphValue
     public OptionalField<string> F { get; init; }
     public OptionalField<int> L { get; init; }
     public OptionalField<int> C { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -1898,6 +2125,22 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<bool> RetNothing { get; init; }
     public OptionalField<int[]> RetNullableFlags { get; init; }
     public OptionalField<TypeNode> RetSuspendFnType { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { visit((BirGraphValue)item0); } }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (Mods.HasValue) { visit((BirGraphValue)Mods.Value); }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { visit((BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { visit((BirGraphValue)item0); } }
+        if (Pos.HasValue) { visit((BirGraphValue)Pos.Value); }
+        if (InheritedImplementation.HasValue) { visit((BirGraphValue)InheritedImplementation.Value); }
+        if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { visit((BirGraphValue)item0); } }
+        if (ClrOverrideRef.HasValue) { visit((BirGraphValue)ClrOverrideRef.Value); }
+        if (ClrInterfaceImpls.HasValue) { foreach (var item0 in ClrInterfaceImpls.Value) { visit((BirGraphValue)item0); } }
+        if (ClrBaseImpls.HasValue) { foreach (var item0 in ClrBaseImpls.Value) { visit((BirGraphValue)item0); } }
+        if (Pinvoke.HasValue) { visit((BirGraphValue)Pinvoke.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)rewrite((BirGraphValue)item0)).ToArray()) : Params,
@@ -2048,6 +2291,18 @@ internal sealed record BirConstructor : BirGraphValue
     public OptionalField<int> LocalCtorIndex { get; init; }
     public OptionalField<IBirStatement[]> PreStmts { get; init; }
     public OptionalField<BirDeclarationPosition> Pos { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { visit((BirGraphValue)item0); } }
+        if (BaseArgs.HasValue) { foreach (var item0 in BaseArgs.Value) { visit((BirGraphValue)item0); } }
+        if (ThisArgs.HasValue) { foreach (var item0 in ThisArgs.Value) { visit((BirGraphValue)item0); } }
+        if (DelegationBindings.HasValue) { foreach (var item0 in DelegationBindings.Value) { visit((BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { visit((BirGraphValue)item0); } }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+        if (BaseCtorRef.HasValue) { visit((BirGraphValue)BaseCtorRef.Value); }
+        if (PreStmts.HasValue) { foreach (var item0 in PreStmts.Value) { visit((BirGraphValue)item0); } }
+        if (Pos.HasValue) { visit((BirGraphValue)Pos.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)rewrite((BirGraphValue)item0)).ToArray()) : Params,
@@ -2134,6 +2389,12 @@ internal sealed record BirFieldDeclaration : BirGraphValue
     public OptionalField<int[]> NullableFlags { get; init; }
     public OptionalField<TypeNode> SuspendFnType { get; init; }
     public OptionalField<BirDeclarationPosition> Pos { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Init.HasValue) { visit((BirGraphValue)Init.Value); }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { visit((BirGraphValue)item0); } }
+        if (Pos.HasValue) { visit((BirGraphValue)Pos.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Init = Init.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Init.Value)) : Init,
@@ -2213,6 +2474,10 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
     public OptionalField<string> Name { get; init; }
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : TypeParams,
@@ -2258,6 +2523,13 @@ internal sealed record BirPropertyDeclaration : BirGraphValue
     public OptionalField<string> Vis { get; init; }
     public OptionalField<TypeNode> Recv { get; init; }
     public OptionalField<BirDeclarationPosition> Pos { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { visit((BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { visit((BirGraphValue)item0); } }
+        if (Mods.HasValue) { visit((BirGraphValue)Mods.Value); }
+        if (Pos.HasValue) { visit((BirGraphValue)Pos.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)rewrite((BirGraphValue)item0)).ToArray()) : Overrides,
@@ -2350,6 +2622,23 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
     public OptionalField<BirParameter[]> Params { get; init; }
     public OptionalField<TypeNode> Ret { get; init; }
     public OptionalField<BirAttribute[]> RetAttrs { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Mods.HasValue) { visit((BirGraphValue)Mods.Value); }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (Fields.HasValue) { foreach (var item0 in Fields.Value) { visit((BirGraphValue)item0); } }
+        if (Ctors.HasValue) { foreach (var item0 in Ctors.Value) { visit((BirGraphValue)item0); } }
+        if (Methods.HasValue) { foreach (var item0 in Methods.Value) { visit((BirGraphValue)item0); } }
+        if (Properties.HasValue) { foreach (var item0 in Properties.Value) { visit((BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { visit((BirGraphValue)item0); } }
+        if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (Pos.HasValue) { visit((BirGraphValue)Pos.Value); }
+        if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { visit((BirGraphValue)item0); } }
+        if (ClrEvents.HasValue) { foreach (var item0 in ClrEvents.Value) { visit((BirGraphValue)item0); } }
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { visit((BirGraphValue)item0); } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { visit((BirGraphValue)item0); } }
+        if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)rewrite((BirGraphValue)Mods.Value)) : Mods,
@@ -2442,6 +2731,9 @@ internal sealed record BirEnumEntryDeclaration : BirGraphValue
     public OptionalField<string> Name { get; init; }
     public OptionalField<int> Ordinal { get; init; }
     public OptionalField<string> Value { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -2466,6 +2758,9 @@ internal sealed record BirEnumEntryDeclaration : BirGraphValue
 internal sealed record BirClrEnumDeclaration : BirGraphValue
 {
     public OptionalField<TypeNode> Underlying { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -2514,6 +2809,24 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
     public OptionalField<BirParameter[]> Params { get; init; }
     public OptionalField<TypeNode> Ret { get; init; }
     public OptionalField<BirAttribute[]> RetAttrs { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (ClrEnum.HasValue) { visit((BirGraphValue)ClrEnum.Value); }
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { visit((BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { visit((BirGraphValue)item0); } }
+        if (Pos.HasValue) { visit((BirGraphValue)Pos.Value); }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (Fields.HasValue) { foreach (var item0 in Fields.Value) { visit((BirGraphValue)item0); } }
+        if (Ctors.HasValue) { foreach (var item0 in Ctors.Value) { visit((BirGraphValue)item0); } }
+        if (Methods.HasValue) { foreach (var item0 in Methods.Value) { visit((BirGraphValue)item0); } }
+        if (Properties.HasValue) { foreach (var item0 in Properties.Value) { visit((BirGraphValue)item0); } }
+        if (Mods.HasValue) { visit((BirGraphValue)Mods.Value); }
+        if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { visit((BirGraphValue)item0); } }
+        if (ClrEvents.HasValue) { foreach (var item0 in ClrEvents.Value) { visit((BirGraphValue)item0); } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { visit((BirGraphValue)item0); } }
+        if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         ClrEnum = ClrEnum.HasValue ? OptionalField<BirClrEnumDeclaration>.Of((BirClrEnumDeclaration)rewrite((BirGraphValue)ClrEnum.Value)) : ClrEnum,
@@ -2643,6 +2956,29 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
     public OptionalField<BirParameter[]> Params { get; init; }
     public OptionalField<TypeNode> Ret { get; init; }
     public OptionalField<BirAttribute[]> RetAttrs { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (Fields.HasValue) { foreach (var item0 in Fields.Value) { visit((BirGraphValue)item0); } }
+        if (Ctors.HasValue) { foreach (var item0 in Ctors.Value) { visit((BirGraphValue)item0); } }
+        if (Methods.HasValue) { foreach (var item0 in Methods.Value) { visit((BirGraphValue)item0); } }
+        if (Mods.HasValue) { visit((BirGraphValue)Mods.Value); }
+        if (Properties.HasValue) { foreach (var item0 in Properties.Value) { visit((BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { visit((BirGraphValue)item0); } }
+        if (Pos.HasValue) { visit((BirGraphValue)Pos.Value); }
+        if (KotlinCompanion.HasValue) { visit((BirGraphValue)KotlinCompanion.Value); }
+        if (InheritedDefaultAccessors.HasValue) { foreach (var item0 in InheritedDefaultAccessors.Value) { visit((BirGraphValue)item0); } }
+        if (InheritedDefaultMethods.HasValue) { foreach (var item0 in InheritedDefaultMethods.Value) { visit((BirGraphValue)item0); } }
+        if (InheritedClassMethods.HasValue) { foreach (var item0 in InheritedClassMethods.Value) { visit((BirGraphValue)item0); } }
+        if (ClrEvents.HasValue) { foreach (var item0 in ClrEvents.Value) { visit((BirGraphValue)item0); } }
+        if (ClrEventForwarders.HasValue) { foreach (var item0 in ClrEventForwarders.Value) { visit((BirGraphValue)item0); } }
+        if (RichEnum.HasValue) { visit((BirGraphValue)RichEnum.Value); }
+        if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { visit((BirGraphValue)item0); } }
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { visit((BirGraphValue)item0); } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { visit((BirGraphValue)item0); } }
+        if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : TypeParams,
@@ -2761,6 +3097,9 @@ internal sealed record BirKotlinCompanion : BirGraphValue
     public OptionalField<string> Owner { get; init; }
     public OptionalField<string> Name { get; init; }
     public OptionalField<string> Visibility { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -2786,6 +3125,9 @@ internal sealed record BirRichEnumEntry : BirGraphValue
 {
     public OptionalField<string> Name { get; init; }
     public OptionalField<string> Field { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -2812,6 +3154,10 @@ internal sealed record BirRichEnumDeclaration : BirGraphValue
     public OptionalField<string> Ordinal { get; init; }
     public OptionalField<string> Values { get; init; }
     public OptionalField<string> ValueOf { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Entries = Entries.HasValue ? OptionalField<BirRichEnumEntry[]>.Of(Entries.Value.Select(item0 => (BirRichEnumEntry)rewrite((BirGraphValue)item0)).ToArray()) : Entries,
@@ -2847,6 +3193,11 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
     public OptionalField<BirOverride[]> Overrides { get; init; }
     public OptionalField<BirInheritedImplementation> Implementation { get; init; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { visit((BirGraphValue)item0); } }
+        if (Implementation.HasValue) { visit((BirGraphValue)Implementation.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)rewrite((BirGraphValue)item0)).ToArray()) : Overrides,
@@ -2886,6 +3237,11 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
     public OptionalField<BirOverride[]> Overrides { get; init; }
     public OptionalField<BirInheritedImplementation> Implementation { get; init; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { visit((BirGraphValue)item0); } }
+        if (Implementation.HasValue) { visit((BirGraphValue)Implementation.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)rewrite((BirGraphValue)item0)).ToArray()) : Overrides,
@@ -2928,6 +3284,14 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
     public OptionalField<BirOverride[]> Overrides { get; init; }
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; init; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { visit((BirGraphValue)item0); } }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (Mods.HasValue) { visit((BirGraphValue)Mods.Value); }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { visit((BirGraphValue)item0); } }
+        if (InheritedImplementation.HasValue) { visit((BirGraphValue)InheritedImplementation.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)rewrite((BirGraphValue)item0)).ToArray()) : Params,
@@ -2980,6 +3344,9 @@ internal sealed record BirClrEventBacking : BirGraphValue
     public OptionalField<string> Modality { get; init; }
     public OptionalField<TypeNode> ClassOverrideOwner { get; init; }
     public OptionalField<string> PolicyField { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -3017,6 +3384,10 @@ internal sealed record BirClrEventForwarder : BirGraphValue
     public OptionalField<string> PropertyAssociation { get; init; }
     public OptionalField<TypeNode> OwnerType { get; init; }
     public OptionalField<IBirExpression> Recv { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -3046,6 +3417,9 @@ internal sealed record BirClrEventAccessor : BirGraphNode, IBirStatement
     public override string Tag => "clrEventAccessor";
     public OptionalField<string> Kind { get; init; }
     public OptionalField<string> Event { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -3074,6 +3448,11 @@ internal sealed record BirNewSam : BirGraphNode, IBirExpression, IBirAttributeVa
     public OptionalField<IBirExpression[]> Captures { get; init; }
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
     public OptionalField<BirClassDefinition> SynthClass { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Captures.HasValue) { foreach (var item0 in Captures.Value) { visit((BirGraphValue)item0); } }
+        if (SynthClass.HasValue) { visit((BirGraphValue)SynthClass.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Captures = Captures.HasValue ? OptionalField<IBirExpression[]>.Of(Captures.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Captures,
@@ -3107,6 +3486,10 @@ internal sealed record BirSamConversion : BirGraphNode, IBirExpression, IBirAttr
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<TypeNode> FuncType { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -3136,6 +3519,9 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
     public OptionalField<string> Name { get; init; }
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<bool> Outer { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -3166,6 +3552,13 @@ internal sealed record BirClosureDefinition : BirGraphValue
     public OptionalField<IBirStatement[]> Body { get; init; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; init; }
     public OptionalField<string> SemanticOwner { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Fields.HasValue) { foreach (var item0 in Fields.Value) { visit((BirGraphValue)item0); } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { visit((BirGraphValue)item0); } }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Fields = Fields.HasValue ? OptionalField<BirCaptureDescriptor[]>.Of(Fields.Value.Select(item0 => (BirCaptureDescriptor)rewrite((BirGraphValue)item0)).ToArray()) : Fields,
@@ -3210,6 +3603,12 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<BirClosureDefinition> SynthClass { get; init; }
     public OptionalField<BirMemberReference> DelegateCtorRef { get; init; }
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Captures.HasValue) { foreach (var item0 in Captures.Value) { visit((BirGraphValue)item0); } }
+        if (SynthClass.HasValue) { visit((BirGraphValue)SynthClass.Value); }
+        if (DelegateCtorRef.HasValue) { visit((BirGraphValue)DelegateCtorRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Captures = Captures.HasValue ? OptionalField<IBirExpression[]>.Of(Captures.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Captures,
@@ -3260,6 +3659,11 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<BirMemberReference> MemberRef { get; init; }
     public OptionalField<TypeNode> CalleeRet { get; init; }
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (DelegateCtorRef.HasValue) { visit((BirGraphValue)DelegateCtorRef.Value); }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)DelegateCtorRef.Value)) : DelegateCtorRef,
@@ -3315,6 +3719,14 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
     public OptionalField<TypeNode> FuncType { get; init; }
     public OptionalField<string> ExternalCompanionOwner { get; init; }
     public OptionalField<string> CompanionCaptureOwner { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Captures.HasValue) { foreach (var item0 in Captures.Value) { visit((BirGraphValue)item0); } }
+        if (CapValues.HasValue) { foreach (var item0 in CapValues.Value) { if (item0 is not null) { visit((BirGraphValue)item0); } } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { visit((BirGraphValue)item0); } }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Captures = Captures.HasValue ? OptionalField<BirCaptureDescriptor[]>.Of(Captures.Value.Select(item0 => (BirCaptureDescriptor)rewrite((BirGraphValue)item0)).ToArray()) : Captures,
@@ -3371,6 +3783,12 @@ internal sealed record BirEventGet : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<string> MemberVisibility { get; init; }
     public OptionalField<BirOverride[]> Overrides { get; init; }
     public OptionalField<TypeNode> CompanionReceiver { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -3417,6 +3835,11 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<bool> Super { get; init; }
     public OptionalField<IBirExpression> Recv { get; init; }
     public OptionalField<IBirExpression[]> Args { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -3454,6 +3877,9 @@ internal sealed record BirLambdaParameter : BirGraphValue
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<TypeNode> NominalParameterSignatureIdentity { get; init; }
     public OptionalField<TypeNode[]> GenericParameterSignatureBounds { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -3485,6 +3911,11 @@ internal sealed record BirInlineCapture : BirGraphValue
     public OptionalField<IBirExpression> Value { get; init; }
     public OptionalField<TypeNode> SharedCellType { get; init; }
     public OptionalField<BirTypeParameter[]> SharedCellTypeParams { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+        if (SharedCellTypeParams.HasValue) { foreach (var item0 in SharedCellTypeParams.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Value.Value)) : Value,
@@ -3521,6 +3952,13 @@ internal sealed record BirInlineLambda : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<BirInlineCapture[]> Captures { get; init; }
     public OptionalField<IBirStatement[]> Body { get; init; }
     public OptionalField<IBirExpression> Result { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { visit((BirGraphValue)item0); } }
+        if (Captures.HasValue) { foreach (var item0 in Captures.Value) { visit((BirGraphValue)item0); } }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+        if (Result.HasValue) { visit((BirGraphValue)Result.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Params = Params.HasValue ? OptionalField<BirLambdaParameter[]>.Of(Params.Value.Select(item0 => (BirLambdaParameter)rewrite((BirGraphValue)item0)).ToArray()) : Params,
@@ -3555,6 +3993,10 @@ internal sealed record BirStackAllocation : BirGraphNode, IBirExpression, IBirAt
     public override string Tag => "stackAlloc";
     public OptionalField<IBirExpression> Count { get; init; }
     public OptionalField<TypeNode> Elem { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Count.HasValue) { visit((BirGraphValue)Count.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Count = Count.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Count.Value)) : Count,
@@ -3584,6 +4026,12 @@ internal sealed record BirStackGet : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<IBirExpression> Len { get; init; }
     public OptionalField<IBirExpression> Index { get; init; }
     public OptionalField<TypeNode> Elem { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Ptr.HasValue) { visit((BirGraphValue)Ptr.Value); }
+        if (Len.HasValue) { visit((BirGraphValue)Len.Value); }
+        if (Index.HasValue) { visit((BirGraphValue)Index.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Ptr.Value)) : Ptr,
@@ -3620,6 +4068,13 @@ internal sealed record BirStackSet : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<IBirExpression> Index { get; init; }
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<IBirExpression> Value { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Ptr.HasValue) { visit((BirGraphValue)Ptr.Value); }
+        if (Len.HasValue) { visit((BirGraphValue)Len.Value); }
+        if (Index.HasValue) { visit((BirGraphValue)Index.Value); }
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Ptr.Value)) : Ptr,
@@ -3657,6 +4112,11 @@ internal sealed record BirStackAsSpan : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<IBirExpression> Ptr { get; init; }
     public OptionalField<IBirExpression> Len { get; init; }
     public OptionalField<TypeNode> Elem { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Ptr.HasValue) { visit((BirGraphValue)Ptr.Value); }
+        if (Len.HasValue) { visit((BirGraphValue)Len.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Ptr.Value)) : Ptr,
@@ -3687,6 +4147,11 @@ internal sealed record BirInlineReceivers : BirGraphValue
     public OptionalField<IBirExpression> Extension { get; init; }
     public OptionalField<IBirExpression> Dispatch { get; init; }
     public OptionalField<TypeNode[]> DispatchTypeArgs { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Extension.HasValue) { visit((BirGraphValue)Extension.Value); }
+        if (Dispatch.HasValue) { visit((BirGraphValue)Dispatch.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Extension = Extension.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Extension.Value)) : Extension,
@@ -3725,6 +4190,11 @@ internal sealed record BirCallInline : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<string> SemanticOwner { get; init; }
     public OptionalField<TypeNode> CompanionReceiver { get; init; }
     public OptionalField<string> DeclarationId { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recvs.HasValue) { visit((BirGraphValue)Recvs.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { if (item0 is not null) { visit((BirGraphValue)item0); } } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recvs = Recvs.HasValue ? OptionalField<BirInlineReceivers>.Of((BirInlineReceivers)rewrite((BirGraphValue)Recvs.Value)) : Recvs,
@@ -3794,6 +4264,15 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     public OptionalField<bool> ClrOwnerResolved { get; init; }
     public OptionalField<BirMemberReference> InvokeRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberMethodTypeParams.HasValue) { foreach (var item0 in MemberMethodTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (DelegateCtorRef.HasValue) { visit((BirGraphValue)DelegateCtorRef.Value); }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+        if (InvokeRef.HasValue) { visit((BirGraphValue)InvokeRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -3867,6 +4346,10 @@ internal sealed record BirByRefOf : BirGraphNode, IBirExpression, IBirAttributeV
 {
     public override string Tag => "byrefOf";
     public OptionalField<IBirExpression> Inner { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Inner.HasValue) { visit((BirGraphValue)Inner.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Inner = Inner.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Inner.Value)) : Inner,
@@ -3894,6 +4377,10 @@ internal sealed record BirByRefLoad : BirGraphNode, IBirExpression, IBirAttribut
     public OptionalField<string> Local { get; init; }
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<bool> Volatile { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Ptr.HasValue) { visit((BirGraphValue)Ptr.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Ptr.Value)) : Ptr,
@@ -3928,6 +4415,11 @@ internal sealed record BirByRefStore : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<IBirExpression> Value { get; init; }
     public OptionalField<bool> Volatile { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Ptr.HasValue) { visit((BirGraphValue)Ptr.Value); }
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Ptr.Value)) : Ptr,
@@ -3961,6 +4453,10 @@ internal sealed record BirReturnExpression : BirGraphNode, IBirExpression, IBirA
 {
     public override string Tag => "returnExpr";
     public OptionalField<IBirExpression> Value { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Value.Value)) : Value,
@@ -3985,6 +4481,9 @@ internal sealed record BirUnsupportedExpression : BirGraphNode, IBirExpression, 
 {
     public override string Tag => "unsupportedExpr";
     public OptionalField<string> Of { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -4007,6 +4506,9 @@ internal sealed record BirUnsupportedExpression : BirGraphNode, IBirExpression, 
 internal sealed record BirPropertyFunction : BirGraphValue
 {
     public OptionalField<TypeNode> Iface { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -4029,6 +4531,9 @@ internal sealed record BirConstant : BirGraphNode, IBirExpression, IBirAttribute
     public override string Tag => "const";
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<BirLiteral> Value { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -4055,6 +4560,11 @@ internal sealed record BirObjectEquals : BirGraphNode, IBirExpression, IBirAttri
     public override string Tag => "objEq";
     public OptionalField<IBirExpression> Lhs { get; init; }
     public OptionalField<IBirExpression> Rhs { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Lhs.HasValue) { visit((BirGraphValue)Lhs.Value); }
+        if (Rhs.HasValue) { visit((BirGraphValue)Rhs.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Lhs = Lhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Lhs.Value)) : Lhs,
@@ -4082,6 +4592,10 @@ internal sealed record BirExpressionStatement : BirGraphNode, IBirStatement
 {
     public override string Tag => "exprStmt";
     public OptionalField<IBirExpression> Expr { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Expr.HasValue) { visit((BirGraphValue)Expr.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Expr.Value)) : Expr,
@@ -4106,6 +4620,10 @@ internal sealed record BirThrowExpression : BirGraphNode, IBirExpression, IBirAt
 {
     public override string Tag => "throwExpr";
     public OptionalField<IBirExpression> Value { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Value.Value)) : Value,
@@ -4131,6 +4649,10 @@ internal sealed record BirUnaryOperation : BirGraphNode, IBirExpression, IBirAtt
     public override string Tag => "unaryOp";
     public OptionalField<string> Op { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -4161,6 +4683,12 @@ internal sealed record BirConditional : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<IBirExpression> Cond { get; init; }
     public OptionalField<IBirExpression> Then { get; init; }
     public OptionalField<IBirExpression> Else { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Cond.HasValue) { visit((BirGraphValue)Cond.Value); }
+        if (Then.HasValue) { visit((BirGraphValue)Then.Value); }
+        if (Else.HasValue) { visit((BirGraphValue)Else.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Cond.Value)) : Cond,
@@ -4197,6 +4725,11 @@ internal sealed record BirNullableHasValue : BirGraphNode, IBirExpression, IBirA
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
     public OptionalField<BirMemberReference> HasValueRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+        if (HasValueRef.HasValue) { visit((BirGraphValue)HasValueRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -4228,6 +4761,11 @@ internal sealed record BirNullableValue : BirGraphNode, IBirExpression, IBirAttr
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
     public OptionalField<BirMemberReference> ValueRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+        if (ValueRef.HasValue) { visit((BirGraphValue)ValueRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -4261,6 +4799,9 @@ internal sealed record BirEnumValue : BirGraphNode, IBirExpression, IBirAttribut
     public OptionalField<int> Ordinal { get; init; }
     public OptionalField<string> Underlying { get; init; }
     public OptionalField<string> PhysicalValue { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -4293,6 +4834,10 @@ internal sealed record BirEnumValues : BirGraphNode, IBirExpression, IBirAttribu
     public override string Tag => "enumValues";
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<BirPhysicalEnumValue[]> Values { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Values.HasValue) { foreach (var item0 in Values.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Values = Values.HasValue ? OptionalField<BirPhysicalEnumValue[]>.Of(Values.Value.Select(item0 => (BirPhysicalEnumValue)rewrite((BirGraphValue)item0)).ToArray()) : Values,
@@ -4321,6 +4866,9 @@ internal sealed record BirCompanionValue : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<TypeNode> OwnerType { get; init; }
     public OptionalField<TypeNode> CompanionType { get; init; }
     public OptionalField<string> Name { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -4348,6 +4896,9 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
 {
     public override string Tag => "classRef";
     public OptionalField<TypeNode> Type { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -4372,6 +4923,10 @@ internal sealed record BirNullableNull : BirGraphNode, IBirExpression, IBirAttri
     public override string Tag => "nullableNull";
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<BirMemberReference> CtorRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (CtorRef.HasValue) { visit((BirGraphValue)CtorRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)CtorRef.Value)) : CtorRef,
@@ -4398,6 +4953,9 @@ internal sealed record BirDefaultParameter : BirGraphNode, IBirExpression, IBirA
 {
     public override string Tag => "defaultArgParam";
     public OptionalField<int> Idx { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -4421,6 +4979,9 @@ internal sealed record BirDefaultReceiver : BirGraphNode, IBirExpression, IBirAt
 {
     public override string Tag => "defaultArgReceiver";
     public OptionalField<string> Kind { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -4445,6 +5006,10 @@ internal sealed record BirBindingReference : BirGraphNode, IBirExpression, IBirA
     public override string Tag => "bindRef";
     public OptionalField<string> Id { get; init; }
     public OptionalField<TypeNode> Sty { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -4472,6 +5037,9 @@ internal sealed record BirLocalFunctionReference : BirGraphNode, IBirExpression,
     public OptionalField<string> Id { get; init; }
     public OptionalField<TypeNode> FuncType { get; init; }
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -4502,6 +5070,11 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<IBirStatement[]> Stmts { get; init; }
     public OptionalField<IBirExpression> Result { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Stmts.HasValue) { foreach (var item0 in Stmts.Value) { visit((BirGraphValue)item0); } }
+        if (Result.HasValue) { visit((BirGraphValue)Result.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Stmts = Stmts.HasValue ? OptionalField<IBirStatement[]>.Of(Stmts.Value.Select(item0 => (IBirStatement)rewrite((BirGraphValue)item0)).ToArray()) : Stmts,
@@ -4545,6 +5118,14 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
     public OptionalField<TypeNode> MemberReturnType { get; init; }
     public OptionalField<int> LocalCtorIndex { get; init; }
     public OptionalField<BirMemberReference> MemberRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (PropertyFunction.HasValue) { visit((BirGraphValue)PropertyFunction.Value); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberMethodTypeParams.HasValue) { foreach (var item0 in MemberMethodTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Args,
@@ -4597,6 +5178,10 @@ internal sealed record BirThrow : BirGraphNode, IBirStatement
 {
     public override string Tag => "throw";
     public OptionalField<IBirExpression> Value { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Value.Value)) : Value,
@@ -4621,6 +5206,10 @@ internal sealed record BirIf : BirGraphNode, IBirStatement
 {
     public override string Tag => "if";
     public OptionalField<BirBranch[]> Branches { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Branches.HasValue) { foreach (var item0 in Branches.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Branches = Branches.HasValue ? OptionalField<BirBranch[]>.Of(Branches.Value.Select(item0 => (BirBranch)rewrite((BirGraphValue)item0)).ToArray()) : Branches,
@@ -4645,6 +5234,10 @@ internal sealed record BirReturn : BirGraphNode, IBirStatement
 {
     public override string Tag => "return";
     public OptionalField<IBirExpression> Value { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Value.Value)) : Value,
@@ -4670,6 +5263,10 @@ internal sealed record BirSetLocal : BirGraphNode, IBirStatement
     public override string Tag => "setLocal";
     public OptionalField<string> Name { get; init; }
     public OptionalField<IBirExpression> Value { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Value.Value)) : Value,
@@ -4714,6 +5311,13 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
     public OptionalField<TypeNode[]> Sig { get; init; }
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     public OptionalField<bool> _callEvalTemporary { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -4777,6 +5381,10 @@ internal sealed record BirBlock : BirGraphNode, IBirStatement
 {
     public override string Tag => "block";
     public OptionalField<IBirStatement[]> Body { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)rewrite((BirGraphValue)item0)).ToArray()) : Body,
@@ -4804,6 +5412,10 @@ internal sealed record BirBranchIf : BirGraphNode, IBirStatement
     public OptionalField<bool> On { get; init; }
     public OptionalField<IBirExpression> Cond { get; init; }
     public OptionalField<bool> Leave { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Cond.HasValue) { visit((BirGraphValue)Cond.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Cond.Value)) : Cond,
@@ -4835,6 +5447,10 @@ internal sealed record BirCatch : BirGraphValue
     public OptionalField<TypeNode> ExcType { get; init; }
     public OptionalField<string> Var { get; init; }
     public OptionalField<IBirStatement[]> Body { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)rewrite((BirGraphValue)item0)).ToArray()) : Body,
@@ -4864,6 +5480,12 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
     public OptionalField<IBirStatement[]> Body { get; init; }
     public OptionalField<BirCatch[]> Catches { get; init; }
     public OptionalField<IBirStatement[]> Finally { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+        if (Catches.HasValue) { foreach (var item0 in Catches.Value) { visit((BirGraphValue)item0); } }
+        if (Finally.HasValue) { foreach (var item0 in Finally.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)rewrite((BirGraphValue)item0)).ToArray()) : Body,
@@ -4901,6 +5523,11 @@ internal sealed record BirForArray : BirGraphNode, IBirStatement
     public OptionalField<IBirStatement[]> Body { get; init; }
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<int> LoopId { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Array.HasValue) { visit((BirGraphValue)Array.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Array.Value)) : Array,
@@ -4942,6 +5569,12 @@ internal sealed record BirForIn : BirGraphNode, IBirStatement
     public OptionalField<string> Var { get; init; }
     public OptionalField<IBirStatement[]> Body { get; init; }
     public OptionalField<BirBlock> Fallback { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Src.HasValue) { visit((BirGraphValue)Src.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+        if (Fallback.HasValue) { visit((BirGraphValue)Fallback.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Src = Src.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Src.Value)) : Src,
@@ -4986,6 +5619,10 @@ internal sealed record BirVariable : BirGraphNode, IBirStatement
     public OptionalField<bool> Outer { get; init; }
     public OptionalField<bool> _callEvalTemporary { get; init; }
     public OptionalField<string> Role { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Init.HasValue) { visit((BirGraphValue)Init.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Init = Init.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Init.Value)) : Init,
@@ -5024,6 +5661,10 @@ internal sealed record BirLocal : BirGraphNode, IBirExpression, IBirAttributeVal
     public OptionalField<string> Name { get; init; }
     public OptionalField<bool> Outer { get; init; }
     public OptionalField<TypeNode> Sty { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -5051,6 +5692,10 @@ internal sealed record BirThis : BirGraphNode, IBirExpression, IBirAttributeValu
 {
     public override string Tag => "this";
     public OptionalField<TypeNode> Sty { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -5074,6 +5719,10 @@ internal sealed record BirSourcePoint : BirGraphNode, IBirStatement
 {
     public override string Tag => "sourcePoint";
     public OptionalField<BirSourceSpan> Span { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Span.HasValue) { visit((BirGraphValue)Span.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Span = Span.HasValue ? OptionalField<BirSourceSpan>.Of((BirSourceSpan)rewrite((BirGraphValue)Span.Value)) : Span,
@@ -5100,6 +5749,9 @@ internal sealed record BirBreak : BirGraphNode, IBirStatement
     public OptionalField<string> Label { get; init; }
     public OptionalField<int> LoopId { get; init; }
     public OptionalField<bool> Leave { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -5129,6 +5781,9 @@ internal sealed record BirContinue : BirGraphNode, IBirStatement
     public OptionalField<string> Label { get; init; }
     public OptionalField<int> LoopId { get; init; }
     public OptionalField<bool> Leave { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -5157,6 +5812,9 @@ internal sealed record BirGoto : BirGraphNode, IBirStatement
     public override string Tag => "goto";
     public OptionalField<int> Id { get; init; }
     public OptionalField<bool> Leave { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -5182,6 +5840,9 @@ internal sealed record BirLabel : BirGraphNode, IBirStatement
 {
     public override string Tag => "label";
     public OptionalField<int> Id { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -5208,6 +5869,9 @@ internal sealed record BirSourceSpan : BirGraphValue
     public OptionalField<int> C { get; init; }
     public OptionalField<int> El { get; init; }
     public OptionalField<int> Ec { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -5239,6 +5903,11 @@ internal sealed record BirWhile : BirGraphNode, IBirStatement
     public OptionalField<IBirExpression> Cond { get; init; }
     public OptionalField<IBirStatement[]> Body { get; init; }
     public OptionalField<int> LoopId { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Cond.HasValue) { visit((BirGraphValue)Cond.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Cond.Value)) : Cond,
@@ -5275,6 +5944,12 @@ internal sealed record BirFor : BirGraphNode, IBirStatement
     public OptionalField<IBirStatement[]> Body { get; init; }
     public OptionalField<int> LoopId { get; init; }
     public OptionalField<string> Label { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (From.HasValue) { visit((BirGraphValue)From.Value); }
+        if (To.HasValue) { visit((BirGraphValue)To.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         From = From.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)From.Value)) : From,
@@ -5322,6 +5997,11 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
     public OptionalField<string> StepM { get; init; }
     public OptionalField<IBirStatement[]> Body { get; init; }
     public OptionalField<int> LoopId { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Range.HasValue) { visit((BirGraphValue)Range.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Range = Range.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Range.Value)) : Range,
@@ -5362,6 +6042,10 @@ internal sealed record BirConvert : BirGraphNode, IBirExpression, IBirAttributeV
     public override string Tag => "conv";
     public OptionalField<TypeNode> To { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -5391,6 +6075,12 @@ internal sealed record BirNewList : BirGraphNode, IBirExpression, IBirAttributeV
     public OptionalField<IBirExpression[]> Elems { get; init; }
     public OptionalField<BirMemberReference> CtorRef { get; init; }
     public OptionalField<BirMemberReference> AddRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Elems.HasValue) { foreach (var item0 in Elems.Value) { visit((BirGraphValue)item0); } }
+        if (CtorRef.HasValue) { visit((BirGraphValue)CtorRef.Value); }
+        if (AddRef.HasValue) { visit((BirGraphValue)AddRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Elems = Elems.HasValue ? OptionalField<IBirExpression[]>.Of(Elems.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Elems,
@@ -5426,6 +6116,11 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
     public OptionalField<IBirExpression[]> Args { get; init; }
     public OptionalField<BirMemberReference> MemberRef { get; init; }
     public OptionalField<TypeNode[]> ArgTypes { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Args,
@@ -5470,6 +6165,13 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
     public OptionalField<string> DeclarationId { get; init; }
     public OptionalField<bool> Virtual { get; init; }
     public OptionalField<TypeNode[]> ArgTypes { get; init; }
+    public override TypeNode? ResultTypeStamp => Ret.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)MemberRef.Value)) : MemberRef,
@@ -5527,6 +6229,12 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
     public OptionalField<IBirExpression[]> Args { get; init; }
     public OptionalField<BirMemberReference> MemberRef { get; init; }
     public OptionalField<TypeNode> Ret { get; init; }
+    public override TypeNode? ResultTypeStamp => Ret.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Args,
@@ -5571,6 +6279,14 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
     public OptionalField<string> Dispatch { get; init; }
     public OptionalField<TypeNode> Ret { get; init; }
     public OptionalField<bool> Super { get; init; }
+    public OptionalField<bool> _erasedConstraintDispatch { get; init; }
+    public override TypeNode? ResultTypeStamp => Ret.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -5591,6 +6307,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         WriteOptional(writer, "dispatch", Dispatch, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "super", Super, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "_erasedConstraintDispatch", _erasedConstraintDispatch, (writer, value) => { writer.WriteBooleanValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -5607,6 +6324,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (Dispatch.IsPresent) result["dispatch"] = Dispatch.IsNull ? null : JsonValue.Create(Dispatch.Value);
         if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
         if (Super.IsPresent) result["super"] = Super.IsNull ? null : JsonValue.Create(Super.Value);
+        if (_erasedConstraintDispatch.IsPresent) result["_erasedConstraintDispatch"] = _erasedConstraintDispatch.IsNull ? null : JsonValue.Create(_erasedConstraintDispatch.Value);
         return result;
     }
 }
@@ -5615,6 +6333,10 @@ internal sealed record BirClrStaticField : BirGraphNode, IBirExpression, IBirAtt
 {
     public override string Tag => "clrStaticField";
     public OptionalField<BirMemberReference> FieldRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (FieldRef.HasValue) { visit((BirGraphValue)FieldRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)FieldRef.Value)) : FieldRef,
@@ -5646,6 +6368,13 @@ internal sealed record BirEventAccessorBody : BirGraphNode, IBirStatement
     public OptionalField<BirMemberReference> CombineRef { get; init; }
     public OptionalField<BirMemberReference> RemoveRef { get; init; }
     public OptionalField<BirMemberReference> CompareExchangeRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (InvokeRef.HasValue) { visit((BirGraphValue)InvokeRef.Value); }
+        if (CombineRef.HasValue) { visit((BirGraphValue)CombineRef.Value); }
+        if (RemoveRef.HasValue) { visit((BirGraphValue)RemoveRef.Value); }
+        if (CompareExchangeRef.HasValue) { visit((BirGraphValue)CompareExchangeRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)InvokeRef.Value)) : InvokeRef,
@@ -5703,6 +6432,12 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<string> DeclarationId { get; init; }
     public OptionalField<string> MemberVisibility { get; init; }
     public OptionalField<bool> ClrOwnerResolved { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Handler.HasValue) { visit((BirGraphValue)Handler.Value); }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -5777,6 +6512,12 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<string> DeclarationId { get; init; }
     public OptionalField<string> MemberVisibility { get; init; }
     public OptionalField<bool> ClrOwnerResolved { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Handler.HasValue) { visit((BirGraphValue)Handler.Value); }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -5850,6 +6591,14 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<TypeNode[]> ArgTypes { get; init; }
     public OptionalField<TypeNode> Sty { get; init; }
     public OptionalField<bool> Super { get; init; }
+    public OptionalField<bool> _erasedConstraintDispatch { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -5876,6 +6625,7 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
         WriteOptional(writer, "argTypes", ArgTypes, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "sty", Sty, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "super", Super, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "_erasedConstraintDispatch", _erasedConstraintDispatch, (writer, value) => { writer.WriteBooleanValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -5898,6 +6648,7 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
         if (ArgTypes.IsPresent) result["argTypes"] = ArgTypes.IsNull ? null : new JsonArray(ArgTypes.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (Sty.IsPresent) result["sty"] = Sty.IsNull ? null : TypeNode.Write(Sty.Value);
         if (Super.IsPresent) result["super"] = Super.IsNull ? null : JsonValue.Create(Super.Value);
+        if (_erasedConstraintDispatch.IsPresent) result["_erasedConstraintDispatch"] = _erasedConstraintDispatch.IsNull ? null : JsonValue.Create(_erasedConstraintDispatch.Value);
         return result;
     }
 }
@@ -5919,6 +6670,13 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<IBirExpression> Recv { get; init; }
     public OptionalField<TypeNode[]> ArgTypes { get; init; }
     public OptionalField<TypeNode> Sty { get; init; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Args,
@@ -5986,6 +6744,13 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<string> Name { get; init; }
     public OptionalField<TypeNode> Ret { get; init; }
     public OptionalField<bool> Super { get; init; }
+    public OptionalField<bool> _erasedConstraintDispatch { get; init; }
+    public override TypeNode? ResultTypeStamp => Ret.OrDefault();
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -6011,6 +6776,7 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "super", Super, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "_erasedConstraintDispatch", _erasedConstraintDispatch, (writer, value) => { writer.WriteBooleanValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -6033,6 +6799,7 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
         if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
         if (Super.IsPresent) result["super"] = Super.IsNull ? null : JsonValue.Create(Super.Value);
+        if (_erasedConstraintDispatch.IsPresent) result["_erasedConstraintDispatch"] = _erasedConstraintDispatch.IsNull ? null : JsonValue.Create(_erasedConstraintDispatch.Value);
         return result;
     }
 }
@@ -6056,6 +6823,13 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<bool> ClrOwnerResolved { get; init; }
     public OptionalField<string> Name { get; init; }
     public OptionalField<bool> Super { get; init; }
+    public OptionalField<bool> _erasedConstraintDispatch { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -6082,6 +6856,7 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         WriteOptional(writer, "clrOwnerResolved", ClrOwnerResolved, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "super", Super, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "_erasedConstraintDispatch", _erasedConstraintDispatch, (writer, value) => { writer.WriteBooleanValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -6104,6 +6879,7 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         if (ClrOwnerResolved.IsPresent) result["clrOwnerResolved"] = ClrOwnerResolved.IsNull ? null : JsonValue.Create(ClrOwnerResolved.Value);
         if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
         if (Super.IsPresent) result["super"] = Super.IsNull ? null : JsonValue.Create(Super.Value);
+        if (_erasedConstraintDispatch.IsPresent) result["_erasedConstraintDispatch"] = _erasedConstraintDispatch.IsNull ? null : JsonValue.Create(_erasedConstraintDispatch.Value);
         return result;
     }
 }
@@ -6115,6 +6891,12 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<IBirExpression> Recv { get; init; }
     public OptionalField<IBirExpression[]> Args { get; init; }
     public OptionalField<BirMemberReference> InvokeRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (InvokeRef.HasValue) { visit((BirGraphValue)InvokeRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -6149,6 +6931,10 @@ internal sealed record BirEnumBits : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<TypeNode> Underlying { get; init; }
     public OptionalField<IBirExpression> E { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (E.HasValue) { visit((BirGraphValue)E.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)E.Value)) : E,
@@ -6186,6 +6972,16 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
     public OptionalField<BirMemberReference> CurrentRef { get; init; }
     public OptionalField<BirMemberReference> CurrentErasedRef { get; init; }
     public OptionalField<BirMemberReference> MoveNextRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Src.HasValue) { visit((BirGraphValue)Src.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+        if (EnumerableGetRef.HasValue) { visit((BirGraphValue)EnumerableGetRef.Value); }
+        if (EnumerableGetErasedRef.HasValue) { visit((BirGraphValue)EnumerableGetErasedRef.Value); }
+        if (CurrentRef.HasValue) { visit((BirGraphValue)CurrentRef.Value); }
+        if (CurrentErasedRef.HasValue) { visit((BirGraphValue)CurrentErasedRef.Value); }
+        if (MoveNextRef.HasValue) { visit((BirGraphValue)MoveNextRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Src = Src.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Src.Value)) : Src,
@@ -6247,6 +7043,12 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
     public OptionalField<TypeNode[]> Sig { get; init; }
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     public OptionalField<bool> ClrOwnerResolved { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
+        if (DelegateCtorRef.HasValue) { visit((BirGraphValue)DelegateCtorRef.Value); }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
@@ -6309,6 +7111,11 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
     public OptionalField<TypeNode> Type { get; init; }
     public OptionalField<TypeNode[]> Sig { get; init; }
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (DelegateCtorRef.HasValue) { visit((BirGraphValue)DelegateCtorRef.Value); }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)DelegateCtorRef.Value)) : DelegateCtorRef,
@@ -6357,6 +7164,11 @@ internal sealed record BirRepeat : BirGraphNode, IBirStatement, IBirExpression, 
     public OptionalField<IBirExpression> Count { get; init; }
     public OptionalField<IBirStatement[]> Body { get; init; }
     public OptionalField<int> LoopId { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Count.HasValue) { visit((BirGraphValue)Count.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Count = Count.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Count.Value)) : Count,
@@ -6399,6 +7211,10 @@ internal sealed record BirPInvoke : BirGraphValue
     public OptionalField<bool> ThrowOnUnmappableChar { get; init; }
     public OptionalField<string[]> PseudoFields { get; init; }
     public OptionalField<BirMemberReference> AttributeCtorRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (AttributeCtorRef.HasValue) { visit((BirGraphValue)AttributeCtorRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         AttributeCtorRef = AttributeCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)AttributeCtorRef.Value)) : AttributeCtorRef,
@@ -6448,6 +7264,10 @@ internal sealed record BirEnumEntry : BirGraphValue
     public OptionalField<string> Underlying { get; init; }
     public OptionalField<string> PhysicalValue { get; init; }
     public OptionalField<BirAttribute[]> Attrs { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)rewrite((BirGraphValue)item0)).ToArray()) : Attrs,
@@ -6483,6 +7303,11 @@ internal sealed record BirMethodImpl : BirGraphValue
     public OptionalField<TypeNode> Ret { get; init; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; init; }
     public OptionalField<BirMemberReference> MemberRef { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : TypeParams,
@@ -6519,6 +7344,10 @@ internal sealed record BirInterfaceSlotSet : BirGraphValue
     public OptionalField<TypeNode> Owner { get; init; }
     public OptionalField<string> Assembly { get; init; }
     public OptionalField<BirMemberReference[]> Slots { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Slots.HasValue) { foreach (var item0 in Slots.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Slots = Slots.HasValue ? OptionalField<BirMemberReference[]>.Of(Slots.Value.Select(item0 => (BirMemberReference)rewrite((BirGraphValue)item0)).ToArray()) : Slots,
@@ -6546,6 +7375,9 @@ internal sealed record BirEvent : BirGraphValue
     public OptionalField<string> K { get; init; }
     public OptionalField<string> Name { get; init; }
     public OptionalField<TypeNode> DelegateType { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -6572,6 +7404,11 @@ internal sealed record BirBranch : BirGraphValue
     public OptionalField<IBirExpression> Cond { get; init; }
     public OptionalField<bool> Else { get; init; }
     public OptionalField<IBirStatement[]> Body { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Cond.HasValue) { visit((BirGraphValue)Cond.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Cond.Value)) : Cond,
@@ -6600,6 +7437,9 @@ internal sealed record BirPhysicalEnumValue : BirGraphValue
     public OptionalField<int> Ordinal { get; init; }
     public OptionalField<string> Underlying { get; init; }
     public OptionalField<string> PhysicalValue { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -6629,6 +7469,9 @@ internal sealed record BirTypeParameter : BirGraphValue
     public OptionalField<TypeNode[]> Constraints { get; init; }
     public OptionalField<TypeNode[]> ErasedInnerConstraints { get; init; }
     public OptionalField<string[]> SpecialConstraints { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -6666,6 +7509,9 @@ internal sealed record BirMemberReference : BirGraphValue
     public OptionalField<string> CallingConvention { get; init; }
     public OptionalField<TypeNode[]> ParameterTypes { get; init; }
     public OptionalField<TypeNode> ReturnType { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -6700,6 +7546,9 @@ internal sealed record BirMemberReference : BirGraphValue
 internal sealed record BirOpaqueBytes : BirGraphValue, IBirAttributeValue
 {
     public OptionalField<byte[]> Bytes { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
