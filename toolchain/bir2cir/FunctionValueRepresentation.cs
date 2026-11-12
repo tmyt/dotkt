@@ -181,7 +181,7 @@ static class FunctionValueRepresentation
             new TypeNode[] { new TypeNode.Tv("type", 0) }, new TypeNode.Fqn("Receiver"),
             Ctx: new TypeNode[] { new TypeNode.Fqn("Context") });
         var native = new TypeNode.Fqn(FunctionPointerVocabulary.Pointer, new TypeNode[] { function });
-        foreach (var (type, containsFunction) in new (TypeNode, bool)[] {
+        var samples = new (TypeNode Type, bool ContainsFunction)[] {
             (function, true), (native, false), (new TypeNode.Fqn("Box", new TypeNode[] { function }), true),
             (integer, false), (new TypeNode.Tv("type", 0), false), (new TypeNode.Star(), false),
             (new TypeNode.Projection("in", function), true), (new TypeNode.Nullable(function), true),
@@ -191,9 +191,16 @@ static class FunctionValueRepresentation
             (new TypeNode.Mod(true, function, integer), true),
             (new TypeNode.Fn(true, integer, Array.Empty<TypeNode>()), false),
             (new TypeNode.Fn(true, function, Array.Empty<TypeNode>()), true),
+            (new TypeNode.Fn(true, integer, Array.Empty<TypeNode>(), Recv: function), true),
+            (new TypeNode.Fn(true, integer, Array.Empty<TypeNode>(), Ctx: new TypeNode[] { function }), true),
             (new TypeNode.Fn(false, integer, Array.Empty<TypeNode>(), Clr: "System.Func"), false),
             (new TypeNode.Fn(false, function, Array.Empty<TypeNode>(), Clr: "System.Func"), true),
-        })
+        };
+        var families = typeof(TypeNode).GetNestedTypes(System.Reflection.BindingFlags.Public)
+            .Where(type => type.IsSubclassOf(typeof(TypeNode))).Select(type => type.Name).ToHashSet(StringComparer.Ordinal);
+        if (!families.SetEquals(samples.Select(sample => sample.Type.GetType().Name)))
+            throw new InvalidOperationException("Audit ordinary function recognition for the current type families");
+        foreach (var (type, containsFunction) in samples)
             if (ContainsOrdinaryFunction(type) != containsFunction || ContainsOrdinaryFunction(TypeJson.Write(type)) != containsFunction)
                 throw new InvalidOperationException("Typed function recognition changed " + type.GetType().Name);
 
@@ -217,7 +224,7 @@ static class FunctionValueRepresentation
                 },
                 new BirInterfaceDefinition { Name = "ContractOwner", Kind = "interface", Interfaces = new[] { edge },
                     Methods = new[] { method }, Fields = new[] { field }, Properties = new[] { property } },
-                new BirEnumDefinition { Name = "EnumOwner", Kind = "enum", Methods = new[] { method } },
+                new BirEnumDefinition { Name = "EnumOwner", Kind = "enum", Methods = new[] { method }, Interfaces = new[] { edge } },
             },
         };
         root = ComparableRepresentationLowering.Apply(new[] { root }, referenceBuild: false)[0];
@@ -233,6 +240,8 @@ static class FunctionValueRepresentation
             || owner.Methods.Value[0].RetKotlinType.Value != function || owner.Fields.Value[0].KotlinType.Value != function
             || owner.Properties.Value[0].KotlinType.Value != function
             || ((BirInterfaceDefinition)rewritten.Types.Value[1]).Methods.Value[0].RetKotlinType.Value != function
+            || ((BirInterfaceDefinition)rewritten.Types.Value[1]).KotlinSupertypesPre.Value.Interfaces.Single() != edge
+            || ((BirEnumDefinition)rewritten.Types.Value[2]).KotlinSupertypesPre.Value.Interfaces.Single() != edge
             || ((BirEnumDefinition)rewritten.Types.Value[2]).Methods.Value[0].RetKotlinType.Value != function)
             throw new InvalidOperationException("Function source facts lost slots, ownership or native signature boundaries");
         var expectedOwner = root.Types.Value[0] as BirClassDefinition;

@@ -19,6 +19,7 @@ sealed class SourceTypeFacts
     internal TypeNode Base { get; }
     internal IReadOnlyList<TypeNode> Interfaces { get; }
     internal IReadOnlyDictionary<int, TypeNode[]> Bounds { get; }
+    internal bool IsBoundsOnly => order.Length == 1 && order[0] == Part.Bounds;
 
     internal SourceTypeFacts(IReadOnlyDictionary<int, TypeNode[]> bounds)
         : this(null, null, bounds, new[] { Part.Bounds }) { }
@@ -170,6 +171,13 @@ sealed class SourceTypeFacts
         if (reader.Read() || ToDom(roundtrip).GetValue<string>() != ToDom(merged).GetValue<string>()
             || roundtrip.Bounds[3].Single() != new TypeNode.Nullable(new TypeNode.Tv("type", 2)))
             throw new InvalidOperationException("Source type facts changed frames, presence or Unicode at the frontier");
+        var methodBounds = new SourceBoundsSnapshot(snapshot.Bounds).Merge(merged.Bounds);
+        var methodReader = new Utf8JsonReader(Encoding.UTF8.GetBytes(SourceBoundsSnapshot.ToDom(methodBounds).ToJsonString(BirJson.Writer)));
+        if (!methodReader.Read()) throw new InvalidOperationException();
+        var methodRoundtrip = SourceBoundsSnapshot.Read(ref methodReader);
+        if (methodReader.Read() || methodRoundtrip.Bounds[0][0] != snapshot.Bounds[0][0]
+            || SourceBoundsSnapshot.ToDom(methodRoundtrip).GetValue<string>() != SourceBoundsSnapshot.ToDom(methodBounds).GetValue<string>())
+            throw new InvalidOperationException("Method bounds lost their bounds-only contract or earliest source frame");
         Console.WriteLine("[source type facts] self-test OK (typed edges/bounds, first-writer wins, input isolation, exact leaf codec)");
     }
 }

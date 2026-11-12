@@ -102,7 +102,7 @@ sealed class ValueRepresentationSourcePolicy
                     new BirTypeParameter { Name = "W" },
                     new BirTypeParameter { Name = "N", Constraints = new TypeNode[] { new TypeNode.Array(union) } },
                 },
-                MethodTypeParameterBoundsPre = new SourceTypeFacts(new Dictionary<int, TypeNode[]> {
+                MethodTypeParameterBoundsPre = new SourceBoundsSnapshot(new Dictionary<int, TypeNode[]> {
                     [0] = new[] { new TypeNode.Fqn("kotlin.Comparable"), union, sibling },
                 }),
             } },

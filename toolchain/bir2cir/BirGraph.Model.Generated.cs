@@ -2114,7 +2114,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<TypeNode[]> _syntheticTypeArgs { get; init; }
     public OptionalField<TypeNode> RetKotlinType { get; init; }
     public OptionalField<string> DeclarationSourceName { get; init; }
-    public OptionalField<SourceTypeFacts> MethodTypeParameterBoundsPre { get; init; }
+    public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; init; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
     public OptionalField<BirAttribute[]> RetAttrs { get; init; }
     public OptionalField<bool> ClrFinal { get; init; }
@@ -2204,7 +2204,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "_syntheticTypeArgs", _syntheticTypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "retKotlinType", RetKotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "declarationSourceName", DeclarationSourceName, (writer, value) => { writer.WriteStringValue(value); });
-        WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
+        WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "retAttrs", RetAttrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "clrFinal", ClrFinal, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -2264,7 +2264,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (_syntheticTypeArgs.IsPresent) result["_syntheticTypeArgs"] = _syntheticTypeArgs.IsNull ? null : new JsonArray(_syntheticTypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (RetKotlinType.IsPresent) result["retKotlinType"] = RetKotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetKotlinType.Value));
         if (DeclarationSourceName.IsPresent) result["declarationSourceName"] = DeclarationSourceName.IsNull ? null : JsonValue.Create(DeclarationSourceName.Value);
-        if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceTypeFacts.ToDom(MethodTypeParameterBoundsPre.Value);
+        if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (RetAttrs.IsPresent) result["retAttrs"] = RetAttrs.IsNull ? null : new JsonArray(RetAttrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (ClrFinal.IsPresent) result["clrFinal"] = ClrFinal.IsNull ? null : JsonValue.Create(ClrFinal.Value);
@@ -2492,7 +2492,7 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
     public OptionalField<string> Name { get; init; }
     public OptionalField<TypeNode> Elem { get; init; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; init; }
-    public OptionalField<SourceTypeFacts> MethodTypeParameterBoundsPre { get; init; }
+    public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; init; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
@@ -2507,7 +2507,7 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
         WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "elem", Elem, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "typeParams", TypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
-        WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
+        WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -2516,7 +2516,7 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
         if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
         if (Elem.IsPresent) result["elem"] = Elem.IsNull ? null : TypeNode.Write(Elem.Value);
         if (TypeParams.IsPresent) result["typeParams"] = TypeParams.IsNull ? null : new JsonArray(TypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
-        if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceTypeFacts.ToDom(MethodTypeParameterBoundsPre.Value);
+        if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         return result;
     }
 }
@@ -3316,7 +3316,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
     public OptionalField<BirModifiers> Mods { get; init; }
     public OptionalField<BirOverride[]> Overrides { get; init; }
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; init; }
-    public OptionalField<SourceTypeFacts> MethodTypeParameterBoundsPre { get; init; }
+    public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; init; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -3347,7 +3347,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         WriteOptional(writer, "mods", Mods, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "overrides", Overrides, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "inheritedImplementation", InheritedImplementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
-        WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
+        WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
@@ -3364,7 +3364,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         if (Mods.IsPresent) result["mods"] = Mods.IsNull ? null : ((BirGraphValue)Mods.Value).ToDom();
         if (Overrides.IsPresent) result["overrides"] = Overrides.IsNull ? null : new JsonArray(Overrides.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (InheritedImplementation.IsPresent) result["inheritedImplementation"] = InheritedImplementation.IsNull ? null : ((BirGraphValue)InheritedImplementation.Value).ToDom();
-        if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceTypeFacts.ToDom(MethodTypeParameterBoundsPre.Value);
+        if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         return result;
     }
@@ -3588,7 +3588,7 @@ internal sealed record BirClosureDefinition : BirGraphValue
     public OptionalField<IBirStatement[]> Body { get; init; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; init; }
     public OptionalField<string> SemanticOwner { get; init; }
-    public OptionalField<SourceTypeFacts> MethodTypeParameterBoundsPre { get; init; }
+    public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; init; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Fields.HasValue) { foreach (var item0 in Fields.Value) { visit((BirGraphValue)item0); } }
@@ -3613,7 +3613,7 @@ internal sealed record BirClosureDefinition : BirGraphValue
         WriteOptional(writer, "body", Body, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "typeParams", TypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "semanticOwner", SemanticOwner, (writer, value) => { writer.WriteStringValue(value); });
-        WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
+        WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -3626,7 +3626,7 @@ internal sealed record BirClosureDefinition : BirGraphValue
         if (Body.IsPresent) result["body"] = Body.IsNull ? null : new JsonArray(Body.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (TypeParams.IsPresent) result["typeParams"] = TypeParams.IsNull ? null : new JsonArray(TypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (SemanticOwner.IsPresent) result["semanticOwner"] = SemanticOwner.IsNull ? null : JsonValue.Create(SemanticOwner.Value);
-        if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceTypeFacts.ToDom(MethodTypeParameterBoundsPre.Value);
+        if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         return result;
     }
 }
@@ -7342,7 +7342,7 @@ internal sealed record BirMethodImpl : BirGraphValue
     public OptionalField<TypeNode> Ret { get; init; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; init; }
     public OptionalField<BirMemberReference> MemberRef { get; init; }
-    public OptionalField<SourceTypeFacts> MethodTypeParameterBoundsPre { get; init; }
+    public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; init; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
@@ -7363,7 +7363,7 @@ internal sealed record BirMethodImpl : BirGraphValue
         WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "typeParams", TypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
-        WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
+        WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -7376,7 +7376,7 @@ internal sealed record BirMethodImpl : BirGraphValue
         if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
         if (TypeParams.IsPresent) result["typeParams"] = TypeParams.IsNull ? null : new JsonArray(TypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
-        if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceTypeFacts.ToDom(MethodTypeParameterBoundsPre.Value);
+        if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         return result;
     }
 }

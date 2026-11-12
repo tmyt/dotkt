@@ -44,16 +44,18 @@ static class SourceConstraintErasure
                 {
                     SourceTypeFacts Merge(OptionalField<SourceTypeFacts> previous) => previous.HasValue
                         ? previous.Value.Merge(bounds) : new SourceTypeFacts(bounds);
+                    SourceBoundsSnapshot MethodBounds(OptionalField<SourceBoundsSnapshot> previous) => previous.HasValue
+                        ? previous.Value.Merge(bounds) : new SourceBoundsSnapshot(bounds);
                     node = node switch {
-                        BirFunctionDeclaration value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
+                        BirFunctionDeclaration value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = MethodBounds(value.MethodTypeParameterBoundsPre) },
                         BirClassDefinition value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
                         BirInterfaceDefinition value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
                         BirEnumDefinition value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
-                        BirClosureDefinition value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
-                        BirRefTypeDeclaration value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
-                        BirInheritedClassMethod value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
+                        BirClosureDefinition value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = MethodBounds(value.MethodTypeParameterBoundsPre) },
+                        BirRefTypeDeclaration value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = MethodBounds(value.MethodTypeParameterBoundsPre) },
+                        BirInheritedClassMethod value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = MethodBounds(value.MethodTypeParameterBoundsPre) },
                         BirInheritedImplementation value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
-                        BirMethodImpl value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
+                        BirMethodImpl value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = MethodBounds(value.MethodTypeParameterBoundsPre) },
                         _ => node,
                     };
                 }

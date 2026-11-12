@@ -2791,7 +2791,7 @@ internal static partial class BirGraphJson
         OptionalField<TypeNode[]> field32 = default;
         OptionalField<TypeNode> field33 = default;
         OptionalField<string> field34 = default;
-        OptionalField<SourceTypeFacts> field35 = default;
+        OptionalField<SourceBoundsSnapshot> field35 = default;
         OptionalField<string[]> field36 = default;
         OptionalField<BirAttribute[]> field37 = default;
         OptionalField<bool> field38 = default;
@@ -2960,7 +2960,7 @@ internal static partial class BirGraphJson
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, 1UL << 35);
-                    field35 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.Read(ref reader));
+                    field35 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.Read(ref reader));
                     break;
                 case "signatureOverrideDeclarations":
                     Seen(ref seen, 1UL << 36);
@@ -3419,7 +3419,7 @@ internal static partial class BirGraphJson
         OptionalField<string> field0 = default;
         OptionalField<TypeNode> field1 = default;
         OptionalField<BirTypeParameter[]> field2 = default;
-        OptionalField<SourceTypeFacts> field3 = default;
+        OptionalField<SourceBoundsSnapshot> field3 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -3441,7 +3441,7 @@ internal static partial class BirGraphJson
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, 1UL << 3);
-                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.Read(ref reader));
+                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.Read(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -4584,7 +4584,7 @@ internal static partial class BirGraphJson
         OptionalField<BirModifiers> field7 = default;
         OptionalField<BirOverride[]> field8 = default;
         OptionalField<BirInheritedImplementation> field9 = default;
-        OptionalField<SourceTypeFacts> field10 = default;
+        OptionalField<SourceBoundsSnapshot> field10 = default;
         OptionalField<string[]> field11 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
@@ -4635,7 +4635,7 @@ internal static partial class BirGraphJson
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, 1UL << 10);
-                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.Read(ref reader));
+                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.Read(ref reader));
                     break;
                 case "signatureOverrideDeclarations":
                     Seen(ref seen, 1UL << 11);
@@ -4940,7 +4940,7 @@ internal static partial class BirGraphJson
         OptionalField<IBirStatement[]> field4 = default;
         OptionalField<BirTypeParameter[]> field5 = default;
         OptionalField<string> field6 = default;
-        OptionalField<SourceTypeFacts> field7 = default;
+        OptionalField<SourceBoundsSnapshot> field7 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -4978,7 +4978,7 @@ internal static partial class BirGraphJson
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.Read(ref reader));
+                    field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.Read(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -9707,7 +9707,7 @@ internal static partial class BirGraphJson
         OptionalField<TypeNode> field4 = default;
         OptionalField<BirTypeParameter[]> field5 = default;
         OptionalField<BirMemberReference> field6 = default;
-        OptionalField<SourceTypeFacts> field7 = default;
+        OptionalField<SourceBoundsSnapshot> field7 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -9745,7 +9745,7 @@ internal static partial class BirGraphJson
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.Read(ref reader));
+                    field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.Read(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }

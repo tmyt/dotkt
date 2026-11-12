@@ -29,6 +29,15 @@
       "x-dotkt-json-content": "#/$defs/sourceTypeFacts",
       "$comment": "Typed source-phase base, interfaces and bounds. JSON text is produced only for the remaining DOM consumer frontier, not used as the internal representation."
     },
+    "sourceMethodBounds": {
+      "type": "object", "properties": { "bounds": { "type": "object", "additionalProperties": {
+        "type": "array", "items": { "$ref": "#/$defs/type" }
+      } } }, "required": ["bounds"], "additionalProperties": false
+    },
+    "sourceMethodBoundsText": {
+      "type": "string", "x-dotkt-csharp-type": "SourceBoundsSnapshot", "x-dotkt-csharp-codec": "SourceBoundsSnapshot",
+      "x-dotkt-json-content": "#/$defs/sourceMethodBounds"
+    },
 
     "birSourceTypeAlias": { "$ref": "kotlin-typealias.schema.json", "x-dotkt-model": { "name": "SourceTypeAlias" } },
     "birTypeDeclaration": {
@@ -390,7 +399,7 @@
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "loweringProperties": {
         "retKotlinType": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "declarationSourceName": { "type": "string" },
-        "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceTypeFactsText" },
+        "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
         "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
       } },
       "properties": {
@@ -445,7 +454,7 @@
       "required": ["name", "type"], "additionalProperties": false
     },
     "birRefTypeDeclaration": {
-      "type": "object", "x-dotkt-model": { "name": "BirRefTypeDeclaration", "domain": "birCoreValues", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirRefTypeDeclaration", "domain": "birCoreValues", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
       "properties": { "name": { "type": "string" }, "elem": { "$ref": "#/$defs/type" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } } },
       "required": ["name", "elem", "typeParams"], "additionalProperties": false
     },
@@ -551,7 +560,7 @@
     },
     "birInheritedClassMethod": {
       "type": "object", "x-dotkt-model": { "name": "BirInheritedClassMethod", "domain": "birCoreValues", "loweringProperties": {
-        "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceTypeFactsText" },
+        "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
         "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
       } },
       "properties": {
@@ -600,7 +609,7 @@
       "required": ["name", "type"], "additionalProperties": false
     },
     "birClosureDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirClosureDefinition", "domain": "birCoreValues", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirClosureDefinition", "domain": "birCoreValues", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
       "properties": {
         "name": { "type": "string" }, "fields": { "type": "array", "items": { "$ref": "#/$defs/birCaptureDescriptor" } },
         "params": { "type": "array", "items": { "$ref": "#/$defs/birLambdaParameter" } }, "ret": { "$ref": "#/$defs/type" },
@@ -1478,7 +1487,7 @@
       }, "required": ["name"], "additionalProperties": false
     },
     "cirMethodImpl": {
-      "type": "object", "x-dotkt-model": { "name": "CirMethodImpl", "domain": "cirDeclarations", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
+      "type": "object", "x-dotkt-model": { "name": "CirMethodImpl", "domain": "cirDeclarations", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
       "properties": {
         "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "arity": { "type": "integer" },
         "params": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "ret": { "$ref": "#/$defs/type" },
