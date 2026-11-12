@@ -74,13 +74,7 @@ static class DeclarationIdentityBinding
                         && Str(constant["k"]) == "const"
                         ? Str(constant["value"])
                         : null;
-                    if (string.IsNullOrEmpty(alias))
-                        throw new InvalidOperationException(
-                            $"bir2cir: malformed @ClrTypeAlias on '{ownerName}'");
-                    if (result.TryGetValue(ownerName, out var prior) && prior != alias)
-                        throw new InvalidOperationException(
-                            $"bir2cir: conflicting @ClrTypeAlias for '{ownerName}': '{prior}' and '{alias}'");
-                    result[ownerName] = alias;
+                    AddCollisionAlias(result, ownerName, alias);
                 }
             }
             if (owner["types"] is JsonArray types)
@@ -93,6 +87,17 @@ static class DeclarationIdentityBinding
                 foreach (var type in types.OfType<JsonObject>()) WalkOwner(type);
         }
         return result;
+    }
+
+    // Both the typed source index and the remaining late physical index apply
+    // the same trusted declaration rule; transport does not choose alias policy.
+    internal static void AddCollisionAlias(Dictionary<string, string> result, string ownerName, string alias)
+    {
+        if (string.IsNullOrEmpty(alias))
+            throw new InvalidOperationException($"bir2cir: malformed @ClrTypeAlias on '{ownerName}'");
+        if (result.TryGetValue(ownerName, out var prior) && prior != alias)
+            throw new InvalidOperationException($"bir2cir: conflicting @ClrTypeAlias for '{ownerName}': '{prior}' and '{alias}'");
+        result[ownerName] = alias;
     }
 
     public static void BindReferenced(
