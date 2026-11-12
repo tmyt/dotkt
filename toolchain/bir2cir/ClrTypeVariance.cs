@@ -17,7 +17,7 @@ static class ClrTypeVariance
         // Compute before mutating: recursive local edges must see the same declarations regardless
         // of source file or type order. Invalidity propagates over dependencies rather than
         // enumerating every simple path through mutually recursive declarations.
-        var analysis = new Analysis(byName, refs);
+        var analysis = new Analysis(ClrVarianceFacts.FromDom(byName), refs);
         var removals = new List<JsonObject>();
         foreach (var definition in definitions)
         {
@@ -45,13 +45,33 @@ static class ClrTypeVariance
 
     internal static string Get(string name, int arity, int index,
         IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs) =>
-        new Analysis(definitions, refs).Get(name, arity, index);
+        new Analysis(owner => definitions.TryGetValue(owner, out var definition)
+            ? ClrVarianceFacts.FromDom(definition) : null, refs).Get(name, arity, index);
 
-    sealed class Analysis(IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs)
+    internal sealed class Analysis
     {
-        sealed class Candidate(JsonObject definition, int position, int variance)
+        readonly Func<string, ClrVarianceFacts.Declaration> resolve;
+        readonly ReferenceMetadataIndex refs;
+        readonly Dictionary<string, ClrVarianceFacts.Declaration> definitions = new(StringComparer.Ordinal);
+
+        internal Analysis(IReadOnlyDictionary<string, ClrVarianceFacts.Declaration> definitions, ReferenceMetadataIndex refs)
+            : this(name => definitions.TryGetValue(name, out var value) ? value : null, refs) { }
+
+        internal Analysis(Func<string, ClrVarianceFacts.Declaration> resolve, ReferenceMetadataIndex refs)
         {
-            public readonly JsonObject Definition = definition;
+            this.resolve = resolve;
+            this.refs = refs;
+        }
+
+        ClrVarianceFacts.Declaration Definition(string name)
+        {
+            if (!definitions.TryGetValue(name, out var value)) definitions[name] = value = resolve(name);
+            return value;
+        }
+
+        sealed class Candidate(ClrVarianceFacts.Declaration definition, int position, int variance)
+        {
+            public readonly ClrVarianceFacts.Declaration Definition = definition;
             public readonly int Position = position, Variance = variance;
             public readonly HashSet<Candidate> Dependents = new();
             public bool Invalid;
@@ -63,14 +83,12 @@ static class ClrTypeVariance
 
         int Declared(string name, int arity, int index)
         {
-            if (definitions.TryGetValue(name, out var local))
+            if (Definition(name) is { } local)
             {
-                var ownIndex = index - ((local["capturedTypeParams"] as JsonArray)?.Count ?? 0);
-                if (Str(local["kind"]) is not ("interface" or "delegate")
-                    || local["typeParams"] is not JsonArray parameters
-                    || ownIndex < 0 || ownIndex >= parameters.Count
-                    || parameters[ownIndex] is not JsonObject parameter) return 0;
-                return Str(parameter["variance"]) switch { "out" => 1, "in" => -1, _ => 0 };
+                var ownIndex = index - local.CapturedCount;
+                if (local.Kind is not ("interface" or "delegate")
+                    || ownIndex < 0 || ownIndex >= local.Parameters.Count) return 0;
+                return local.Parameters[ownIndex] switch { "out" => 1, "in" => -1, _ => 0 };
             }
             var key = (name, arity, index);
             if (!external.TryGetValue(key, out var value))
@@ -84,7 +102,7 @@ static class ClrTypeVariance
             var key = (name, position);
             if (!candidates.TryGetValue(key, out var candidate))
             {
-                candidates.Add(key, candidate = new Candidate(definitions[name], position, variance));
+                candidates.Add(key, candidate = new Candidate(Definition(name), position, variance));
                 pending.Enqueue(candidate);
             }
             return candidate;
@@ -101,7 +119,7 @@ static class ClrTypeVariance
         {
             var variance = Declared(name, arity, index);
             if (variance == 0) return null;
-            if (definitions.ContainsKey(name))
+            if (Definition(name) != null)
             {
                 var root = Require(name, index, variance);
                 while (pending.TryDequeue(out var candidate))
@@ -115,26 +133,7 @@ static class ClrTypeVariance
 
         bool Conflicts(Candidate candidate)
         {
-            var definition = candidate.Definition;
-            bool Slot(JsonNode slot, int context) => TypeJson.Read(slot) is TypeNode type && Conflicts(type, candidate, context);
-            if (Slot(definition["base"], 1)) return true;
-            if (definition["interfaces"] is JsonArray interfaces && interfaces.Any(type => Slot(type, 1))) return true;
-            var methods = (definition["methods"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>();
-            if (Str(definition["kind"]) == "delegate") methods = methods.Prepend(definition);
-            foreach (var method in methods)
-            {
-                if (method["static"]?.GetValue<bool>() == true
-                    && method["virtual"]?.GetValue<bool>() != true && method["abstract"]?.GetValue<bool>() != true) continue;
-                if (method["params"] is JsonArray parameters
-                    && parameters.OfType<JsonObject>().Any(parameter => Slot(parameter["type"], -1))) return true;
-                if (Slot(method["ret"], 1)) return true;
-                // ECMA-335 II.9.7: method generic constraints are input positions; the type's own
-                // generic constraints impose no variance restriction.
-                if (method["typeParams"] is JsonArray genericParameters
-                    && genericParameters.OfType<JsonObject>().Any(parameter =>
-                        parameter["constraints"] is JsonArray constraints && constraints.Any(type => Slot(type, -1)))) return true;
-            }
-            return false;
+            return candidate.Definition.Occurrences.Any(slot => Conflicts(slot.Type, candidate, slot.Context));
         }
 
         bool Conflicts(TypeNode type, Candidate candidate, int context)
@@ -151,7 +150,7 @@ static class ClrTypeVariance
                         if (!Mentions(arguments[index], candidate.Position)) continue;
                         var variance = Declared(application.Name, arguments.Length, index);
                         if (variance == 0 || Nested(arguments[index], context * variance)) return true;
-                        if (definitions.ContainsKey(application.Name))
+                        if (Definition(application.Name) != null)
                         {
                             var dependency = Require(application.Name, index, variance);
                             dependency.Dependents.Add(candidate);
@@ -211,7 +210,19 @@ static class ClrTypeVariance
               {"name":"ConstraintConflict","kind":"interface","typeParams":[{"name":"T","variance":"out"}],
                "methods":[{"typeParams":[{"name":"U","constraints":[{"t":"tv","scope":"type","i":0}]}]}]},
               {"name":"SafeConstraint","kind":"interface","typeParams":[{"name":"T","variance":"in"}],
-               "methods":[{"typeParams":[{"name":"U","constraints":[{"t":"tv","scope":"type","i":0}]}]}]}
+               "methods":[{"typeParams":[{"name":"U","constraints":[{"t":"tv","scope":"type","i":0}]}]}]},
+              {"name":"CapturedOutput","kind":"interface","capturedTypeParams":[{"name":"Outer","variance":"out"}],
+               "typeParams":[{"name":"T","variance":"out"}],"methods":[{"ret":{"t":"tv","scope":"type","i":1}}]},
+              {"name":"StaticInput","kind":"interface","typeParams":[{"name":"T","variance":"out"}],
+               "methods":[{"static":true,"params":[{"type":{"t":"tv","scope":"type","i":0}}]}]},
+              {"name":"StaticVirtualInput","kind":"interface","typeParams":[{"name":"T","variance":"out"}],
+               "methods":[{"static":true,"virtual":true,"params":[{"type":{"t":"tv","scope":"type","i":0}}]}]},
+              {"name":"StaticAbstractInput","kind":"interface","typeParams":[{"name":"T","variance":"out"}],
+               "methods":[{"static":true,"abstract":true,"params":[{"type":{"t":"tv","scope":"type","i":0}}]}]},
+              {"name":"DelegateInput","kind":"delegate","typeParams":[{"name":"T","variance":"in"}],
+               "params":[{"type":{"t":"tv","scope":"type","i":0}}]},
+              {"name":"DelegateConflict","kind":"delegate","typeParams":[{"name":"T","variance":"out"}],
+               "params":[{"type":{"t":"tv","scope":"type","i":0}}]}
             ]}
             """;
         foreach (var reverse in new[] { false, true })
@@ -222,12 +233,24 @@ static class ClrTypeVariance
             foreach (var type in ((JsonArray)root["types"]).OfType<JsonObject>())
             {
                 var name = Str(type["name"]);
-                var expected = name is "SafeOutput" or "SafeInherited" or "RecursiveOutput" ? "out"
-                    : name == "SafeConstraint" ? "in" : null;
+                var expected = name is "SafeOutput" or "SafeInherited" or "RecursiveOutput" or "CapturedOutput" or "StaticInput" ? "out"
+                    : name is "SafeConstraint" or "DelegateInput" ? "in" : null;
                 if (Str(type["typeParams"][0]["variance"]) != expected)
                     throw new InvalidOperationException($"CLR variance self-test failed for {name} (reverse={reverse})");
+                if (type["capturedTypeParams"] is JsonArray captured && captured.Any(parameter => parameter["variance"] != null))
+                    throw new InvalidOperationException("Captured CLR type parameters retained variance");
             }
         }
+        // An analysis owns signature facts, not a view over its still-mutable declaration.
+        var source = JsonNode.Parse(declarations)["types"].AsArray().OfType<JsonObject>()
+            .Single(type => Str(type["name"]) == "SafeOutput");
+        var facts = ClrVarianceFacts.FromDom(source);
+        source["typeParams"][0]["variance"] = "in";
+        source["methods"][0]["ret"] = TypeJson.Write(new TypeNode.Fqn("System.Int32"));
+        var reads = 0;
+        var snapshot = new Analysis(name => { reads++; return name == "SafeOutput" ? facts : null; }, null);
+        if (snapshot.Get("SafeOutput", 1, 0) != "out" || snapshot.Get("SafeOutput", 1, 0) != "out" || reads != 1)
+            throw new InvalidOperationException("CLR variance facts were not independent, cached signature snapshots");
         // A dense, legal recursive graph must be checked as dependencies, not factorially many
         // simple paths. One invalid input in the same graph must invalidate every dependent.
         foreach (var broken in new[] { false, true })
@@ -256,7 +279,7 @@ static class ClrTypeVariance
             if (types.Any(type => Str(type["typeParams"][0]["variance"]) != (broken ? null : "out")))
                 throw new InvalidOperationException("CLR variance dense recursive graph self-test failed");
         }
-        Console.WriteLine("[CLR variance] self-test OK (inherited invariance, transitive signatures, order, dense recursion, method constraints)");
+        Console.WriteLine("[CLR variance] self-test OK (inherited invariance, transitive signatures, order, dense recursion, method constraints, captured/static/delegate slots, owning snapshots)");
     }
 
     static string Str(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
