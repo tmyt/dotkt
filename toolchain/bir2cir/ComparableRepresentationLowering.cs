@@ -14,7 +14,6 @@ static class ComparableRepresentationLowering
     static readonly TypeNode Object = new TypeNode.Fqn("kotlin.Any");
     static readonly TypeNode Result = new TypeNode.Fqn("kotlin.Int");
     static readonly TypeNode Parameter = new TypeNode.Tv("method", 0);
-    static JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
     static JsonObject Cast(TypeNode type, JsonNode value) => new() {
         ["k"] = "cast", ["type"] = TypeJson.Write(type), ["e"] = value,
     };
@@ -331,6 +330,7 @@ static class ComparableRepresentationLowering
             || TypeJson.OwnerName(enumRoot["types"][0]["base"]) != "DotKt.Runtime.CompilerServices.KotlinEnumComparable"
             || enumRoot["types"][0]["ctors"][0]["baseArgs"] is not JsonArray { Count: 0 }
             || enumRoot["types"][0]["ctors"][0]["delegationSig"] is not JsonArray { Count: 0 }
+            || !KotlinPropertyAccessors.IsPhysicalSlotBridge(enumBridge.AsObject())
             || Text(enumBridge["clrInterfaceImpls"][0]["member"]) != "compareEnumTo")
             throw new InvalidOperationException("Enum comparison lost the shared value view or the producer's ordinal map");
         Console.WriteLine("[comparable representation] self-test OK (shared facade, evaluation, source bounds, generic-first dispatch, inherited owner frame)");
