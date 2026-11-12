@@ -12,6 +12,13 @@ namespace DotKt.Bir.Lowering;
 // while passes establish/remove facts; no missing declaration fact is inferred.
 internal abstract record BirGraphValue
 {
+    public virtual TypeNode? ResultTypeStamp => null;
+    public abstract void VisitChildren(Action<BirGraphValue> visit);
+    public void Visit(Action<BirGraphValue> visit)
+    {
+        visit(this);
+        VisitChildren(child => child.Visit(visit));
+    }
     public abstract BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite);
     public abstract void WriteJson(Utf8JsonWriter writer);
     // Temporary one-way frontier to the not-yet-migrated owning passes. It builds
