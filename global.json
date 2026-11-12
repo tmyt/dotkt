@@ -1,4 +1,9 @@
 {
+  "sdk": {
+    "version": "10.0.100",
+    "rollForward": "latestFeature",
+    "allowPrerelease": false
+  },
   "msbuild-sdks": {
     "DotKt.Sdk": "0.9.24",
     "DotKt.Sdk.Mpp": "0.9.24"
