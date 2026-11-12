@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // The cold coroutine protocol uses monomorphic Result/Continuation value surfaces where the earlier
 // existential projection has not already supplied its carrier. CLR variance cannot relate value-type
@@ -23,10 +25,10 @@ static partial class ContinuationErasure
     // Supertype edges are source declaration facts too. Freeze them before nullable-frame allocation and
     // other representation passes; recording only member slots leaves Continuation<T>'s inherited contract
     // paired with a physical Continuation<object> edge when a DLL is imported again.
-    public static void PreserveSourceSupertypes(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    public static BirFileDeclaration[] PreserveSourceSupertypes(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         SetTypeNames(refs.PhysicalTypeNames);
-        foreach (var root in roots) RecordSupertypes(root);
+        return roots.Select(root => (BirFileDeclaration)root.Rewrite(CaptureSupertypes)).ToArray();
     }
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Apply(root, refs.PhysicalTypeNames);
@@ -51,43 +53,43 @@ static partial class ContinuationErasure
         _resultTypeNames = resultNames;
     }
 
-    static void RecordSupertypes(JsonNode node)
+    static BirGraphValue CaptureSupertypes(BirGraphValue node)
     {
-        if (node is JsonObject declaration)
+        bool Moves(TypeNode edge) => edge != null && !EraseType(edge).Equals(edge);
+        OptionalField<SourceTypeFacts> Capture(OptionalField<TypeNode> baseType, OptionalField<TypeNode[]> interfaces,
+            OptionalField<BirTypeParameter[]> parameters, OptionalField<SourceTypeFacts> previous)
         {
-            if (declaration["kind"] is JsonValue && declaration["k"] == null)
-            {
-                bool Moves(JsonNode edge) => TypeJson.Read(edge) is TypeNode type
-                    && !EraseType(type).Equals(type);
-                var source = new JsonObject();
-                if (Moves(declaration["base"])) source["base"] = declaration["base"].DeepClone();
-                if (declaration["interfaces"] is JsonArray interfaces)
-                {
-                    var moved = new JsonArray(interfaces.Where(Moves).Select(edge => edge.DeepClone()).ToArray());
-                    if (moved.Count > 0) source["interfaces"] = moved;
-                }
-                if (declaration["typeParams"] is JsonArray parameters)
-                {
-                    var bounds = new JsonObject();
-                    for (var index = 0; index < parameters.Count; index++)
-                        if (parameters[index] is JsonObject parameter
-                            && parameter["constraints"] is JsonArray constraints && constraints.Any(Moves))
-                            bounds[index.ToString()] = constraints.DeepClone();
-                    if (bounds.Count > 0) source["bounds"] = bounds;
-                }
-                KotlinSupertypesRecord.Merge(declaration, source);
-            }
-            foreach (var child in declaration.Select(pair => pair.Value).Where(value => value != null).ToList())
-                RecordSupertypes(child);
+            var original = previous.OrDefault() ?? SourceTypeFacts.Empty;
+            var bounds = parameters.OrEmpty().Select((parameter, index) => (parameter, index))
+                .Where(entry => entry.parameter.Constraints.OrEmpty().Any(Moves))
+                .ToDictionary(entry => entry.index, entry => entry.parameter.Constraints.Value);
+            var merged = original.Merge(Moves(baseType.OrDefault()) ? baseType.Value : null,
+                interfaces.OrEmpty().Where(Moves).ToArray(), bounds);
+            return ReferenceEquals(original, merged) ? previous : merged;
         }
-        else if (node is JsonArray array)
-            foreach (var child in array.Where(value => value != null).ToList()) RecordSupertypes(child);
+        return node switch {
+            BirClassDefinition owner => owner with {
+                KotlinSupertypesPre = Capture(owner.Base, owner.Interfaces, owner.TypeParams, owner.KotlinSupertypesPre),
+            },
+            BirInterfaceDefinition owner => owner with {
+                KotlinSupertypesPre = Capture(owner.Base, owner.Interfaces, owner.TypeParams, owner.KotlinSupertypesPre),
+            },
+            BirEnumDefinition owner => owner with {
+                KotlinSupertypesPre = Capture(owner.Base, owner.Interfaces, owner.TypeParams, owner.KotlinSupertypesPre),
+            },
+            // An inherited implementation descriptor also owns its declared generic bounds.
+            BirInheritedImplementation owner => owner with {
+                KotlinSupertypesPre = Capture(default, default, owner.TypeParams, owner.KotlinSupertypesPre),
+            },
+            _ => node,
+        };
     }
 
     internal static void SelfTest()
     {
         FunctionRewriteTests.Check("continuation erasure", EraseType);
         LexicalOwnerSelfTest();
+        SourceOwnerSelfTest();
         var names = new Dictionary<string, string>
         {
             [Cont] = "kotlin.coroutines.Continuation`1",
@@ -124,7 +126,12 @@ static partial class ContinuationErasure
                     ["ret"] = TypeJson.Write(original),
                 });
             SetTypeNames(names);
-            RecordSupertypes(root);
+            var typed = new BirClassDefinition { Name = Cont, Kind = "class", Base = original,
+                Interfaces = new[] { original }, TypeParams = new[] { new BirTypeParameter {
+                    Name = "T", Constraints = new TypeNode[] { original, new TypeNode.Fqn("probe.Unchanged") },
+                } } };
+            var captured = (BirClassDefinition)CaptureSupertypes(typed);
+            root[KotlinSupertypesRecord.PreKey] = SourceTypeFacts.ToDom(captured.KotlinSupertypesPre.Value);
             var source = JsonNode.Parse(root[KotlinSupertypesRecord.PreKey].GetValue<string>());
             if (!JsonNode.DeepEquals(source["base"], TypeJson.Write(original))
                 || !JsonNode.DeepEquals(source["interfaces"][0], TypeJson.Write(original))
@@ -132,7 +139,15 @@ static partial class ContinuationErasure
                 throw new InvalidOperationException($"ContinuationErasure self-test: {typeName} source edges/bounds");
             var snapshot = source.ToJsonString();
             Apply(root, names);
-            RecordSupertypes(root);
+            var competing = Nested(new TypeNode.Tv("method", 3));
+            var later = (BirClassDefinition)CaptureSupertypes(captured with {
+                Base = competing, Interfaces = new[] { competing }, TypeParams = new[] { new BirTypeParameter {
+                    Name = "T", Constraints = new TypeNode[] { competing, new TypeNode.Fqn("probe.Unchanged") },
+                } },
+            });
+            if (SourceTypeFacts.ToDom(later.KotlinSupertypesPre.Value).GetValue<string>() != snapshot
+                || typed.KotlinSupertypesPre.IsPresent)
+                throw new InvalidOperationException($"ContinuationErasure self-test: {typeName} typed source ownership");
             if (root[KotlinSupertypesRecord.PreKey].GetValue<string>() != snapshot)
                 throw new InvalidOperationException($"ContinuationErasure self-test: {typeName} earlier source precedence");
             void Equal(JsonNode actual, TypeNode wanted, string role)
@@ -151,6 +166,61 @@ static partial class ContinuationErasure
                 Equal(descriptor["ret"], expected, key + " return");
             }
         }
+    }
+
+    static void SourceOwnerSelfTest()
+    {
+        SetTypeNames(new Dictionary<string, string>());
+        var source = new TypeNode.Fqn(Cont, new TypeNode[] { new TypeNode.Tv("type", 2) });
+        var sibling = new TypeNode.Fqn("probe.Sibling");
+        var bounds = new[] { new BirTypeParameter { Name = "T", Constraints = new TypeNode[] { source, sibling } } };
+        var descriptor = new BirInheritedImplementation { Kind = "function", TypeParams = bounds };
+        var method = new BirFunctionDeclaration { Name = "member", TypeParams = bounds,
+            InheritedImplementation = descriptor, Body = new IBirStatement[] { new BirExpressionStatement {
+                Expr = new BirNewSam { SynthClass = new BirClassDefinition {
+                    Kind = "class", Name = "probe.Synthetic", Base = source,
+                    InheritedDefaultAccessors = new[] { new BirInheritedDefaultAccessor { Implementation = descriptor } },
+                    InheritedDefaultMethods = new[] { new BirInheritedDefaultMethod { Implementation = descriptor } },
+                } },
+            } } };
+        var input = new BirFileDeclaration { Methods = new[] { method }, Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Kind = "class", Name = "probe.Class", Base = source,
+                Interfaces = new TypeNode[] { source, sibling }, TypeParams = bounds },
+            new BirInterfaceDefinition { Kind = "interface", Name = "probe.Interface",
+                Interfaces = new TypeNode[] { source }, TypeParams = bounds },
+            new BirEnumDefinition { Kind = "enum", Name = "probe.Enum", Base = source, TypeParams = bounds },
+        } };
+        var result = (BirFileDeclaration)input.Rewrite(CaptureSupertypes);
+        var classOwner = (BirClassDefinition)result.Types.Value[0];
+        var interfaceOwner = (BirInterfaceDefinition)result.Types.Value[1];
+        var enumOwner = (BirEnumDefinition)result.Types.Value[2];
+        var inherited = result.Methods.Value[0].InheritedImplementation.Value;
+        var synthetic = ((BirNewSam)((BirExpressionStatement)result.Methods.Value[0].Body.Value[0]).Expr.Value).SynthClass.Value;
+        foreach (var facts in new[] { classOwner.KotlinSupertypesPre.Value, interfaceOwner.KotlinSupertypesPre.Value,
+            enumOwner.KotlinSupertypesPre.Value, inherited.KotlinSupertypesPre.Value,
+            synthetic.InheritedDefaultAccessors.Value[0].Implementation.Value.KotlinSupertypesPre.Value,
+            synthetic.InheritedDefaultMethods.Value[0].Implementation.Value.KotlinSupertypesPre.Value })
+            if (facts.Bounds[0].Length != 2 || facts.Bounds[0][0] != source || facts.Bounds[0][1] != sibling)
+                throw new InvalidOperationException("Continuation source bounds lost a generic frame or unchanged sibling");
+        if (classOwner.KotlinSupertypesPre.Value.Base != source
+            || classOwner.KotlinSupertypesPre.Value.Interfaces.Single() != source
+            || interfaceOwner.KotlinSupertypesPre.Value.Interfaces.Single() != source
+            || enumOwner.KotlinSupertypesPre.Value.Base != source
+            || inherited.KotlinSupertypesPre.Value.Base != null
+            || synthetic.KotlinSupertypesPre.Value.Base != source
+            || ((BirClassDefinition)input.Types.Value[0]).KotlinSupertypesPre.IsPresent
+            || descriptor.KotlinSupertypesPre.IsPresent
+            || classOwner.Base.Value != source || classOwner.Interfaces.Value[1] != sibling)
+            throw new InvalidOperationException("Continuation source capture changed declaration ownership or physical types");
+        var existing = new SourceTypeFacts(new Dictionary<int, TypeNode[]> { [0] = new TypeNode[] { sibling } });
+        var recorded = (BirClassDefinition)CaptureSupertypes(classOwner with { KotlinSupertypesPre = existing });
+        if (recorded.KotlinSupertypesPre.Value.Bounds[0].Single() != sibling)
+            throw new InvalidOperationException("Continuation source capture replaced earlier source bounds");
+        var unchanged = (BirClassDefinition)CaptureSupertypes(new BirClassDefinition {
+            Kind = "class", Name = "probe.Plain", Base = sibling,
+        });
+        if (unchanged.KotlinSupertypesPre.IsPresent)
+            throw new InvalidOperationException("Continuation source capture invented an absent source fact");
     }
 
     // The CLR coroutine ABI is deliberately monomorphic, but a referenced DLL must still re-expose the source-level

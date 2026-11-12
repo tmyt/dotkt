@@ -200,6 +200,7 @@ sealed class Pipeline
         for (var index = 0; index < captured.Length; index++) captured[index] = valuePolicy.EraseBounds(captured[index]);
         captured = CallableVisibilityLowering.ApplyAll(captured, refs);
         captured = FunctionValueRepresentation.PreserveSourceFacts(captured);
+        captured = ContinuationErasure.PreserveSourceSupertypes(captured, refs);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -255,7 +256,6 @@ sealed class Pipeline
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
         ClrEventImplBinding.PreserveSourceFacts(birRoots);
         CapturedGenericInvocation.PreserveSourceFacts(birRoots, refs);
-        ContinuationErasure.PreserveSourceSupertypes(birRoots, refs);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
         // These are new CLR slot bodies for frontend-selected inherited implementations, not source declarations.
         // Materialize before downstream indexing/freezing so references and local bases use the same suspend ABI.
