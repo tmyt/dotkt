@@ -73,6 +73,7 @@ def compose_shapes(definitions):
         "mods": "birModifiers", "pos": "birDeclarationPosition",
         "cirAttributeApplication": "birAttribute",
         "cirEnumEntry": "birEnumEntryDeclaration",
+        "cirEvent": "birClrEventBacking",
         "cirFile": "birFileDeclaration",
     }
 
@@ -131,7 +132,8 @@ def compose_shapes(definitions):
                     "cirField": ["birFieldDeclaration"], "cirProperty": ["birPropertyDeclaration"],
                     "cirParameter": ["birParameter"], "mods": ["birModifiers"],
                     "cirTypeDeclaration": ["birClassDefinition", "birInterfaceDefinition", "birEnumDefinition"],
-                    "cirEnumEntry": ["birEnumEntryDeclaration"]}
+                    "cirEnumEntry": ["birEnumEntryDeclaration"],
+                    "cirEvent": ["birClrEventBacking"]}
     for key, targets in declarations.items():
         for target in targets:
             fields = shapes[target]["properties"]

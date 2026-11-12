@@ -266,6 +266,30 @@ if (!closureLoop.LoopId.HasValue || closureLoop.Label.IsPresent
     throw new Exception("A closure definition did not receive its own physical transfer frame");
 Console.WriteLine("Typed execution frames: three deferred body forms retain private returns/labels and caller capture evaluation; generic frames/codecs and closure admission OK");
 
+var signatureSnapshot = SourceTypeVector.ReadFrozenText("[{\"t\":\"tv\",\"scope\":\"method\",\"i\":1}]");
+var phaseFacts = new BirFileDeclaration {
+    Methods = new[] { new BirFunctionDeclaration { Body = new IBirStatement[] {
+        new BirExpressionStatement { Expr = new BirNativeStatic {
+            ResolvedMemberParams = new TypeNode[] { frame }, ResolvedMemberReturn = frame,
+            _resolvedMethodTypeParams = new[] { new BirTypeParameter { Name = "T", SpecialConstraints = new[] { "class" } } },
+        } },
+        new BirExpressionStatement { Expr = new BirPropertyGet { _foreignDeclarationSignature = signatureSnapshot } },
+        new BirExpressionStatement { Expr = new BirCallStatic { NullableWitnessCount = 2 } },
+        new BirExpressionStatement { Expr = new BirNewClr { MemberSignature = new TypeNode[] { frame } } },
+        new BirExpressionStatement { Expr = new BirValueBlock { Sty = frame } },
+    } } },
+    Types = new IBirTypeDeclaration[] { new BirClassDefinition {
+        Kind = "class", ClrEvents = new[] { new BirClrEventBacking {
+            K = "clrEventDecl", Name = "Changed", DelegateType = new TypeNode.Fqn("System.Action"),
+        } },
+    } },
+};
+var phaseJson = Encoding.UTF8.GetString(Write(phaseFacts));
+Same(phaseJson, BirGraphJson.ReadFile(Write(phaseFacts)), "current signature/event/witness facts");
+Same(phaseJson, BirFileCodec.Decode(BirFileCodec.Encode(phaseFacts)), "current phase metadata binary");
+if (signatureSnapshot.Types[0] != frame)
+    throw new Exception("Frozen foreign signature is not a typed declaration-frame vector");
+
 var defaults = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
     Mods = new BirModifiers { Suspend = true },
     Params = new[] { new BirParameter { Name = "p", DefaultBir = new BirDefaultBody {
