@@ -16,8 +16,9 @@ internal abstract record BirGraphValue
     public abstract void VisitChildren(Action<BirGraphValue> visit);
     public void Visit(Action<BirGraphValue> visit)
     {
-        visit(this);
-        VisitChildren(child => child.Visit(visit));
+        Action<BirGraphValue> walk = null!;
+        walk = node => { visit(node); node.VisitChildren(walk); };
+        walk(this);
     }
     public abstract BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite);
     public abstract void WriteJson(Utf8JsonWriter writer);
