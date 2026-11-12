@@ -273,6 +273,10 @@ var phaseFacts = new BirFileDeclaration {
             ResolvedMemberParams = new TypeNode[] { frame }, ResolvedMemberReturn = frame,
             _resolvedMethodTypeParams = new[] { new BirTypeParameter { Name = "T", SpecialConstraints = new[] { "class" } } },
         } },
+        new BirExpressionStatement { Expr = new BirGenericStatic {
+            Sty = frame, SuspendCall = false, _capturedGenericResult = frame,
+            _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
+        } },
         new BirExpressionStatement { Expr = new BirPropertyGet { _foreignDeclarationSignature = signatureSnapshot } },
         new BirExpressionStatement { Expr = new BirCallStatic { NullableWitnessCount = 2 } },
         new BirExpressionStatement { Expr = new BirNewClr { MemberSignature = new TypeNode[] { frame } } },

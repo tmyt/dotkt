@@ -1970,6 +1970,8 @@
       "type": "object", "x-dotkt-model": { "name": "CirConstrainedCall", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["virtual", "argTypes"], "loweringProperties": {
         "dotktDeclarationIdentityBound": { "type": "boolean" }, "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "nullableWitnessCount": { "type": "integer" }, "resolvedMemberParams": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "sty": { "$ref": "#/$defs/type" }, "suspendCall": { "type": "boolean" },
+        "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } }, "_capturedGenericResult": { "$ref": "#/$defs/type" },
         "_foreignDeclarationSignature": { "$ref": "#/$defs/sourceTypeVectorText" },
         "resolvedMemberReturn": { "$ref": "#/$defs/type" }, "_resolvedMethodTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }
       }, "sourceProperties": { "declarationId": { "type": "string" }, "virtual": { "type": "boolean" }, "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } } } },
@@ -1983,6 +1985,8 @@
     },
     "cirGenericStaticNode": {
       "type": "object", "x-dotkt-model": { "name": "CirGenericStatic", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": {
+        "sty": { "$ref": "#/$defs/type" }, "suspendCall": { "type": "boolean" },
+        "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } }, "_capturedGenericResult": { "$ref": "#/$defs/type" },
         "resolvedMemberParams": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "resolvedMemberReturn": { "$ref": "#/$defs/type" },
         "_resolvedMethodTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }
       }, "sourceConsumed": ["ret"], "sourceProperties": { "ret": { "$ref": "#/$defs/type" } } },
@@ -1991,6 +1995,8 @@
     },
     "cirGenericInstanceNode": {
       "type": "object", "x-dotkt-model": { "name": "CirGenericInstance", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": {
+        "sty": { "$ref": "#/$defs/type" }, "suspendCall": { "type": "boolean" },
+        "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } }, "_capturedGenericResult": { "$ref": "#/$defs/type" },
         "_erasedConstraintDispatch": { "type": "boolean" }, "resolvedMemberParams": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "_foreignDeclarationSignature": { "$ref": "#/$defs/sourceTypeVectorText" },
         "resolvedMemberReturn": { "$ref": "#/$defs/type" }, "_resolvedMethodTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }

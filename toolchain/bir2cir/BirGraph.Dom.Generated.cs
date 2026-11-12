@@ -3796,6 +3796,10 @@ internal static class BirGraphDom
                 case "functionCallSignature": break;
                 case "nullableWitnessCount": break;
                 case "resolvedMemberParams": break;
+                case "sty": break;
+                case "suspendCall": break;
+                case "_capturedGenericArgument": break;
+                case "_capturedGenericResult": break;
                 case "_foreignDeclarationSignature": break;
                 case "resolvedMemberReturn": break;
                 case "_resolvedMethodTypeParams": break;
@@ -3821,6 +3825,10 @@ internal static class BirGraphDom
             FunctionCallSignature = Field<TypeNode[]>(fields, "functionCallSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             NullableWitnessCount = Field<int>(fields, "nullableWitnessCount", value => value!.GetValue<int>()),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
+            SuspendCall = Field<bool>(fields, "suspendCall", value => value!.GetValue<bool>()),
+            _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
+            _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             _foreignDeclarationSignature = Field<SourceTypeVector>(fields, "_foreignDeclarationSignature", value => SourceTypeVector.ReadFrozenText(value!.GetValue<string>())),
             ResolvedMemberReturn = Field<TypeNode>(fields, "resolvedMemberReturn", value => TypeNode.Read(value) ?? throw new FormatException()),
             _resolvedMethodTypeParams = Field<BirTypeParameter[]>(fields, "_resolvedMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
@@ -3840,6 +3848,10 @@ internal static class BirGraphDom
                 case "args": break;
                 case "memberRef": break;
                 case "ret": break;
+                case "sty": break;
+                case "suspendCall": break;
+                case "_capturedGenericArgument": break;
+                case "_capturedGenericResult": break;
                 case "resolvedMemberParams": break;
                 case "resolvedMemberReturn": break;
                 case "_resolvedMethodTypeParams": break;
@@ -3853,6 +3865,10 @@ internal static class BirGraphDom
             Args = Field<IBirExpression[]>(fields, "args", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
             Ret = Field<TypeNode>(fields, "ret", value => TypeNode.Read(value) ?? throw new FormatException()),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
+            SuspendCall = Field<bool>(fields, "suspendCall", value => value!.GetValue<bool>()),
+            _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
+            _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ResolvedMemberReturn = Field<TypeNode>(fields, "resolvedMemberReturn", value => TypeNode.Read(value) ?? throw new FormatException()),
             _resolvedMethodTypeParams = Field<BirTypeParameter[]>(fields, "_resolvedMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
@@ -3876,6 +3892,10 @@ internal static class BirGraphDom
                 case "dispatch": break;
                 case "ret": break;
                 case "super": break;
+                case "sty": break;
+                case "suspendCall": break;
+                case "_capturedGenericArgument": break;
+                case "_capturedGenericResult": break;
                 case "_erasedConstraintDispatch": break;
                 case "resolvedMemberParams": break;
                 case "_foreignDeclarationSignature": break;
@@ -3895,6 +3915,10 @@ internal static class BirGraphDom
             Dispatch = Field<string>(fields, "dispatch", value => value!.GetValue<string>()),
             Ret = Field<TypeNode>(fields, "ret", value => TypeNode.Read(value) ?? throw new FormatException()),
             Super = Field<bool>(fields, "super", value => value!.GetValue<bool>()),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
+            SuspendCall = Field<bool>(fields, "suspendCall", value => value!.GetValue<bool>()),
+            _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
+            _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             _erasedConstraintDispatch = Field<bool>(fields, "_erasedConstraintDispatch", value => value!.GetValue<bool>()),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             _foreignDeclarationSignature = Field<SourceTypeVector>(fields, "_foreignDeclarationSignature", value => SourceTypeVector.ReadFrozenText(value!.GetValue<string>())),
