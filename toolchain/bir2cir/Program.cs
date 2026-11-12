@@ -40,6 +40,8 @@ static class Bir2Cir
                 MemberCallSubstitution.StaticCollectionPreferenceSelfTest();
                 FunctionSignatureIdentity.SelfTest();
                 FunctionValueRepresentation.SelfTestSourceFacts();
+                BirNodeType.SelfTest();
+                CapturedGenericInvocation.SelfTestSourceFacts();
                 ClrTypeVariance.SelfTest();
                 PhysicalValueCoercion.SelfTest();
                 StringCharSequenceBridge.SelfTest();
@@ -203,6 +205,7 @@ sealed class Pipeline
         captured = FunctionValueRepresentation.PreserveSourceFacts(captured);
         captured = ClrEventImplBinding.PreserveSourceFacts(captured);
         captured = ContinuationErasure.PreserveSourceSupertypes(captured, refs);
+        captured = CapturedGenericInvocation.PreserveSourceFacts(captured, refs);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -256,7 +259,6 @@ sealed class Pipeline
         var declarationSemanticSignatures = module.Signatures;
         var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild, module.ValuePolicy);
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
-        CapturedGenericInvocation.PreserveSourceFacts(birRoots, refs);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
         // These are new CLR slot bodies for frontend-selected inherited implementations, not source declarations.
         // Materialize before downstream indexing/freezing so references and local bases use the same suspend ABI.

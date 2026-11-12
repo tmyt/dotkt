@@ -42,6 +42,32 @@ internal sealed record EventPropertySourceFacts : BirGraphValue
     }
 }
 
+internal sealed record CapturedGenericArgument : BirGraphValue
+{
+    public OptionalField<int> Argument { get; init; }
+    public OptionalField<int[]> Slots { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
+    public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
+    {
+    };
+    public override void WriteJson(Utf8JsonWriter writer)
+    {
+        writer.WriteStartObject();
+        WriteOptional(writer, "argument", Argument, (writer, value) => { writer.WriteNumberValue(value); });
+        WriteOptional(writer, "slots", Slots, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
+        writer.WriteEndObject();
+    }
+    public override JsonObject ToDom()
+    {
+        var result = new JsonObject();
+        if (Argument.IsPresent) result["argument"] = Argument.IsNull ? null : JsonValue.Create(Argument.Value);
+        if (Slots.IsPresent) result["slots"] = Slots.IsNull ? null : new JsonArray(Slots.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
+        return result;
+    }
+}
+
 internal sealed record BirFileDeclaration : BirGraphValue
 {
     public OptionalField<string> FileClass { get; init; }
@@ -995,6 +1021,9 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<BirTypeParameter[]> MemberMethodTypeParams { get; init; }
     public OptionalField<TypeNode[]> MemberSignature { get; init; }
     public OptionalField<TypeNode> MemberReturnType { get; init; }
+    public OptionalField<CapturedGenericArgument[]> _capturedGenericArgument { get; init; }
+    public OptionalField<TypeNode> _capturedGenericResult { get; init; }
+    public OptionalField<string> _capturedGenericTarget { get; init; }
     public OptionalField<TypeNode> CalleeRet { get; init; }
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     public OptionalField<BirMemberReference> MemberRef { get; init; }
@@ -1006,6 +1035,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
         if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
         if (MemberMethodTypeParams.HasValue) { foreach (var item0 in MemberMethodTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { visit((BirGraphValue)item0); } }
         if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
@@ -1013,6 +1043,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Args,
         MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
         MemberMethodTypeParams = MemberMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberMethodTypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : MemberMethodTypeParams,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)rewrite((BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)MemberRef.Value)) : MemberRef,
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -1047,6 +1078,9 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "memberMethodTypeParams", MemberMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "_capturedGenericArgument", _capturedGenericArgument, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "_capturedGenericResult", _capturedGenericResult, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "_capturedGenericTarget", _capturedGenericTarget, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "calleeRet", CalleeRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -1086,6 +1120,9 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (MemberMethodTypeParams.IsPresent) result["memberMethodTypeParams"] = MemberMethodTypeParams.IsNull ? null : new JsonArray(MemberMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
+        if (_capturedGenericArgument.IsPresent) result["_capturedGenericArgument"] = _capturedGenericArgument.IsNull ? null : new JsonArray(_capturedGenericArgument.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (_capturedGenericResult.IsPresent) result["_capturedGenericResult"] = _capturedGenericResult.IsNull ? null : TypeNode.Write(_capturedGenericResult.Value);
+        if (_capturedGenericTarget.IsPresent) result["_capturedGenericTarget"] = _capturedGenericTarget.IsNull ? null : JsonValue.Create(_capturedGenericTarget.Value);
         if (CalleeRet.IsPresent) result["calleeRet"] = CalleeRet.IsNull ? null : TypeNode.Write(CalleeRet.Value);
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
@@ -1130,6 +1167,9 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<TypeNode[]> MemberSignature { get; init; }
     public OptionalField<TypeNode> MemberReturnType { get; init; }
     public OptionalField<bool> _erasedConstraintDispatch { get; init; }
+    public OptionalField<CapturedGenericArgument[]> _capturedGenericArgument { get; init; }
+    public OptionalField<TypeNode> _capturedGenericResult { get; init; }
+    public OptionalField<string> _capturedGenericTarget { get; init; }
     public OptionalField<TypeNode> CalleeRet { get; init; }
     public OptionalField<TypeNode[]> CalleeParams { get; init; }
     public OptionalField<BirMemberReference> MemberRef { get; init; }
@@ -1144,6 +1184,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { visit((BirGraphValue)item0); } }
         if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { visit((BirGraphValue)item0); } }
         if (MemberMethodTypeParams.HasValue) { foreach (var item0 in MemberMethodTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { visit((BirGraphValue)item0); } }
         if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
@@ -1153,6 +1194,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)rewrite((BirGraphValue)item0)).ToArray()) : Overrides,
         MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
         MemberMethodTypeParams = MemberMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberMethodTypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : MemberMethodTypeParams,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)rewrite((BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)MemberRef.Value)) : MemberRef,
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -1191,6 +1233,9 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_erasedConstraintDispatch", _erasedConstraintDispatch, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "_capturedGenericArgument", _capturedGenericArgument, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "_capturedGenericResult", _capturedGenericResult, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "_capturedGenericTarget", _capturedGenericTarget, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "calleeRet", CalleeRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -1235,6 +1280,9 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
         if (_erasedConstraintDispatch.IsPresent) result["_erasedConstraintDispatch"] = _erasedConstraintDispatch.IsNull ? null : JsonValue.Create(_erasedConstraintDispatch.Value);
+        if (_capturedGenericArgument.IsPresent) result["_capturedGenericArgument"] = _capturedGenericArgument.IsNull ? null : new JsonArray(_capturedGenericArgument.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (_capturedGenericResult.IsPresent) result["_capturedGenericResult"] = _capturedGenericResult.IsNull ? null : TypeNode.Write(_capturedGenericResult.Value);
+        if (_capturedGenericTarget.IsPresent) result["_capturedGenericTarget"] = _capturedGenericTarget.IsNull ? null : JsonValue.Create(_capturedGenericTarget.Value);
         if (CalleeRet.IsPresent) result["calleeRet"] = CalleeRet.IsNull ? null : TypeNode.Write(CalleeRet.Value);
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
