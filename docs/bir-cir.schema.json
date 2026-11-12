@@ -406,7 +406,7 @@
       "required": ["params", "baseArgs", "body"], "additionalProperties": false
     },
     "birFieldDeclaration": {
-      "type": "object", "x-dotkt-model": { "name": "BirFieldDeclaration", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirFieldDeclaration", "domain": "birCoreValues", "loweringProperties": { "constant": { "$ref": "#/$defs/literalValue" } } },
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" }, "static": { "type": "boolean", "x-dotkt-kotlin-name": "isStatic" },
         "init": { "oneOf": [{ "$ref": "#/$defs/birExpressionNode" }, { "type": "null" }] }, "vis": { "type": "string" },

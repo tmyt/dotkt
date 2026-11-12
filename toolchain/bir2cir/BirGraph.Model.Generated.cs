@@ -2097,7 +2097,7 @@ internal sealed record BirFieldDeclaration : BirGraphValue
     public OptionalField<string> CompanionSetterExplicitClrName { get; init; }
     public OptionalField<string> CompanionGetterDeclarationId { get; init; }
     public OptionalField<string> CompanionSetterDeclarationId { get; init; }
-    public OptionalField<AttributeArgument> Constant { get; init; }
+    public OptionalField<BirLiteral> Constant { get; init; }
     public OptionalField<int[]> NullableFlags { get; init; }
     public OptionalField<TypeNode> SuspendFnType { get; init; }
     public OptionalField<BirDeclarationPosition> Pos { get; init; }
@@ -2134,7 +2134,7 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         WriteOptional(writer, "companionSetterExplicitClrName", CompanionSetterExplicitClrName, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "companionGetterDeclarationId", CompanionGetterDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "companionSetterDeclarationId", CompanionSetterDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
-        WriteOptional(writer, "constant", Constant, (writer, value) => { JsonSerializer.Serialize(writer, value, AttributeJson.Options); });
+        WriteOptional(writer, "constant", Constant, (writer, value) => { BirLiteral.WriteJson(writer, value); });
         WriteOptional(writer, "nullableFlags", NullableFlags, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "suspendFnType", SuspendFnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "pos", Pos, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -2167,7 +2167,7 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         if (CompanionSetterExplicitClrName.IsPresent) result["companionSetterExplicitClrName"] = CompanionSetterExplicitClrName.IsNull ? null : JsonValue.Create(CompanionSetterExplicitClrName.Value);
         if (CompanionGetterDeclarationId.IsPresent) result["companionGetterDeclarationId"] = CompanionGetterDeclarationId.IsNull ? null : JsonValue.Create(CompanionGetterDeclarationId.Value);
         if (CompanionSetterDeclarationId.IsPresent) result["companionSetterDeclarationId"] = CompanionSetterDeclarationId.IsNull ? null : JsonValue.Create(CompanionSetterDeclarationId.Value);
-        if (Constant.IsPresent) result["constant"] = Constant.IsNull ? null : JsonValue.Create<AttributeArgument>(Constant.Value);
+        if (Constant.IsPresent) result["constant"] = Constant.IsNull ? null : LiteralToDom(Constant.Value);
         if (NullableFlags.IsPresent) result["nullableFlags"] = NullableFlags.IsNull ? null : new JsonArray(NullableFlags.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (SuspendFnType.IsPresent) result["suspendFnType"] = SuspendFnType.IsNull ? null : TypeNode.Write(SuspendFnType.Value);
         if (Pos.IsPresent) result["pos"] = Pos.IsNull ? null : ((BirGraphValue)Pos.Value).ToDom();

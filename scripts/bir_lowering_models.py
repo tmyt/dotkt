@@ -129,7 +129,6 @@ def outputs(root, definitions):
         key = refkey(field)
         if key:
             special = {"type": "TypeNode", "literalValue": "BirLiteral", "birSourceTypeAlias": "SourceTypeAlias",
-                       "cirAttributeArgument": "AttributeArgument",
                        "birExpressionNode": "IBirExpression", "birStatementNode": "IBirStatement",
                        "birTypeDeclaration": "IBirTypeDeclaration", "loweringAttributeValue": "IBirAttributeValue"}
             return special[key] if key in special else shapes[key]["x-dotkt-model"]["name"]
@@ -153,7 +152,6 @@ def outputs(root, definitions):
             if key == "type": return "TypeNode.ReadJson(ref reader)"
             if key == "literalValue": return "BirLiteral.ReadJson(ref reader)"
             if key == "birSourceTypeAlias": return "SourceMetadataJson.Read(ref reader)"
-            if key == "cirAttributeArgument": return "JsonSerializer.Deserialize<AttributeArgument>(ref reader, AttributeJson.Options)!"
             return f"Read{cs(field).removeprefix('I')}(ref reader)"
         if field.get("type") == "array":
             item = field["items"]
@@ -175,7 +173,6 @@ def outputs(root, definitions):
             if key == "type": expr = f"TypeNode.WriteJson(writer, {value});"
             elif key == "literalValue": expr = f"BirLiteral.WriteJson(writer, {value});"
             elif key == "birSourceTypeAlias": expr = f"SourceMetadataJson.Write(writer, {value});"
-            elif key == "cirAttributeArgument": expr = f"JsonSerializer.Serialize(writer, {value}, AttributeJson.Options);"
             else: expr = f"((BirGraphValue){value}).WriteJson(writer);"
             return [indent + expr]
         if field.get("type") == "array":
@@ -198,7 +195,6 @@ def outputs(root, definitions):
         if key:
             if key == "type": return f"TypeNode.Write({value})"
             if key == "literalValue": return f"LiteralToDom({value})"
-            if key == "cirAttributeArgument": return f"JsonValue.Create<AttributeArgument>({value})"
             if key == "birSourceTypeAlias": return "throw new InvalidOperationException(\"Extract aliases before the temporary DOM boundary\")"
             return f"((BirGraphValue){value}).ToDom()"
         if field.get("type") == "array":
@@ -211,7 +207,7 @@ def outputs(root, definitions):
     def is_child(field):
         field = base(field)
         if field.get("type") == "array": return is_child(field["items"])
-        return bool(refkey(field)) and refkey(field) not in {"type", "literalValue", "birSourceTypeAlias", "cirAttributeArgument"}
+        return bool(refkey(field)) and refkey(field) not in {"type", "literalValue", "birSourceTypeAlias"}
 
     def rewrite(field, value, depth=0):
         field = base(field)

@@ -3144,7 +3144,7 @@ internal static partial class BirGraphJson
         OptionalField<string> field21 = default;
         OptionalField<string> field22 = default;
         OptionalField<string> field23 = default;
-        OptionalField<AttributeArgument> field24 = default;
+        OptionalField<BirLiteral> field24 = default;
         OptionalField<int[]> field25 = default;
         OptionalField<TypeNode> field26 = default;
         OptionalField<BirDeclarationPosition> field27 = default;
@@ -3253,7 +3253,7 @@ internal static partial class BirGraphJson
                     break;
                 case "constant":
                     Seen(ref seen, 1UL << 24);
-                    field24 = reader.TokenType == JsonTokenType.Null ? OptionalField<AttributeArgument>.Null : OptionalField<AttributeArgument>.Of(JsonSerializer.Deserialize<AttributeArgument>(ref reader, AttributeJson.Options)!);
+                    field24 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirLiteral>.Null : OptionalField<BirLiteral>.Of(BirLiteral.ReadJson(ref reader));
                     break;
                 case "nullableFlags":
                     Seen(ref seen, 1UL << 25);

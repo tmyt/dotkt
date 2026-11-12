@@ -133,6 +133,28 @@ if (!JsonNode.DeepEquals(DefaultBirCarrier.Decode(carrier),
     ((BirGraphValue)defaults.Methods.Value[0].Params.Value[0].DefaultBir.Value.Body.Value).ToDom()))
     throw new Exception("The typed source default changed its frame or float payload while freezing");
 
+// A lowered const field still holds a BIR literal until final CIR declaration
+// projection chooses its physical Constant-table value. Do not admit the final
+// attribute vocabulary prematurely just because the physical field has the same key.
+var constantJson = "{\"fileClass\":\"Constant\",\"fields\":[{\"name\":\"value\",\"type\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"constant\":42}]}";
+var constantRoot = BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(constantJson));
+Same(constantJson, constantRoot);
+if (constantRoot.Fields.Value[0].Constant.Value is not BirLiteral.IntegerLiteral { Value: 42 }
+    || CirDeclarationProjection.ReadCirField(constantRoot.Fields.Value[0].ToDom()).Constant.Value is not AttributeArgument.Int32Value { Value: 42 })
+    throw new Exception("An intermediate field constant was not projected from its source literal");
+foreach (var (type, literal, expected) in new (string, BirLiteral, AttributeArgument)[] {
+    ("System.Int64", new BirLiteral.IntegerLiteral(long.MinValue), new AttributeArgument.Int64Value(long.MinValue)),
+    ("System.Single", new Float32Literal(unchecked((int)0xffc01234)), new AttributeArgument.Float32Value(unchecked((int)0xffc01234))),
+    ("System.Double", new Float64Literal(long.MinValue), new AttributeArgument.Float64Value(long.MinValue)),
+    ("System.String", new BirLiteral.NullLiteral(), new AttributeArgument.NullValue()),
+})
+{
+    var field = new BirFieldDeclaration { Name = "value", Type = new TypeNode.Fqn(type), Constant = literal };
+    var physical = CirDeclarationProjection.ReadCirField(field.ToDom());
+    if (!expected.Equals(physical.Constant.Value))
+        throw new Exception("A typed intermediate field changed literal width, bits, or null during final projection");
+}
+
 var authored = 0;
 foreach (var file in Directory.EnumerateFiles("tests/ir/lowering", "*.bir*.json").Order(StringComparer.Ordinal))
 {
