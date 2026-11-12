@@ -87,6 +87,8 @@ static class Bir2Cir
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
                 ComparableRepresentationLowering.SelfTest();
                 ValueRepresentationLowering.SelfTest();
+                ValueRepresentationSourcePolicy.SelfTest();
+                CallableVisibilityLowering.SelfTest();
                 AliasVarianceRepresentation.SelfTest();
                 ExactMutableViewDispatch.SelfTest();
                 KotlinCollectionClassifierLowering.SelfTest();
@@ -130,14 +132,14 @@ sealed class Pipeline
     {
         Directory.CreateDirectory(_options.OutDir);
 
-        var module = LoadBirFiles(_options.Inputs, _options.RefBuild);
-        var birFiles = module.Files;
         var refs = ReferenceMetadataIndex.Build(_options.CompileReferences);
         // Fail-loud: a ref.dll scan swallows load/type failures into Diagnostics (so ONE malformed type never aborts the
         // whole scan). Surface them here — a silent ref-scan miss otherwise surfaces as a distant EntryPointNotFound/NRE
         // with no "ref scan failed" signal. An empty Diagnostics stays silent (the happy path prints nothing).
         var diagnostics = refs.Diagnostics.ToList();
         foreach (var d in diagnostics) Console.Error.WriteLine($"bir2cir: WARNING ref-scan diagnostic: {d}");
+        var module = LoadBirFiles(_options.Inputs, _options.RefBuild, refs);
+        var birFiles = module.Files;
         var cirFiles = TransformFiles(module, refs);
         if (_options.ReflectionRestricted
             && (ForeignStarProjectionBinding.UsedRuntimeFallback || StarProjectionLowering.UsedRuntimeFallback))
@@ -163,7 +165,7 @@ sealed class Pipeline
             $"bir2cir: lowered {birFiles.Count} BIR file(s) -> {_options.OutDir} ({refs.Count} ref(s), build: {(_options.RefBuild ? "reference" : "substitute/app")}, suspend: {suspend.FunctionCount} fn)");
     }
 
-    static LoadedBirModule LoadBirFiles(IReadOnlyList<string> inputs, bool referenceBuild)
+    static LoadedBirModule LoadBirFiles(IReadOnlyList<string> inputs, bool referenceBuild, ReferenceMetadataIndex refs)
     {
         var inputsWithSources = new List<(string Path, DotKt.Bir.Lowering.BirFileDeclaration Source, SuspendShapeAnalysis Suspend)>();
         foreach (var input in inputs)
@@ -193,6 +195,9 @@ sealed class Pipeline
         // Later metadata must not reconstruct them from get_/set_ or CLR names.
         var signatures = new SourceDeclarationSignatures();
         captured = signatures.Capture(captured);
+        var valuePolicy = new ValueRepresentationSourcePolicy(captured, refs, referenceBuild);
+        for (var index = 0; index < captured.Length; index++) captured[index] = valuePolicy.EraseBounds(captured[index]);
+        captured = CallableVisibilityLowering.ApplyAll(captured, refs);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -208,7 +213,7 @@ sealed class Pipeline
                 inputsWithSources[index].Suspend));
         }
 
-        return new LoadedBirModule(files, signatures);
+        return new LoadedBirModule(files, signatures, valuePolicy);
     }
 
     // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
@@ -244,10 +249,8 @@ sealed class Pipeline
         var birFiles = module.Files;
         var birRoots = birFiles.Select(b => b.Root).ToList();
         var declarationSemanticSignatures = module.Signatures;
-        var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild);
+        var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild, module.ValuePolicy);
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
-        foreach (var root in birRoots) valueRepresentations.EraseBounds(root);
-        CallableVisibilityLowering.ApplyAll(birRoots, refs);
         FunctionValueRepresentation.PreserveSourceFacts(birRoots);
         ClrEventImplBinding.PreserveSourceFacts(birRoots);
         CapturedGenericInvocation.PreserveSourceFacts(birRoots, refs);
@@ -1906,7 +1909,8 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 }
 
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
-sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures);
+sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
+    ValueRepresentationSourcePolicy ValuePolicy);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // ONE TRANSITIVE SUPERTYPE WALK, SHARED BY EVERY PASS THAT ASKS "WHAT DOES THIS TYPE INHERIT?".
 //
@@ -25,8 +27,9 @@ using DotKt.Bir;
 // the descriptor resolvable; a pass that only needs the NAME simply ignores the arguments.
 static class SupertypeGraph
 {
-    // A type DECLARED IN THIS COMPILATION, indexed by its BIR name. `Node`/`Methods` are the live JSON, so a pass
-    // that rewrites a declaration rewrites the tree.
+    // A type DECLARED IN THIS COMPILATION, indexed by its BIR name. Collect supplies
+    // live Node/Methods for mutable DOM consumers; CollectSource supplies only the
+    // typed declaration shape used by source reachability, with no DOM pointers.
     public sealed class Def
     {
         public string Name;
@@ -44,6 +47,31 @@ static class SupertypeGraph
     {
         var result = new Dictionary<string, Def>(StringComparer.Ordinal);
         foreach (var root in roots) CollectFrom(root, result);
+        return result;
+    }
+
+    // Before the DOM frontier, reachability needs only the declaration-owned
+    // type shape. Node/Methods are late mutable consumers, not source facts.
+    internal static Dictionary<string, Def> CollectSource(IEnumerable<BirFileDeclaration> roots)
+    {
+        var result = new Dictionary<string, Def>(StringComparer.Ordinal);
+        foreach (var declaration in roots.SelectMany(root => root.Types.OrEmpty()))
+        {
+            var (name, kind, arity, baseType, interfaces) = declaration switch {
+                BirClassDefinition type => (type.Name.OrDefault(), type.Kind.OrDefault(),
+                    type.CapturedTypeParams.OrEmpty().Length + type.TypeParams.OrEmpty().Length,
+                    type.Base.OrDefault(), type.Interfaces.OrEmpty()),
+                BirInterfaceDefinition type => (type.Name.OrDefault(), type.Kind.OrDefault(),
+                    type.CapturedTypeParams.OrEmpty().Length + type.TypeParams.OrEmpty().Length,
+                    type.Base.OrDefault(), type.Interfaces.OrEmpty()),
+                BirEnumDefinition type => (type.Name.OrDefault(), type.Kind.OrDefault(),
+                    type.CapturedTypeParams.OrEmpty().Length + type.TypeParams.OrEmpty().Length,
+                    type.Base.OrDefault(), type.Interfaces.OrEmpty()),
+                _ => throw new InvalidOperationException("Unaccounted source hierarchy owner: " + declaration.GetType().Name),
+            };
+            if (name != null) result[name] = new Def { Name = name, Kind = kind, Arity = arity,
+                Base = baseType as TypeNode.Fqn, Interfaces = interfaces.OfType<TypeNode.Fqn>().ToArray() };
+        }
         return result;
     }
 
