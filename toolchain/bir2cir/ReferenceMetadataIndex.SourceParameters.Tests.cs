@@ -16,13 +16,13 @@ sealed partial class ReferenceMetadataIndex
             new("source-parameters.dll", "source-parameters", "1", metadata),
         }, ManagedReferenceCatalog.Create(Array.Empty<string>(), "bir2cir"));
         var index = Create();
-        var first = index.SourceOwnerTypeParameters("external.Frame");
+        var first = index.OwnerTypeParametersInPhysicalFrame("external.Frame");
         if (first.Count != 3 || first[0].Variance.Value != "out"
             || first[2].Constraints.Value.Single() != new TypeNode.Tv("type", 0)
             || first[2].SpecialConstraints.Value.Single() != "class"
-            || !ReferenceEquals(first, index.SourceOwnerTypeParameters("external.Frame"))
-            || ReferenceEquals(first, Create().SourceOwnerTypeParameters("external.Frame"))
-            || index.SourceOwnerTypeParameters("external.Missing") != null)
+            || !ReferenceEquals(first, index.OwnerTypeParametersInPhysicalFrame("external.Frame"))
+            || ReferenceEquals(first, Create().OwnerTypeParametersInPhysicalFrame("external.Frame"))
+            || index.OwnerTypeParametersInPhysicalFrame("external.Missing") != null)
             throw new InvalidOperationException("Typed reference parameters lost facts or index-local cache ownership");
         return index;
     }

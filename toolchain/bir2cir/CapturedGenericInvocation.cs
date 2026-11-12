@@ -48,7 +48,7 @@ static class CapturedGenericInvocation
                     || BirNodeType.Of(arguments[index] as BirGraphNode) is not TypeNode.Fqn { Args: { } actualArgs } actual
                     || formal.Name != actual.Name || formalArgs.Length != actualArgs.Length) continue;
                 var local = locals.TryGetValue(formal.Name, out var localParameters);
-                var parameters = local ? localParameters : refs.SourceOwnerTypeParameters(formal.Name);
+                var parameters = local ? localParameters : refs.OwnerTypeParametersInPhysicalFrame(formal.Name);
                 var frame = !local && refs.NullableTypeFrames.TryGetValue(formal.Name, out var referencedFrame)
                     ? referencedFrame : null;
                 if (parameters == null || (frame?.SourceArity ?? parameters.Count) != formalArgs.Length) continue;
@@ -138,6 +138,18 @@ static class CapturedGenericInvocation
             .Single().Methods.Value[0].Body.Value[0]).Expr.Value;
         if (shadow._capturedGenericArgument.Value.Length != 1 || shadow._capturedGenericArgument.Value[0].Argument.Value != 0)
             throw new InvalidOperationException("Reference variance replaced an authoritative local declaration");
+        var externalCall = call with { Sig = new TypeNode[] { Formal("external.Invariant", 1) },
+            Args = new IBirExpression[] { Actual("external.Invariant", 1) } };
+        var externalInput = input with { Methods = new[] { input.Methods.Value[0] with { Body = new IBirStatement[] {
+            new BirExpressionStatement { Expr = externalCall },
+        } } } };
+        BirCallStatic Imported(BirFileDeclaration file) => (BirCallStatic)((BirExpressionStatement)
+            PreserveSourceFacts(new[] { file }, references).Single().Methods.Value[0].Body.Value[0]).Expr.Value;
+        if (!Imported(externalInput)._capturedGenericArgument.Value.Single().Slots.Value.SequenceEqual(new[] { 1 })
+            || Imported(externalInput with { Types = new IBirTypeDeclaration[] {
+                new BirInterfaceDefinition { Name = "external.Invariant", Kind = "interface" },
+            } })._capturedGenericArgument.IsPresent)
+            throw new InvalidOperationException("Missing local type parameters fell back to a same-named reference declaration");
         var reader = new System.Text.Json.Utf8JsonReader(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(captured.ToDom()));
         if (!reader.Read()) throw new InvalidOperationException();
         var roundtrip = BirGraphJson.ReadBirCallStatic(ref reader);

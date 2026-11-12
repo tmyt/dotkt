@@ -2528,7 +2528,9 @@ sealed partial class ReferenceMetadataIndex
         ? JsonNode.Parse(text) as JsonArray : null;
 
     readonly Dictionary<string, IReadOnlyList<BirTypeParameter>> sourceOwnerParameters = new(StringComparer.Ordinal);
-    internal IReadOnlyList<BirTypeParameter> SourceOwnerTypeParameters(string ownerFqn)
+    // Source declaration facts retain CLR parameter positions. Map source indices
+    // through NullableRepresentationFrame.SourcePosition before indexing this list.
+    internal IReadOnlyList<BirTypeParameter> OwnerTypeParametersInPhysicalFrame(string ownerFqn)
     {
         if (OwnerTypeParamDeclarationText(ownerFqn) is not { } text) return null;
         if (sourceOwnerParameters.TryGetValue(text, out var cached)) return cached;
