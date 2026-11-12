@@ -177,7 +177,7 @@ static class ComparableRepresentationLowering
             nameof(BirEnumDefinition), nameof(BirClosureDefinition), nameof(BirRefTypeDeclaration), nameof(BirInheritedClassMethod),
             nameof(BirInheritedImplementation), nameof(BirMethodImpl) }))
             throw new InvalidOperationException("Audit comparable bound erasure for the current declaration families");
-        SourceBoundsSnapshot.SelfTest();
+        SourceTypeFacts.SelfTest();
         var comparable = new TypeNode.Fqn("kotlin.Comparable", new TypeNode[] { new TypeNode.Tv("method", 0) });
         var sibling = new TypeNode.Fqn("Sibling");
         var parameters = new[] {

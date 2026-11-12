@@ -42,8 +42,8 @@ static class SourceConstraintErasure
                 }).ToArray();
                 if (changed)
                 {
-                    SourceBoundsSnapshot Merge(OptionalField<SourceBoundsSnapshot> previous) => previous.HasValue
-                        ? previous.Value.Merge(bounds) : new SourceBoundsSnapshot(bounds);
+                    SourceTypeFacts Merge(OptionalField<SourceTypeFacts> previous) => previous.HasValue
+                        ? previous.Value.Merge(bounds) : new SourceTypeFacts(bounds);
                     node = node switch {
                         BirFunctionDeclaration value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
                         BirClassDefinition value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },

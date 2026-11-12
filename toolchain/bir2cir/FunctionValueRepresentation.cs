@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Ordinary Kotlin function variance must not change the identity of the stored value.
 // Choose argument/result carriers at construction, rather than allocating adapters at
@@ -14,58 +16,71 @@ static class FunctionValueRepresentation
 
     // Preserve the complete source slot, including nested generic function arguments,
     // before either nullable-frame expansion or function representation changes it.
-    public static void PreserveSourceFacts(IEnumerable<JsonNode> roots)
+    public static BirFileDeclaration[] PreserveSourceFacts(IReadOnlyList<BirFileDeclaration> roots)
     {
-        foreach (var root in roots.OfType<JsonObject>()) PreserveOwner(root);
-    }
+        static OptionalField<T[]> Map<T>(OptionalField<T[]> source, Func<T, T> rewrite) =>
+            source.HasValue ? source.Value.Select(rewrite).ToArray() : source;
+        static OptionalField<TypeNode> Slot(OptionalField<TypeNode> type, OptionalField<TypeNode> previous) =>
+            !previous.HasValue && ContainsOrdinaryFunction(type.OrDefault()) ? type : previous;
+        BirParameter Parameter(BirParameter parameter) => parameter with { KotlinType = Slot(parameter.Type, parameter.KotlinType) };
+        BirFunctionDeclaration Method(BirFunctionDeclaration method) => method with {
+            RetKotlinType = Slot(method.Ret, method.RetKotlinType), Params = Map(method.Params, Parameter),
+        };
+        BirConstructor Constructor(BirConstructor constructor) => constructor with { Params = Map(constructor.Params, Parameter) };
+        BirFieldDeclaration Field(BirFieldDeclaration field) => field with { KotlinType = Slot(field.Type, field.KotlinType) };
+        BirPropertyDeclaration Property(BirPropertyDeclaration property) => property with { KotlinType = Slot(property.Type, property.KotlinType) };
 
-    static void PreserveOwner(JsonObject owner)
-    {
-        var sourceEdges = new JsonObject();
-        if (ContainsOrdinaryFunction(owner["base"]))
-            sourceEdges["base"] = owner["base"].DeepClone();
-        if (owner["interfaces"] is JsonArray interfaces)
+        OptionalField<SourceTypeFacts> Edges(OptionalField<TypeNode> baseType, OptionalField<TypeNode[]> interfaces,
+            OptionalField<BirTypeParameter[]> parameters, OptionalField<SourceTypeFacts> previous)
         {
-            var moving = new JsonArray(interfaces.Where(ContainsOrdinaryFunction)
-                .Select(edge => edge.DeepClone()).ToArray());
-            if (moving.Count != 0) sourceEdges["interfaces"] = moving;
+            var original = previous.OrDefault() ?? SourceTypeFacts.Empty;
+            var bounds = parameters.OrEmpty().Select((parameter, index) => (parameter, index))
+                .Where(entry => entry.parameter.Constraints.OrEmpty().Any(ContainsOrdinaryFunction))
+                .ToDictionary(entry => entry.index, entry => entry.parameter.Constraints.Value);
+            var merged = original.Merge(ContainsOrdinaryFunction(baseType.OrDefault()) ? baseType.Value : null,
+                interfaces.OrEmpty().Where(ContainsOrdinaryFunction).ToArray(), bounds);
+            return ReferenceEquals(original, merged) ? previous : merged;
         }
-        if (owner["typeParams"] is JsonArray parameters)
-        {
-            var bounds = new JsonObject();
-            for (var i = 0; i < parameters.Count; i++)
-                if (parameters[i] is JsonObject parameter
-                    && parameter["constraints"] is JsonArray constraints
-                    && constraints.Any(ContainsOrdinaryFunction))
-                    bounds[i.ToString()] = constraints.DeepClone();
-            if (bounds.Count != 0) sourceEdges["bounds"] = bounds;
-        }
-        KotlinSupertypesRecord.Merge(owner, sourceEdges);
-        if (owner["methods"] is JsonArray methods)
-            foreach (var method in methods.OfType<JsonObject>())
-            {
-                PreserveSlot(method, "ret", "retKotlinType");
-                PreserveSlots(method["params"]);
-            }
-        if (owner["ctors"] is JsonArray ctors)
-            foreach (var ctor in ctors.OfType<JsonObject>()) PreserveSlots(ctor["params"]);
-        PreserveSlots(owner["fields"]);
-        PreserveSlots(owner["properties"]);
-        if (owner["types"] is JsonArray types)
-            foreach (var type in types.OfType<JsonObject>()) PreserveOwner(type);
+        IBirTypeDeclaration Owner(IBirTypeDeclaration declaration) => declaration switch {
+            BirClassDefinition owner => owner with {
+                KotlinSupertypesPre = Edges(owner.Base, owner.Interfaces, owner.TypeParams, owner.KotlinSupertypesPre),
+                Methods = Map(owner.Methods, Method), Ctors = Map(owner.Ctors, Constructor),
+                Fields = Map(owner.Fields, Field), Properties = Map(owner.Properties, Property),
+            },
+            BirInterfaceDefinition owner => owner with {
+                KotlinSupertypesPre = Edges(owner.Base, owner.Interfaces, owner.TypeParams, owner.KotlinSupertypesPre),
+                Methods = Map(owner.Methods, Method), Ctors = Map(owner.Ctors, Constructor),
+                Fields = Map(owner.Fields, Field), Properties = Map(owner.Properties, Property),
+            },
+            BirEnumDefinition owner => owner with {
+                KotlinSupertypesPre = Edges(owner.Base, owner.Interfaces, owner.TypeParams, owner.KotlinSupertypesPre),
+                Methods = Map(owner.Methods, Method), Ctors = Map(owner.Ctors, Constructor),
+                Fields = Map(owner.Fields, Field), Properties = Map(owner.Properties, Property),
+            },
+            _ => throw new InvalidOperationException("Unaccounted function-source owner: " + declaration.GetType().Name),
+        };
+        return roots.Select(root => root with {
+            Methods = Map(root.Methods, Method), Fields = Map(root.Fields, Field),
+            Properties = Map(root.Properties, Property), Types = Map(root.Types, Owner),
+        }).ToArray();
     }
 
-    static void PreserveSlots(JsonNode slots)
-    {
-        if (slots is JsonArray array)
-            foreach (var slot in array.OfType<JsonObject>()) PreserveSlot(slot, "type", "kotlinType");
-    }
-
-    static void PreserveSlot(JsonObject slot, string typeKey, string sourceKey)
-    {
-        if (slot[sourceKey] == null && ContainsOrdinaryFunction(slot[typeKey]))
-            slot[sourceKey] = slot[typeKey].ToJsonString();
-    }
+    internal static bool ContainsOrdinaryFunction(TypeNode type) => type switch {
+        TypeNode.Fqn { Name: FunctionPointerVocabulary.Pointer } => false,
+        TypeNode.Fqn f => f.Args?.Any(ContainsOrdinaryFunction) == true,
+        TypeNode.Fn { Suspend: false, Clr: null } => true,
+        TypeNode.Fn f => ContainsOrdinaryFunction(f.Ret) || f.Params.Any(ContainsOrdinaryFunction)
+            || ContainsOrdinaryFunction(f.Recv) || f.Ctx?.Any(ContainsOrdinaryFunction) == true,
+        TypeNode.Array a => ContainsOrdinaryFunction(a.Elem),
+        TypeNode.Nullable n => ContainsOrdinaryFunction(n.Of),
+        TypeNode.Oblivious o => ContainsOrdinaryFunction(o.Of),
+        TypeNode.Projection p => ContainsOrdinaryFunction(p.Of),
+        TypeNode.ByRef b => ContainsOrdinaryFunction(b.Of),
+        TypeNode.Ptr p => ContainsOrdinaryFunction(p.Of),
+        TypeNode.FnPtr f => ContainsOrdinaryFunction(f.Ret) || f.Params.Any(ContainsOrdinaryFunction),
+        TypeNode.Mod m => ContainsOrdinaryFunction(m.M) || ContainsOrdinaryFunction(m.Of),
+        _ => false,
+    };
 
     internal static bool ContainsOrdinaryFunction(JsonNode node)
     {
@@ -158,4 +173,78 @@ static class FunctionValueRepresentation
         && tag.TryGetValue<string>(out var kind) && kind == "fqn"
         && type["name"] is JsonValue name && name.TryGetValue<string>(out var fqn)
         && fqn == FunctionPointerVocabulary.Pointer;
+
+    internal static void SelfTestSourceFacts()
+    {
+        var integer = new TypeNode.Fqn("kotlin.Int");
+        var function = new TypeNode.Fn(false, new TypeNode.Nullable(new TypeNode.Tv("method", 1)),
+            new TypeNode[] { new TypeNode.Tv("type", 0) }, new TypeNode.Fqn("Receiver"),
+            Ctx: new TypeNode[] { new TypeNode.Fqn("Context") });
+        var native = new TypeNode.Fqn(FunctionPointerVocabulary.Pointer, new TypeNode[] { function });
+        foreach (var (type, containsFunction) in new (TypeNode, bool)[] {
+            (function, true), (native, false), (new TypeNode.Fqn("Box", new TypeNode[] { function }), true),
+            (integer, false), (new TypeNode.Tv("type", 0), false), (new TypeNode.Star(), false),
+            (new TypeNode.Projection("in", function), true), (new TypeNode.Nullable(function), true),
+            (new TypeNode.Oblivious(function), true), (new TypeNode.Array(function), true),
+            (new TypeNode.ByRef(function), true), (new TypeNode.Ptr(function), true),
+            (new TypeNode.FnPtr(0, 0, 0, function, Array.Empty<TypeNode>()), true),
+            (new TypeNode.Mod(true, function, integer), true),
+            (new TypeNode.Fn(true, integer, Array.Empty<TypeNode>()), false),
+            (new TypeNode.Fn(true, function, Array.Empty<TypeNode>()), true),
+            (new TypeNode.Fn(false, integer, Array.Empty<TypeNode>(), Clr: "System.Func"), false),
+            (new TypeNode.Fn(false, function, Array.Empty<TypeNode>(), Clr: "System.Func"), true),
+        })
+            if (ContainsOrdinaryFunction(type) != containsFunction || ContainsOrdinaryFunction(TypeJson.Write(type)) != containsFunction)
+                throw new InvalidOperationException("Typed function recognition changed " + type.GetType().Name);
+
+        var baseType = new TypeNode.Fqn("Base", new TypeNode[] { function });
+        var edge = new TypeNode.Fqn("Contract", new TypeNode[] { function });
+        var sibling = new TypeNode.Fqn("Sibling");
+        BirParameter Parameter(TypeNode type) => new() { Name = "value", Type = type };
+        var method = new BirFunctionDeclaration { Name = "value", Ret = function,
+            Params = new[] { Parameter(function), Parameter(native), Parameter(integer) } };
+        var field = new BirFieldDeclaration { Name = "value", Type = function };
+        var property = new BirPropertyDeclaration { Name = "value", Type = function };
+        var root = new BirFileDeclaration { FileClass = "Functions", Methods = new[] { method },
+            Fields = new[] { field }, Properties = new[] { property },
+            Types = new IBirTypeDeclaration[] {
+                new BirClassDefinition { Name = "Owner", Kind = "class", Base = baseType,
+                    Interfaces = new[] { edge }, Methods = new[] { method }, Fields = new[] { field },
+                    Properties = new[] { property }, Ctors = new[] { new BirConstructor { Params = new[] { Parameter(function) } } },
+                    TypeParams = new[] { new BirTypeParameter { Name = "T", Constraints = new TypeNode[] {
+                        new TypeNode.Fqn("kotlin.Comparable"), edge, sibling,
+                    } } },
+                },
+                new BirInterfaceDefinition { Name = "ContractOwner", Kind = "interface", Interfaces = new[] { edge },
+                    Methods = new[] { method }, Fields = new[] { field }, Properties = new[] { property } },
+                new BirEnumDefinition { Name = "EnumOwner", Kind = "enum", Methods = new[] { method } },
+            },
+        };
+        root = ComparableRepresentationLowering.Apply(new[] { root }, referenceBuild: false)[0];
+        var before = root.ToDom();
+        var rewritten = PreserveSourceFacts(new[] { root })[0];
+        var result = rewritten.Methods.Value[0];
+        var owner = (BirClassDefinition)rewritten.Types.Value[0];
+        if (!JsonNode.DeepEquals(before, root.ToDom()) || result.RetKotlinType.Value != function
+            || result.Params.Value[0].KotlinType.Value != function || result.Params.Value[1].KotlinType.IsPresent
+            || result.Params.Value[2].KotlinType.IsPresent || rewritten.Fields.Value[0].KotlinType.Value != function
+            || rewritten.Properties.Value[0].KotlinType.Value != function
+            || owner.Ctors.Value[0].Params.Value[0].KotlinType.Value != function
+            || owner.Methods.Value[0].RetKotlinType.Value != function || owner.Fields.Value[0].KotlinType.Value != function
+            || owner.Properties.Value[0].KotlinType.Value != function
+            || ((BirInterfaceDefinition)rewritten.Types.Value[1]).Methods.Value[0].RetKotlinType.Value != function
+            || ((BirEnumDefinition)rewritten.Types.Value[2]).Methods.Value[0].RetKotlinType.Value != function)
+            throw new InvalidOperationException("Function source facts lost slots, ownership or native signature boundaries");
+        var expectedOwner = root.Types.Value[0] as BirClassDefinition;
+        var expected = expectedOwner.ToDom();
+        KotlinSupertypesRecord.Merge(expected, new JsonObject {
+            ["base"] = TypeJson.Write(baseType), ["interfaces"] = new JsonArray(TypeJson.Write(edge)),
+            ["bounds"] = new JsonObject { ["0"] = new JsonArray(TypeJson.Write(edge), TypeJson.Write(sibling)) },
+        });
+        if (SourceTypeFacts.ToDom(owner.KotlinSupertypesPre.Value).GetValue<string>()
+                != expected[KotlinSupertypesRecord.PreKey].GetValue<string>()
+            || owner.KotlinSupertypesPre.Value.Bounds[0][0] is not TypeNode.Fqn { Name: "kotlin.Comparable" })
+            throw new InvalidOperationException("Function source facts lost earliest sibling bounds or exact leaf order");
+        Console.WriteLine("[function source facts] self-test OK (typed slots, all type families, native signatures, least-erased edges/bounds)");
+    }
 }
