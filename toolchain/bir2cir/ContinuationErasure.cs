@@ -139,9 +139,10 @@ static partial class ContinuationErasure
                 throw new InvalidOperationException($"ContinuationErasure self-test: {typeName} source edges/bounds");
             var snapshot = source.ToJsonString();
             Apply(root, names);
+            var competing = Nested(new TypeNode.Tv("method", 3));
             var later = (BirClassDefinition)CaptureSupertypes(captured with {
-                Base = expected, Interfaces = new[] { expected }, TypeParams = new[] { new BirTypeParameter {
-                    Name = "T", Constraints = new TypeNode[] { expected, new TypeNode.Fqn("probe.Unchanged") },
+                Base = competing, Interfaces = new[] { competing }, TypeParams = new[] { new BirTypeParameter {
+                    Name = "T", Constraints = new TypeNode[] { competing, new TypeNode.Fqn("probe.Unchanged") },
                 } },
             });
             if (SourceTypeFacts.ToDom(later.KotlinSupertypesPre.Value).GetValue<string>() != snapshot
@@ -175,7 +176,13 @@ static partial class ContinuationErasure
         var bounds = new[] { new BirTypeParameter { Name = "T", Constraints = new TypeNode[] { source, sibling } } };
         var descriptor = new BirInheritedImplementation { Kind = "function", TypeParams = bounds };
         var method = new BirFunctionDeclaration { Name = "member", TypeParams = bounds,
-            InheritedImplementation = descriptor };
+            InheritedImplementation = descriptor, Body = new IBirStatement[] { new BirExpressionStatement {
+                Expr = new BirNewSam { SynthClass = new BirClassDefinition {
+                    Kind = "class", Name = "probe.Synthetic", Base = source,
+                    InheritedDefaultAccessors = new[] { new BirInheritedDefaultAccessor { Implementation = descriptor } },
+                    InheritedDefaultMethods = new[] { new BirInheritedDefaultMethod { Implementation = descriptor } },
+                } },
+            } } };
         var input = new BirFileDeclaration { Methods = new[] { method }, Types = new IBirTypeDeclaration[] {
             new BirClassDefinition { Kind = "class", Name = "probe.Class", Base = source,
                 Interfaces = new TypeNode[] { source, sibling }, TypeParams = bounds },
@@ -188,8 +195,11 @@ static partial class ContinuationErasure
         var interfaceOwner = (BirInterfaceDefinition)result.Types.Value[1];
         var enumOwner = (BirEnumDefinition)result.Types.Value[2];
         var inherited = result.Methods.Value[0].InheritedImplementation.Value;
+        var synthetic = ((BirNewSam)((BirExpressionStatement)result.Methods.Value[0].Body.Value[0]).Expr.Value).SynthClass.Value;
         foreach (var facts in new[] { classOwner.KotlinSupertypesPre.Value, interfaceOwner.KotlinSupertypesPre.Value,
-            enumOwner.KotlinSupertypesPre.Value, inherited.KotlinSupertypesPre.Value })
+            enumOwner.KotlinSupertypesPre.Value, inherited.KotlinSupertypesPre.Value,
+            synthetic.InheritedDefaultAccessors.Value[0].Implementation.Value.KotlinSupertypesPre.Value,
+            synthetic.InheritedDefaultMethods.Value[0].Implementation.Value.KotlinSupertypesPre.Value })
             if (facts.Bounds[0].Length != 2 || facts.Bounds[0][0] != source || facts.Bounds[0][1] != sibling)
                 throw new InvalidOperationException("Continuation source bounds lost a generic frame or unchanged sibling");
         if (classOwner.KotlinSupertypesPre.Value.Base != source
@@ -197,7 +207,7 @@ static partial class ContinuationErasure
             || interfaceOwner.KotlinSupertypesPre.Value.Interfaces.Single() != source
             || enumOwner.KotlinSupertypesPre.Value.Base != source
             || inherited.KotlinSupertypesPre.Value.Base != null
-            || result.Methods.Value[0].MethodTypeParameterBoundsPre.IsPresent
+            || synthetic.KotlinSupertypesPre.Value.Base != source
             || ((BirClassDefinition)input.Types.Value[0]).KotlinSupertypesPre.IsPresent
             || descriptor.KotlinSupertypesPre.IsPresent
             || classOwner.Base.Value != source || classOwner.Interfaces.Value[1] != sibling)
