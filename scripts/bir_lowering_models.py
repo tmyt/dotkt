@@ -44,7 +44,7 @@ def outputs(root, definitions):
 
     shapes = {key: normalize(copy.deepcopy(shape)) for key, shape in definitions.items()
               if isinstance(shape, dict) and shape.get("x-dotkt-model", {}).get("domain") in
-              {"birCore", "birCoreValues"} and key not in {"birConditionalBranch", "birElseBranch"}}
+              {"birCore", "birCoreValues", "birLoweringValues"} and key not in {"birConditionalBranch", "birElseBranch"}}
     for shape in shapes.values():
         shape["properties"].update(shape["x-dotkt-model"].get("loweringProperties", {}))
     source_tags = {shape["properties"]["k"]["const"]: key for key, shape in shapes.items()

@@ -47,6 +47,7 @@ static class Bir2Cir
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ClrEventSubscriptionBinding.SelfTest();
+                ClrEventImplBinding.SelfTestSourceFacts();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 DefaultBirCarrier.SelfTest();
@@ -200,6 +201,7 @@ sealed class Pipeline
         for (var index = 0; index < captured.Length; index++) captured[index] = valuePolicy.EraseBounds(captured[index]);
         captured = CallableVisibilityLowering.ApplyAll(captured, refs);
         captured = FunctionValueRepresentation.PreserveSourceFacts(captured);
+        captured = ClrEventImplBinding.PreserveSourceFacts(captured);
         captured = ContinuationErasure.PreserveSourceSupertypes(captured, refs);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
@@ -254,7 +256,6 @@ sealed class Pipeline
         var declarationSemanticSignatures = module.Signatures;
         var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild, module.ValuePolicy);
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
-        ClrEventImplBinding.PreserveSourceFacts(birRoots);
         CapturedGenericInvocation.PreserveSourceFacts(birRoots, refs);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
         // These are new CLR slot bodies for frontend-selected inherited implementations, not source declarations.

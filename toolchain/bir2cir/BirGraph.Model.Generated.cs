@@ -7,6 +7,41 @@ using DotKt.Cir;
 using static DotKt.Bir.Lowering.BirGraphJson;
 namespace DotKt.Bir.Lowering;
 
+internal sealed record EventPropertySourceFacts : BirGraphValue
+{
+    public OptionalField<string> Name { get; init; }
+    public OptionalField<string> Kind { get; init; }
+    public OptionalField<string> Association { get; init; }
+    public OptionalField<string> Event { get; init; }
+    public OptionalField<bool> Inherited { get; init; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
+    public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
+    {
+    };
+    public override void WriteJson(Utf8JsonWriter writer)
+    {
+        writer.WriteStartObject();
+        WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "kind", Kind, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "association", Association, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "event", Event, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "inherited", Inherited, (writer, value) => { writer.WriteBooleanValue(value); });
+        writer.WriteEndObject();
+    }
+    public override JsonObject ToDom()
+    {
+        var result = new JsonObject();
+        if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
+        if (Kind.IsPresent) result["kind"] = Kind.IsNull ? null : JsonValue.Create(Kind.Value);
+        if (Association.IsPresent) result["association"] = Association.IsNull ? null : JsonValue.Create(Association.Value);
+        if (Event.IsPresent) result["event"] = Event.IsNull ? null : JsonValue.Create(Event.Value);
+        if (Inherited.IsPresent) result["inherited"] = Inherited.IsNull ? null : JsonValue.Create(Inherited.Value);
+        return result;
+    }
+}
+
 internal sealed record BirFileDeclaration : BirGraphValue
 {
     public OptionalField<string> FileClass { get; init; }
@@ -2115,6 +2150,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<TypeNode> RetKotlinType { get; init; }
     public OptionalField<string> DeclarationSourceName { get; init; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; init; }
+    public OptionalField<EventPropertySourceFacts> KotlinPropertyAccessorCarrier { get; init; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
     public OptionalField<BirAttribute[]> RetAttrs { get; init; }
     public OptionalField<bool> ClrFinal { get; init; }
@@ -2144,6 +2180,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { visit((BirGraphValue)item0); } }
         if (Pos.HasValue) { visit((BirGraphValue)Pos.Value); }
         if (InheritedImplementation.HasValue) { visit((BirGraphValue)InheritedImplementation.Value); }
+        if (KotlinPropertyAccessorCarrier.HasValue) { visit((BirGraphValue)KotlinPropertyAccessorCarrier.Value); }
         if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { visit((BirGraphValue)item0); } }
         if (ClrOverrideRef.HasValue) { visit((BirGraphValue)ClrOverrideRef.Value); }
         if (ClrInterfaceImpls.HasValue) { foreach (var item0 in ClrInterfaceImpls.Value) { visit((BirGraphValue)item0); } }
@@ -2160,6 +2197,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)rewrite((BirGraphValue)item0)).ToArray()) : Attrs,
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)rewrite((BirGraphValue)Pos.Value)) : Pos,
         InheritedImplementation = InheritedImplementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)rewrite((BirGraphValue)InheritedImplementation.Value)) : InheritedImplementation,
+        KotlinPropertyAccessorCarrier = KotlinPropertyAccessorCarrier.HasValue ? OptionalField<EventPropertySourceFacts>.Of((EventPropertySourceFacts)rewrite((BirGraphValue)KotlinPropertyAccessorCarrier.Value)) : KotlinPropertyAccessorCarrier,
         RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)rewrite((BirGraphValue)item0)).ToArray()) : RetAttrs,
         ClrOverrideRef = ClrOverrideRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)ClrOverrideRef.Value)) : ClrOverrideRef,
         ClrInterfaceImpls = ClrInterfaceImpls.HasValue ? OptionalField<BirMethodImpl[]>.Of(ClrInterfaceImpls.Value.Select(item0 => (BirMethodImpl)rewrite((BirGraphValue)item0)).ToArray()) : ClrInterfaceImpls,
@@ -2205,6 +2243,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "retKotlinType", RetKotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "declarationSourceName", DeclarationSourceName, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
+        WriteOptional(writer, "kotlinPropertyAccessorCarrier", KotlinPropertyAccessorCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "retAttrs", RetAttrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "clrFinal", ClrFinal, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -2265,6 +2304,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (RetKotlinType.IsPresent) result["retKotlinType"] = RetKotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetKotlinType.Value));
         if (DeclarationSourceName.IsPresent) result["declarationSourceName"] = DeclarationSourceName.IsNull ? null : JsonValue.Create(DeclarationSourceName.Value);
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
+        if (KotlinPropertyAccessorCarrier.IsPresent) result["kotlinPropertyAccessorCarrier"] = KotlinPropertyAccessorCarrier.IsNull ? null : ((BirGraphValue)KotlinPropertyAccessorCarrier.Value).ToDom();
         if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (RetAttrs.IsPresent) result["retAttrs"] = RetAttrs.IsNull ? null : new JsonArray(RetAttrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (ClrFinal.IsPresent) result["clrFinal"] = ClrFinal.IsNull ? null : JsonValue.Create(ClrFinal.Value);
