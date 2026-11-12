@@ -1678,6 +1678,8 @@ internal sealed record BirParameter : BirGraphValue
     public OptionalField<int> CtxFnType { get; init; }
     public OptionalField<TypeNode> SharedCellType { get; init; }
     public OptionalField<BirAttribute[]> Attrs { get; init; }
+    public OptionalField<TypeNode> NominalParameterSignatureIdentity { get; init; }
+    public OptionalField<TypeNode[]> GenericParameterSignatureBounds { get; init; }
     public OptionalField<int[]> NullableFlags { get; init; }
     public OptionalField<TypeNode> SuspendFnType { get; init; }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
@@ -1699,6 +1701,8 @@ internal sealed record BirParameter : BirGraphValue
         WriteOptional(writer, "ctxFnType", CtxFnType, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "sharedCellType", SharedCellType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "attrs", Attrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "nominalParameterSignatureIdentity", NominalParameterSignatureIdentity, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "genericParameterSignatureBounds", GenericParameterSignatureBounds, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "nullableFlags", NullableFlags, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "suspendFnType", SuspendFnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
@@ -1715,6 +1719,8 @@ internal sealed record BirParameter : BirGraphValue
         if (CtxFnType.IsPresent) result["ctxFnType"] = CtxFnType.IsNull ? null : JsonValue.Create(CtxFnType.Value);
         if (SharedCellType.IsPresent) result["sharedCellType"] = SharedCellType.IsNull ? null : TypeNode.Write(SharedCellType.Value);
         if (Attrs.IsPresent) result["attrs"] = Attrs.IsNull ? null : new JsonArray(Attrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (NominalParameterSignatureIdentity.IsPresent) result["nominalParameterSignatureIdentity"] = NominalParameterSignatureIdentity.IsNull ? null : TypeNode.Write(NominalParameterSignatureIdentity.Value);
+        if (GenericParameterSignatureBounds.IsPresent) result["genericParameterSignatureBounds"] = GenericParameterSignatureBounds.IsNull ? null : new JsonArray(GenericParameterSignatureBounds.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (NullableFlags.IsPresent) result["nullableFlags"] = NullableFlags.IsNull ? null : new JsonArray(NullableFlags.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (SuspendFnType.IsPresent) result["suspendFnType"] = SuspendFnType.IsNull ? null : TypeNode.Write(SuspendFnType.Value);
         return result;
@@ -1873,6 +1879,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<bool> FakeOverride { get; init; }
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; init; }
     public OptionalField<TypeNode[]> _syntheticTypeArgs { get; init; }
+    public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
     public OptionalField<BirAttribute[]> RetAttrs { get; init; }
     public OptionalField<bool> ClrFinal { get; init; }
     public OptionalField<bool> SpecialName { get; init; }
@@ -1943,6 +1950,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "fakeOverride", FakeOverride, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "inheritedImplementation", InheritedImplementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "_syntheticTypeArgs", _syntheticTypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "retAttrs", RetAttrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "clrFinal", ClrFinal, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "specialName", SpecialName, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -1999,6 +2007,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (FakeOverride.IsPresent) result["fakeOverride"] = FakeOverride.IsNull ? null : JsonValue.Create(FakeOverride.Value);
         if (InheritedImplementation.IsPresent) result["inheritedImplementation"] = InheritedImplementation.IsNull ? null : ((BirGraphValue)InheritedImplementation.Value).ToDom();
         if (_syntheticTypeArgs.IsPresent) result["_syntheticTypeArgs"] = _syntheticTypeArgs.IsNull ? null : new JsonArray(_syntheticTypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (RetAttrs.IsPresent) result["retAttrs"] = RetAttrs.IsNull ? null : new JsonArray(RetAttrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (ClrFinal.IsPresent) result["clrFinal"] = ClrFinal.IsNull ? null : JsonValue.Create(ClrFinal.Value);
         if (SpecialName.IsPresent) result["specialName"] = SpecialName.IsNull ? null : JsonValue.Create(SpecialName.Value);
@@ -2837,6 +2846,7 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
     public OptionalField<TypeNode> Ret { get; init; }
     public OptionalField<BirOverride[]> Overrides { get; init; }
     public OptionalField<BirInheritedImplementation> Implementation { get; init; }
+    public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)rewrite((BirGraphValue)item0)).ToArray()) : Overrides,
@@ -2851,6 +2861,7 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
         WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "overrides", Overrides, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "implementation", Implementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -2862,6 +2873,7 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
         if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
         if (Overrides.IsPresent) result["overrides"] = Overrides.IsNull ? null : new JsonArray(Overrides.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (Implementation.IsPresent) result["implementation"] = Implementation.IsNull ? null : ((BirGraphValue)Implementation.Value).ToDom();
+        if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         return result;
     }
 }
@@ -2873,6 +2885,7 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
     public OptionalField<TypeNode> Ret { get; init; }
     public OptionalField<BirOverride[]> Overrides { get; init; }
     public OptionalField<BirInheritedImplementation> Implementation { get; init; }
+    public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)rewrite((BirGraphValue)item0)).ToArray()) : Overrides,
@@ -2886,6 +2899,7 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
         WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "overrides", Overrides, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "implementation", Implementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -2896,6 +2910,7 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
         if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
         if (Overrides.IsPresent) result["overrides"] = Overrides.IsNull ? null : new JsonArray(Overrides.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (Implementation.IsPresent) result["implementation"] = Implementation.IsNull ? null : ((BirGraphValue)Implementation.Value).ToDom();
+        if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         return result;
     }
 }
@@ -2912,6 +2927,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
     public OptionalField<BirModifiers> Mods { get; init; }
     public OptionalField<BirOverride[]> Overrides { get; init; }
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; init; }
+    public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)rewrite((BirGraphValue)item0)).ToArray()) : Params,
@@ -2933,6 +2949,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         WriteOptional(writer, "mods", Mods, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "overrides", Overrides, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "inheritedImplementation", InheritedImplementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -2948,6 +2965,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         if (Mods.IsPresent) result["mods"] = Mods.IsNull ? null : ((BirGraphValue)Mods.Value).ToDom();
         if (Overrides.IsPresent) result["overrides"] = Overrides.IsNull ? null : new JsonArray(Overrides.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (InheritedImplementation.IsPresent) result["inheritedImplementation"] = InheritedImplementation.IsNull ? null : ((BirGraphValue)InheritedImplementation.Value).ToDom();
+        if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         return result;
     }
 }
@@ -3434,6 +3452,8 @@ internal sealed record BirLambdaParameter : BirGraphValue
 {
     public OptionalField<string> Name { get; init; }
     public OptionalField<TypeNode> Type { get; init; }
+    public OptionalField<TypeNode> NominalParameterSignatureIdentity { get; init; }
+    public OptionalField<TypeNode[]> GenericParameterSignatureBounds { get; init; }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
     };
@@ -3442,6 +3462,8 @@ internal sealed record BirLambdaParameter : BirGraphValue
         writer.WriteStartObject();
         WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "nominalParameterSignatureIdentity", NominalParameterSignatureIdentity, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "genericParameterSignatureBounds", GenericParameterSignatureBounds, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -3449,6 +3471,8 @@ internal sealed record BirLambdaParameter : BirGraphValue
         var result = new JsonObject();
         if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
+        if (NominalParameterSignatureIdentity.IsPresent) result["nominalParameterSignatureIdentity"] = NominalParameterSignatureIdentity.IsNull ? null : TypeNode.Write(NominalParameterSignatureIdentity.Value);
+        if (GenericParameterSignatureBounds.IsPresent) result["genericParameterSignatureBounds"] = GenericParameterSignatureBounds.IsNull ? null : new JsonArray(GenericParameterSignatureBounds.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         return result;
     }
 }
