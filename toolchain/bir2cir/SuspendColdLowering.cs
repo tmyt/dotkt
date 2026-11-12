@@ -68,7 +68,7 @@ static partial class SuspendColdLowering
     static ReferenceMetadataIndex _refs;
     static ValueTypeOracle _isValueFqn = _ => false;
     static IReadOnlySet<string> _localTypeFqns;
-    static (string Owner, JsonObject Method, JsonObject Source)[] _localHelperDeclarations;
+    static (string Owner, JsonObject Method, SourceDeclarationSignature Source)[] _localHelperDeclarations;
 
     static JsonObject BindAuthoredCall(JsonObject call, int sourceArity, TypeNode[] sourceParameters)
     {
@@ -86,9 +86,9 @@ static partial class SuspendColdLowering
                 && (Str(entry.Method["declarationSourceName"]) ?? Str(entry.Method["name"])) == name
                 && (NullableRepresentationTypes.DeclarationMethodFrame(entry.Method)?.SourceArity
                     ?? (entry.Method["typeParams"] as JsonArray)?.Count ?? 0) == sourceArity
-                && entry.Source["params"] is JsonArray declared && declared.Count == sourceParameters.Length
+                && entry.Source.Parameters is { } declared && declared.Count == sourceParameters.Length
                 && declared.Select((parameter, index) => ReferenceMetadataIndex.SourceDeclarationDescribesCall(
-                    TypeJson.Read(parameter), sourceParameters[index])).All(match => match)).ToArray();
+                    parameter, sourceParameters[index])).All(match => match)).ToArray();
             if (matches.Length != 1)
                 throw new InvalidOperationException($"Compiler-authored helper '{owner}.{name}' has {matches.Length} exact local source declarations");
             var method = matches[0].Method;
@@ -398,14 +398,14 @@ static partial class SuspendColdLowering
     public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots,
         ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild,
         IReadOnlyDictionary<string, string> localExistentialOwners, ValueTypeOracle isValueFqn,
-        IReadOnlyDictionary<string, JsonObject> sourceSignatures = null,
+        SourceDeclarationSignatures sourceSignatures = null,
         IDictionary<string, int[]> physicalParameterIndices = null,
         IDictionary<string, string> physicalDeclarationSources = null)
     {
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
         _isValueFqn = isValueFqn ?? (_ => false);
         _localTypeFqns = localTypeFqns;
-        var helperDeclarations = new List<(string Owner, JsonObject Method, JsonObject Source)>();
+        var helperDeclarations = new List<(string Owner, JsonObject Method, SourceDeclarationSignature Source)>();
         void CollectHelperDeclarations(JsonObject declaration)
         {
             var owner = Str(declaration["name"]) ?? Str(declaration["fileClass"]);

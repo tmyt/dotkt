@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 static partial class NullableRepresentationDemand
 {
@@ -425,11 +426,13 @@ static partial class NullableRepresentationDemand
         };
         var root = new JsonObject { ["fileClass"] = "FrameFile", ["types"] = new JsonArray(owner), ["methods"] = new JsonArray(method) };
         var runtime = root.DeepClone();
+        var signatures = new SourceDeclarationSignatures();
+        signatures.Capture(new[] { new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
+            DeclarationId = "frame-test-method", Params = Array.Empty<BirParameter>(), Ret = sourceResult,
+        } } } });
         DeclarationIdentityBinding.ApplyLocal(new[] { root },
             new Dictionary<string, string> { ["frame-test-method"] = "physical" }, new HashSet<string>(),
-            new Dictionary<string, JsonObject> {
-                ["frame-test-method"] = (JsonObject)method[DeclarationIdentityBinding.SemanticSignatureKey].DeepClone(),
-            }, new Dictionary<string, int[]>(), null);
+            signatures, new Dictionary<string, int[]>(), null);
         RoundtripMetadata.Stamp(root);
 
         static JsonNode Payload(JsonObject declaration, string name)

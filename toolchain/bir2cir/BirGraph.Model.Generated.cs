@@ -1882,6 +1882,7 @@ internal sealed record BirParameter : BirGraphValue
     public OptionalField<int> CtxFnType { get; init; }
     public OptionalField<TypeNode> SharedCellType { get; init; }
     public OptionalField<BirAttribute[]> Attrs { get; init; }
+    public OptionalField<TypeNode> KotlinType { get; init; }
     public OptionalField<TypeNode> NominalParameterSignatureIdentity { get; init; }
     public OptionalField<TypeNode[]> GenericParameterSignatureBounds { get; init; }
     public OptionalField<int[]> NullableFlags { get; init; }
@@ -1912,6 +1913,7 @@ internal sealed record BirParameter : BirGraphValue
         WriteOptional(writer, "ctxFnType", CtxFnType, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "sharedCellType", SharedCellType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "attrs", Attrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "kotlinType", KotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nominalParameterSignatureIdentity", NominalParameterSignatureIdentity, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "genericParameterSignatureBounds", GenericParameterSignatureBounds, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "nullableFlags", NullableFlags, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
@@ -1930,6 +1932,7 @@ internal sealed record BirParameter : BirGraphValue
         if (CtxFnType.IsPresent) result["ctxFnType"] = CtxFnType.IsNull ? null : JsonValue.Create(CtxFnType.Value);
         if (SharedCellType.IsPresent) result["sharedCellType"] = SharedCellType.IsNull ? null : TypeNode.Write(SharedCellType.Value);
         if (Attrs.IsPresent) result["attrs"] = Attrs.IsNull ? null : new JsonArray(Attrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (KotlinType.IsPresent) result["kotlinType"] = KotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(KotlinType.Value));
         if (NominalParameterSignatureIdentity.IsPresent) result["nominalParameterSignatureIdentity"] = NominalParameterSignatureIdentity.IsNull ? null : TypeNode.Write(NominalParameterSignatureIdentity.Value);
         if (GenericParameterSignatureBounds.IsPresent) result["genericParameterSignatureBounds"] = GenericParameterSignatureBounds.IsNull ? null : new JsonArray(GenericParameterSignatureBounds.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (NullableFlags.IsPresent) result["nullableFlags"] = NullableFlags.IsNull ? null : new JsonArray(NullableFlags.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
@@ -2109,6 +2112,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<bool> FakeOverride { get; init; }
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; init; }
     public OptionalField<TypeNode[]> _syntheticTypeArgs { get; init; }
+    public OptionalField<string> DeclarationSourceName { get; init; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; init; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; init; }
     public OptionalField<BirAttribute[]> RetAttrs { get; init; }
@@ -2197,6 +2201,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "fakeOverride", FakeOverride, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "inheritedImplementation", InheritedImplementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "_syntheticTypeArgs", _syntheticTypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "declarationSourceName", DeclarationSourceName, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "retAttrs", RetAttrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
@@ -2255,6 +2260,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (FakeOverride.IsPresent) result["fakeOverride"] = FakeOverride.IsNull ? null : JsonValue.Create(FakeOverride.Value);
         if (InheritedImplementation.IsPresent) result["inheritedImplementation"] = InheritedImplementation.IsNull ? null : ((BirGraphValue)InheritedImplementation.Value).ToDom();
         if (_syntheticTypeArgs.IsPresent) result["_syntheticTypeArgs"] = _syntheticTypeArgs.IsNull ? null : new JsonArray(_syntheticTypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (DeclarationSourceName.IsPresent) result["declarationSourceName"] = DeclarationSourceName.IsNull ? null : JsonValue.Create(DeclarationSourceName.Value);
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (RetAttrs.IsPresent) result["retAttrs"] = RetAttrs.IsNull ? null : new JsonArray(RetAttrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());

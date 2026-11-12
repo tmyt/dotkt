@@ -37,48 +37,6 @@ static class DeclarationIdentityBinding
         method["generated"] = true;
     }
 
-    // Capture Kotlin's declaration spelling before any representation pass renames accessors, companion-extension
-    // cores, suspend entries, or other CLR artifacts. Later metadata must never recover this spelling from a physical
-    // get_/set_ or compiler-reserved name.
-    public static IReadOnlyDictionary<string, JsonObject> PreserveSourceFacts(IEnumerable<JsonNode> roots)
-    {
-        var semanticSignatures = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        void WalkOwner(JsonObject owner)
-        {
-            if (owner["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                {
-                    if (Str(method[Key]) is not string id) continue;
-                    if (Str(method["name"]) is string name
-                        && method["declarationSourceName"] == null)
-                        method["declarationSourceName"] = name;
-                    if (method["params"] is not JsonArray parameters || method["ret"] == null)
-                        throw new InvalidOperationException(
-                            $"declaration identity '{method[Key]}' has no complete semantic signature");
-                    var signature = new JsonObject
-                    {
-                        ["params"] = new JsonArray(parameters.OfType<JsonObject>()
-                            .Select(parameter => Str(parameter["kotlinType"]) is string kotlinType
-                                ? JsonNode.Parse(kotlinType)
-                                : parameter["type"]?.DeepClone()
-                                    ?? throw new InvalidOperationException(
-                                        $"declaration identity '{method[Key]}' has an untyped parameter"))
-                            .ToArray()),
-                        ["ret"] = method["ret"]!.DeepClone(),
-                    };
-                    if (semanticSignatures.TryGetValue(id, out var prior) &&
-                        prior.ToJsonString() != signature.ToJsonString())
-                        throw new InvalidOperationException(
-                            $"declaration identity '{id}' has conflicting semantic signatures");
-                    semanticSignatures[id] = signature;
-                }
-            if (owner["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>()) WalkOwner(type);
-        }
-        foreach (var root in roots.OfType<JsonObject>()) WalkOwner(root);
-        return semanticSignatures;
-    }
-
     public static HashSet<string> CollectDeclarationIds(IEnumerable<JsonNode> roots)
     {
         var result = new HashSet<string>(StringComparer.Ordinal);
@@ -556,7 +514,7 @@ static class DeclarationIdentityBinding
         IEnumerable<JsonNode> roots,
         IReadOnlyDictionary<string, string> physicalById,
         IReadOnlySet<string> semanticCarrierIds,
-        IReadOnlyDictionary<string, JsonObject> semanticSignatures,
+        SourceDeclarationSignatures semanticSignatures,
         IReadOnlyDictionary<string, int[]> physicalParameterIndices,
         ReferenceMetadataIndex refs)
     {
@@ -631,7 +589,7 @@ static class DeclarationIdentityBinding
                 || declaration[ReifiedNullabilityWitnessLowering.WitnessIndicesKey] != null
                 || declaration[NullableRepresentationTypes.MethodFrameKey] != null)
                 declaration[SemanticSignatureKey] = semanticSignatures.TryGetValue(id, out var signature)
-                    ? signature.DeepClone()
+                    ? signature.ToDom()
                     : throw new InvalidOperationException(
                         $"declaration identity '{id}' has no preserved semantic signature");
             else declaration.Remove(SemanticSignatureKey);
@@ -740,7 +698,7 @@ static class DeclarationIdentityBinding
         var inheritedRoot = new JsonObject { ["fileClass"] = "InheritedOwner", ["methods"] = new JsonArray(inherited) };
         var inheritedNames = AllocatePhysicalNames(new[] { inheritedRoot }, out var inheritedCarriers);
         ApplyLocal(new[] { inheritedRoot }, inheritedNames, inheritedCarriers,
-            new Dictionary<string, JsonObject>(), new Dictionary<string, int[]>(), null);
+            new SourceDeclarationSignatures(), new Dictionary<string, int[]>(), null);
         if (inherited[Key] != null || inherited[NullableRepresentationTypes.MethodFrameKey] != null
             || inherited[NullableGenericErasure.MethodTypeParameterBoundsPre] != null
             || inherited["generated"]?.GetValue<bool>() != true || Str(inherited["name"]) != "inherited")

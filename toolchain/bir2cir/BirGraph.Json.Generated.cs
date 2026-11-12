@@ -2496,9 +2496,10 @@ internal static partial class BirGraphJson
         OptionalField<TypeNode> field7 = default;
         OptionalField<BirAttribute[]> field8 = default;
         OptionalField<TypeNode> field9 = default;
-        OptionalField<TypeNode[]> field10 = default;
-        OptionalField<int[]> field11 = default;
-        OptionalField<TypeNode> field12 = default;
+        OptionalField<TypeNode> field10 = default;
+        OptionalField<TypeNode[]> field11 = default;
+        OptionalField<int[]> field12 = default;
+        OptionalField<TypeNode> field13 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -2542,21 +2543,25 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirAttribute(ref reader)));
                     break;
-                case "nominalParameterSignatureIdentity":
+                case "kotlinType":
                     Seen(ref seen, 1UL << 9);
-                    field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(ReadFrozenType(ref reader));
+                    break;
+                case "nominalParameterSignatureIdentity":
+                    Seen(ref seen, 1UL << 10);
+                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 case "genericParameterSignatureBounds":
-                    Seen(ref seen, 1UL << 10);
-                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
+                    Seen(ref seen, 1UL << 11);
+                    field11 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
                     break;
                 case "nullableFlags":
-                    Seen(ref seen, 1UL << 11);
-                    field11 = reader.TokenType == JsonTokenType.Null ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => reader.GetInt32()));
+                    Seen(ref seen, 1UL << 12);
+                    field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => reader.GetInt32()));
                     break;
                 case "suspendFnType":
-                    Seen(ref seen, 1UL << 12);
-                    field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -2573,10 +2578,11 @@ internal static partial class BirGraphJson
             CtxFnType = field6,
             SharedCellType = field7,
             Attrs = field8,
-            NominalParameterSignatureIdentity = field9,
-            GenericParameterSignatureBounds = field10,
-            NullableFlags = field11,
-            SuspendFnType = field12,
+            KotlinType = field9,
+            NominalParameterSignatureIdentity = field10,
+            GenericParameterSignatureBounds = field11,
+            NullableFlags = field12,
+            SuspendFnType = field13,
         };
     }
 
@@ -2783,26 +2789,27 @@ internal static partial class BirGraphJson
         OptionalField<bool> field30 = default;
         OptionalField<BirInheritedImplementation> field31 = default;
         OptionalField<TypeNode[]> field32 = default;
-        OptionalField<SourceBoundsSnapshot> field33 = default;
-        OptionalField<string[]> field34 = default;
-        OptionalField<BirAttribute[]> field35 = default;
-        OptionalField<bool> field36 = default;
+        OptionalField<string> field33 = default;
+        OptionalField<SourceBoundsSnapshot> field34 = default;
+        OptionalField<string[]> field35 = default;
+        OptionalField<BirAttribute[]> field36 = default;
         OptionalField<bool> field37 = default;
         OptionalField<bool> field38 = default;
         OptionalField<bool> field39 = default;
         OptionalField<bool> field40 = default;
-        OptionalField<BirMemberReference> field41 = default;
-        OptionalField<BirMethodImpl[]> field42 = default;
+        OptionalField<bool> field41 = default;
+        OptionalField<BirMemberReference> field42 = default;
         OptionalField<BirMethodImpl[]> field43 = default;
-        OptionalField<bool> field44 = default;
-        OptionalField<BirPInvoke> field45 = default;
-        OptionalField<bool> field46 = default;
+        OptionalField<BirMethodImpl[]> field44 = default;
+        OptionalField<bool> field45 = default;
+        OptionalField<BirPInvoke> field46 = default;
         OptionalField<bool> field47 = default;
         OptionalField<bool> field48 = default;
-        OptionalField<byte[]> field49 = default;
-        OptionalField<bool> field50 = default;
-        OptionalField<int[]> field51 = default;
-        OptionalField<TypeNode> field52 = default;
+        OptionalField<bool> field49 = default;
+        OptionalField<byte[]> field50 = default;
+        OptionalField<bool> field51 = default;
+        OptionalField<int[]> field52 = default;
+        OptionalField<TypeNode> field53 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -2942,85 +2949,89 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 32);
                     field32 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
                     break;
-                case "methodTypeParameterBoundsPre":
+                case "declarationSourceName":
                     Seen(ref seen, 1UL << 33);
-                    field33 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.Read(ref reader));
+                    field33 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
+                    break;
+                case "methodTypeParameterBoundsPre":
+                    Seen(ref seen, 1UL << 34);
+                    field34 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.Read(ref reader));
                     break;
                 case "signatureOverrideDeclarations":
-                    Seen(ref seen, 1UL << 34);
-                    field34 = reader.TokenType == JsonTokenType.Null ? OptionalField<string[]>.Null : OptionalField<string[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadString(ref reader)));
+                    Seen(ref seen, 1UL << 35);
+                    field35 = reader.TokenType == JsonTokenType.Null ? OptionalField<string[]>.Null : OptionalField<string[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadString(ref reader)));
                     break;
                 case "retAttrs":
-                    Seen(ref seen, 1UL << 35);
-                    field35 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirAttribute(ref reader)));
+                    Seen(ref seen, 1UL << 36);
+                    field36 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirAttribute(ref reader)));
                     break;
                 case "clrFinal":
-                    Seen(ref seen, 1UL << 36);
-                    field36 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
-                    break;
-                case "specialName":
                     Seen(ref seen, 1UL << 37);
                     field37 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "suspendBridge":
+                case "specialName":
                     Seen(ref seen, 1UL << 38);
                     field38 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "clrInterfaceSlotBridge":
+                case "suspendBridge":
                     Seen(ref seen, 1UL << 39);
                     field39 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "requiresClrOverride":
+                case "clrInterfaceSlotBridge":
                     Seen(ref seen, 1UL << 40);
                     field40 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "clrOverrideRef":
+                case "requiresClrOverride":
                     Seen(ref seen, 1UL << 41);
-                    field41 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
+                    field41 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    break;
+                case "clrOverrideRef":
+                    Seen(ref seen, 1UL << 42);
+                    field42 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
                 case "clrInterfaceImpls":
-                    Seen(ref seen, 1UL << 42);
-                    field42 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMethodImpl[]>.Null : OptionalField<BirMethodImpl[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirMethodImpl(ref reader)));
-                    break;
-                case "clrBaseImpls":
                     Seen(ref seen, 1UL << 43);
                     field43 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMethodImpl[]>.Null : OptionalField<BirMethodImpl[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirMethodImpl(ref reader)));
                     break;
-                case "extern":
+                case "clrBaseImpls":
                     Seen(ref seen, 1UL << 44);
-                    field44 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    field44 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMethodImpl[]>.Null : OptionalField<BirMethodImpl[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirMethodImpl(ref reader)));
+                    break;
+                case "extern":
+                    Seen(ref seen, 1UL << 45);
+                    field45 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
                 case "pinvoke":
-                    Seen(ref seen, 1UL << 45);
-                    field45 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirPInvoke>.Null : OptionalField<BirPInvoke>.Of(ReadBirPInvoke(ref reader));
+                    Seen(ref seen, 1UL << 46);
+                    field46 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirPInvoke>.Null : OptionalField<BirPInvoke>.Of(ReadBirPInvoke(ref reader));
                     break;
                 case "bodyTerminates":
-                    Seen(ref seen, 1UL << 46);
-                    field46 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
-                    break;
-                case "independentAliasSlot":
                     Seen(ref seen, 1UL << 47);
                     field47 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "physicalSlotBridge":
+                case "independentAliasSlot":
                     Seen(ref seen, 1UL << 48);
                     field48 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "inlineBir":
+                case "physicalSlotBridge":
                     Seen(ref seen, 1UL << 49);
-                    field49 = reader.TokenType == JsonTokenType.Null ? OptionalField<byte[]>.Null : OptionalField<byte[]>.Of(Convert.FromBase64String(ReadString(ref reader)));
+                    field49 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    break;
+                case "inlineBir":
+                    Seen(ref seen, 1UL << 50);
+                    field50 = reader.TokenType == JsonTokenType.Null ? OptionalField<byte[]>.Null : OptionalField<byte[]>.Of(Convert.FromBase64String(ReadString(ref reader)));
                     break;
                 case "retNothing":
-                    Seen(ref seen, 1UL << 50);
-                    field50 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    Seen(ref seen, 1UL << 51);
+                    field51 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
                 case "retNullableFlags":
-                    Seen(ref seen, 1UL << 51);
-                    field51 = reader.TokenType == JsonTokenType.Null ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => reader.GetInt32()));
+                    Seen(ref seen, 1UL << 52);
+                    field52 = reader.TokenType == JsonTokenType.Null ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => reader.GetInt32()));
                     break;
                 case "retSuspendFnType":
-                    Seen(ref seen, 1UL << 52);
-                    field52 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    Seen(ref seen, 1UL << 53);
+                    field53 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -3061,26 +3072,27 @@ internal static partial class BirGraphJson
             FakeOverride = field30,
             InheritedImplementation = field31,
             _syntheticTypeArgs = field32,
-            MethodTypeParameterBoundsPre = field33,
-            SignatureOverrideDeclarations = field34,
-            RetAttrs = field35,
-            ClrFinal = field36,
-            SpecialName = field37,
-            SuspendBridge = field38,
-            ClrInterfaceSlotBridge = field39,
-            RequiresClrOverride = field40,
-            ClrOverrideRef = field41,
-            ClrInterfaceImpls = field42,
-            ClrBaseImpls = field43,
-            Extern = field44,
-            Pinvoke = field45,
-            BodyTerminates = field46,
-            IndependentAliasSlot = field47,
-            PhysicalSlotBridge = field48,
-            InlineBir = field49,
-            RetNothing = field50,
-            RetNullableFlags = field51,
-            RetSuspendFnType = field52,
+            DeclarationSourceName = field33,
+            MethodTypeParameterBoundsPre = field34,
+            SignatureOverrideDeclarations = field35,
+            RetAttrs = field36,
+            ClrFinal = field37,
+            SpecialName = field38,
+            SuspendBridge = field39,
+            ClrInterfaceSlotBridge = field40,
+            RequiresClrOverride = field41,
+            ClrOverrideRef = field42,
+            ClrInterfaceImpls = field43,
+            ClrBaseImpls = field44,
+            Extern = field45,
+            Pinvoke = field46,
+            BodyTerminates = field47,
+            IndependentAliasSlot = field48,
+            PhysicalSlotBridge = field49,
+            InlineBir = field50,
+            RetNothing = field51,
+            RetNullableFlags = field52,
+            RetSuspendFnType = field53,
         };
     }
 

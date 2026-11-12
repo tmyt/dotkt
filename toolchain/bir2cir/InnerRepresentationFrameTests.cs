@@ -183,7 +183,11 @@ static class InnerRepresentationFrameTests
         """)!;
         root["fields"]![0]!["nullableGeneric"] = TypeNode.ToJson(source);
         var outer = new TypeNode.Fqn("Sample.Outer", new TypeNode[] { new TypeNode.Tv("method", 0) });
-        var signature = new JsonObject { ["params"] = new JsonArray(TypeJson.Write(source), TypeJson.Write(outer)) };
+        var signatures = new SourceDeclarationSignatures();
+        signatures.Capture(new[] { new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
+            DeclarationId = "declaration", Params = new[] { new BirParameter { Type = source }, new BirParameter { Type = outer } },
+            Ret = new TypeNode.Fqn("kotlin.Unit"),
+        } } } });
         var executable = new JsonObject {
             ["params"] = new JsonArray(TypeJson.Write(source)),
             ["body"] = new JsonArray(TypeJson.Write(source), TypeJson.Write(outer)),
@@ -198,12 +202,13 @@ static class InnerRepresentationFrameTests
         var defaultAttribute = DefaultBirCarrier.Create(0, defaultBody).ToDom();
         root["attrs"] = new JsonArray(defaultAttribute);
         OpaqueCarrierTypeBinding.ApplyAll(new[] { root }, ReferenceMetadataIndex.Build(Array.Empty<string>()),
-            new Dictionary<string, JsonObject> { ["declaration"] = signature });
+            signatures);
+        signatures.TryGetValue("declaration", out var signature);
         var expected = new TypeNode.Fqn("Sample.Outer`1+Inner`2", source.Args);
         var slot = TypeJson.Read(JsonNode.Parse(root["fields"]![0]!["nullableGeneric"]!.GetValue<string>()));
-        if (slot != expected || TypeJson.Read(signature["params"]![0]) != expected)
+        if (slot != expected || signature.Parameters[0] != expected)
             throw new InvalidOperationException("Source carriers lost nested identity or changed source argument order");
-        if (TypeJson.Read(signature["params"]![1]) != outer)
+        if (signature.Parameters[1] != outer)
             throw new InvalidOperationException("Source carriers unnecessarily changed a top-level classifier");
         var inline = BirCarrier.DecodeBody(BirCarrier.JsonV1,
             Convert.FromBase64String(root["inlineBir"]!.GetValue<string>()));
