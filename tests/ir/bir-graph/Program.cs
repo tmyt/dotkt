@@ -21,20 +21,20 @@ static Utf8JsonReader Reader(string json)
     return reader;
 }
 
-static void Same(string json, BirGraphValue graph)
+static void Same(string json, BirGraphValue graph, string? context = null)
 {
     var source = JsonNode.Parse(json, documentOptions: BirJson.DocOptions)!;
-    if (!JsonNode.DeepEquals(source,
+    if (!LogicalBirValue.Equal(source,
         JsonNode.Parse(Write(graph), documentOptions: BirJson.DocOptions)))
-        throw new Exception("Owning BIR graph changed a logical value");
+        throw new Exception($"Owning BIR graph changed a logical value: {context ?? "inline sample"}");
     // Exercise the actual production seam too, not only the debug JSON writer.
     if (graph is BirFileDeclaration file)
     {
         source.AsObject().Remove("typeAliases");
         graph = file with { TypeAliases = default };
     }
-    if (!JsonNode.DeepEquals(source, graph.ToDom()))
-        throw new Exception("The temporary owning-pass frontier changed a logical value");
+    if (!LogicalBirValue.Equal(source, graph.ToDom()))
+        throw new Exception($"The temporary owning-pass frontier changed a logical value: {context ?? "inline sample"}");
 }
 
 var samples = XDocument.Load(args[0]).Descendants("system-out")
@@ -102,6 +102,15 @@ if (absent.Fields.IsPresent || !present.Fields.IsNull || !present.Methods.HasVal
     throw new Exception("Missing, null, and empty fields were conflated");
 Same("{\"fileClass\":\"Probe\"}", absent);
 Same("{\"fileClass\":\"Probe\",\"fields\":null,\"methods\":[]}", present);
+
+// Frozen TypeNode facts retain their structure, not a particular JSON string
+// escape spelling. Ordinary user string literals still compare byte-for-byte.
+const string frozenTypeJson = """{"k":"callStatic","companionReceiver":"{\"t\":\"fqn\",\"name\":\"probe.箱`1\"}"}""";
+var frozenTypeReader = Reader(frozenTypeJson);
+Same(frozenTypeJson, BirGraphJson.ReadNode(ref frozenTypeReader));
+if (LogicalBirValue.Equal(JsonNode.Parse(frozenTypeJson), JsonNode.Parse(frozenTypeJson.Replace("箱", "箱違い")))
+    || LogicalBirValue.Equal(JsonNode.Parse("""{"k":"const","value":"a"}"""), JsonNode.Parse("""{"k":"const","value":"b"}""")))
+    throw new Exception("Logical comparison ignored a frozen classifier or an ordinary string value");
 
 foreach (var json in new[] { "{\"fileClass\":\"A\",\"fileClass\":\"B\"}",
     "{\"fileClass\":\"A\"}{}" })
@@ -182,7 +191,7 @@ foreach (var file in Directory.EnumerateFiles("tests/ir/lowering", "*.bir*.json"
 {
     if (Path.GetFileName(file).StartsWith("reject-", StringComparison.Ordinal)) continue;
     var json = File.ReadAllText(file);
-    Same(json, BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(json)));
+    Same(json, BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(json)), file);
     authored++;
 }
 if (authored == 0) throw new Exception("No accepted lowering inputs were checked");
@@ -193,7 +202,7 @@ if (args.Length > 1)
     foreach (var file in File.ReadAllLines(args[1]).Distinct(StringComparer.Ordinal))
     {
         var json = File.ReadAllText(file);
-        Same(json, BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(json)));
+        Same(json, BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(json)), file);
         corpus++;
     }
     if (corpus == 0) throw new Exception("No actual compiler BIR was selected");
@@ -214,3 +223,30 @@ if (args.Length > 2)
     if (cirGraphs == 0) throw new Exception("No actual compiler CIR was selected for typed rewriting");
 }
 Console.WriteLine($"Typed CIR executable rewrite: {cirGraphs} actual graphs preserved declarations, frames, opaque metadata and ordered children");
+
+static class LogicalBirValue
+{
+    // The maintained model, not a heuristic that parses arbitrary strings,
+    // identifies the few frozen type facts whose current wire form is text.
+    static readonly HashSet<string> FrozenTypeFields = JsonNode.Parse(File.ReadAllText("docs/bir-cir.schema.json"))!["$defs"]!
+        .AsObject().SelectMany(definition => new[] {
+            definition.Value?["properties"] as JsonObject,
+            definition.Value?["x-dotkt-model"]?["loweringProperties"] as JsonObject,
+        }).Where(properties => properties != null).SelectMany(properties => properties!)
+        .Where(property => property.Value is JsonObject field && field["x-dotkt-kotlin-json-type"]?.GetValue<bool>() == true)
+        .Select(property => property.Key).ToHashSet(StringComparer.Ordinal);
+
+    internal static bool Equal(JsonNode? before, JsonNode? after, string? field = null)
+    {
+        if (field != null && FrozenTypeFields.Contains(field) && before is JsonValue a && after is JsonValue b
+            && a.TryGetValue<string>(out var left) && b.TryGetValue<string>(out var right))
+            return JsonNode.DeepEquals(JsonNode.Parse(left, documentOptions: BirJson.DocOptions),
+                JsonNode.Parse(right, documentOptions: BirJson.DocOptions));
+        if (before is JsonObject first && after is JsonObject second)
+            return first.Count == second.Count && first.All(pair => second.TryGetPropertyValue(pair.Key, out var value)
+                && Equal(pair.Value, value, pair.Key));
+        if (before is JsonArray firstArray && after is JsonArray secondArray)
+            return firstArray.Count == secondArray.Count && firstArray.Zip(secondArray).All(pair => Equal(pair.First, pair.Second));
+        return JsonNode.DeepEquals(before, after);
+    }
+}
