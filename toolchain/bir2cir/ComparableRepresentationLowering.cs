@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
@@ -14,90 +15,68 @@ static class ComparableRepresentationLowering
     static readonly TypeNode Object = new TypeNode.Fqn("kotlin.Any");
     static readonly TypeNode Result = new TypeNode.Fqn("kotlin.Int");
     static readonly TypeNode Parameter = new TypeNode.Tv("method", 0);
-    static JsonObject Cast(TypeNode type, JsonNode value) => new() {
-        ["k"] = "cast", ["type"] = TypeJson.Write(type), ["e"] = value,
-    };
-
-    internal static void Apply(IReadOnlyList<JsonNode> roots, bool referenceBuild)
+    internal static BirFileDeclaration[] Apply(IReadOnlyList<BirFileDeclaration> roots, bool referenceBuild)
     {
-        RichEnumComparisonSynthesis.Apply(roots);
-        var helperNames = roots.OfType<JsonObject>().Where(root => Text(root["fileClass"]) != null)
-            .GroupBy(root => Text(root["fileClass"])).ToDictionary(group => group.Key, group => {
-                var names = group.SelectMany(root => (root["methods"] as JsonArray ?? new JsonArray())
-                    .OfType<JsonObject>().Select(method => Text(method["name"]))).ToHashSet();
+        var enriched = roots.Select(RichEnumComparisonSynthesis.Apply).ToArray();
+        var helperNames = enriched.Where(root => root.FileClass.HasValue)
+            .GroupBy(root => root.FileClass.Value).ToDictionary(group => group.Key, group => {
+                var names = group.SelectMany(root => root.Methods.OrEmpty().Select(method => method.Name.OrDefault())).ToHashSet();
                 var suffix = 0;
                 string name;
                 do { name = "$comparableDispatch$" + suffix++; } while (names.Contains(name));
                 return name;
             });
         var inserted = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var root in roots.OfType<JsonObject>())
+        return enriched.Select(root =>
         {
-            var owner = Text(root["fileClass"]);
-            if (owner == null) continue;
-            var methods = root["methods"] as JsonArray ?? new JsonArray();
-            if (root["methods"] == null) root["methods"] = methods;
+            if (!root.FileClass.HasValue) return root;
+            var owner = root.FileClass.Value;
+            var input = root.Methods.HasValue ? root : root with { Methods = Array.Empty<BirFunctionDeclaration>() };
             var helperName = helperNames[owner];
             var identity = "dotkt-comparable-dispatch:" + owner + ":" + helperName;
             var used = false;
-            void Rewrite(JsonNode node)
+            BirGraphValue Rewrite(BirGraphValue node)
             {
-                if (node is JsonArray array)
-                {
-                    foreach (var child in array.ToArray()) Rewrite(child);
-                    return;
-                }
-                if (node is not JsonObject call) return;
-                foreach (var (key, child) in call.ToArray())
-                    if (key is not ("attrs" or "overrides")) Rewrite(child);
-                if (Text(call["k"]) != "callInstance" || Text(call["method"]) != "compareTo"
+                if (node is BirAttribute or BirOverride) return node;
+                node = node.RewriteChildren(Rewrite);
+                if (node is not BirCallInstance call || call.Method.OrDefault() != "compareTo"
                     || ComparisonContract(call) is not TypeNode.Fqn comparable
-                    || call["args"] is not JsonArray { Count: 1 } args) return;
+                    || call.Args.OrDefault() is not { Length: 1 } args) return node;
                 var argument = comparable.Args[0];
                 if (argument is TypeNode.Projection projection) argument = projection.Of;
                 if (argument is TypeNode.Star) argument = Object;
-                var receiver = call["recv"].DeepClone();
-                var value = args[0].DeepClone();
-                var position = call["pos"]?.DeepClone();
-                call.Clear();
-                call["k"] = "callStatic";
-                call["owner"] = TypeJson.Fqn(owner);
-                call["method"] = helperName;
-                call[DeclarationIdentityBinding.Key] = identity;
-                call["typeArgs"] = new JsonArray(TypeJson.Write(argument));
-                call["sig"] = new JsonArray(TypeJson.Write(Object), TypeJson.Write(Parameter));
-                call["args"] = new JsonArray(Cast(Object, receiver), value);
-                call["ret"] = TypeJson.Write(Result);
-                call["sty"] = TypeJson.Write(Result);
-                if (position != null) call["pos"] = position;
                 used = true;
+                return new BirCallStatic {
+                    Owner = new TypeNode.Fqn(owner), Method = helperName, DeclarationId = identity,
+                    TypeArgs = new[] { argument }, Sig = new[] { Object, Parameter },
+                    Args = new[] { new BirCast { Type = Object, E = call.Recv }, args[0] }, Ret = Result, Sty = Result,
+                };
             }
-            Rewrite(root);
-            if (used && inserted.Add(owner)) methods.Add(Helper(helperName, identity).ToDom());
-            if (!referenceBuild) EraseBounds(root);
-        }
+            var rewritten = (BirFileDeclaration)Rewrite(input);
+            if (used && inserted.Add(owner)) rewritten = rewritten with { Methods = rewritten.Methods.Value.Append(Helper(helperName, identity)).ToArray() };
+            return referenceBuild ? rewritten : (BirFileDeclaration)EraseBounds(rewritten);
+        }).ToArray();
     }
 
-    static TypeNode.Fqn ComparisonContract(JsonObject call)
+    static TypeNode.Fqn ComparisonContract(BirCallInstance call)
     {
-        if (TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner) return null;
+        if (call.OwnerType.OrDefault() is not TypeNode.Fqn owner) return null;
         if (owner is { Name: "kotlin.Comparable", Args.Length: 1 }) return owner;
         // An erased generic classifier cannot retain the generic comparison slot on its physical owner.
         // The frontend's override contract identifies the Kotlin operation; close that contract in the
         // selected owner's frame before nullable/storage companions change either frame. Ordinary class
         // overrides and explicit super calls retain their selected implementation.
-        if (call["super"] != null || call["overrides"] is not JsonArray overrides)
+        if (call.Super.HasValue || !call.Overrides.HasValue)
             return null;
-        var comparisonSlots = overrides.OfType<JsonObject>()
-            .Where(slot => Text(slot["member"]) == "compareTo" && Text(slot["kind"]) == "method");
+        var comparisonSlots = call.Overrides.Value.Where(slot => slot.Member.OrDefault() == "compareTo" && slot.Kind.OrDefault() == "method");
         // A concrete enum reference selects the final Enum comparison through its concrete owner.
         // Its explicit override chain, not that owner's eventual CLR shape, identifies the operation.
         if (!BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(owner.Name)
-            && !comparisonSlots.Any(slot => TypeJson.Read(slot["owner"])
+            && !comparisonSlots.Any(slot => slot.Owner.OrDefault()
                 is TypeNode.Fqn { Name: "kotlin.Enum", Args.Length: 1 }))
             return null;
         return comparisonSlots
-            .Select(slot => TypeJson.Read(slot["owner"]))
+            .Select(slot => slot.Owner.OrDefault())
             .OfType<TypeNode.Fqn>()
             .Where(contract => contract is { Name: "kotlin.Comparable", Args.Length: 1 })
             .Select(contract => SupertypeGraph.SubstOwnerTvs(contract, owner.Args ?? Array.Empty<TypeNode>()))
@@ -171,49 +150,75 @@ static class ComparableRepresentationLowering
         };
     }
 
-    static void EraseBounds(JsonNode node)
+    static BirGraphValue EraseBounds(BirGraphValue node)
     {
-        if (node is JsonArray array) { foreach (var child in array) EraseBounds(child); return; }
-        if (node is not JsonObject declaration) return;
-        if (declaration["k"] == null && declaration["typeParams"] is JsonArray parameters)
+        if (node is BirAttribute or BirOverride) return node;
+        var parameters = node switch {
+            BirFunctionDeclaration value => value.TypeParams,
+            BirClassDefinition value => value.TypeParams,
+            BirInterfaceDefinition value => value.TypeParams,
+            BirEnumDefinition value => value.TypeParams,
+            BirClosureDefinition value => value.TypeParams,
+            BirRefTypeDeclaration value => value.TypeParams,
+            BirInheritedClassMethod value => value.TypeParams,
+            BirInheritedImplementation value => value.TypeParams,
+            BirMethodImpl value => value.TypeParams,
+            _ => default,
+        };
+        if (parameters.HasValue)
         {
-            var bounds = new JsonObject();
+            var bounds = new Dictionary<int, TypeNode[]>();
             var changed = false;
-            for (var index = 0; index < parameters.Count; index++)
-                if (parameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints
-                    && constraints.Count > 0)
+            var rewritten = parameters.Value.Select((parameter, index) => {
+                if (parameter.Constraints.OrDefault() is { Length: > 0 } constraints)
                 {
-                    // This carrier freezes the method's source bounds before companion-frame expansion.
-                    // A partial snapshot would make later passes mistake unrelated bounds for already-saved facts.
-                    bounds[index.ToString()] = constraints.DeepClone();
-                    if (!constraints.Any(bound => TypeJson.Read(bound) is TypeNode.Fqn { Name: "kotlin.Comparable" }))
-                        continue;
-                    changed = true;
-                    parameter["constraints"] = new JsonArray(constraints.Where(bound =>
-                        TypeJson.Read(bound) is not TypeNode.Fqn { Name: "kotlin.Comparable" }).Select(bound => bound.DeepClone()).ToArray());
+                    // A snapshot preserves all siblings, including unchanged source parameters.
+                    bounds[index] = constraints;
+                    if (constraints.Any(bound => bound is TypeNode.Fqn { Name: "kotlin.Comparable" }))
+                    {
+                        changed = true;
+                        return parameter with { Constraints = constraints.Where(bound => bound is not TypeNode.Fqn { Name: "kotlin.Comparable" }).ToArray() };
+                    }
                 }
+                return parameter;
+            }).ToArray();
             if (changed)
             {
-                if (declaration["kind"] != null)
-                    KotlinSupertypesRecord.Merge(declaration, new JsonObject { ["bounds"] = bounds });
-                else
-                {
-                    var payload = Text(declaration[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string existing
-                        ? JsonNode.Parse(existing).AsObject() : new JsonObject();
-                    var saved = payload["bounds"] as JsonObject;
-                    if (saved == null) payload["bounds"] = saved = new JsonObject();
-                    foreach (var (index, value) in bounds)
-                        if (!saved.ContainsKey(index)) saved[index] = value.DeepClone();
-                    declaration[NullableGenericErasure.MethodTypeParameterBoundsPre] = payload.ToJsonString();
-                }
+                SourceBoundsSnapshot Merge(OptionalField<SourceBoundsSnapshot> previous) => previous.HasValue
+                    ? previous.Value.Merge(bounds) : new SourceBoundsSnapshot(bounds);
+                node = node switch {
+                    BirFunctionDeclaration value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
+                    BirClassDefinition value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
+                    BirInterfaceDefinition value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
+                    BirEnumDefinition value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
+                    BirClosureDefinition value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
+                    BirRefTypeDeclaration value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
+                    BirInheritedClassMethod value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
+                    BirInheritedImplementation value => value with { TypeParams = rewritten, KotlinSupertypesPre = Merge(value.KotlinSupertypesPre) },
+                    BirMethodImpl value => value with { TypeParams = rewritten, MethodTypeParameterBoundsPre = Merge(value.MethodTypeParameterBoundsPre) },
+                    _ => node,
+                };
             }
         }
-        foreach (var (key, child) in declaration.ToArray())
-            if (key is not ("attrs" or "overrides")) EraseBounds(child);
+        return node.RewriteChildren(EraseBounds);
     }
+
+    // Authored sparse self-test inputs cross the same typed consumer boundary.
+    internal static JsonObject[] ApplyFixtures(IEnumerable<JsonNode> roots, bool referenceBuild) =>
+        Apply(roots.Select(root => BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(root.ToJsonString(BirJson.Writer)))).ToArray(), referenceBuild)
+            .Select(root => root.ToDom()).ToArray();
 
     internal static void SelfTest()
     {
+        var formalOwners = typeof(BirGraphValue).Assembly.GetTypes().Where(type => type.IsSubclassOf(typeof(BirGraphValue))
+            && !type.IsSubclassOf(typeof(BirGraphNode))
+            && type.GetProperty("TypeParams")?.PropertyType == typeof(OptionalField<BirTypeParameter[]>))
+            .Select(type => type.Name).ToHashSet(StringComparer.Ordinal);
+        if (!formalOwners.SetEquals(new[] { nameof(BirFunctionDeclaration), nameof(BirClassDefinition), nameof(BirInterfaceDefinition),
+            nameof(BirEnumDefinition), nameof(BirClosureDefinition), nameof(BirRefTypeDeclaration), nameof(BirInheritedClassMethod),
+            nameof(BirInheritedImplementation), nameof(BirMethodImpl) }))
+            throw new InvalidOperationException("Audit comparable bound erasure for the current declaration families");
+        SourceBoundsSnapshot.SelfTest();
         var boundHelpers = new List<BirCallStatic>();
         BirFunctionDeclaration typedHelper = null;
         FaithfulHints.WithHelperBinding(call => {
@@ -248,10 +253,17 @@ static class ComparableRepresentationLowering
         second["methods"][0]["name"] = "second";
         var sourceBounds = first["methods"][0]["typeParams"][0]["constraints"].DeepClone();
         var otherBounds = first["methods"][0]["typeParams"][1]["constraints"].DeepClone();
-        Apply(new JsonNode[] { first, second }, referenceBuild: false);
+        first["methods"].AsArray().Add(new JsonObject { ["name"] = "$comparableDispatch$0", ["generated"] = false,
+            ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("kotlin.Unit"), ["body"] = new JsonArray() });
+        var originalFirst = first.DeepClone();
+        var rewrittenFixtures = ApplyFixtures(new JsonNode[] { first, second }, referenceBuild: false);
+        if (!JsonNode.DeepEquals(first, originalFirst))
+            throw new InvalidOperationException("Typed comparison rewrote its caller-owned source input");
+        first = rewrittenFixtures[0]; second = rewrittenFixtures[1];
         var helpers = new[] { first, second }.SelectMany(root => root["methods"].AsArray().OfType<JsonObject>())
-            .Where(method => Text(method["name"]).StartsWith("$comparableDispatch$", StringComparison.Ordinal)).ToArray();
-        if (helpers.Length != 1)
+            .Where(method => method["generated"]?.GetValue<bool>() == true
+                && Text(method["name"]).StartsWith("$comparableDispatch$", StringComparison.Ordinal)).ToArray();
+        if (helpers.Length != 1 || Text(helpers[0]["name"]) != "$comparableDispatch$1")
             throw new InvalidOperationException("Comparable dispatch duplicated a shared facade helper");
         foreach (var root in new[] { first, second })
         {
@@ -287,38 +299,41 @@ static class ComparableRepresentationLowering
             || TypeJson.OwnerName(branch["else"]["else"]["owner"]) != "kotlin.comparisons.ComparisonsKt"
             || Text(branch["else"]["else"]["method"]) != "clrErasedCompareTo")
             throw new InvalidOperationException("Comparable dispatch lost generic-first/erased dispatch order");
-        var inherited = new JsonObject {
-            ["ownerType"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Enum", new[] { new TypeNode.Tv("method", 1) })),
-            ["overrides"] = new JsonArray(new JsonObject {
-                ["owner"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Comparable", new[] { new TypeNode.Tv("type", 0) })),
-                ["member"] = "compareTo", ["kind"] = "method",
-            }),
+        var inherited = new BirCallInstance {
+            OwnerType = new TypeNode.Fqn("kotlin.Enum", new[] { new TypeNode.Tv("method", 1) }),
+            Overrides = new[] { new BirOverride {
+                Owner = new TypeNode.Fqn("kotlin.Comparable", new[] { new TypeNode.Tv("type", 0) }),
+                Member = "compareTo", Kind = "method",
+            } },
         };
         if (ComparisonContract(inherited) is not TypeNode.Fqn { Args.Length: 1 } inheritedOwner
             || inheritedOwner.Args[0] is not TypeNode.Tv { Scope: "method", I: 1 })
             throw new InvalidOperationException("Inherited comparison contract lost the selected owner's frame");
-        inherited["ownerType"] = TypeJson.Fqn("AuthoredComparison");
+        inherited = inherited with { OwnerType = new TypeNode.Fqn("AuthoredComparison") };
         if (ComparisonContract(inherited) != null)
             throw new InvalidOperationException("Ordinary class comparison lost its selected implementation");
-        var enumReference = JsonNode.Parse("""
-        {"ownerType":{"t":"fqn","name":"ConcreteEnum"},"overrides":[
-          {"owner":{"t":"fqn","name":"kotlin.Enum","args":[{"t":"fqn","name":"ConcreteEnum"}]},
-           "member":"compareTo","kind":"method"},
-          {"owner":{"t":"fqn","name":"kotlin.Comparable","args":[{"t":"fqn","name":"ConcreteEnum"}]},
-           "member":"compareTo","kind":"method"}]}
-        """).AsObject();
+        var enumReference = new BirCallInstance {
+            OwnerType = new TypeNode.Fqn("ConcreteEnum"),
+            Overrides = new[] { new BirOverride { Owner = new TypeNode.Fqn("kotlin.Enum", new TypeNode[] { new TypeNode.Fqn("ConcreteEnum") }),
+                Member = "compareTo", Kind = "method" },
+                new BirOverride { Owner = new TypeNode.Fqn("kotlin.Comparable", new TypeNode[] { new TypeNode.Fqn("ConcreteEnum") }),
+                    Member = "compareTo", Kind = "method" } },
+        };
         if (ComparisonContract(enumReference) is not TypeNode.Fqn { Args.Length: 1 } enumContract
             || TypeJson.OwnerName(TypeJson.Write(enumContract.Args[0])) != "ConcreteEnum")
             throw new InvalidOperationException("Concrete enum reference lost its selected comparison contract");
-        enumReference["super"] = TypeJson.Fqn("kotlin.Enum");
+        enumReference = enumReference with { Super = true };
         if (ComparisonContract(enumReference) != null)
             throw new InvalidOperationException("Explicit super comparison lost its selected implementation");
+        if (ComparisonContract(enumReference with { Super = false }) != null
+            || ComparisonContract(enumReference with { Super = OptionalField<bool>.Null }) == null)
+            throw new InvalidOperationException("Comparison contract changed explicit super presence");
         var enumRoot = JsonNode.Parse("""
         {"fileClass":"EnumComparisons","types":[{"name":"RichOrder","kind":"class","interfaces":[],
           "methods":[],"ctors":[{"params":[],"baseArgs":null,"thisArgs":null,"body":[]}],
           "richEnum":{"ordinal":"selectedOrdinalField"}}],"methods":[]}
         """).AsObject();
-        Apply(new JsonNode[] { enumRoot }, referenceBuild: false);
+        enumRoot = ApplyFixtures(new JsonNode[] { enumRoot }, referenceBuild: false)[0];
         var enumBridge = enumRoot["types"][0]["methods"][0];
         if (BirTypeLowering.PhysicalHead("kotlin.Enum", "System.Object", new[] { Parameter })
                 is not TypeNode.Fqn { Name: "System.Object", Args: null }

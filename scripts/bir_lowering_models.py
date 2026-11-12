@@ -34,6 +34,8 @@ def outputs(root, definitions):
             return value
         if "$ref" in value:
             key = value["$ref"].removeprefix("#/$defs/")
+            if definitions.get(key, {}).get("x-dotkt-csharp-codec"):
+                return normalize({**definitions[key], **{k: v for k, v in value.items() if k != "$ref"}})
             if key in {"cirStatementList", "cirExpressionList"}:
                 item = "birStatementNode" if key == "cirStatementList" else "birExpressionNode"
                 return {"type": "array", "items": {"$ref": "#/$defs/" + item}}
@@ -90,6 +92,7 @@ def outputs(root, definitions):
         info = shape.get("x-dotkt-model", {}) if isinstance(shape, dict) else {}
         if info.get("domain") == "cirDeclarations" and key not in aliases and key not in declarations and "properties" in shape:
             shapes[key] = normalize(copy.deepcopy(shape))
+            shapes[key]["properties"].update(normalize(info.get("loweringProperties", {})))
             shapes[key]["x-dotkt-model"] = {"name": "Bir" + info["name"].removeprefix("Cir"), "domain": "birCoreValues"}
     shapes["birBranch"] = normalize(copy.deepcopy(definitions["cirConditionalBranch"]))
     shapes["birBranch"]["x-dotkt-model"] = {"name": "BirBranch", "domain": "birCoreValues"}
@@ -189,6 +192,8 @@ def outputs(root, definitions):
 
     def read(field):
         field = base(field)
+        if codec := field.get("x-dotkt-csharp-codec"):
+            return f"{codec}.Read(ref reader)"
         if cs(field) == "byte[]": return "Convert.FromBase64String(ReadString(ref reader))"
         if field.get("x-dotkt-kotlin-json-type"):
             return "ReadFrozenType(ref reader)"
@@ -210,6 +215,8 @@ def outputs(root, definitions):
 
     def write(field, value, indent="            ", depth=0):
         field = base(field)
+        if codec := field.get("x-dotkt-csharp-codec"):
+            return [indent + f"{codec}.Write(writer, {value});"]
         if cs(field) == "byte[]": return [indent + f"writer.WriteBase64StringValue({value});"]
         if field.get("x-dotkt-kotlin-json-type"):
             return [indent + f"writer.WriteStringValue(TypeNode.ToJson({value}));"]
@@ -233,6 +240,8 @@ def outputs(root, definitions):
 
     def dom(field, value, depth=0):
         field = base(field)
+        if codec := field.get("x-dotkt-csharp-codec"):
+            return f"{codec}.ToDom({value})"
         if cs(field) == "byte[]": return f"JsonValue.Create(Convert.ToBase64String({value}))"
         if field.get("x-dotkt-kotlin-json-type"):
             return f"JsonValue.Create(TypeNode.ToJson({value}))"
