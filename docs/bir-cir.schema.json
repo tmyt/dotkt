@@ -2079,7 +2079,11 @@
       "required": ["k", "type", "method", "args"], "additionalProperties": false
     },
     "cirPropertyGetNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirPropertyGet", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": { "_erasedConstraintDispatch": { "type": "boolean" }, "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" }, "declarationId": { "type": "string" } }, "sourceConsumed": ["clrOwnerResolved", "name", "ret", "super"], "sourceProperties": { "clrOwnerResolved": { "type": "boolean" }, "name": { "type": "string" }, "ret": { "$ref": "#/$defs/type" }, "super": { "type": "boolean" } } },
+      "type": "object", "x-dotkt-model": { "name": "CirPropertyGet", "domain": "cirExecutable", "roles": ["expression"],
+        "loweringProperties": { "_erasedConstraintDispatch": { "type": "boolean" }, "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" }, "declarationId": { "type": "string" } },
+        "sourceConsumed": ["clrOwnerResolved", "name", "ret", "super", "sty"],
+        "sourceProperties": { "clrOwnerResolved": { "type": "boolean" }, "name": { "type": "string" }, "ret": { "$ref": "#/$defs/type" }, "super": { "type": "boolean" }, "sty": { "$ref": "#/$defs/type" } }
+      },
       "properties": { "k": { "const": "clrPropGet" }, "type": { "$ref": "#/$defs/type" }, "static": { "type": "boolean" }, "member": { "type": "string", "enum": ["accessor", "field"] }, "accessor": { "type": "string" }, "dispatch": { "type": "string", "enum": ["call", "callvirt", "constrained"] }, "recv": { "$ref": "#/$defs/cirExpressionNode" }, "memberRef": { "$ref": "#/$defs/memberRef" }, "volatile": { "type": "boolean" }, "localAccessor": { "type": "boolean" }, "accessorOwner": { "$ref": "#/$defs/type" }, "sig": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "calleeParams": { "type": "array", "items": { "$ref": "#/$defs/type" } } },
       "required": ["k", "type", "static", "member"], "additionalProperties": false
     },

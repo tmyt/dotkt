@@ -20457,15 +20457,16 @@ internal static class BirGraphMessagePack
         OptionalField<string> field13 = default;
         OptionalField<TypeNode> field14 = default;
         OptionalField<bool> field15 = default;
-        OptionalField<bool> field16 = default;
-        OptionalField<string> field17 = default;
+        OptionalField<TypeNode> field16 = default;
+        OptionalField<bool> field17 = default;
         OptionalField<string> field18 = default;
         OptionalField<string> field19 = default;
+        OptionalField<string> field20 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 20); if (IrMessagePack.ReadString(ref reader) != "clrPropGet") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 21); if (IrMessagePack.ReadString(ref reader) != "clrPropGet") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -20530,21 +20531,25 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 15);
                     field15 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "_erasedConstraintDispatch":
+                case "sty":
                     Seen(ref seen, 1UL << 16);
-                    field16 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    field16 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
+                case "_erasedConstraintDispatch":
+                    Seen(ref seen, 1UL << 17);
+                    field17 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
                 case "propertyName":
-                    Seen(ref seen, 1UL << 17);
-                    field17 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
-                    break;
-                case "propertyAccessor":
                     Seen(ref seen, 1UL << 18);
                     field18 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "declarationId":
+                case "propertyAccessor":
                     Seen(ref seen, 1UL << 19);
                     field19 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "declarationId":
+                    Seen(ref seen, 1UL << 20);
+                    field20 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -20568,17 +20573,18 @@ internal static class BirGraphMessagePack
             Name = field13,
             Ret = field14,
             Super = field15,
-            _erasedConstraintDispatch = field16,
-            PropertyName = field17,
-            PropertyAccessor = field18,
-            DeclarationId = field19,
+            Sty = field16,
+            _erasedConstraintDispatch = field17,
+            PropertyName = field18,
+            PropertyAccessor = field19,
+            DeclarationId = field20,
         };
     }
 
     internal static void WriteBirPropertyGet(ref MessagePackWriter writer, BirPropertyGet value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value._erasedConstraintDispatch.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value._erasedConstraintDispatch.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("clrPropGet");
         if (value.Type.IsPresent)
@@ -20733,6 +20739,15 @@ internal static class BirGraphMessagePack
             else
             {
                 writer.Write(value.Super.Value);
+            }
+        }
+        if (value.Sty.IsPresent)
+        {
+            writer.Write("sty");
+            if (value.Sty.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.Sty.Value, depth + 1);
             }
         }
         if (value._erasedConstraintDispatch.IsPresent)

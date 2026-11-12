@@ -4116,6 +4116,7 @@ internal static class BirGraphDom
                 case "name": break;
                 case "ret": break;
                 case "super": break;
+                case "sty": break;
                 case "_erasedConstraintDispatch": break;
                 case "propertyName": break;
                 case "propertyAccessor": break;
@@ -4140,6 +4141,7 @@ internal static class BirGraphDom
             Name = Field<string>(fields, "name", value => value!.GetValue<string>()),
             Ret = Field<TypeNode>(fields, "ret", value => TypeNode.Read(value) ?? throw new FormatException()),
             Super = Field<bool>(fields, "super", value => value!.GetValue<bool>()),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
             _erasedConstraintDispatch = Field<bool>(fields, "_erasedConstraintDispatch", value => value!.GetValue<bool>()),
             PropertyName = Field<string>(fields, "propertyName", value => value!.GetValue<string>()),
             PropertyAccessor = Field<string>(fields, "propertyAccessor", value => value!.GetValue<string>()),

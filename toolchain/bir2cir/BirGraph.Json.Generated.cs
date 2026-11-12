@@ -9300,10 +9300,11 @@ internal static partial class BirGraphJson
         OptionalField<string> field13 = default;
         OptionalField<TypeNode> field14 = default;
         OptionalField<bool> field15 = default;
-        OptionalField<bool> field16 = default;
-        OptionalField<string> field17 = default;
+        OptionalField<TypeNode> field16 = default;
+        OptionalField<bool> field17 = default;
         OptionalField<string> field18 = default;
         OptionalField<string> field19 = default;
+        OptionalField<string> field20 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -9311,7 +9312,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 20); if (ReadString(ref reader) != "clrPropGet") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 21); if (ReadString(ref reader) != "clrPropGet") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
@@ -9376,21 +9377,25 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 15);
                     field15 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "_erasedConstraintDispatch":
+                case "sty":
                     Seen(ref seen, 1UL << 16);
-                    field16 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    field16 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    break;
+                case "_erasedConstraintDispatch":
+                    Seen(ref seen, 1UL << 17);
+                    field17 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
                 case "propertyName":
-                    Seen(ref seen, 1UL << 17);
-                    field17 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
-                    break;
-                case "propertyAccessor":
                     Seen(ref seen, 1UL << 18);
                     field18 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
-                case "declarationId":
+                case "propertyAccessor":
                     Seen(ref seen, 1UL << 19);
                     field19 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
+                    break;
+                case "declarationId":
+                    Seen(ref seen, 1UL << 20);
+                    field20 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -9414,10 +9419,11 @@ internal static partial class BirGraphJson
             Name = field13,
             Ret = field14,
             Super = field15,
-            _erasedConstraintDispatch = field16,
-            PropertyName = field17,
-            PropertyAccessor = field18,
-            DeclarationId = field19,
+            Sty = field16,
+            _erasedConstraintDispatch = field17,
+            PropertyName = field18,
+            PropertyAccessor = field19,
+            DeclarationId = field20,
         };
     }
 

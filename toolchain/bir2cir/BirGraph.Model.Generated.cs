@@ -7781,11 +7781,12 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<string> Name { get; set; }
     public OptionalField<TypeNode> Ret { get; set; }
     public OptionalField<bool> Super { get; set; }
+    public OptionalField<TypeNode> Sty { get; set; }
     public OptionalField<bool> _erasedConstraintDispatch { get; set; }
     public OptionalField<string> PropertyName { get; set; }
     public OptionalField<string> PropertyAccessor { get; set; }
     public OptionalField<string> DeclarationId { get; set; }
-    public override TypeNode? ResultTypeStamp => Ret.OrDefault();
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
@@ -7821,6 +7822,7 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "super", Super, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "sty", Sty, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_erasedConstraintDispatch", _erasedConstraintDispatch, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "propertyName", PropertyName, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "propertyAccessor", PropertyAccessor, (writer, value) => { writer.WriteStringValue(value); });
@@ -7847,6 +7849,7 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
         if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
         if (Super.IsPresent) result["super"] = Super.IsNull ? null : JsonValue.Create(Super.Value);
+        if (Sty.IsPresent) result["sty"] = Sty.IsNull ? null : TypeNode.Write(Sty.Value);
         if (_erasedConstraintDispatch.IsPresent) result["_erasedConstraintDispatch"] = _erasedConstraintDispatch.IsNull ? null : JsonValue.Create(_erasedConstraintDispatch.Value);
         if (PropertyName.IsPresent) result["propertyName"] = PropertyName.IsNull ? null : JsonValue.Create(PropertyName.Value);
         if (PropertyAccessor.IsPresent) result["propertyAccessor"] = PropertyAccessor.IsNull ? null : JsonValue.Create(PropertyAccessor.Value);
