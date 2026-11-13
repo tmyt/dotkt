@@ -48,8 +48,8 @@ sealed partial class InlineExpansion
         Find(root);
     }
 
-    // Match the old first-body scope, including nested bodies in that scope's
-    // flat var inventory. Do not silently turn this migration into lexical retyping.
+    // The first body-bearing occurrence owns its whole subtree's flat var
+    // inventory; nested bodies do not start independent retyping scopes.
     static bool HasBody(BirGraphValue node) => node switch {
         BirFunctionDeclaration value => value.Body.HasValue,
         BirConstructor value => value.Body.HasValue,
@@ -60,6 +60,13 @@ sealed partial class InlineExpansion
         BirTry value => value.Body.HasValue,
         BirCatch value => value.Body.HasValue,
         BirBranch value => value.Body.HasValue,
+        BirBlock value => value.Body.HasValue,
+        BirForArray value => value.Body.HasValue,
+        BirForIn value => value.Body.HasValue,
+        BirFor value => value.Body.HasValue,
+        BirForRange value => value.Body.HasValue,
+        BirForEach value => value.Body.HasValue,
+        BirRepeat value => value.Body.HasValue,
         _ => false,
     };
 

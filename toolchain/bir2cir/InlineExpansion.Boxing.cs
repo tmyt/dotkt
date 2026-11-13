@@ -233,9 +233,12 @@ sealed partial class InlineExpansion
             var index = 0;
             foreach (var (name, type) in fields)
             {
-                if (name != null && request.CaptureNames.Contains(name) && type is TypeNode.Fqn cell && cell.Name == request.RefName
-                    && values != null && index < values.Length && values[index] is BirLocal local && local.Name.HasValue)
-                    yield return local.Name.Value;
+                if (name != null && request.CaptureNames.Contains(name) && type is TypeNode.Fqn cell && cell.Name == request.RefName)
+                {
+                    var value = values != null && index < values.Length ? values[index] : null;
+                    if (value is BirLocal { Name.HasValue: true } local) yield return local.Name.Value;
+                    else if (value == null && node is BirNewSuspendLambda) yield return name;
+                }
                 index++;
             }
         }

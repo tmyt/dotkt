@@ -73,6 +73,49 @@ sealed partial class InlineExpansion
         if (call.TypeArgs.Value[0] != new TypeNode.Tv("type", 0) || call.Ret.Value != new TypeNode.Tv("type", 1)
             || call.ResolvedMemberReturn.Value != new TypeNode.Tv("method", 10) || call.Sig.Value[0] != new TypeNode.Tv("method", 9))
             throw new InvalidOperationException("Inline caller TV remap changed a selected declaration's independent frame");
-        Console.WriteLine("[typed inline hygiene] self-test OK (joint labels, captures, shadowing, return regions, caller TV roles)");
+        var cell = new TypeNode.Fqn("Cell");
+        var request = new InlineBoxRequest("storage", cell.Name, cell, integer, false, new(StringComparer.Ordinal) { "storage" });
+        var suspendCapture = new BirNewSuspendLambda {
+            Captures = new[] { new BirCaptureDescriptor { Name = "storage", Type = cell } },
+        };
+        if (!MaterializedCaptureSources(suspendCapture, request).SequenceEqual(new[] { "storage" }))
+            throw new InvalidOperationException("Inline boxing lost an implicit suspend capture operand");
+        suspendCapture.CapValues = new IBirExpression[] { null };
+        if (!MaterializedCaptureSources(suspendCapture, request).SequenceEqual(new[] { "storage" }))
+            throw new InvalidOperationException("Inline boxing lost a null suspend capture operand");
+        suspendCapture.CapValues = new IBirExpression[] { new BirLocal { Name = "source" } };
+        if (!MaterializedCaptureSources(suspendCapture, request).SequenceEqual(new[] { "source" }))
+            throw new InvalidOperationException("Inline boxing ignored an explicit suspend capture's source");
+        suspendCapture.CapValues = new IBirExpression[] { new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(1) } };
+        if (MaterializedCaptureSources(suspendCapture, request).Any())
+            throw new InvalidOperationException("Inline boxing inferred a source for a non-local explicit operand");
+
+        var normalizer = new InlineExpansion(new InlinePassContext {
+            File = new BirFileDeclaration(), References = ReferenceMetadataIndex.Build(Array.Empty<string>()),
+            Bodies = null, Dispatch = null, CompanionExtensions = null,
+            NextSpliceIdentity = () => 1, AppLocalMethods = new(StringComparer.Ordinal),
+        });
+        foreach (var makeBody in new Func<IBirStatement[], BirGraphValue>[] {
+            body => new BirBlock { Body = body }, body => new BirForArray { Body = body },
+            body => new BirForIn { Body = body }, body => new BirFor { Body = body },
+            body => new BirForRange { Body = body }, body => new BirForEach { Body = body },
+            body => new BirRepeat { Body = body },
+        })
+        {
+            var destination = new BirVariable {
+                Name = "result", Type = integer,
+                Init = OptionalField<IBirExpression>.Of(new BirLocal { Name = "__inl$value" }),
+            };
+            var initializerBody = makeBody(new IBirStatement[] {
+                new BirVariable { Name = "__inl$value", Type = new TypeNode.Nullable(integer) }, destination,
+            });
+            var initializer = new BirValueBlock { Stmts = new[] { (IBirStatement)initializerBody } };
+            normalizer.NormalizeImplicitNullableUnwrap(new BirFileDeclaration {
+                Fields = new[] { new BirFieldDeclaration { Init = OptionalField<IBirExpression>.Of(initializer) } },
+            });
+            if (destination.Init.Value is not BirNullableValue { Elem.HasValue: true } unwrapped || unwrapped.Elem.Value != integer)
+                throw new InvalidOperationException("Inline nullable normalization missed an initializer's " + ((BirGraphNode)initializerBody).Tag + " body");
+        }
+        Console.WriteLine("[typed inline hygiene] self-test OK (labels, captures, shadowing, return regions, TV roles, suspend cells, initializer bodies)");
     }
 }
