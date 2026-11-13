@@ -184,7 +184,7 @@ static partial class KotlinCollectionSlotSynthesis
         OwnsMapOverride(TypeJson.Read(marker["owner"]), Str(marker["member"]), Str(marker["kind"]),
             marker["arity"] is JsonValue value && value.TryGetValue<int>(out var arity) ? arity : null);
 
-    static bool OwnsMapOverride(TypeNode type, string member, string kind, int? arity) =>
+    internal static bool OwnsMapOverride(TypeNode type, string member, string kind, int? arity) =>
         type is TypeNode.Fqn owner && IsMapContractOwner(owner.Name)
         && Slots.Any(slot => IsMapContractOwner(slot.DeclaringInterface)
             && (owner.Name == slot.DeclaringInterface || owner.Name == MutableMap && slot.DeclaringInterface == Map)

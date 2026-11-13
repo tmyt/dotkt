@@ -303,6 +303,15 @@ sealed class Pipeline
         TypedCharSequenceIdentity.ApplyAll(captured);
         var forwardedEvents = ClrEventSubscriptionBinding.CollectForwardedOwners(captured);
         var inventory = new TypedModuleInventory(captured);
+        // Current local declarations, including file facades, shadow referenced
+        // CLR types before the first selected-slot resolver consumes this index.
+        refs.SetLocalEmittedTypes(inventory.EmittedTypeFqns);
+        // Nested invariant override slots adopt the selected declaration shape before
+        // snapshots; top-level object seams remain for the later bridge owner.
+        KotlinOverrideSlotBridge.PropagateErasedSlots(captured, sourceIsValue, refs, referenceBuild,
+            genericRepresentations, valuePolicy.HasClassifier);
+        var nullableDeclarations = NullableTvErasureCallRealign.CollectDeclaredMemberRets(captured, refs);
+        var uncheckedDeclarations = UncheckedGenericCastReturnErasure.CaptureSource(captured);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -321,9 +330,11 @@ sealed class Pipeline
         var continuingRoots = files.Select(file => file.Root).ToArray();
         genericRepresentations.BindDomDeclarations(continuingRoots);
         ownership.BindDomDeclarations(continuingRoots);
+        var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
+            continuingRoots.Cast<JsonObject>().ToArray());
         return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand,
             genericRepresentations, scalarSlots, valueSources, representationMethodFrames, placement,
-            new ModulePreparation(ownership, inventory, forwardedEvents));
+            new ModulePreparation(ownership, inventory, forwardedEvents, nullableDeclarations, uncheckedReturns));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -368,10 +379,6 @@ sealed class Pipeline
         // a LOCAL type (rt-stdlib self-build -> bare base + local slot override) or a REFERENCED one
         // (app build -> clr: base + pendingOverrideOwner linkage).
         var localTypeFqns = module.Preparation.Inventory.EmittedTypeFqns;
-        // LOCAL-OVER-REF (#15): tell the refs index which FQNs are this-assembly-emitted, so ResolveNetType refuses to
-        // bind a locally-declared type to a referenced dll of the same identity — `new`/callInstance/callStatic/field
-        // on a source-compiled `demo.Plain` route to the emitted type, not `newClr`/`clr*` against the ref copy.
-        refs.SetLocalEmittedTypes(localTypeFqns);
         // The DIRECT supertypes (base + interfaces, by FQN) of each type DECLARED in this compilation, aggregated
         // across all input files. ForInLowering walks it to decide whether a stdlib self-build for-loop source is a
         // kotlin.collections iterable (a concrete subtype such as ArrayList : MutableList matches even though its own
@@ -397,25 +404,16 @@ sealed class Pipeline
         // captured module-wide before override or per-file declaration changes.
         var calleeTypeParams = module.Preparation.Inventory.CalleeTypeParameters;
 
-        // OVERRIDE SLOTS, THE HALF THAT MOVES A DECLARATION (#86 D3). An override narrowing a base `T?` NESTED in a
-        // constructed generic (`Box<T?>` overridden as `Box<Int?>`) has no conversion available in either direction —
-        // `Box<object>` and `Box<Nullable<int32>>` are unrelated invariant reified generics — so that slot must adopt
-        // the base's shape. It happens over every file at once, because a base may be declared in another one, and
-        // BEFORE the declaration snapshot below: a call reached through the DERIVED type is typed against that
-        // declaration, so a snapshot taken first would type it against the slot the override no longer has. The
-        // top-level `object` seam is bridged instead, beside the other bridge synthesizers.
-        KotlinOverrideSlotBridge.PropagateErasedSlots(birFiles.Select(f => f.Root), isValueFqn, refs, _options.RefBuild, genericRepresentations);
-
         // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
         // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds
         // NullableTvErasureCallRealign so a `Box<Int>.get_a()` call across the generic boundary re-derives its
         // return from the (erased) declaration instead of kotc's over-substituted `Ref<Nullable<Int>>` (#4).
-        var nullableTvDeclRets = NullableTvErasureCallRealign.CollectDeclaredMemberRets(birFiles.Select(f => f.Root), refs);
+        var nullableTvDeclRets = module.Preparation.NullableDeclarations;
         // Snapshot every method whose source-level `T` return is produced by an unchecked cast from a nullable/object
         // carrier.  Its physical CLR ABI must return object so narrowing can be delayed until the value is consumed;
         // the exact Kotlin `T` return is retained through [KotlinType].  Collected module-wide so cross-file local calls
         // are matched by exact frontend declaration identity and owner, never by a library/name heuristic.
-        var uncheckedGenericCastRets = UncheckedGenericCastReturnErasure.Collect(birFiles.Select(f => f.Root));
+        var uncheckedGenericCastRets = module.Preparation.UncheckedReturns;
 
         // The local RICH-enum type names (a `kind:"class"` decl carrying the faithful `enumRich:true` marker), across
         // ALL input files: EnumIntrinsicLowering lowers `enumValues<RichEnum>()` to the synthesized static values()
@@ -1852,7 +1850,9 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
     IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames,
     DeclarationPlacement Placement, ModulePreparation Preparation);
 sealed record ModulePreparation(TypeOwnershipLowering.PreparedFacts Ownership, TypedModuleInventory Inventory,
-    IReadOnlyDictionary<(string Owner, string Event), TypeNode> ForwardedEvents);
+    IReadOnlyDictionary<(string Owner, string Event), TypeNode> ForwardedEvents,
+    NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
+    UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties,
     CompanionRepresentationLowering.LocalIndex Companions, CompanionExtensionBinding.LocalIndex Extensions);

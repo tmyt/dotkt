@@ -54,8 +54,15 @@ sealed class NullableRepresentationTypes
     internal static TypeNode BindingScalar(TypeNode physical, JsonNode sourceFact,
         NullableRepresentationFrame owner, NullableRepresentationFrame method = null)
     {
-        if (sourceFact is not JsonValue value || !value.TryGetValue<string>(out var encoded)
-            || TypeJson.Read(JsonNode.Parse(encoded)) is not TypeNode.Tv source) return physical;
+        return BindingScalarFromSource(physical,
+            sourceFact is JsonValue value && value.TryGetValue<string>(out var encoded)
+                ? TypeJson.Read(JsonNode.Parse(encoded)) : null, owner, method);
+    }
+
+    internal static TypeNode BindingScalarFromSource(TypeNode physical, TypeNode sourceFact,
+        NullableRepresentationFrame owner, NullableRepresentationFrame method = null)
+    {
+        if (sourceFact is not TypeNode.Tv source) return physical;
         var frame = source.Scope == "type" ? owner : source.Scope == "method" ? method : null;
         return frame?.StorageIndices.Contains(source.I) == true
             && physical == frame.Variable(source, NullableRepresentationFrame.Role.Storage)

@@ -74,6 +74,26 @@ sealed class ValueRepresentationSourcePolicy
         _ => type,
     };
 
+    internal bool HasClassifier(TypeNode type) => Classifier(type).Binding != null;
+
+    internal (ValueRepresentationBinding Binding, string Shape) Classifier(TypeNode type)
+    {
+        var shape = "";
+        for (;;)
+            switch (type)
+            {
+                case TypeNode.Nullable nullable: type = nullable.Of; break;
+                case TypeNode.Oblivious oblivious: type = oblivious.Of; break;
+                case TypeNode.Projection { Variance: "out" } projection: type = projection.Of; break;
+                case TypeNode.Array { SzArray: true, Rank: 1 } array:
+                    shape += GenericArrayStorageLowering.NeedsStorage(array) ? "o" : "a";
+                    type = array.Elem;
+                    break;
+                case TypeNode.Fqn named when Bindings.TryGetValue(named.Name, out var binding): return (binding, shape);
+                default: return (null, "");
+            }
+    }
+
     internal static void SelfTest()
     {
         var union = new TypeNode.Fqn("Union");
@@ -109,6 +129,13 @@ sealed class ValueRepresentationSourcePolicy
         };
         var before = root.ToDom();
         var policy = new ValueRepresentationSourcePolicy(new[] { root }, null, false);
+        var array = new TypeNode.Array(union);
+        var wrapped = new TypeNode.Nullable(new TypeNode.Oblivious(new TypeNode.Projection("out", array)));
+        if (!policy.HasClassifier(union) || !policy.HasClassifier(wrapped)
+            || policy.Classifier(wrapped).Shape != (GenericArrayStorageLowering.NeedsStorage(array) ? "o" : "a")
+            || policy.HasClassifier(new TypeNode.Projection("in", union))
+            || policy.HasClassifier(new TypeNode.Array(union, 2, false)) || policy.HasClassifier(sibling))
+            throw new InvalidOperationException("Value classifier policy changed supported wrappers or exact array shapes");
         var erased = policy.EraseBounds(root);
         var method = erased.Methods.Value[0];
         var bounds = method.MethodTypeParameterBoundsPre.Value.Bounds;

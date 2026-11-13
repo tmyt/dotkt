@@ -4,12 +4,13 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // CLR OVERRIDE ALLOCATION. kotc tags each emitted declaration/call with a pure-Kotlin `overrides` marker (the
 // transitive override closure). This pass resolves the external slot from reference metadata. Ordinary functions may
 // adopt that physical name; Kotlin property accessors retain their dedicated physical name and record the external
 // base slot separately for MethodImpl wiring. The `overrides` marker is stripped later by BirTypeLowering.
-static class DeclarationRename
+static partial class DeclarationRename
 {
     // bir2cir-internal hand-off from semantic declaration identity to physical allocation. Ordinary methods may
     // adopt an external CLR name in this pass, but later representation passes still have to consume frontend facts
@@ -197,73 +198,24 @@ static class DeclarationRename
     internal static string ResolveSlot(JsonObject declaration, JsonArray ovs, ReferenceMetadataIndex refs,
         NullableRepresentationFrame ownerFrame = null)
     {
-        foreach (var o in ovs)
+        var overrides = ovs.OfType<JsonObject>().Select(marker =>
+            (Owner: TypeJson.Read(marker["owner"]) as TypeNode.Fqn,
+                Member: (marker["member"] as JsonValue)?.GetValue<string>(),
+                Kind: (marker["kind"] as JsonValue)?.GetValue<string>(),
+                Arity: (marker["arity"] as JsonValue)?.GetValue<int>() ?? 0))
+            .Where(marker => marker.Owner != null && marker.Member != null)
+            .Select(marker => new SlotOverride(marker.Owner, marker.Member, marker.Kind, marker.Arity)).ToArray();
+        if (!TryCallableSignature(declaration, out var signature, out var methodArity)) signature = null;
+        TypeNode[] binding = null;
+        if (signature != null && declaration["params"] is JsonArray parameters)
         {
-            if (o is not JsonObject oo) continue;
-            if (TypeJson.Read(oo["owner"]) is not TypeNode.Fqn ownerSpec) continue;
-            var owner = ownerSpec.Name;
-            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
-            var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
-            var arity = (oo["arity"] as JsonValue)?.GetValue<int>() ?? 0;
-            // A property annotation names the target CLR Property, not an accessor spelling. Resolve the exact
-            // MethodSemantics association from reference metadata. A setter overriding a getter-only `val` still uses
-            // the getter to establish the property allocation, then resolves the external setter if one exists. Plain
-            // methods use their exact intrinsic name.
-            if (kind is "getter" or "setter")
-            {
-                if (TryExactPropertySlot(declaration, refs, ownerSpec, member, kind,
-                        out _, out _, out var accessorMethod, out _)) return accessorMethod;
-                continue;
-            }
-            if (!TryCallableSignature(declaration, out var signature, out var methodArity)
-                || signature.Length != arity) continue;
-            // A call's physical value vector may already use storage companions.
-            // Override selection still owns the pristine selected Kotlin descriptor.
-            if (declaration["k"]?.GetValue<string>() == "callInstance"
-                && refs.DeclarationOverrideParameters(declaration[DeclarationIdentityBinding.Key]?.GetValue<string>())
-                    is { } sourceParameters)
-                signature = sourceParameters;
-            if (declaration["params"] is JsonArray parameters)
-            {
-                var methodFrame = NullableRepresentationTypes.DeclarationMethodFrame(declaration);
-                signature = signature.Select((type, index) => NullableRepresentationTypes.BindingScalar(type,
-                    parameters[index]?["nullableGeneric"], ownerFrame, methodFrame)).ToArray();
-            }
-            if (refs.TryProjectedIndexerSlot(ownerSpec, member, methodArity, signature, out var indexerSlot, out _))
-                return indexerSlot;
-            // A declaration's params live in the declaring type's frame, so close the referenced ancestor into that
-            // frame through the override edge. A call's sig is the SELECTED CALLEE DECLARATION vector (§2.2), but the
-            // frontend can state an inherited slot either in its open declaration frame (!T) or already constructed
-            // at the receiver (Instant in Comparable<Instant>). Prefer the raw exact identity first; only if it has no
-            // match, compare the same referenced declaration closed by the authored override edge. Both routes still
-            // require the complete vector and method arity; neither falls back to name/parameter count.
-            var isSelectedCall = (declaration["k"] as JsonValue)?.GetValue<string>() == "callInstance";
-            if (isSelectedCall
-                && refs.TryExactMemberIntrinsic(owner, member, methodArity, signature, out var openIntrinsic))
-                return openIntrinsic;
-            if (refs.TryExactMemberIntrinsic(owner, member, methodArity, signature,
-                    ownerSpec.Args ?? Array.Empty<TypeNode>(), out var closedIntrinsic))
-                return closedIntrinsic;
+            var methodFrame = NullableRepresentationTypes.DeclarationMethodFrame(declaration);
+            binding = signature.Select((type, index) => NullableRepresentationTypes.BindingScalar(type,
+                parameters[index]?["nullableGeneric"], ownerFrame, methodFrame)).ToArray();
         }
-        // REFERENCE-KLIB-PROJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type off the
-        // refs (NOT a stdlib ref.dll alias — ResolveNetType excludes kotlin.*/dotkt$ synthetics and locals
-        // type).
-        // A Kotlin class implementing/overriding such a member binds the .NET slot HERE (kotc no longer bakes it). Because
-        // dll2klib injects an ordinary method identity equal to the .NET name, that method's slot is the identity.
-        // Properties were already handled above through their explicit Property/MethodSemantics association. This
-        // also restores the override:true/vis:public flags the Walk caller stamps for a CLR-bound declaration.
-        foreach (var o in ovs)
-        {
-            if (o is not JsonObject oo) continue;
-            if (TypeJson.Read(oo["owner"]) is not TypeNode.Fqn ownerSpec) continue;
-            var owner = ownerSpec.Name;
-            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
-            var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
-            if (refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(owner), ownerSpec.Args?.Length ?? 0) is not Type nt) continue;
-            if (kind is "getter" or "setter") continue;
-            if (NetInteropBinding.DeclaresPublicMethodNamed(nt, member)) return member;
-        }
-        return null;
+        return ResolveSlot(overrides, refs, new CallableSlot(signature, binding, methodArity,
+            declaration["params"] is JsonArray, (declaration["k"] as JsonValue)?.GetValue<string>() == "callInstance",
+            (declaration[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>()));
     }
 
     // ResolveSlot serves both a declaration and its already-selected call nodes. They carry the same declaration
@@ -312,11 +264,21 @@ static class DeclarationRename
             signature.Add(type);
         }
         var methodArity = (declaration["typeParams"] as JsonArray)?.Count ?? 0;
+        return TryExactPropertySlot(signature.ToArray(), methodArity, refs, owner, member, overrideKind,
+            out physicalOwner, out physicalProperty, out physicalMethod, out slotReturn);
+    }
+
+    static bool TryExactPropertySlot(TypeNode[] signature, int methodArity, ReferenceMetadataIndex refs,
+        TypeNode.Fqn owner, string member, string overrideKind,
+        out string physicalOwner, out string physicalProperty, out string physicalMethod, out TypeNode slotReturn)
+    {
+        physicalOwner = physicalProperty = physicalMethod = null;
+        slotReturn = null;
         if (!refs.TryExternalPropertyAccessor(owner.Name, member,
-            overrideKind == "setter" ? "set" : "get", parameters.Count, methodArity, signature,
+            overrideKind == "setter" ? "set" : "get", signature.Length, methodArity, signature,
             owner.Args ?? Array.Empty<TypeNode>(), out physicalOwner, out physicalProperty, out physicalMethod)
             || !refs.TryNullableGenericPropertySlot(owner.Name, member,
-                overrideKind == "setter" ? "set" : "get", isStatic: false, parameters.Count, methodArity,
+                overrideKind == "setter" ? "set" : "get", isStatic: false, signature.Length, methodArity,
                 signature, owner.Args ?? Array.Empty<TypeNode>(), out var declaredReturn, out _, out var refused,
                 includeUnchanged: true)
             || declaredReturn == null || refused?.Any(value => value) == true)

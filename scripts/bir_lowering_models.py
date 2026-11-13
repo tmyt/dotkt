@@ -345,7 +345,7 @@ def outputs(root, definitions):
         kind = cs(field)
         if kind == "byte[]": return f"{left}.AsSpan().SequenceEqual({right})"
         if kind == "TypeNode": return f"TypeNodeDataEquality.Equal({left}, {right})"
-        if kind in {"SourceTypeFacts", "SourceBoundsSnapshot", "SourceTypeVector"}:
+        if kind in {"SourceTypeFacts", "SourceBoundsSnapshot", "SourceTypeVector", "OwnerConstraintOverrideBounds"}:
             return f"{left}.FrozenText == {right}.FrozenText"
         if kind == "NullableRepresentationFrame": return f"EqualFrame({left}, {right})"
         if kind == "PhysicalMemberTable": return f"{left}.StructurallyEquals({right})"
@@ -419,6 +419,10 @@ def outputs(root, definitions):
                          if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
         if binding_hints:
             model += ["    public override TypeNode? CallBindingTypeHint => " + " ?? ".join(binding_hints) + ";"]
+        explicit_source_types = [member(field) + ".OrDefault()" for field in ("sty", "type", "ret")
+                                 if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
+        if explicit_source_types:
+            model += ["    public override TypeNode? ExplicitSourceType => " + " ?? ".join(explicit_source_types) + ";"]
         if "declarationId" in shape["properties"]:
             model += ["    public override OptionalField<string> DeclarationIdentityFact => DeclarationId;"]
         if "typeArgs" in shape["properties"] and cs(shape["properties"]["typeArgs"]) == "TypeNode[]":

@@ -20,7 +20,7 @@ using DotKt.Bir;
 // This is a Kotlin-to-CLR ABI decision, so it belongs in bir2cir.  ilemit merely emits the object signature and the
 // explicit CIR types.  Detection is structural (return Tv + returned cast from a nullable/object static source), with
 // exact frontend declaration identity and owner matching at calls; no library or declaration-name special cases.
-static class UncheckedGenericCastReturnErasure
+static partial class UncheckedGenericCastReturnErasure
 {
     public sealed class DeclIndex
     {
@@ -36,87 +36,19 @@ static class UncheckedGenericCastReturnErasure
         public JsonObject Method;
     }
 
-    public static DeclIndex Collect(IEnumerable<JsonNode> roots)
-    {
-        var index = new DeclIndex();
-        foreach (var root in roots.OfType<JsonObject>())
-            CollectContainer(root, index, topLevel: true);
-        return index;
-    }
-
-    static void CollectContainer(JsonObject container, DeclIndex index, bool topLevel)
-    {
-        if (topLevel && container["methods"] is JsonArray topMethods)
-            foreach (var method in topMethods.OfType<JsonObject>())
-                AddCandidate(method, Str(container["fileClass"]), topLevel: true, index);
-
-        if (container["types"] is not JsonArray types) return;
-        foreach (var type in types.OfType<JsonObject>())
-        {
-            var owner = Str(type["name"]);
-            if (owner != null && type["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                    AddCandidate(method, owner, topLevel: false, index);
-            CollectContainer(type, index, topLevel: false);
-        }
-    }
-
-    static void AddCandidate(JsonObject method, string owner, bool topLevel, DeclIndex index)
-    {
-        if (Str(method[DeclarationIdentityBinding.Key]) is not string identity
-            // A virtual/override slot is one ABI shared by the whole hierarchy.  Erasing only the declaration whose
-            // body happens to contain the cast changes its CLR slot and bypasses a derived unwrapping override (the
-            // DispatchedTask<T>.getSuccessfulResult / CancellableContinuationImpl case).  Hierarchy-wide physical
-            // signature coordination is a distinct lowering; this local deferred-carrier rule applies only to final
-            // slots, where the declaration and every call resolve to the same method.
-            || Bool(method["virtual"]) || Bool(method["override"]) || Bool(method["abstract"])
-            || TypeJson.Read(method["ret"]) is not TypeNode.Tv ret
-            || !HasReturnedUncheckedCast(method["body"], ret))
-            return;
-
-        index.ByIdentity.Add(identity, new Decl
-        {
-            Owner = owner, TopLevel = topLevel, Static = Bool(method["static"]), Return = ret, Method = method,
-        });
-    }
-
-    static bool HasReturnedUncheckedCast(JsonNode node, TypeNode.Tv ret)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                var value = ReturnedValue(obj);
-                if (value != null
-                    && Str(value["k"]) == "cast"
-                    && !KotlinTypeWitness.NeedsWitness(value)
-                    && TypeJson.Read(value["type"]) is TypeNode.Tv cast && cast == ret
-                    && value["e"] is JsonObject source && IsNullableOrObjectSource(source))
-                    return true;
-                // `synthClass` is a nested declaration, not an expression evaluated in this method's return scope.
-                // ClosureSynthesis later publishes its invoke/SAM methods as independent declarations.  Looking
-                // through this transient payload here lets a return in that other method change the enclosing
-                // method's physical CLR ABI.
-                return obj.Any(kv => kv.Key != "synthClass"
-                                     && kv.Value != null
-                                     && HasReturnedUncheckedCast(kv.Value, ret));
-            case JsonArray arr:
-                return arr.Any(value => value != null && HasReturnedUncheckedCast(value, ret));
-            default:
-                return false;
-        }
-    }
-
-    static bool IsNullableOrObjectSource(JsonObject source)
-    {
-        var type = TypeJson.Read(source["sty"]) ?? TypeJson.Read(source["type"]) ?? TypeJson.Read(source["ret"]);
-        return type switch
+    static bool IsNullableOrObjectSource(TypeNode type) => type switch
         {
             TypeNode.Nullable => true,
             TypeNode.Oblivious => true,
             TypeNode.Fqn f => f.Name is "kotlin.Any" or "object" or "System.Object",
             _ => false,
         };
-    }
+
+    static bool IsUncheckedReturnCast(string kind, bool reifiedOperand, TypeNode castType,
+        TypeNode.Tv expected, TypeNode sourceType) => kind == "cast"
+        && !KotlinTypeWitness.NeedsWitness(kind, reifiedOperand)
+        && castType is TypeNode.Tv variable && variable == expected
+        && IsNullableOrObjectSource(sourceType);
 
     public static void Apply(JsonNode root, DeclIndex index)
     {
@@ -453,10 +385,9 @@ static class UncheckedGenericCastReturnErasure
         {
             case JsonObject obj:
                 if (ReturnedValue(obj) is JsonObject value
-                    && Str(value["k"]) == "cast"
-                    && !KotlinTypeWitness.NeedsWitness(value)
-                    && TypeJson.Read(value["type"]) is TypeNode.Tv cast && cast == ret
-                    && value["e"] is JsonObject source && IsNullableOrObjectSource(source))
+                    && value["e"] is JsonObject source
+                    && IsUncheckedReturnCast(Str(value["k"]), Bool(value["reifiedTypeOperand"]),
+                        TypeJson.Read(value["type"]), ret, ExplicitSourceType(source)))
                     value["type"] = TypeJson.Fqn("object");
                 foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList())
                     RetypeReturnedCasts(child, ret);
@@ -469,56 +400,26 @@ static class UncheckedGenericCastReturnErasure
     }
 
     static JsonObject ReturnedValue(JsonObject statement)
+        => ReturnedValue(Str(statement["k"]), statement["value"] as JsonObject,
+            value => Str(value["k"]), value => TypeJson.Read(value["type"]),
+            value => value["e"] as JsonObject, value => value["result"] as JsonObject);
+
+    static TypeNode ExplicitSourceType(JsonObject source) =>
+        TypeJson.Read(source["sty"]) ?? TypeJson.Read(source["type"]) ?? TypeJson.Read(source["ret"]);
+
+    static T ReturnedValue<T>(string statementKind, T value, Func<T, string> kind, Func<T, TypeNode> type,
+        Func<T, T> castOperand, Func<T, T> blockResult) where T : class
     {
-        var value = Str(statement["k"]) == "return" ? statement["value"] as JsonObject : null;
+        if (statementKind != "return") return null;
         // Return-slot coercion can already have boxed the value. Preserve that
         // edge and its guards while locating the cast supplying the return.
         while (value != null)
         {
-            if (Str(value["k"]) == "cast" && IsObject(TypeJson.Read(value["type"])))
-                value = value["e"] as JsonObject;
-            else if (Str(value["k"]) == "valueBlock") value = value["result"] as JsonObject;
+            if (kind(value) == "cast" && IsObject(type(value))) value = castOperand(value);
+            else if (kind(value) == "valueBlock") value = blockResult(value);
             else break;
         }
         return value;
-    }
-
-    internal static void SelfTest()
-    {
-        JsonObject Root(string owner, string identity) => JsonNode.Parse("""
-        {"fileClass":"OWNER","methods":[{"name":"read","declarationId":"IDENTITY","static":true,
-         "typeParams":[{"name":"T"}],"ret":{"t":"tv","scope":"method","i":0},"params":[],"body":[
-          {"k":"return","value":{"k":"cast","reifiedTypeOperand":false,
-           "type":{"t":"tv","scope":"method","i":0},"e":{"k":"local","name":"value",
-           "sty":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}}}}]}]}
-        """.Replace("OWNER", owner).Replace("IDENTITY", identity)).AsObject();
-        foreach (var reverse in new[] { false, true })
-        {
-            var first = Root("First", "first");
-            var second = Root("Second", "second");
-            if (reverse) (first, second) = (second, first);
-            var other = second["methods"][0].AsObject();
-            var sourceReturn = TypeJson.Read(other["ret"]);
-            first["methods"].AsArray().Add(JsonNode.Parse("""
-            {"name":"use","params":[],"body":[{"k":"var","name":"deferred",
-             "type":{"t":"tv","scope":"method","i":0},"init":{"k":"callStatic","method":"read",
-             "declarationId":"IDENTITY","owner":{"t":"fqn","name":"OWNER"},
-             "typeArgs":[{"t":"tv","scope":"method","i":0}],"args":[]}}]}
-            """.Replace("OWNER", Str(second["fileClass"]))
-                .Replace("IDENTITY", Str(other[DeclarationIdentityBinding.Key]))));
-            var index = Collect(new JsonNode[] { first, second });
-            Apply(first, index);
-            if (TypeJson.Read(first["methods"][0]["ret"]) != new TypeNode.Fqn("object")
-                || TypeJson.Read(first["methods"][1]["body"][0]["type"]) != new TypeNode.Fqn("object")
-                || TypeJson.Read(other["ret"]) != sourceReturn
-                || TypeJson.Read(other["body"][0]["value"]["type"]) != sourceReturn)
-                throw new InvalidOperationException("Unchecked cast lowering crossed root ownership or lost cross-file ABI facts");
-            Apply(second, index);
-            if (TypeJson.Read(other["ret"]) != new TypeNode.Fqn("object")
-                || index.ByIdentity[Str(other[DeclarationIdentityBinding.Key])].Return != sourceReturn)
-                throw new InvalidOperationException("Unchecked cast lowering lost its source snapshot or owning-root transition");
-        }
-        Console.WriteLine("[unchecked cast ownership] self-test OK (both root orders, deferred cross-file calls, source snapshot)");
     }
 
     static string Str(JsonNode node) =>

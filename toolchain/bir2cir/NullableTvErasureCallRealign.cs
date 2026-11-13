@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // NULLABLE-Tv ERASURE call-site realignment (#4; the value-type-array-nullability / generic-boundary
 // read family — #113/#117/#120/#142, READ side).
@@ -104,14 +106,6 @@ static partial class NullableTvErasureCallRealign
         public readonly Dictionary<string, Dictionary<string, TypeNode>> Slots = new(StringComparer.Ordinal);
     }
 
-    public static DeclIndex CollectDeclaredMemberRets(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs = null)
-    {
-        var rootList = roots.ToList();
-        var idx = new DeclIndex { SourceApplicationOrder = new InnerApplicationOrder(rootList, refs) };
-        foreach (var r in rootList) CollectFrom(r, idx, topLevel: true);
-        return idx;
-    }
-
     // The declaration snapshot outlives source application order. Transition its constructed slots with
     // the live declarations, before physical-use flow substitutes owner variables into those same slots.
     public static void ProjectDeclarationApplications(DeclIndex index)
@@ -155,12 +149,12 @@ static partial class NullableTvErasureCallRealign
     // NullableGenericErasure; UnsafeAccessor holders call it afterwards. The latter's callable entry carries the
     // one-shot ownership key only when synthesis selected a local declaration, so ReadSig may consult its propagated
     // pre-erasure return carrier without mistaking every other late synthetic or external accessor for that case.
-    // topLevel=false skips already-indexed facade members while retaining the recursive `types` walk; existing type
-    // names are ignored, making each call an additive transition rather than an ambiguity-producing rescan.
+    // Only the recursive `types` walk admits new owners; facade members are already indexed. Existing type names
+    // are ignored, making each call an additive transition rather than an ambiguity-producing rescan.
     public static void CollectNewSyntheticTypes(JsonNode root, DeclIndex idx)
     {
         idx.SourceApplicationOrder?.Add(root);
-        CollectFrom(root, idx, topLevel: false);
+        CollectNewTypeContainers(root, idx);
     }
 
     // Capture storage can change after the original declaration snapshot. Update the exact already-owned
@@ -193,7 +187,7 @@ static partial class NullableTvErasureCallRealign
     }
 
     // UnsafeAccessor has a second materialization shape: for a non-generic target owner it appends a generated extern
-    // method to the EXISTING caller type (or file facade) instead of creating a holder type. CollectFrom deliberately
+    // method to the EXISTING caller type (or file facade) instead of creating a holder type. Type admission deliberately
     // ignores an owner already in ByOwner, so admit only those generated methods here. Their allocated names are the
     // exact identity used by the replacement call, and their post-erasure signature is the authoritative physical
     // declaration. Ordinary existing declarations and property candidate sets remain untouched.
@@ -228,42 +222,12 @@ static partial class NullableTvErasureCallRealign
                 AddUnambiguous(declarations, name + "|" + sig.Params.Length, sig);
     }
 
-    static void CollectFrom(JsonNode node, DeclIndex idx, bool topLevel)
+    sealed record MethodSnapshot(string Name, string Identity, string PropertyName, string AccessorKind,
+        int Arity, bool Static, DeclSig Signature);
+
+    static void CollectNewTypeContainers(JsonNode node, DeclIndex idx)
     {
         if (node is not JsonObject o) return;
-        // TOP-LEVEL functions are keyed by bare name + arity across every root. EVERY one is indexed, generic or not:
-        // the entry is only usable when it is UNAMBIGUOUS, so a non-generic same-name/same-arity sibling is not
-        // noise — it is what poisons the key and stops a generic declaration from being applied to a call that meant
-        // the other one. (`Int.coerceIn(min, max)` beside `<T : Comparable<T>> T.coerceIn(min: T?, max: T?)` is
-        // exactly that pair: index only the generic half and every `coerceIn` call gets the erased parameter vector.)
-        var fileClass = topLevel ? Str(o["fileClass"]) : null;
-        if (fileClass is { Length: > 0 }) idx.FileClasses.Add(fileClass);
-        if (fileClass is { Length: > 0 })
-        {
-            // Top-level property backing fields live on the file facade and `staticFieldSet` addresses that owner.
-            // They are fixed declaration slots exactly like fields on an ordinary type, so retain them on the same
-            // owner-index axis instead of limiting Slots to entries nested under `types`.
-            if (!idx.Slots.TryGetValue(fileClass, out var fileSlots))
-                idx.Slots[fileClass] = fileSlots = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-            CollectSlots(o["fields"], fileSlots);
-            CollectSlots(o["properties"], fileSlots);
-        }
-        if (topLevel && o["methods"] is JsonArray topMethods)
-            foreach (var m in topMethods)
-                if (m is JsonObject mo && Str(mo["name"]) is string mn && ReadSig(mo) is DeclSig sig)
-                {
-                    AddUnambiguous(idx.TopLevel, mn + "|" + sig.Params.Length, sig);
-                    AddDeclarationIdentity(idx, fileClass, mo, sig);
-                    if (fileClass is { Length: > 0 }
-                        && KotlinPropertyAccessors.TryIdentity(mo, out var propertyName, out var accessorKind))
-                    {
-                        if (!idx.TopLevelPropertiesByOwner.TryGetValue(fileClass, out var properties))
-                            idx.TopLevelPropertiesByOwner[fileClass] = properties =
-                                new Dictionary<string, List<DeclSig>>(StringComparer.Ordinal);
-                        AddCandidate(properties, PropertyKey(propertyName, accessorKind, sig.Params.Length,
-                            (mo["typeParams"] as JsonArray)?.Count ?? 0, isStatic: true), sig);
-                    }
-                }
         if (o["types"] is JsonArray types)
             foreach (var t in types)
                 if (t is JsonObject to)
@@ -273,45 +237,52 @@ static partial class NullableTvErasureCallRealign
                         var sigs = new Dictionary<string, DeclSig>(StringComparer.Ordinal);
                         var propertySigs = new Dictionary<string, List<DeclSig>>(StringComparer.Ordinal);
                         if (to["methods"] is JsonArray ms)
-                            foreach (var m in ms)
-                                if (m is JsonObject mo && Str(mo["name"]) is string mn2
-                                    && ReadSig(mo) is DeclSig sig)
-                                {
-                                    // AMBIGUOUS overload guard: two same-name/same-arity members whose declarations
-                                    // DISAGREE (`g(Int): Ref<T?>` vs `g(String): Ref<T>`) would otherwise collapse
-                                    // first-wins and could derive the WRONG type for a use — manufacturing the very
-                                    // mismatch this pass fixes. A conflicting key is poisoned to `null` (the lookups
-                                    // then skip it).
-                                    AddUnambiguous(sigs, mn2 + "|" + sig.Params.Length, sig);
-                                    AddDeclarationIdentity(idx, nm, mo, sig);
-                                    if (KotlinPropertyAccessors.TryIdentity(mo,
-                                            out var propertyName, out var accessorKind))
-                                        AddCandidate(propertySigs,
-                                            PropertyKey(propertyName, accessorKind, sig.Params.Length,
-                                                (mo["typeParams"] as JsonArray)?.Count ?? 0,
-                                                Bool(mo["static"])), sig);
-                                }
+                            foreach (var method in ms.OfType<JsonObject>())
+                                if (ReadMethodSnapshot(method) is { } snapshot)
+                                    AddMethodSnapshot(idx, nm, snapshot, sigs, propertySigs);
                         idx.ByOwner[nm] = sigs;
                         idx.PropertiesByOwner[nm] = propertySigs;
                         var ctors = new Dictionary<int, TypeNode[]>();
                         if (to["ctors"] is JsonArray cs)
                             foreach (var c in cs)
                                 if (c is JsonObject co && ReadParams(co["params"]) is TypeNode[] cp)
-                                {
-                                    if (ctors.TryGetValue(cp.Length, out var prior))
-                                    {
-                                        if (prior != null && !SameVector(prior, cp)) ctors[cp.Length] = null;
-                                    }
-                                    else ctors[cp.Length] = cp;
-                                }
+                                    AddConstructorSnapshot(ctors, cp);
                         idx.Ctors[nm] = ctors;
                         var slots = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
                         CollectSlots(to["fields"], slots);
                         CollectSlots(to["properties"], slots);
                         idx.Slots[nm] = slots;
                     }
-                    CollectFrom(to, idx, topLevel: false);   // nested types
+                    CollectNewTypeContainers(to, idx);   // late materialized nested types
                 }
+    }
+
+    static MethodSnapshot ReadMethodSnapshot(JsonObject method)
+    {
+        if (Str(method["name"]) is not string name || ReadSig(method) is not DeclSig signature) return null;
+        KotlinPropertyAccessors.TryIdentity(method, out var propertyName, out var accessorKind);
+        return new MethodSnapshot(name, Str(method[DeclarationIdentityBinding.Key]), propertyName, accessorKind,
+            (method["typeParams"] as JsonArray)?.Count ?? 0, Bool(method["static"]), signature);
+    }
+
+    static void AddMethodSnapshot(DeclIndex index, string owner, MethodSnapshot method,
+        Dictionary<string, DeclSig> signatures, Dictionary<string, List<DeclSig>> properties, bool topLevel = false)
+    {
+        var signature = method.Signature;
+        AddUnambiguous(signatures, method.Name + "|" + signature.Params.Length, signature);
+        AddDeclarationIdentity(index, owner, method.Identity, signature);
+        if (properties != null && method.PropertyName != null)
+            AddCandidate(properties, PropertyKey(method.PropertyName, method.AccessorKind, signature.Params.Length,
+                method.Arity, topLevel || method.Static), signature);
+    }
+
+    static void AddConstructorSnapshot(Dictionary<int, TypeNode[]> constructors, TypeNode[] parameters)
+    {
+        if (constructors.TryGetValue(parameters.Length, out var prior))
+        {
+            if (prior != null && !SameVector(prior, parameters)) constructors[parameters.Length] = null;
+        }
+        else constructors[parameters.Length] = parameters;
     }
 
     static void CollectSlots(JsonNode decls, Dictionary<string, TypeNode> slots)
@@ -319,24 +290,36 @@ static partial class NullableTvErasureCallRealign
         if (decls is not JsonArray a) return;
         foreach (var d in a)
             if (d is JsonObject o && Str(o["name"]) is string n && TypeJson.Read(o["type"]) is TypeNode t)
-            {
-                if (slots.TryGetValue(n, out var prior))
-                {
-                    if (prior != null && !prior.Equals(t)) slots[n] = null;
-                }
-                else slots[n] = t;
-            }
+                AddSlotSnapshot(slots, n, t);
+    }
+
+    static void AddSlotSnapshot(Dictionary<string, TypeNode> slots, string name, TypeNode type)
+    {
+        if (slots.TryGetValue(name, out var prior))
+        {
+            if (prior != null && !prior.Equals(type)) slots[name] = null;
+        }
+        else slots[name] = type;
     }
 
     static DeclSig ReadSig(JsonObject mo)
     {
-        var ownershipKnown = Bool(mo[NullableErasureOwnershipKnownKey]);
+        return ReadSignature(TypeJson.Read(mo["ret"]), () => ReadTypeCarrier(mo["nullableGenericRet"]),
+            () => ReadTypeCarrier(mo["retKotlinType"]), Bool(mo[NullableErasureOwnershipKnownKey]),
+            preferCarrier => ReadParams(mo["params"], preferCarrier));
+    }
+
+    static TypeNode ReadTypeCarrier(JsonNode carrier) => Str(carrier) is string encoded ? TypeNode.Parse(encoded) : null;
+
+    static DeclSig ReadSignature(TypeNode physicalReturn, Func<TypeNode> nullableCarrier,
+        Func<TypeNode> sourceReturn, bool ownershipKnown, Func<bool, TypeNode[]> parameters)
+    {
         // An explicit non-nullable scalar source carrier owns an independent
         // object transport seam, not nullable erasure. Keep concrete use hints.
-        ownershipKnown |= TypeJson.Read(mo["ret"]) is TypeNode.Fqn { Name: "object" or "System.Object" }
-            && Str(mo["retKotlinType"]) is string source && TypeNode.Parse(source) is TypeNode.Tv;
-        if (ReadDeclaredSlot(mo, "ret", "nullableGenericRet", ownershipKnown) is not TypeNode rt) return null;
-        return ReadParams(mo["params"], ownershipKnown) is TypeNode[] ps
+        ownershipKnown |= physicalReturn is TypeNode.Fqn { Name: "object" or "System.Object" }
+            && sourceReturn() is TypeNode.Tv;
+        if (ReadDeclaredSlot(physicalReturn, nullableCarrier, ownershipKnown) is not TypeNode rt) return null;
+        return parameters(ownershipKnown) is TypeNode[] ps
             ? new DeclSig { Ret = rt, Params = ps, NullableErasureOwnershipKnown = ownershipKnown }
             : null;
     }
@@ -348,10 +331,14 @@ static partial class NullableTvErasureCallRealign
     static TypeNode ReadDeclaredSlot(JsonObject slot, string physicalKey, string carrierKey,
         bool preferCarrier)
     {
-        if (preferCarrier && Str(slot[carrierKey]) is string encoded
-            && TypeNode.Parse(encoded) is TypeNode.Nullable { Of: TypeNode.Tv } scalarNullable)
+        return ReadDeclaredSlot(TypeJson.Read(slot[physicalKey]), () => ReadTypeCarrier(slot[carrierKey]), preferCarrier);
+    }
+
+    static TypeNode ReadDeclaredSlot(TypeNode physical, Func<TypeNode> carrier, bool preferCarrier)
+    {
+        if (preferCarrier && carrier() is TypeNode.Nullable { Of: TypeNode.Tv } scalarNullable)
             return scalarNullable;
-        return TypeJson.Read(slot[physicalKey]);
+        return physical;
     }
 
     // The declared parameter vector, or null when any slot is untyped — a partially-read vector would silently
@@ -359,13 +346,16 @@ static partial class NullableTvErasureCallRealign
     static TypeNode[] ReadParams(JsonNode ps, bool preferCarrier = false)
     {
         if (ps is not JsonArray a) return Array.Empty<TypeNode>();
-        var result = new TypeNode[a.Count];
-        for (var i = 0; i < a.Count; i++)
-        {
-            if (a[i] is not JsonObject po
-                || ReadDeclaredSlot(po, "type", "nullableGeneric", preferCarrier) is not TypeNode t) return null;
-            result[i] = t;
-        }
+        return ReadParameterVector(a.Count, index => a[index] is JsonObject parameter
+            ? ReadDeclaredSlot(parameter, "type", "nullableGeneric", preferCarrier) : null);
+    }
+
+    static TypeNode[] ReadParameterVector(int count, Func<int, TypeNode> parameter)
+    {
+        var result = new TypeNode[count];
+        for (var index = 0; index < count; index++)
+            if (parameter(index) is TypeNode type) result[index] = type;
+            else return null;
         return result;
     }
 
@@ -389,9 +379,9 @@ static partial class NullableTvErasureCallRealign
         candidates.Add(sig);
     }
 
-    static void AddDeclarationIdentity(DeclIndex index, string owner, JsonObject method, DeclSig signature)
+    static void AddDeclarationIdentity(DeclIndex index, string owner, string identity, DeclSig signature)
     {
-        if (owner == null || Str(method[DeclarationIdentityBinding.Key]) is not string identity) return;
+        if (owner == null || identity == null) return;
         if (!index.ByDeclarationOwner.TryGetValue(owner, out var declarations))
             index.ByDeclarationOwner[owner] = declarations = new(StringComparer.Ordinal);
         AddUnambiguous(declarations, identity, signature);
@@ -1233,6 +1223,7 @@ static partial class NullableTvErasureCallRealign
 
     internal static void SelfTest()
     {
+        SourceSnapshotSelfTest();
         var roleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 2, 0, 3, 1 },
             storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 });
         var methodRoleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 1, 3, 0, 2 },
@@ -1245,11 +1236,13 @@ static partial class NullableTvErasureCallRealign
                     != (role is NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage))
                     throw new InvalidOperationException("Nullable result realignment confused a storage companion with a nullable slot");
 
-        var innerDeclaration = new JsonObject {
-            ["name"] = "Outer.Middle", ["semanticOwner"] = "Outer",
-            ["mods"] = new JsonObject { ["inner"] = true }, ["outerTypeParamCount"] = 2,
+        var innerDeclaration = new BirClassDefinition {
+            Name = "Outer.Middle", Kind = "class", SemanticOwner = "Outer",
+            Mods = new BirModifiers { Inner = true }, OuterTypeParamCount = 2,
         };
-        var declarationIndex = CollectDeclaredMemberRets(new JsonNode[] { innerDeclaration });
+        var declarationIndex = CollectDeclaredMemberRets(new[] { new BirFileDeclaration {
+            Types = new IBirTypeDeclaration[] { innerDeclaration },
+        } });
         var sourceApplication = new TypeNode.Fqn("Outer.Middle", new TypeNode[] {
             new TypeNode.Tv("type", 2), new TypeNode.Tv("type", 3),
             new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1),

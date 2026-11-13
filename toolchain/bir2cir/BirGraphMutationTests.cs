@@ -11,6 +11,13 @@ internal static class BirGraphMutationTests
     {
         TypeNode source = new TypeNode.Tv("method", 0);
         TypeNode target = new TypeNode.Fqn("kotlin.String");
+        var explicitType = new BirCallInstance { Sty = source, Ret = target, DynRet = new TypeNode.Fqn("Ignored") };
+        Require(explicitType.ExplicitSourceType == source, "explicit source type prefers sty");
+        explicitType.Sty = OptionalField<TypeNode>.Null;
+        Require(explicitType.ExplicitSourceType == target, "explicit null stamp falls through to represented return");
+        explicitType.Ret = default;
+        Require(explicitType.ExplicitSourceType == null && new BirNew { Type = target }.ExplicitSourceType == target,
+            "explicit source type reads construction type but never infers or uses dynRet");
         var local = new BirLocal { Name = "value", Sty = source };
         var arguments = new IBirExpression[] { local };
         var call = new BirCallStatic {

@@ -1568,6 +1568,9 @@ internal static class BirGraphDom
                 case "_syntheticTypeArgs": break;
                 case "retSuspendFnTypePre": break;
                 case "suspendResult": break;
+                case "suspendTaskResult": break;
+                case "dotktValueReturn": break;
+                case "_ownerConstraintOverrideBounds": break;
                 case "_physicalDeclarationSignature": break;
                 case "retKotlinType": break;
                 case "_preparedDelegateReturnArgument": break;
@@ -1637,6 +1640,9 @@ internal static class BirGraphDom
             _syntheticTypeArgs = Field<TypeNode[]>(fields, "_syntheticTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             SuspendResult = Field<TypeNode>(fields, "suspendResult", value => TypeNode.Parse(value!.GetValue<string>())),
+            SuspendTaskResult = Field<TypeNode>(fields, "suspendTaskResult", value => TypeNode.Read(value) ?? throw new FormatException()),
+            DotktValueReturn = Field<bool>(fields, "dotktValueReturn", value => value!.GetValue<bool>()),
+            _ownerConstraintOverrideBounds = Field<OwnerConstraintOverrideBounds>(fields, "_ownerConstraintOverrideBounds", value => OwnerConstraintOverrideBounds.ReadFrozenText(value!.GetValue<string>())),
             _physicalDeclarationSignature = Field<bool>(fields, "_physicalDeclarationSignature", value => value!.GetValue<bool>()),
             RetKotlinType = Field<TypeNode>(fields, "retKotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
             _preparedDelegateReturnArgument = Field<bool>(fields, "_preparedDelegateReturnArgument", value => value!.GetValue<bool>()),
@@ -4908,6 +4914,7 @@ internal static class BirGraphDom
                 case "typeParams": break;
                 case "memberRef": break;
                 case "methodTypeParameterBoundsPre": break;
+                case "dotktValueReturn": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirMethodImpl at {source.GetPath()}");
             }
         return new BirMethodImpl
@@ -4920,6 +4927,7 @@ internal static class BirGraphDom
             TypeParams = Field<BirTypeParameter[]>(fields, "typeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
+            DotktValueReturn = Field<bool>(fields, "dotktValueReturn", value => value!.GetValue<bool>()),
         };
     }
 

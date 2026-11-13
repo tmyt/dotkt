@@ -49,6 +49,16 @@
       "type": "string", "x-dotkt-csharp-type": "SourceBoundsSnapshot", "x-dotkt-csharp-codec": "SourceBoundsSnapshot",
       "x-dotkt-json-content": "#/$defs/sourceMethodBounds"
     },
+    "ownerConstraintOverrideBounds": {
+      "type": "array", "items": {
+        "type": "object", "properties": {
+          "index": { "type": "integer" }, "bound": { "$ref": "#/$defs/type" },
+          "template": { "$ref": "#/$defs/type" },
+          "consequences": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+          "ownerArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+        }, "required": ["index", "bound", "template", "consequences", "ownerArgs"], "additionalProperties": false
+      }
+    },
     "sourceTypeVectorText": {
       "type": "string", "x-dotkt-csharp-type": "SourceTypeVector", "x-dotkt-csharp-codec": "SourceTypeVector",
       "x-dotkt-json-content": { "type": "array", "items": { "$ref": "#/$defs/type" } }
@@ -500,6 +510,9 @@
     "birFunctionDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": { "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "suspendResult": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "suspendTaskResult": { "x-dotkt-representation-role": "Return", "$ref": "#/$defs/type" },
+        "dotktValueReturn": { "type": "boolean" },
+        "_ownerConstraintOverrideBounds": { "type": "string", "x-dotkt-csharp-type": "OwnerConstraintOverrideBounds", "x-dotkt-csharp-codec": "OwnerConstraintOverrideBounds", "x-dotkt-json-content": "#/$defs/ownerConstraintOverrideBounds" },
         "_physicalDeclarationSignature": { "type": "boolean" },
         "retKotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },
         "_preparedDelegateReturnArgument": { "type": "boolean" },
@@ -1631,7 +1644,7 @@
       }, "required": ["name"], "additionalProperties": false
     },
     "cirMethodImpl": {
-      "type": "object", "x-dotkt-model": { "name": "CirMethodImpl", "domain": "cirDeclarations", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
+      "type": "object", "x-dotkt-model": { "name": "CirMethodImpl", "domain": "cirDeclarations", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" }, "dotktValueReturn": { "type": "boolean" } } },
       "properties": {
         "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "arity": { "type": "integer" },
         "params": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "ret": { "x-dotkt-representation-role": "Return", "$ref": "#/$defs/type" },
