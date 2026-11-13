@@ -1,5 +1,5 @@
-using System.Linq;
-using System.Text.Json.Nodes;
+using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // APPLIED-ATTRIBUTE EXTERNAL NORMALIZE — mint the ilemit-facing `attrExternal` bool for an applied attribute (#48).
 // The `attr` type is a structured `{t:fqn}` identity node; ilemit's BuildCab/StampMemberAttrs/DefineParamNames stamp
@@ -11,22 +11,12 @@ using System.Text.Json.Nodes;
 // in the BCL or another referenced assembly. bir2cir owns this CLR-relation decision; ilemit just reads the flag.
 static class AttrExternalNormalize
 {
-    public static void Apply(JsonNode root) => Walk(root);
-
-    static void Walk(JsonNode node)
+    public static void Apply(BirGraphValue root) => TypedAttributeBinding.Visit(root, attribute =>
     {
-        if (node is JsonObject obj)
+        if (attribute.Attr.OrDefault() is TypeNode.Fqn { Name: not null } && attribute.AttrClr.OrDefault())
         {
-            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value);
-            if (obj.ContainsKey("attr") && TypeJson.OwnerName(obj["attr"]) is string s)
-            {
-                if ((obj["attrClr"] as JsonValue)?.TryGetValue<bool>(out var isClr) == true && isClr)
-                {
-                    obj.Remove("attrClr");                   // consume kotc's origin fact
-                    obj["attrExternal"] = true;
-                }
-            }
+            attribute.AttrClr = default;
+            attribute.AttrExternal = true;
         }
-        else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) Walk(it);
-    }
+    });
 }

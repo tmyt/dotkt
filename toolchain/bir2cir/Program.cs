@@ -27,6 +27,8 @@ static class Bir2Cir
                 MemberRefNodeSelfTest.Run();
                 DotKt.Cir.AttributeSelfTest.Run(JsonOptions.Indented);
                 AttributeProjection.SelfTest();
+                PInvokeLowering.SelfTest();
+                TypedAttributeBinding.SelfTest();
                 DotKt.Cir.DeclarationSelfTest.Run();
                 DotKt.Cir.ExecutableSelfTest.Run();
                 DotKt.Cir.MessagePackSelfTest.Run();
@@ -232,9 +234,8 @@ sealed class Pipeline
             captured, refs, sourceIsValue, carryForReference: referenceBuild);
         if (!referenceBuild)
             foreach (var source in captured) aliasConstructorDelegations.Apply(source);
-        // Snapshot collection-selection facts before any semantic helper producer
-        // rewrites source expressions.
-        // Only declaration/scalar facts survive this owning-to-DOM frontier.
+        // Snapshot source collection-selection facts before helper producers
+        // change expressions; consume them before entering the DOM frontier.
         var collectionInputs = new SourceCollectionInputs(captured, refs);
         var sourceTopLevelFns = captured.SelectMany(source => source.Methods.OrEmpty())
             .Select(method => method.Name.OrDefault()).Where(name => name != null).ToHashSet(StringComparer.Ordinal);
@@ -1594,8 +1595,6 @@ sealed class Pipeline
             // sees a suspend surface). CIR describes the physical graph, so the flag stops here — ilemit has no
             // coroutine semantics to apply to it, and IrSanity refuses one that survives.
             SuspendResidueLowering.DropModifier(lowered);
-            // Consume the frontend origin fact for an imported CLR attribute into its physical external-link flag.
-            AttrExternalNormalize.Apply(lowered);
             // W1-S2 (#46): resolve every clrStatic/clrInstance/newClr against the ref.dll MLC. Internal
             // `resolvedMemberParams` carries matching inputs between bir2cir passes; Apply consumes it into the scalar
             // memberRef (+ `dispatch` on clrInstance). ilemit is a pure linker. Runs LAST — on
@@ -1613,12 +1612,6 @@ sealed class Pipeline
             // resolution. Convert the accessor subset on type-variable receivers to constrained calls now, retaining
             // the exact memberRef just resolved; fields keep their distinct load/store representation.
             ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(new[] { lowered });
-            // An applied attribute is a call into the assembly that declares it, so its constructor is resolved
-            // like any other external member. After Apply, whose statics it shares.
-            ClrMemberResolution.ResolveAttributeCtors(lowered, refs);
-            // DllImportAttribute is a pseudo-custom attribute. Consume the Kotlin external fact plus the now-resolved
-            // exact attribute application into one physical CIR MethodDef/ImplMap descriptor before ilemit sees it.
-            PInvokeLowering.Apply(lowered, refs, localBasicEnums);
             ClrMemberResolution.ResolveWellKnown(lowered, refs);
             ClrMemberResolution.ResolveInterfaceSlots(lowered, loweredRoots.Select(file => file.Root), refs);
             // Every delegate slot in this file now names its selected member, so each literal lambda filling one
@@ -1655,6 +1648,12 @@ sealed class Pipeline
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         loweredRoots.Clear();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Consume CLR attribute origin and select each external constructor from
+        // its declaration, retaining the shared foreign-parameter validation.
+        foreach (var (root, file) in physicalRoots) TypedAttributeBinding.Apply(root, refs, file);
+        // Native import lowering owns the MethodDef/ImplMap descriptor. Attribute
+        // identity and generic-crossing validation remain authoritative.
+        foreach (var root in physicalDocuments) PInvokeLowering.Apply(root, refs, localBasicEnums);
 
         // BirTypeLowering's mutable/read-only collection faces are sibling CLR interfaces. Materialize every cast
         // required by the final value-flow graph only now, after every synthetic declaration and exact memberRef is

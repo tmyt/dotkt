@@ -162,9 +162,16 @@ public static class FieldLegality
     public static string PosPrefix(JsonNode? decl)
     {
         if (decl is not JsonObject o || o["pos"] is not JsonObject pos) return "";
-        if ((pos["f"] as JsonValue)?.TryGetValue<string>(out var path) != true || path == null) return "";
+        if ((pos["f"] as JsonValue)?.TryGetValue<string>(out var path) != true) return "";
+        return PosPrefix(path, pos["l"] is JsonValue lv && lv.TryGetValue<int>(out var line) ? line : null);
+    }
+
+    /// <summary>Format an already decoded declaration position without a graph adapter.</summary>
+    public static string PosPrefix(string? path, int? line)
+    {
+        if (path == null) return "";
         var file = System.IO.Path.GetFileName(path);
-        if (pos["l"] is JsonValue lv && lv.TryGetValue<int>(out var line) && line >= 0) return file + ":" + line + ": ";
+        if (line is >= 0) return file + ":" + line + ": ";
         return file + ": ";
     }
 }
