@@ -33,10 +33,10 @@ static class EnumIntrinsicLowering
     {
         var set = new HashSet<string>(System.StringComparer.Ordinal);
         foreach (var root in roots)
-                foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>())
-                    if (type.Kind.OrDefault() == "class" && type.EnumRich.OrDefault()
-                        && type.Name.OrDefault() is string n)
-                        set.Add(n);
+            foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>())
+                if (type.Kind.OrDefault() == "class" && type.EnumRich.OrDefault()
+                    && type.Name.OrDefault() is string n)
+                    set.Add(n);
         return set;
     }
 
@@ -130,7 +130,6 @@ static class EnumIntrinsicLowering
 
     internal static void SelfTest()
     {
-        ClrEnumLowering.SelfTest();
         var parameter = new TypeNode.Tv("method", 0);
         var genericValues = new JsonObject { ["k"] = "enumValues", ["type"] = TypeJson.Write(parameter) };
         var noRichFields = new Dictionary<string, (string Name, string Ordinal)>();

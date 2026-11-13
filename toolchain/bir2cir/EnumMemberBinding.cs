@@ -39,9 +39,9 @@ static class EnumMemberBinding
     {
         var set = new HashSet<string>(System.StringComparer.Ordinal);
         foreach (var root in roots)
-                foreach (var type in root.Types.OrEmpty().OfType<BirEnumDefinition>())
-                    if (type.Kind.OrDefault() == "enum" && type.Name.OrDefault() is string n)
-                        set.Add(n);
+            foreach (var type in root.Types.OrEmpty().OfType<BirEnumDefinition>())
+                if (type.Kind.OrDefault() == "enum" && type.Name.OrDefault() is string n)
+                    set.Add(n);
         return set;
     }
 
