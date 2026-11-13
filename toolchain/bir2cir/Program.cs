@@ -130,6 +130,8 @@ static class Bir2Cir
                 MetadataDeclaredMembersTests.SelfTest();
                 NullableTvErasureCallRealign.SelfTest();
                 MapVarianceRealign.SelfTest();
+                TypedModuleInventory.SelfTest();
+                TypedCharSequenceIdentityTests.SelfTest();
                 return 0;
             }
             var options = DriverOptions.Parse(args);
@@ -297,6 +299,10 @@ sealed class Pipeline
         genericRepresentations.PrepareDomLocations(captured);
         var placement = new DeclarationPlacement(localFactories, localPropertyDeclarations,
             companionRepresentations, companionExtensionBindings);
+        var ownership = TypeOwnershipLowering.PrepareOwnershipFacts(captured);
+        TypedCharSequenceIdentity.ApplyAll(captured);
+        var forwardedEvents = ClrEventSubscriptionBinding.CollectForwardedOwners(captured);
+        var inventory = new TypedModuleInventory(captured);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -312,37 +318,12 @@ sealed class Pipeline
                 inputsWithSources[index].Suspend));
         }
 
-        genericRepresentations.BindDomDeclarations(files.Select(file => file.Root).ToArray());
+        var continuingRoots = files.Select(file => file.Root).ToArray();
+        genericRepresentations.BindDomDeclarations(continuingRoots);
+        ownership.BindDomDeclarations(continuingRoots);
         return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand,
-            genericRepresentations, scalarSlots, valueSources, representationMethodFrames, placement);
-    }
-
-    // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
-    // `dotkt$CharSequence` identity SharedSyntheticSynthesis materializes. A type reference is any object carrying `t=="fqn"`;
-    // a type DECLARATION (which has `kind`, not `t`) is left alone. This IS the CharSequence substitution — bir2cir owns the
-    // Kotlin<->CLR relation, so recognizing the one type with no faithful .NET supertype belongs here, not in kotc.
-    static void SubstituteCharSeqIdentity(JsonNode node)
-    {
-        switch (node)
-        {
-            case JsonObject o:
-                if ((o["kind"] as JsonValue)?.GetValue<string>() is "class" or "interface" or "struct" or "enum")
-                    KotlinSupertypesRecord.PreserveRewrittenEdges(o, SubstituteCharSeqIdentity);
-                // Selecting the fixed CharSequence bridge consumes the source declaration binding as well as
-                // its owner. The generated bridge owns these slots; the original Kotlin MethodDef identity must
-                // not be looked up on that different physical declaration by later access/binding passes.
-                if ((o["k"] as JsonValue)?.GetValue<string>() == "callInstance"
-                    && TypeJson.OwnerName(o["ownerType"]) == "kotlin.CharSequence")
-                    o.Remove(DeclarationIdentityBinding.Key);
-                if ((o["t"] as JsonValue)?.GetValue<string>() == "fqn"
-                    && (o["name"] as JsonValue)?.GetValue<string>() == "kotlin.CharSequence")
-                    o["name"] = SharedSyntheticSynthesis.CharSeq;
-                foreach (var kv in o) SubstituteCharSeqIdentity(kv.Value);
-                break;
-            case JsonArray a:
-                foreach (var it in a) SubstituteCharSeqIdentity(it);
-                break;
-        }
+            genericRepresentations, scalarSlots, valueSources, representationMethodFrames, placement,
+            new ModulePreparation(ownership, inventory, forwardedEvents));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -372,50 +353,21 @@ sealed class Pipeline
         var companionRepresentations = module.Placement.Companions;
         var companionExtensionBindings = module.Placement.Extensions;
         var localPropertyDeclarations = module.Placement.Properties;
-        var ownershipFacts = TypeOwnershipLowering.PrepareOwnershipFacts(birRoots);
-        // #68 (PART 2): kotc emits the PLAIN Kotlin identity `kotlin.CharSequence` at every CharSequence use site (no CLR
-        // synthetic name — kotc knows nothing of the synthetic). Recognizing `kotlin.CharSequence` as a synthesize-target is
-        // a bir2cir concern (the Kotlin<->CLR layer), so SUBSTITUTE it here — as a one-type hardcode, exactly like the ref.dll
-        // @ClrTypeAlias types substitute `kotlin.String` -> `System.String`. It runs FIRST (before the `hasUserCharSeqImpl`
-        // detection, CharSeqStringLowering, and the per-file SharedSyntheticSynthesis trigger) so every downstream pass sees
-        // the canonical `dotkt$CharSequence` identity defined by SharedSyntheticSynthesis. Only a
-        // `{t:"fqn"}` type-reference NAME is rewritten (a type DECLARATION's own `name` sits under `kind`, not `t`, so real
-        // kotlin.CharSequence declarations — if any — are untouched).
-        foreach (var b in birFiles) SubstituteCharSeqIdentity(b.Root);
+        var ownershipFacts = module.Preparation.Ownership;
         // A delegated CLR-event declaration and a subscription through that Kotlin wrapper may be in sibling source
         // files. Snapshot the module-wide relation before any declaration-normalizing pass can consume or rebuild the
         // kotc directive; ClrEventSubscriptionBinding later consumes this immutable physical-owner index per file.
-        var clrEventForwardedOwners = ClrEventSubscriptionBinding.CollectForwardedOwners(birFiles.Select(f => f.Root));
+        var clrEventForwardedOwners = module.Preparation.ForwardedEvents;
 
         // The top-level funs DEFINED in this compilation (every file-class's own static methods, across all input
         // files). A `callStatic owner=null` to one of these must stay owner-less (ilemit's FindStatic finds the
         // sibling); only a name absent here is eligible for referenced-stdlib file-class attribution (Gap B).
-        var localTopLevelFns = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var b in birFiles)
-            if (b.Root is JsonObject ro && ro["methods"] is JsonArray ms)
-                foreach (var m in ms)
-                    if (m is JsonObject mo && (mo["name"] as JsonValue)?.GetValue<string>() is string mn)
-                        localTopLevelFns.Add(mn);
+        var localTopLevelFns = module.Preparation.Inventory.LocalTopLevelFunctions;
         // The type FQNs DECLARED in this compilation (every input file's own `types`). SuspendColdLowering
         // uses it to decide whether the cold-core base (kotlin.coroutines.clr.internal.ContinuationImpl) is
         // a LOCAL type (rt-stdlib self-build -> bare base + local slot override) or a REFERENCED one
         // (app build -> clr: base + pendingOverrideOwner linkage).
-        var localTypeFqns = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var b in birFiles)
-        {
-            if (b.Root is not JsonObject ro) continue;
-            if (ro["types"] is JsonArray ts)
-                foreach (var t in ts)
-                    if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
-                        localTypeFqns.Add(tn);
-            // A FILE CLASS is a type this compilation emits just as much as a declared one — it simply has no
-            // row in `types`, because ilemit builds it from the file's top-level members. Leaving it out let a
-            // reference assembly declaring the same file class win over the source in front of us, which is
-            // precisely the precedence #15 exists to fix; it stayed invisible only while the mis-binding
-            // produced a signature rather than a named member.
-            if ((ro["fileClass"] as JsonValue)?.GetValue<string>() is string fileClass && fileClass.Length > 0)
-                localTypeFqns.Add(fileClass);
-        }
+        var localTypeFqns = module.Preparation.Inventory.EmittedTypeFqns;
         // LOCAL-OVER-REF (#15): tell the refs index which FQNs are this-assembly-emitted, so ResolveNetType refuses to
         // bind a locally-declared type to a referenced dll of the same identity — `new`/callInstance/callStatic/field
         // on a source-compiled `demo.Plain` route to the emitted type, not `newClr`/`clr*` against the ref copy.
@@ -425,19 +377,7 @@ sealed class Pipeline
         // kotlin.collections iterable (a concrete subtype such as ArrayList : MutableList matches even though its own
         // FQN is not a collection interface) — the supertype walk kotc's retired isStdlibCollectionIterable did over
         // the IR hierarchy, reconstructed here from the BIR type defs.
-        var typeSupers = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var b in birFiles)
-            if (b.Root is JsonObject ro && ro["types"] is JsonArray ts)
-                foreach (var t in ts)
-                    if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
-                    {
-                        var sup = new List<string>();
-                        if (to["base"] is JsonNode bn && TypeJson.Read(bn) is TypeNode.Fqn bf) sup.Add(bf.Name);
-                        if (to["interfaces"] is JsonArray ifs)
-                            foreach (var iface in ifs)
-                                if (iface is JsonNode inode && TypeJson.Read(inode) is TypeNode.Fqn iff) sup.Add(iff.Name);
-                        typeSupers[tn] = sup;
-                    }
+        var typeSupers = module.Preparation.Inventory.DirectSuperNames;
         // Attribute referenced top-level stdlib funs to their file-class owner only in an APP build: a stdlib self-
         // build (`--build-stdlib=metadata|runtime`) defines them locally, so owner=null is correct there. The reference
         // build never runs MemberCallSubstitution at all (see the RefBuild gate below).
@@ -451,12 +391,11 @@ sealed class Pipeline
         // (CharSeqStringLowering) is DISABLED for such assemblies (they keep the synthetic, unchanged), and enabled
         // only for a "pure" app assembly with no user implementer. Sealed System.String forbids a real `: string`
         // supertype, so this synthetic-retention is a technical necessity, not a preference. (docs/design-charsequence-clr-string.md)
-        var hasUserCharSeqImpl = birFiles.Any(f => DeclaresCharSeqImplementer(f.Root));
+        var hasUserCharSeqImpl = module.Preparation.Inventory.HasUserCharSeqImplementation;
 
-        // The callee generic-param ORDER index (funName|arity -> ordered type-param names), aggregated across ALL input
-        // BIR files: a same-assembly cross-file `callStatic owner=null` may target a fun defined in another input, and
-        // MapVarianceRealign needs the callee's declared type-param order to map a sig's `gp:NAME` to its typeArg index.
-        var calleeTypeParams = MapVarianceRealign.CollectCalleeTypeParams(birFiles.Select(f => f.Root));
+        // Exact declaration identities select the callee's parameter-type vector,
+        // captured module-wide before override or per-file declaration changes.
+        var calleeTypeParams = module.Preparation.Inventory.CalleeTypeParameters;
 
         // OVERRIDE SLOTS, THE HALF THAT MOVES A DECLARATION (#86 D3). An override narrowing a base `T?` NESTED in a
         // constructed generic (`Box<T?>` overridden as `Box<Int?>`) has no conversion available in either direction —
@@ -1784,28 +1723,6 @@ sealed class Pipeline
             && root.Fields.OrEmpty().Length == 0 && root.AssemblyAttrs.OrEmpty().Length == 0;
     }
 
-    // True iff this file declares a type whose `interfaces` names the synthetic `dotkt$CharSequence` — i.e. a user
-    // `class S : CharSequence`. Such a type is a genuine polymorphic implementer, so the whole assembly must keep the
-    // synthetic (CharSeqStringLowering is disabled). Only kotc's `interfaces` array carries this name at the top level
-    // of a type; the synthetic interface DEFINITION itself (name == the synthetic) has an EMPTY interfaces list, so it
-    // is not counted.
-    static bool DeclaresCharSeqImplementer(JsonNode root)
-    {
-        if (root is not JsonObject o || o["types"] is not JsonArray types) return false;
-        foreach (var t in types)
-            if (t is JsonObject to && to["interfaces"] is JsonArray ifaces)
-                foreach (var i in ifaces)
-                    // interfaces are structured `{t:fqn,name:…}` nodes. Read via OwnerName so a user
-                    // `class S : CharSequence` is detected. Reading it as JsonValue left hasUserCharSeqImpl false, so
-                    // CharSeqStringLowering ran on an assembly
-                    // with a real polymorphic implementer, lowering its `subSequence(): CharSequence` override return to
-                    // System.String (+ toString coercion) while it overrides a `dotkt$CharSequence` slot -> TypeLoad
-                    // "signature of the body and declaration do not match" (il-charseq/charseqx).
-                    if (TypeJson.OwnerName(i) == "dotkt$CharSequence")
-                        return true;
-        return false;
-    }
-
     // #305: the spec §2.7 `sty` chokepoint, run on the FULLY-PASSED BIR of one file. `sty` is bir2cir-internal and
     // BirTypeLowering strips it, so the CIR gate below can never see one — the stamp has to be checked here, while it
     // still exists, or the invariant has no mechanical witness at all. Same bir-common checker, restricted to the one
@@ -1933,7 +1850,9 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
     GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots,
     ValueRepresentationLowering.SourceIndex ValueSources,
     IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames,
-    DeclarationPlacement Placement);
+    DeclarationPlacement Placement, ModulePreparation Preparation);
+sealed record ModulePreparation(TypeOwnershipLowering.PreparedFacts Ownership, TypedModuleInventory Inventory,
+    IReadOnlyDictionary<(string Owner, string Event), TypeNode> ForwardedEvents);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties,
     CompanionRepresentationLowering.LocalIndex Companions, CompanionExtensionBinding.LocalIndex Extensions);

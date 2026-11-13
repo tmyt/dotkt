@@ -39,7 +39,8 @@ def generate(definitions, model_type, non_null_field, allows_null):
         # Traversal ownership guides lowering, not wire codecs.
         if isinstance(value, dict):
             return {key: codec_shape(item) for key, item in value.items()
-                    if key not in {"x-dotkt-frame-role", "x-dotkt-representation-role", "x-dotkt-representation-parameters"}}
+                    if key not in {"x-dotkt-frame-role", "x-dotkt-representation-role", "x-dotkt-representation-parameters",
+                                   "x-dotkt-ownership-role"}}
         if isinstance(value, list):
             return [codec_shape(item) for item in value]
         return value

@@ -350,8 +350,8 @@ static partial class NullableRepresentationMaterialization
             && TestSame(nested.Fields.Value[0].Type.Value, TestTv(2, "type"))
             && TestSame(nested.Fields.Value[1].Type.Value, TestType("Box", TestTv(1, "type"))) && nested.TypeParams.Value.Length == 3,
             "Nested frame lost enclosing companions or child source positions");
+        TypeOwnershipLowering.PrepareOwnershipFacts(new[] { root });
         var projected = root.ToDom();
-        TypeOwnershipLowering.PrepareOwnershipFacts(new[] { projected });
         var afterOwnership = BirGraphDom.ReadBirFileDeclaration(projected);
         foreach (var closed in afterOwnership.Methods.Value.Where(method => method.Name.Value.StartsWith("closedCaller", StringComparison.Ordinal))
             .Select(method => (BirCallStatic)((BirExpressionStatement)method.Body.Value[0]).Expr.Value))

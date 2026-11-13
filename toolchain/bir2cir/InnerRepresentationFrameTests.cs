@@ -30,10 +30,10 @@ static class InnerRepresentationFrameTests
                "memberOwnerTypeParams":[{"name":"O"},{"name":"I"}],"memberType":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}}}]}]}]}
         """));
         NullableRepresentationMaterialization.Apply(new[] { source }, _ => false);
-        // The remaining ownership pass is still a downstream DOM consumer.
+        var materializedOwner = TypeJson.Write(((BirFieldGet)((BirReturn)source.Types.Value[2].Methods.Value[0].Body.Value[0]).Value.Value).OwnerType.Value).ToJsonString();
+        TypeOwnershipLowering.PrepareOwnershipFacts(new[] { source });
+        // Application projection is still a downstream DOM consumer.
         var root = source.ToDom();
-        var materializedOwner = root["types"]![2]!["methods"]![0]!["body"]![0]!["value"]!["ownerType"]!.ToJsonString();
-        TypeOwnershipLowering.PrepareOwnershipFacts(new[] { root });
         TypeOwnershipLowering.ProjectInnerApplications(new[] { root }, null);
         var owner = TypeJson.Read(root["types"]![2]!["methods"]![0]!["body"]![0]!["value"]!["ownerType"]);
         var arity = ((JsonArray)root["types"]![2]!["typeParams"]!).Count;
@@ -87,37 +87,35 @@ static class InnerRepresentationFrameTests
                 physicalOrder: scenario == "permuted" ? new[] { 1, 0 } : null,
                 storageIndices: new[] { 0 });
             var captureFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 0 });
-            var owner = JsonNode.Parse("""
-            {"name":"CaptureOwner","kind":"class","typeParams":[{"name":"O"},{"name":"P"}]}
-            """)!.AsObject();
-            var synthetic = JsonNode.Parse("""
-            {"name":"CaptureClosure","semanticOwner":"CaptureOwner","typeParams":[{"name":"M"},{"name":"PM"}]}
-            """)!.AsObject();
-            KotlinSupertypesRecord.Merge(owner, new JsonObject { [NullableRepresentationFrame.MetadataKey] = ownerFrame.ToJson() });
-            KotlinSupertypesRecord.Merge(synthetic, new JsonObject { [NullableRepresentationFrame.MetadataKey] = captureFrame.ToJson() });
-            var args = scenario switch {
+            var owner = new BirClassDefinition { Name = "CaptureOwner", Kind = "class",
+                TypeParams = new[] { new BirTypeParameter { Name = "O" }, new BirTypeParameter { Name = "P" } },
+                KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(ownerFrame) };
+            var synthetic = new BirClosureDefinition { Name = "CaptureClosure", SemanticOwner = "CaptureOwner",
+                TypeParams = new[] { new BirTypeParameter { Name = "M" }, new BirTypeParameter { Name = "PM" } },
+                KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(captureFrame) };
+            TypeNode[] args = scenario switch {
                 "shared" => new[] { new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1) },
                 "splitRoles" => new[] { new TypeNode.Tv("type", 0), new TypeNode.Tv("method", 1) },
                 "permuted" => new[] { new TypeNode.Tv("type", 1), new TypeNode.Tv("type", 0) },
                 _ => new[] { new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1) },
             };
-            var call = new JsonObject { ["k"] = "newClosure", ["synthClass"] = synthetic,
-                ["typeArgs"] = new JsonArray(args.Select(TypeJson.Write).ToArray()) };
-            var root = new JsonObject { ["fileClass"] = "CaptureFile", ["types"] = new JsonArray(owner),
-                ["methods"] = new JsonArray(new JsonObject { ["body"] = new JsonArray(call) }) };
+            var call = new BirNewClosure { SynthClass = synthetic, TypeArgs = args };
+            var root = new BirFileDeclaration { FileClass = "CaptureFile", Types = new IBirTypeDeclaration[] { owner },
+                Methods = new[] { new BirFunctionDeclaration { Body = new IBirStatement[] { new BirExpressionStatement { Expr = call } } } } };
             TypeOwnershipLowering.PrepareOwnershipFacts(new[] { root });
-            var frame = KotlinSupertypesRecord.ReadNullableFrame(synthetic)!;
+            var frame = synthetic.KotlinSupertypesPre.Value.NullableFrame;
             var shared = scenario is "shared" or "permuted";
             var order = shared ? ownerFrame.PhysicalOrder.ToArray() : new[] { 0, 2, 1, 3 };
             if (frame.SourceArity != (shared ? 1 : 2) || !frame.PhysicalOrder.SequenceEqual(order)
-                || frame.PhysicalArity != ((JsonArray)synthetic["typeParams"]!).Count
-                || frame.PhysicalArity != ((JsonArray)call["typeArgs"]!).Count)
+                || frame.PhysicalArity != synthetic.TypeParams.Value.Length
+                || frame.PhysicalArity != call.TypeArgs.Value.Length)
                 throw new InvalidOperationException($"Synthetic owner frame lost exact source roles: {scenario}");
-            var stable = root.ToJsonString();
+            var stable = root.DeepClone();
             TypeOwnershipLowering.PrepareOwnershipFacts(new[] { root });
-            if (root.ToJsonString() != stable)
+            if (!root.StructurallyEquals(stable))
                 throw new InvalidOperationException($"Synthetic owner preparation expanded an already-complete frame: {scenario}");
         }
+        TypeOwnershipLowering.SelfTestSourcePreparation();
     }
 
     static void DeclarationArgumentOrder()

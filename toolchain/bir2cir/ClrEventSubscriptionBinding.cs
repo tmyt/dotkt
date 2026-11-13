@@ -14,7 +14,7 @@ static partial class ClrEventSubscriptionBinding
     {
         readonly string _scope;
         readonly ReferenceMetadataIndex _refs;
-        readonly IReadOnlyDictionary<(string Owner, string Event), JsonNode> _forwardedOwners;
+        readonly IReadOnlyDictionary<(string Owner, string Event), TypeNode> _forwardedOwners;
         readonly Dictionary<JsonObject, (JsonArray TypeParams, JsonArray MethodParams)> _scopes = new();
         readonly JsonArray _empty = new();
         int _next;
@@ -24,7 +24,7 @@ static partial class ClrEventSubscriptionBinding
         public Binder(
             JsonNode root,
             ReferenceMetadataIndex refs,
-            IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners)
+            IReadOnlyDictionary<(string Owner, string Event), TypeNode> forwardedOwners)
         {
             _refs = refs;
             _forwardedOwners = forwardedOwners;
@@ -242,63 +242,12 @@ static partial class ClrEventSubscriptionBinding
             var name = Str(eventGet["name"]);
             if (owner != null && name != null && _forwardedOwners.TryGetValue((owner, name), out var forwarded))
             {
-                var template = TypeJson.Read(forwarded);
                 var actualArgs = (TypeJson.Read(ownerType) as TypeNode.Fqn)?.Args;
-                return template == null ? forwarded.DeepClone() : TypeJson.Write(SubstituteTypeVariables(template, actualArgs));
+                return TypeJson.Write(SubstituteTypeVariables(forwarded, actualArgs));
             }
             return ownerType;
         }
 
-    }
-
-    // Class delegation and its use site can live in different Kotlin source files. Build this relation once for the
-    // whole compilation before the per-file lowering loop; scanning only the current root would leave a sibling-file
-    // `DelegatingSource.Changed.subscribe(...)` incorrectly bound against the local wrapper rather than the delegated
-    // CLR interface that owns the event declaration.
-    public static IReadOnlyDictionary<(string Owner, string Event), JsonNode> CollectForwardedOwners(
-        IEnumerable<JsonNode> roots)
-    {
-        var definitions = roots.OfType<JsonObject>()
-            .SelectMany(root => root["types"] is JsonArray types
-                ? types.OfType<JsonObject>() : Enumerable.Empty<JsonObject>())
-            .Where(type => Str(type["name"]) != null)
-            .GroupBy(type => Str(type["name"]), StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
-        var direct = new Dictionary<(string Owner, string Event), JsonNode>();
-        var eventNames = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var type in definitions.Values)
-        {
-            var owner = Str(type["name"]);
-            if (type["clrEventForwarders"] is not JsonArray forwarders) continue;
-            foreach (var forwarder in forwarders.OfType<JsonObject>())
-            {
-                var name = Str(forwarder["name"]);
-                if (name == null || forwarder["ownerType"] == null) continue;
-                direct[(owner, name)] = forwarder["ownerType"].DeepClone();
-                eventNames.Add(name);
-            }
-        }
-
-        // A subclass inherits the delegating event property/accessors. Carry its base instantiation through so
-        // `Derived<X> : Wrapper<String,X>` maps the inherited event to `Source<X>`, not to the local Derived owner.
-        var result = new Dictionary<(string Owner, string Event), JsonNode>(direct);
-        JsonNode Resolve(string owner, string eventName, HashSet<string> visiting)
-        {
-            if (result.TryGetValue((owner, eventName), out var found)) return found;
-            if (!visiting.Add(owner) || !definitions.TryGetValue(owner, out var definition)
-                || TypeJson.Read(definition["base"]) is not TypeNode.Fqn baseType
-                || !definitions.ContainsKey(baseType.Name)) return null;
-            var inherited = Resolve(baseType.Name, eventName, visiting);
-            visiting.Remove(owner);
-            if (inherited == null || TypeJson.Read(inherited) is not TypeNode template) return null;
-            var closed = TypeJson.Write(SubstituteTypeVariables(template, baseType.Args));
-            result[(owner, eventName)] = closed;
-            return closed;
-        }
-        foreach (var owner in definitions.Keys)
-            foreach (var eventName in eventNames)
-                Resolve(owner, eventName, new HashSet<string>(StringComparer.Ordinal));
-        return result;
     }
 
     // Close a declaration-space physical owner with the constructed local owner/base arguments. If the current use is
@@ -325,7 +274,7 @@ static partial class ClrEventSubscriptionBinding
     public static JsonNode Apply(
         JsonNode root,
         ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners,
+        IReadOnlyDictionary<(string Owner, string Event), TypeNode> forwardedOwners,
         out IReadOnlyList<JsonNode> materializedRoots)
     {
         var binder = new Binder(root, refs, forwardedOwners);

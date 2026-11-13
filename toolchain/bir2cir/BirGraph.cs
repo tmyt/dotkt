@@ -67,6 +67,9 @@ internal abstract record BirGraphValue
     public abstract void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child);
+    public abstract void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child);
     public virtual void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite) { }
     public abstract void WriteJson(Utf8JsonWriter writer);
@@ -136,6 +139,10 @@ internal enum BirRepresentationRole
 }
 
 internal enum BirRepresentationParameterRole { Owner, Method, SharedCell }
+
+// Ownership normalization distinguishes a complete target declaration descriptor
+// from a target signature vector, and a nested synthetic declaration from its use.
+internal enum BirOwnershipRole { Lexical, ForeignVector, MemberDescriptor, SyntheticDeclaration, FrozenFact }
 
 // A short-lived address into an owning typed graph, not a string-key property
 // view. Generated setters retain each declared child role. Replacements change

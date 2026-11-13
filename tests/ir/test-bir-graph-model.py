@@ -38,6 +38,16 @@ class PhaseCompositionTests(unittest.TestCase):
         self.assertRegex(record("BirCallStatic"), r"ArgTypes = .*BirGenericFrameRole.ReferencedDeclaration")
         self.assertRegex(record("BirLocalFunction"), r"Decl = .*BirGenericFrameRole.LocalDeclaration")
         self.assertRegex(record("BirFieldDeclaration"), r"KotlinType = .*BirGenericFrameRole.StorageSourceType")
+        self.assertRegex(record("BirNew"), r"ArgTypes = .*BirOwnershipRole.Lexical")
+        self.assertRegex(record("BirCallStatic"), r"ArgTypes = .*BirOwnershipRole.ForeignVector")
+        self.assertRegex(record("BirCallStatic"), r"MemberSignature = .*BirOwnershipRole.MemberDescriptor")
+        self.assertRegex(record("BirFieldDeclaration"), r"KotlinType = .*BirOwnershipRole.FrozenFact")
+        self.assertIn("child(BirOwnershipRole.SyntheticDeclaration, (BirGraphValue)SynthClass.Value)", record("BirNewSam"))
+        original = self.definitions["birCallStatic"]["properties"]["sig"]["x-dotkt-ownership-role"]
+        self.definitions["birCallStatic"]["properties"]["sig"]["x-dotkt-ownership-role"] = "UnknownOwnershipRole"
+        with self.assertRaisesRegex(ValueError, "Unknown ownership traversal role"):
+            outputs(ROOT, self.definitions)
+        self.definitions["birCallStatic"]["properties"]["sig"]["x-dotkt-ownership-role"] = original
         self.definitions["birCallStatic"]["properties"]["sig"]["x-dotkt-frame-role"] = "UnknownFrameRole"
         with self.assertRaisesRegex(ValueError, "Unknown generic-frame role"):
             outputs(ROOT, self.definitions)

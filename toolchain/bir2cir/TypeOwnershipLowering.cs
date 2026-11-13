@@ -7,7 +7,7 @@ using DotKt.Bir;
 // Kotlin declarations carry only their semantic lexical owner in BIR. This pass is the single place that selects
 // the corresponding CLR TypeDef nesting and rewrites inner-class outer generic declarations into explicit physical
 // capture slots. ilemit then emits nestedIn/capturedTypeParams one-to-one.
-static class TypeOwnershipLowering
+static partial class TypeOwnershipLowering
 {
     // KotlinType metadata must retain the source classifier path and own-first inner arguments, before physical
     // capture projection permutes those arguments. The '+' path separator explicitly records a class segment;
@@ -89,13 +89,6 @@ static class TypeOwnershipLowering
         foreach (var root in roots) Visit(root);
     }
 
-    internal sealed class PreparedFacts
-    {
-        internal IReadOnlyDictionary<string, JsonObject> Types { get; }
-
-        internal PreparedFacts(IReadOnlyDictionary<string, JsonObject> types) => Types = types;
-    }
-
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 
     // A spliced declaration keeps its own generic frame, but its captured-owner
@@ -108,221 +101,6 @@ static class TypeOwnershipLowering
         type.Remove("outerTypeParamOffset");
     }
 
-    // Lifted local/anonymous implementation types keep Kotlin semantic generic order in BIR:
-    // [own..., lexical-owner..., other captured...]. CLR nested TypeDefs require the lexical-owner segment first.
-    // Project the declaration slots, every type-scope tv in the declaration, and every construction/application as
-    // one module-wide permutation before any lowering pass consumes positional generic facts.
-    static void NormalizeOwnerCapturePrefixes(IReadOnlyList<JsonNode> roots)
-    {
-        var permutations = new Dictionary<string, (int[] NewToOld, int[] OldToNew)>(StringComparer.Ordinal);
-        var types = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        foreach (var root in roots.OfType<JsonObject>())
-            if (root["types"] is JsonArray declarations)
-                foreach (var type in declarations.OfType<JsonObject>())
-                    if (Str(type["name"]) is string name) types[name] = type;
-
-        static TypeNode RemapTvs(TypeNode type, int[] oldToNew) => type switch
-        {
-            TypeNode.Tv tv when tv.Scope == "type" && tv.I >= 0 && tv.I < oldToNew.Length =>
-                new TypeNode.Tv("type", oldToNew[tv.I]),
-            TypeNode.Fqn f => f with { Args = f.Args?.Select(a => RemapTvs(a, oldToNew)).ToArray() },
-            TypeNode.Nullable n => new TypeNode.Nullable(RemapTvs(n.Of, oldToNew)),
-            TypeNode.Oblivious o => new TypeNode.Oblivious(RemapTvs(o.Of, oldToNew)),
-            TypeNode.Projection p => new TypeNode.Projection(p.Variance, RemapTvs(p.Of, oldToNew)),
-            TypeNode.Array a => new TypeNode.Array(RemapTvs(a.Elem, oldToNew)),
-            TypeNode.ByRef b => new TypeNode.ByRef(RemapTvs(b.Of, oldToNew)),
-            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, RemapTvs(fn.Ret, oldToNew),
-                fn.Params.Select(p => RemapTvs(p, oldToNew)).ToArray(),
-                fn.Recv == null ? null : RemapTvs(fn.Recv, oldToNew), fn.Clr,
-                fn.Ctx?.Select(p => RemapTvs(p, oldToNew)).ToArray()),
-            _ => type,
-        };
-
-        static void RewriteTypes(JsonNode node, Func<TypeNode, TypeNode> rewrite,
-            bool lexicalTypeVariablesOnly = false)
-        {
-            if (node is JsonObject obj)
-            {
-                var kind = Str(obj["k"]);
-                foreach (var key in obj.Select(kv => kv.Key).ToList())
-                {
-                    var value = obj[key];
-                    if (value == null) continue;
-                    // These vectors describe another declaration in that declaration's own generic frame. Reordering
-                    // the current lexical type's slots must never rewrite them. Actual applications (`ownerType`,
-                    // `typeArgs`, value types, etc.) remain in the walk. `new.argTypes` describes an application at the
-                    // current use site and is rewritten; descriptor argTypes on calls/members remain in the referenced
-                    // declaration's own frame.
-                    if (lexicalTypeVariablesOnly && (key is "sig" or "resolvedMemberParams"
-                        or "shapeTypes" or "paramSig" or "delegationSig" || (key == "argTypes" && kind != "new")))
-                        continue;
-                    if (TypeJson.IsType(value)) obj[key] = TypeJson.Write(rewrite(TypeJson.Read(value)));
-                    else RewriteTypes(value, rewrite, lexicalTypeVariablesOnly);
-                }
-            }
-            else if (node is JsonArray array)
-                for (var i = 0; i < array.Count; i++)
-                {
-                    var value = array[i];
-                    if (value == null) continue;
-                    if (TypeJson.IsType(value)) array[i] = TypeJson.Write(rewrite(TypeJson.Read(value)));
-                    else RewriteTypes(value, rewrite, lexicalTypeVariablesOnly);
-                }
-        }
-
-        foreach (var root in roots.OfType<JsonObject>())
-        {
-            if (root["types"] is not JsonArray declarations) continue;
-            foreach (var type in declarations.OfType<JsonObject>())
-            {
-                if (type["outerTypeParamOffset"] is not JsonValue offsetValue
-                    || !offsetValue.TryGetValue<int>(out var offset) || offset == 0)
-                {
-                    type.Remove("outerTypeParamOffset");
-                    continue;
-                }
-                if (type["outerTypeParamCount"] is not JsonValue countValue
-                    || !countValue.TryGetValue<int>(out var count) || count <= 0
-                    || type["typeParams"] is not JsonArray typeParams
-                    || offset < 0 || offset + count > typeParams.Count)
-                    throw new InvalidOperationException(
-                        $"Kotlin type '{Str(type["name"])}' has an invalid semantic owner parameter segment");
-
-                var newToOld = Enumerable.Range(offset, count)
-                    .Concat(Enumerable.Range(0, offset))
-                    .Concat(Enumerable.Range(offset + count, typeParams.Count - offset - count))
-                    .ToArray();
-                var oldToNew = new int[newToOld.Length];
-                for (var i = 0; i < newToOld.Length; i++) oldToNew[newToOld[i]] = i;
-                var reordered = new JsonArray(newToOld.Select(i => typeParams[i]?.DeepClone()).ToArray());
-                type["typeParams"] = reordered;
-                type.Remove("outerTypeParamOffset");
-                RewriteTypes(type, t => RemapTvs(t, oldToNew), lexicalTypeVariablesOnly: true);
-
-                if (Str(type["name"]) is string name)
-                    permutations[name] = (newToOld, oldToNew);
-            }
-        }
-
-        // A lifted local/anonymous child copies its semantic owner's frame in the owner's original Kotlin order. If
-        // that owner is itself lifted, the direct permutation above moves the owner's captured segment to the CLR
-        // prefix, but the child's copied segment still has the old order. Propagate the owner's complete permutation
-        // through that prefix before any positional consumer sees it. This is declaration correspondence, not a name
-        // match: shadowed Kotlin type-parameter names remain legal and slot identity stays positional end-to-end.
-        var finalPermutations = new Dictionary<string, (int[] NewToOld, int[] OldToNew)>(StringComparer.Ordinal);
-        var visiting = new HashSet<string>(StringComparer.Ordinal);
-
-        (int[] NewToOld, int[] OldToNew) ResolvePermutation(string name, JsonObject type)
-        {
-            if (finalPermutations.TryGetValue(name, out var completed)) return completed;
-            if (!visiting.Add(name))
-                throw new InvalidOperationException($"cyclic semantic owner chain at Kotlin type '{name}'");
-            try
-            {
-                var count = (type["typeParams"] as JsonArray)?.Count ?? 0;
-                (int[] NewToOld, int[] OldToNew) direct = permutations.TryGetValue(name, out var own)
-                    ? own
-                    : (NewToOld: Enumerable.Range(0, count).ToArray(),
-                        OldToNew: Enumerable.Range(0, count).ToArray());
-                var newToOld = direct.NewToOld;
-
-                if (Str(type["semanticOwner"]) is string ownerName
-                    && types.TryGetValue(ownerName, out var owner)
-                    && type["outerTypeParamCount"] is JsonValue capturedValue
-                    && capturedValue.TryGetValue<int>(out var capturedCount) && capturedCount > 0)
-                {
-                    var ownerPermutation = ResolvePermutation(ownerName, owner);
-                    if (capturedCount != ownerPermutation.NewToOld.Length || capturedCount > count)
-                        throw new InvalidOperationException(
-                            $"Kotlin type '{name}' captures {capturedCount} owner slots but semantic owner " +
-                            $"'{ownerName}' declares {ownerPermutation.NewToOld.Length}");
-
-                    var prefixNewToOld = Enumerable.Range(0, count).ToArray();
-                    for (var index = 0; index < capturedCount; index++)
-                        prefixNewToOld[index] = ownerPermutation.NewToOld[index];
-                    if (prefixNewToOld.Where((old, current) => old != current).Any())
-                    {
-                        if (type["typeParams"] is not JsonArray currentParams)
-                            throw new InvalidOperationException(
-                                $"Kotlin type '{name}' captures a generic owner but has no type parameter declarations");
-                        type["typeParams"] = new JsonArray(prefixNewToOld
-                            .Select(index => currentParams[index]?.DeepClone()).ToArray());
-                        var prefixOldToNew = new int[count];
-                        for (var index = 0; index < count; index++)
-                            prefixOldToNew[prefixNewToOld[index]] = index;
-                        RewriteTypes(type, value => RemapTvs(value, prefixOldToNew),
-                            lexicalTypeVariablesOnly: true);
-                        newToOld = prefixNewToOld.Select(index => direct.NewToOld[index]).ToArray();
-                    }
-                }
-
-                var oldToNew = new int[newToOld.Length];
-                for (var index = 0; index < newToOld.Length; index++) oldToNew[newToOld[index]] = index;
-                return finalPermutations[name] = (newToOld, oldToNew);
-            }
-            finally
-            {
-                visiting.Remove(name);
-            }
-        }
-
-        foreach (var (name, type) in types) ResolvePermutation(name, type);
-        permutations.Clear();
-        foreach (var (name, permutation) in finalPermutations)
-            if (permutation.NewToOld.Where((old, current) => old != current).Any())
-                permutations[name] = permutation;
-
-        if (permutations.Count == 0) return;
-
-        TypeNode RewriteApplications(TypeNode type) => type switch
-        {
-            TypeNode.Fqn f => RewriteFqn(f),
-            TypeNode.Nullable n => new TypeNode.Nullable(RewriteApplications(n.Of)),
-            TypeNode.Oblivious o => new TypeNode.Oblivious(RewriteApplications(o.Of)),
-            TypeNode.Projection p => new TypeNode.Projection(p.Variance, RewriteApplications(p.Of)),
-            TypeNode.Array a => new TypeNode.Array(RewriteApplications(a.Elem)),
-            TypeNode.ByRef b => new TypeNode.ByRef(RewriteApplications(b.Of)),
-            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, RewriteApplications(fn.Ret),
-                fn.Params.Select(RewriteApplications).ToArray(),
-                fn.Recv == null ? null : RewriteApplications(fn.Recv), fn.Clr,
-                fn.Ctx?.Select(RewriteApplications).ToArray()),
-            _ => type,
-        };
-        TypeNode.Fqn RewriteFqn(TypeNode.Fqn f)
-        {
-            if (f.Args == null) return f;
-            var args = f.Args.Select(RewriteApplications).ToArray();
-            if (!permutations.TryGetValue(f.Name, out var permutation))
-                return f with { Args = args };
-            if (args.Length != permutation.NewToOld.Length)
-                throw new InvalidOperationException(
-                    $"Kotlin lifted type application '{f.Name}' has {args.Length} arguments " +
-                    $"[{string.Join(", ", args.Select(a => TypeJson.Write(a).ToJsonString()))}] but its declaration has " +
-                    $"{permutation.NewToOld.Length}");
-            return f with { Args = permutation.NewToOld.Select(i => args[i]).ToArray() };
-        }
-        foreach (var root in roots) RewriteTypes(root, RewriteApplications);
-    }
-
-    // Normalize explicit BIR ownership facts before ordinary lowering consumes positional generic information.
-    // Local functions are intentionally absent here: kotc keeps them as lexical localFun declarations, and
-    // LocalFunctionLowering later consumes their declaration ids without reconstructing ownership from a flat method.
-    public static PreparedFacts PrepareOwnershipFacts(IReadOnlyList<JsonNode> roots)
-    {
-        var types = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        foreach (var root in roots.OfType<JsonObject>())
-        {
-            if (root["types"] is JsonArray declarations)
-                foreach (var type in declarations.OfType<JsonObject>())
-                    if (Str(type["name"]) is string name) types[name] = type;
-        }
-
-        NormalizeOwnerCapturePrefixes(roots);
-
-        foreach (var root in roots) PrepareSyntheticOwnerCaptures(root, types);
-        return new PreparedFacts(types);
-    }
-
     // Inline/default splices mutate only their current consumer root. Reuse the module type index prepared above and
     // revisit that root alone; walking every file after each consumer splice makes phase 1 quadratic in file count.
     public static void PrepareSplicedOwnershipFacts(JsonNode root, PreparedFacts prepared) =>
@@ -331,25 +109,6 @@ static class TypeOwnershipLowering
     static void PrepareSyntheticOwnerCaptures(
         JsonNode root, IReadOnlyDictionary<string, JsonObject> types)
     {
-        static TypeNode RemapSyntheticTypeSlots(TypeNode type, int[] oldToNew) => type switch
-        {
-            TypeNode.Tv tv when tv.Scope == "type" && tv.I >= 0 && tv.I < oldToNew.Length =>
-                new TypeNode.Tv("type", oldToNew[tv.I]),
-            TypeNode.Fqn f => f with {
-                Args = f.Args?.Select(arg => RemapSyntheticTypeSlots(arg, oldToNew)).ToArray(),
-            },
-            TypeNode.Nullable n => new TypeNode.Nullable(RemapSyntheticTypeSlots(n.Of, oldToNew)),
-            TypeNode.Oblivious o => new TypeNode.Oblivious(RemapSyntheticTypeSlots(o.Of, oldToNew)),
-            TypeNode.Projection p => new TypeNode.Projection(p.Variance, RemapSyntheticTypeSlots(p.Of, oldToNew)),
-            TypeNode.Array a => new TypeNode.Array(RemapSyntheticTypeSlots(a.Elem, oldToNew)),
-            TypeNode.ByRef b => new TypeNode.ByRef(RemapSyntheticTypeSlots(b.Of, oldToNew)),
-            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, RemapSyntheticTypeSlots(fn.Ret, oldToNew),
-                fn.Params.Select(param => RemapSyntheticTypeSlots(param, oldToNew)).ToArray(),
-                fn.Recv == null ? null : RemapSyntheticTypeSlots(fn.Recv, oldToNew), fn.Clr,
-                fn.Ctx?.Select(param => RemapSyntheticTypeSlots(param, oldToNew)).ToArray()),
-            _ => type,
-        };
-
         // `synthClass` opens a fresh type-parameter frame. Remap uses in the current synthesized declaration (including
         // its own type-parameter constraints), but never descend into a nested synthClass's declaration frame. The
         // construction-side `typeArgs` beside that nested declaration remain uses of the current frame and are visited.
@@ -370,7 +129,7 @@ static class TypeOwnershipLowering
                         || (key == "argTypes" && kind != "new"))
                         continue;
                     if (TypeJson.IsType(value))
-                        obj[key] = TypeJson.Write(RemapSyntheticTypeSlots(TypeJson.Read(value), oldToNew));
+                        obj[key] = TypeJson.Write(RemapOwnerSlots(TypeJson.Read(value), oldToNew));
                     else
                         RemapSyntheticFrame(value, oldToNew, root: false);
                 }
@@ -381,7 +140,7 @@ static class TypeOwnershipLowering
                     var value = array[index];
                     if (value == null) continue;
                     if (TypeJson.IsType(value))
-                        array[index] = TypeJson.Write(RemapSyntheticTypeSlots(TypeJson.Read(value), oldToNew));
+                        array[index] = TypeJson.Write(RemapOwnerSlots(TypeJson.Read(value), oldToNew));
                     else
                         RemapSyntheticFrame(value, oldToNew, root: false);
                 }
@@ -410,63 +169,19 @@ static class TypeOwnershipLowering
             if (ownerFrame.PhysicalArity != ownerParams.Count || captureFrame.PhysicalArity != typeParams.Count)
                 throw new InvalidOperationException($"Synthetic owner capture '{Str(synth["name"])}' has an incomplete declaration frame");
 
-            static bool IsOwnerSlot(JsonNode arg, int slot) =>
-                arg is JsonObject tv && Str(tv["t"]) == "tv" && Str(tv["scope"]) == "type"
-                && tv["i"] is JsonValue index && index.TryGetValue<int>(out var value) && value == slot;
-
-            // Reuse a captured source parameter only when every already-shared
-            // representation names the same explicit owner slot. Equal argument
-            // spellings alone cannot merge independently-owned generic roles.
-            var sourceMap = new int[captureFrame.SourceArity];
-            var reusedSources = new HashSet<int>();
-            var sourceArity = ownerFrame.SourceArity;
-            for (var source = 0; source < captureFrame.SourceArity; source++)
-            {
-                var capturedSlots = Enumerable.Range(0, captureFrame.PhysicalArity)
-                    .Where(index => captureFrame.PhysicalSlot(index).SourceIndex == source).ToArray();
-                var shared = Enumerable.Range(0, ownerFrame.SourceArity).FirstOrDefault(candidate =>
-                    !reusedSources.Contains(candidate)
-                    && IsOwnerSlot(typeArgs[captureFrame.SourcePosition(source)], ownerFrame.SourcePosition(candidate))
-                    && capturedSlots.All(index => {
-                        var role = captureFrame.PhysicalSlot(index).Representation;
-                        var ownerSlot = Enumerable.Range(0, ownerFrame.PhysicalArity).FirstOrDefault(slot =>
-                            ownerFrame.PhysicalSlot(slot) == new NullableRepresentationFrame.Slot(candidate, role), -1);
-                        return ownerSlot < 0 || IsOwnerSlot(typeArgs[index], ownerSlot);
-                    }), -1);
-                sourceMap[source] = shared < 0 ? sourceArity++ : shared;
-                if (shared >= 0) reusedSources.Add(shared);
-            }
-
-            var consumed = new HashSet<int>();
-            var ownerSource = new List<(int Slot, int Existing)>();
-            for (var slot = 0; slot < ownerParams.Count; slot++)
-            {
-                var existing = Enumerable.Range(0, typeArgs.Count)
-                    .FirstOrDefault(index => !consumed.Contains(index) && IsOwnerSlot(typeArgs[index], slot)
-                        && sourceMap[captureFrame.PhysicalSlot(index).SourceIndex] == ownerFrame.PhysicalSlot(slot).SourceIndex
-                        && captureFrame.PhysicalSlot(index).Representation == ownerFrame.PhysicalSlot(slot).Representation, -1);
-                ownerSource.Add((slot, existing));
-                if (existing >= 0) consumed.Add(existing);
-            }
-
-            var remaining = Enumerable.Range(0, typeArgs.Count).Where(index => !consumed.Contains(index)).ToArray();
-            var oldToNew = new int[typeParams.Count];
-            foreach (var (slot, existing) in ownerSource)
-                if (existing >= 0) oldToNew[existing] = slot;
-            for (var index = 0; index < remaining.Length; index++)
-                oldToNew[remaining[index]] = ownerParams.Count + index;
+            var plan = PlanCapture(typeArgs.Select(TypeJson.Read).ToArray(), ownerFrame, captureFrame);
 
             // Only an explicitly prebound payload uses these dense class-slot indices already. Raw kotc ingredients
             // still name lexical type/method variables; ClosureSynthesis binds those through the reordered typeArgs.
             // Remapping a lexical type#0 as dense slot 0 would turn the owner's T into a captured method parameter.
             if (ClosureSynthesis.HasPreboundFrame(synth)
-                && oldToNew.Where((mapped, old) => mapped != old).Any())
-                RemapSyntheticFrame(synth, oldToNew);
+                && plan.OldToNew.Where((mapped, old) => mapped != old).Any())
+                RemapSyntheticFrame(synth, plan.OldToNew);
 
             var remappedParams = synth["typeParams"] as JsonArray ?? new JsonArray();
             var normalizedParams = new JsonArray();
             var normalizedArgs = new JsonArray();
-            foreach (var (slot, _) in ownerSource)
+            foreach (var slot in Enumerable.Range(0, ownerParams.Count))
             {
                 // The semantic owner is the authority for its slot constraints. A synthesized/materialized closure
                 // may already carry the slot under a dense placeholder name, but that representation must not erase
@@ -474,7 +189,7 @@ static class TypeOwnershipLowering
                 normalizedParams.Add(ownerParams[slot]?.DeepClone());
                 normalizedArgs.Add(TypeJson.Write(new TypeNode.Tv("type", slot)));
             }
-            foreach (var index in remaining)
+            foreach (var index in plan.Remaining)
             {
                 normalizedParams.Add(remappedParams[index]?.DeepClone());
                 normalizedArgs.Add(typeArgs[index]?.DeepClone());
@@ -483,24 +198,8 @@ static class TypeOwnershipLowering
             synth["typeParams"] = normalizedParams;
             synth["outerTypeParamCount"] = ownerParams.Count;
             node["typeArgs"] = normalizedArgs;
-            var slots = Enumerable.Range(0, ownerFrame.PhysicalArity).Select(ownerFrame.PhysicalSlot)
-                .Concat(remaining.Select(index => {
-                    var slot = captureFrame.PhysicalSlot(index);
-                    return new NullableRepresentationFrame.Slot(sourceMap[slot.SourceIndex], slot.Representation);
-                })).ToArray();
-            int[] Indices(NullableRepresentationFrame.Role role) => slots.Where(slot => slot.Representation == role)
-                .Select(slot => slot.SourceIndex).Distinct().OrderBy(index => index).ToArray();
-            var nullable = Indices(NullableRepresentationFrame.Role.Nullable);
-            var storage = Indices(NullableRepresentationFrame.Role.Storage);
-            var nullableStorage = Indices(NullableRepresentationFrame.Role.NullableStorage);
-            var canonical = new NullableRepresentationFrame(sourceArity, nullable,
-                storageIndices: storage, nullableStorageIndices: nullableStorage);
-            var physicalOrder = slots.Select(slot => canonical.Variable(
-                new TypeNode.Tv("type", slot.SourceIndex), slot.Representation).I).ToArray();
-            var normalizedFrame = new NullableRepresentationFrame(sourceArity, nullable, physicalOrder,
-                storage, nullableStorage);
-            if (normalizedFrame.RequiresMetadata || KotlinSupertypesRecord.ReadNullableFrame(synth) != null)
-                KotlinSupertypesRecord.RebaseCapturedFrame(synth, normalizedFrame, sourceMap, ownerType);
+            if (plan.Frame.RequiresMetadata || KotlinSupertypesRecord.ReadNullableFrame(synth) != null)
+                KotlinSupertypesRecord.RebaseCapturedFrame(synth, plan.Frame, plan.SourceMap, ownerType);
         }
 
         void Rewrite(JsonNode node)
