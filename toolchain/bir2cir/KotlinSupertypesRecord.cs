@@ -65,18 +65,6 @@ static class KotlinSupertypesRecord
                 .Select(TypeJson.Read).Where(type => type != null).ToArray())
             : null;
 
-    // Owner capture changes a synthesized declaration's source and physical
-    // frames together. Rebase its recorded source facts through that exact map;
-    // this is not an erasure or reconstruction of a missing frame.
-    internal static void RebaseCapturedFrame(JsonObject declaration, NullableRepresentationFrame frame,
-        int[] sourceMap, JsonObject owner)
-    {
-        var source = (declaration[PreKey] as JsonValue)?.GetValue<string>();
-        var ownerSource = (owner[PreKey] as JsonValue)?.GetValue<string>();
-        declaration[PreKey] = SourceTypeFacts.ToDom((source == null ? SourceTypeFacts.Empty : SourceTypeFacts.ReadFrozenText(source))
-            .RebaseCapturedFrame(frame, sourceMap, ownerSource == null ? null : SourceTypeFacts.ReadFrozenText(ownerSource)));
-    }
-
     static JsonObject Read(JsonObject declaration)
     {
         if ((declaration[PreKey] as JsonValue)?.TryGetValue<string>(out var encoded) != true)

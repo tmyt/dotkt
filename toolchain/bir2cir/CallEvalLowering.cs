@@ -11,9 +11,8 @@ using DotKt.Bir.Lowering;
 // the receiver, the supplied arguments and the filled defaults, in Kotlin evaluation order, each a BINDING; every
 // reader — the call's own slot, a spliced default, a reconstructed `copy` field — is a `bindRef`, a pure READ.
 //
-// `Apply` runs once the shared inline/default expansion has finished materializing cross-module fills into the
-// bindings kotc reserved for them, and turns each plan into locals. `Materialise`, the decision itself,
-// is also called directly by the two passes that AUTHOR a plan of their own and lower it on the spot (spec §2.7): the
+// TypedCallEvalLowering consumes source plans after inline/default expansion. The shared materialisation policy
+// also serves the two remaining DOM passes that AUTHOR a plan and lower it on the spot (spec §2.7): the
 // suspend lowering's stage-0 operand plan, and MemberCallSubstitution's mapping of a constructor parameter the CLR has
 // no slot for. The rules below are the whole answer in every case:
 //
@@ -31,112 +30,13 @@ using DotKt.Bir.Lowering;
 // all — is SuspendColdLowering's single decision, ~300 passes later, from liveness. Splitting those two questions is
 // the point of the redesign: this pass cannot be pushed into "declining to bind" by a storage answer it never sees.
 //
-// The plan's own vocabulary must not survive: the terminal assert refuses a leftover `callEval`/`bindRef`/
-// `delegationBindings`, and scripts/verify-schema.py enforces the same split structurally.
+// The plan's own vocabulary must not survive its owner. TypedCallEvalLowering and the remaining plan producers
+// enforce their post-conditions; scripts/verify-schema.py enforces the same split structurally.
 static partial class CallEvalLowering
 {
     // A compiler value binding (including a spliced lambda parameter) is initialized once; unlike a user variable
     // it cannot subsequently acquire a wider value.
     internal const string ValueTemporaryKey = "_callEvalTemporary";
-    public static void Apply(JsonNode root, ValueTypeOracle isValue)
-    {
-        Walk(root, isValue ?? (_ => false));
-        AssertLowered(root, "");
-    }
-
-    // POST-ORDER: a nested plan (a default that is itself a call with defaults) lowers first, so by the time the outer
-    // plan lowers, the inner is an ordinary `valueBlock` — which may still contain reads of the OUTER plan's bindings,
-    // and those are substituted here. An unknown `bindRef` id is therefore left alone on purpose: it belongs to an
-    // enclosing plan that has not lowered yet.
-    static void Walk(JsonNode node, ValueTypeOracle isValue)
-    {
-        if (node is JsonObject obj)
-        {
-            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value, isValue);
-            if (Str(obj["k"]) == "callEval") LowerExpression(obj, isValue);
-            else if (obj["delegationBindings"] is JsonArray) LowerDelegation(obj, isValue);
-            // NORMALIZE, unconditionally: a block whose RESULT is a block is one block — its statements run, then the
-            // inner's, then the inner's value — and downstream expects the single layer the inline splice's own
-            // flatten guarantees. Not restricted to the nesting this pass just created: a nested block is the same
-            // shape whoever built it, and folding one that was already flat costs nothing. It matters here because a
-            // plan is what re-introduced the shape — a spliced lambda body ending in a nested inline call reaches this
-            // pass as `valueBlock{…, result: callEval{…}}`, which the splice could not flatten, a plan's bindings not
-            // being statements until the line above makes them ones.
-            if (Str(obj["k"]) == "valueBlock") MergeNestedResult(obj);
-        }
-        else if (node is JsonArray arr)
-        {
-            foreach (var it in arr.ToList()) if (it != null) Walk(it, isValue);
-        }
-    }
-
-    /// A `callEval` in EXPRESSION position: the materialised bindings become the `stmts` of a `valueBlock` whose
-    /// `result` is the call. No materialised binding ⇒ no block at all, and the node collapses to the bare call.
-    static void LowerExpression(JsonObject plan, ValueTypeOracle isValue)
-    {
-        var bindings = plan["bindings"] as JsonArray ?? new JsonArray();
-        var call = plan["expr"] ?? throw new InvalidOperationException("bir2cir: a callEval carries no `expr`");
-        var type = plan["type"]?.DeepClone();
-        var (stmts, repl) = Materialise(bindings, new List<JsonNode> { call }, DescribeExpression(call), isValue: isValue);
-        var lowered = Substitute(call, repl);
-        plan.Clear();
-        if (stmts.Count == 0)
-        {
-            foreach (var kv in ((JsonObject)lowered).ToList()) plan[kv.Key] = kv.Value?.DeepClone();
-            return;
-        }
-        plan["k"] = "valueBlock";
-        if (type != null) plan["type"] = type;
-        plan["stmts"] = stmts;
-        plan["result"] = lowered;
-    }
-
-    /// Fold a `valueBlock` whose RESULT is a `valueBlock` into one block. Evaluation order is untouched — this block's
-    /// statements, then the inner's, then the inner's value — and every name in either is already frame-unique (splice
-    /// prefixes, `dotkt$local…`, `cir$b…`), so the merged scope cannot capture. The inner's `type` is the value's, so
-    /// it wins when this block carries none.
-    ///
-    /// A `valueBlock` may carry EITHER of two statement lists, and its consumers run `stmts` and then `body`
-    /// (SuspendColdLowering, InlineSplice's carrier flatten). The inner block's two are appended in that order, which
-    /// is the order it would have run them in; the OUTER block's `body` would have to run AFTER the inner statements
-    /// arriving in its `stmts`, which appending cannot express. No producer emits an outer `body` beside a block
-    /// result today, so this refuses rather than reorders — the day one does, it says so instead of miscompiling.
-    static void MergeNestedResult(JsonObject block)
-    {
-        while (block["result"] is JsonObject inner && Str(inner["k"]) == "valueBlock")
-        {
-            if (block["body"] is JsonArray ob && ob.Count > 0)
-                throw new InvalidOperationException(
-                    "bir2cir: a valueBlock carrying `body` statements has another valueBlock as its result — folding "
-                    + "them would run this block's `body` after the inner block's statements instead of before. The "
-                    + "producer of this shape is new; teach CallEvalLowering.MergeNestedResult how to order it.");
-            if (block["stmts"] is not JsonArray stmts) { stmts = new JsonArray(); block["stmts"] = stmts; }
-            foreach (var key in new[] { "stmts", "body" })
-                if (inner[key] is JsonArray arr)
-                    foreach (var st in arr.ToList()) { arr.Remove(st); stmts.Add(st); }
-            if (block["type"] == null && inner["type"] is JsonNode it) block["type"] = it.DeepClone();
-            block["result"] = inner["result"] is JsonNode r ? r.DeepClone() : null;
-        }
-    }
-
-    /// A constructor DELEGATION's plan. Its arguments ride the ctor DECLARATION (`thisArgs`/`baseArgs`), so there is
-    /// no wrapping expression to hold the bindings: they become `preStmts`, which ilemit emits ahead of the `this`/
-    /// `base` call — the first thing the constructor body does.
-    static void LowerDelegation(JsonObject ctor, ValueTypeOracle isValue)
-    {
-        var bindings = (JsonArray)ctor["delegationBindings"];
-        var readers = new List<JsonNode>();
-        if (ctor["thisArgs"] is JsonArray ta) readers.Add(ta);
-        if (ctor["baseArgs"] is JsonArray ba) readers.Add(ba);
-        var (stmts, repl) = Materialise(bindings, readers, "a constructor delegation", isValue: isValue);
-        foreach (var r in readers.ToList())
-        {
-            var arr = (JsonArray)r;
-            for (var i = 0; i < arr.Count; i++) if (arr[i] is JsonNode v) arr[i] = Substitute(v, repl);
-        }
-        ctor.Remove("delegationBindings");
-        if (stmts.Count > 0) ctor["preStmts"] = stmts;
-    }
 
     /// Decide each binding's physical form. Returns the `var` statements in plan order, and how each binding id is to
     /// be READ: a `local` load for a materialised binding, the expression itself for an inlined one, null for a
@@ -803,30 +703,6 @@ static partial class CallEvalLowering
             }
             default: return node.DeepClone();
         }
-    }
-
-    // How a diagnostic names the call site: the callee if the node has one, else the node kind.
-    static string DescribeExpression(JsonNode call) =>
-        call is JsonObject o
-            ? (Str(o["method"]) is string m ? $"the call to `{m}`"
-                : TypeJson.OwnerName(o["type"]) is string t ? $"the construction of `{t}`" : "a call")
-            : "a call";
-
-    /// CHOKEPOINT: no plan vocabulary reaches the passes below. Everything after this point sees `var`/`local`/
-    /// `valueBlock`/`preStmts` only, which is why ~300 later passes need to know nothing about the plan.
-    static void AssertLowered(JsonNode node, string path)
-    {
-        if (node is JsonObject o)
-        {
-            var k = Str(o["k"]);
-            if (k == "callEval" || k == "bindRef" || o.ContainsKey("delegationBindings"))
-                throw new InvalidOperationException(
-                    $"bir2cir: a call-evaluation plan survived CallEvalLowering at {path} (`{k ?? "delegationBindings"}`) — " +
-                    "a pass between kotc and this one rewrote a plan into a shape the lowering does not reach.");
-            foreach (var kv in o) if (kv.Value != null) AssertLowered(kv.Value, path + "/" + kv.Key);
-        }
-        else if (node is JsonArray a)
-            for (var i = 0; i < a.Count; i++) if (a[i] is JsonNode it) AssertLowered(it, path + "[" + i + "]");
     }
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
