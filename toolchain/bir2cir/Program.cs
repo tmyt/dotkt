@@ -63,6 +63,7 @@ static class Bir2Cir
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
                 SourceGraphRewrite.SelfTest();
+                ForInLowering.SelfTestTypedRangePrefix();
                 RoundtripMetadata.SourceSuspendResultSelfTest();
                 InheritedMemberOwnerBinding.SourceProjectionSelfTest();
                 TypedExecutableFrames.SelfTest();
@@ -391,6 +392,16 @@ sealed class Pipeline
             ClosureSynthesis.Apply(source, refs, scalarSlots.ProjectMethod);
             SharedSyntheticSynthesis.Apply(source, refs, sharedCells);
         }
+        // Classify source loops, realize range access, then consume membership
+        // endpoints before materializing range values. Keep that semantic order
+        // within the same owning graph; no intermediate DOM handoff is needed.
+        foreach (var source in captured)
+        {
+            ForInLowering.Apply(source, !appBuild, inventory.DirectSuperNames, inventory.LocalTopLevelFunctions, refs);
+            RangeForLowering.Apply(source, !appBuild);
+            RangeMembershipLowering.Apply(source, inventory.LocalTopLevelFunctions, appBuild);
+            RangeConstructionLowering.Apply(source);
+        }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -457,12 +468,6 @@ sealed class Pipeline
         // a LOCAL type (rt-stdlib self-build -> bare base + local slot override) or a REFERENCED one
         // (app build -> clr: base + pendingOverrideOwner linkage).
         var localTypeFqns = module.Preparation.Inventory.EmittedTypeFqns;
-        // The DIRECT supertypes (base + interfaces, by FQN) of each type DECLARED in this compilation, aggregated
-        // across all input files. ForInLowering walks it to decide whether a stdlib self-build for-loop source is a
-        // kotlin.collections iterable (a concrete subtype such as ArrayList : MutableList matches even though its own
-        // FQN is not a collection interface) — the supertype walk kotc's retired isStdlibCollectionIterable did over
-        // the IR hierarchy, reconstructed here from the BIR type defs.
-        var typeSupers = module.Preparation.Inventory.DirectSuperNames;
         // Attribute referenced top-level stdlib funs to their file-class owner only in an APP build: a stdlib self-
         // build (`--build-stdlib=metadata|runtime`) defines them locally, so owner=null is correct there. The reference
         // build never runs MemberCallSubstitution at all (see the RefBuild gate below).
@@ -545,35 +550,6 @@ sealed class Pipeline
             // inherited protected-property read may be correctly realigned to object[] while its store into a
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
             NullableTvErasureCallRealign.CollectNewSyntheticTypes(bir.Root, nullableTvDeclRets);
-            // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's
-            // runtime type token (`srcType`) for every non-array source — it no longer decides range-vs-collection nor
-            // the .NET/Sequence-enumerable case (each needs the kotlin.ranges FQN or a `@Clr`/.NET-type resolution off
-            // the refs, a Kotlin<->CLR relation). Dispatch it: a counted range -> `forRange` (realized by
-            // RangeForLowering next); a `kotlin.sequences.Sequence`/.NET-enumerable/stdlib-collection -> `forEachInline`
-            // (GetEnumerator); anything else -> the iterator `fallback`. Runs BEFORE RangeForLowering /
-            // RangeConstructionLowering / SequenceForEachLowering so the produced forms flow through every downstream
-            // pass exactly as the equivalent kotc-emitted forms did.
-            ForInLowering.Apply(bir.Root, !attributeTopLevelOwner, typeSupers, localTopLevelFns, refs);
-            // RANGE FOR-LOOP (#52 Phase 5 "range partial"): kotc emits a FAITHFUL `forRange` (range VALUE + loop var +
-            // Kotlin `rangeType`, NO CLR accessor names/owner). Realize the IntProgression get_first/get_last/get_step
-            // access HERE — the stdlib form keeps `forRange` + injects the accessors (ilemit resolves off `_types`);
-            // the app form rewrites to a cross-module counter loop. Runs FIRST so the realized callInstance / forRange
-            // nodes enter the ordinary downstream CIR pipeline.
-            RangeForLowering.Apply(bir.Root, !attributeTopLevelOwner);
-            // RANGE MEMBERSHIP (#73 M2): kotc emits the FAITHFUL `contains` member call for `x in a..b` (by identity,
-            // NO comparison synthesis — its old bare-name lowering MISCOMPILED a user rangeTo/contains type). Lower the
-            // membership to the short-circuit `(x >= a && x <op> b)` fast path FQN-keyed — only for a stdlib primitive
-            // range (`kotlin.ranges.{Int,Long,Char}Range` contains over an un-materialized `rangeTo`/`until`/`rangeUntil`).
-            // Runs BEFORE RangeConstructionLowering (which would else materialize the recv rangeTo into `new IntRange`)
-            // so the recv still carries the inline bounds. The fast path must not reorder the membership: `x in a()..b()`
-            // builds the range first, so both bounds run, in order, before the subject — the pass binds lo/hi/subject to
-            // temps to keep that, and splices only an operand re-reading cannot move (ValueStability.IsReReadable).
-            RangeMembershipLowering.Apply(bir.Root, localTopLevelFns, attributeTopLevelOwner);
-            // VALUE-POSITION RANGE CONSTRUCTION (#73 Phase 2b-1): kotc emits the FAITHFUL `callInstance
-            // kotlin.Int.rangeTo(b)` for `a..b` / `a..<b`; materialize the stdlib `new IntRange/LongRange/CharRange`
-            // HERE (the Kotlin<->CLR realization). Runs before MemberCallSubstitution (whose Rule-4 gate would refuse
-            // the unbound `kotlin.Int.rangeTo`) so the realized construction enters the ordinary downstream pipeline.
-            RangeConstructionLowering.Apply(bir.Root);
             // PRIMITIVE OPERATORS (#52 Phase 5): realize faithful primitive member calls as CIR binOp/unaryOp nodes.
             // Runs in ref + app before body-squash/type/suspend consumers, so a ref-build ctor field-init or base-arg
             // (not body-squashed) carries a raw IL operation rather than an unresolvable bodyless builtin call.

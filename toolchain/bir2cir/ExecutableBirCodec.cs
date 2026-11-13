@@ -5,8 +5,7 @@ using DotKt.Cir;
 using MessagePack;
 
 // Executable carriers share the file codecs' owning phase vocabulary and the
-// declared codec dispatch. The remaining DOM owners use direct neighbours,
-// never an IR-text/binary/IR-text bridge. Those neighbours retire with the owners.
+// declared codec dispatch, without an intermediate executable DOM graph.
 static class ExecutableBirCodec
 {
     internal const string Codec = BirCarrier.MessagePackV1;
@@ -24,18 +23,6 @@ static class ExecutableBirCodec
 
     internal static BirInlinePayload ReadInline(string codec, byte[] content) => BirCarrier.DecodeBody(
         codec, content, BirGraphJson.ReadBirInlinePayload, BirGraphMessagePack.ReadBirInlinePayload);
-
-    internal static byte[] EncodeExpressionDom(string codec, JsonNode body)
-        => EncodeExpression(codec, BirGraphDom.ReadBirExpression(body));
-
-    internal static JsonObject ReadExpressionDom(string codec, byte[] content)
-        => ((BirGraphValue)ReadExpression(codec, content)).ToDom();
-
-    internal static byte[] EncodeInlineDom(string codec, JsonObject body)
-        => EncodeInline(codec, BirGraphDom.ReadBirInlinePayload(body));
-
-    internal static JsonObject ReadInlineDom(string codec, byte[] content)
-        => ReadInline(codec, content).ToDom();
 
     // Conflict checks are not graph hand-offs. Compare the canonical logical
     // encoding only when duplicate declarations actually need to be compared.
@@ -112,23 +99,24 @@ static class ExecutableBirCodec
         foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1 })
         {
             var prepared = (BirCallInline)ReadExpression(codec,
-                EncodeExpressionDom(codec, preparedCall.ToDom()));
+                EncodeExpression(codec, preparedCall));
             if (prepared.Recvs.Value.DispatchOwnerTypeArgs.Value[0] != frame
                 || prepared.PreparedDefaults.Value.Length != 2 || prepared.PreparedDefaults.Value[0] != null
                 || prepared.PreparedDefaults.Value[1] is not BirLocal { Name.Value: "earlier" })
                 throw new InvalidOperationException("Executable carrier lost prepared default or dispatch owner facts");
-            var capture = (BirNewClosure)ReadExpression(codec, EncodeExpressionDom(codec, captured.ToDom()));
+            var capture = (BirNewClosure)ReadExpression(codec, EncodeExpression(codec, captured));
             if (capture.SynthClass.Value.OuterTypeParamCount.Value != 2
                 || capture.SynthClass.Value.TypeParams.Value.Length != 2)
                 throw new InvalidOperationException("Executable carrier lost a closure's enclosing generic frame");
         }
-        var outgoing = source.ToDom();
+        var outgoing = (BirInlinePayload)source.DeepClone();
         MaterializedBirPayload.HideSourceSpans(outgoing);
-        var hidden = ReadInlineDom(Codec, EncodeInlineDom(Codec, outgoing));
-        var defaultAttribute = hidden["params"][1]["attrs"][0].AsObject();
-        if (DefaultBirCarrier.Decode(defaultAttribute)["stmts"][0]["span"] != null
+        var hidden = ReadInline(Codec, EncodeInline(Codec, outgoing));
+        var defaultAttribute = hidden.Params.Value[1].Attrs.Value[0];
+        if (DefaultBirCarrier.Decode(defaultAttribute) is not BirValueBlock {
+                Stmts.Value: [BirSourcePoint { Span.IsPresent: false }] }
             || sourceDefault.Stmts.Value[0] is not BirSourcePoint { Span.HasValue: true }
-            || defaultAttribute["args"][1]["value"].GetValue<string>() != Codec)
+            || defaultAttribute.Args.Value[1] is not BirConstant { Value.Value: BirLiteral.TextLiteral { Value: Codec } })
             throw new InvalidOperationException("Executable carrier rewrote source ownership or lost nested codec identity");
         foreach (var literal in new BirLiteral[] { new Float32Literal(unchecked((int)0x80000000)),
                      new Float64Literal(unchecked((long)0x7ff8000000000042UL)),

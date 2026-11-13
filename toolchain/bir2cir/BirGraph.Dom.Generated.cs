@@ -4103,6 +4103,7 @@ internal static class BirGraphDom
                 case "body": break;
                 case "loopId": break;
                 case "label": break;
+                case "rangeType": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirForRange at {source.GetPath()}");
             }
         return new BirForRange
@@ -4116,6 +4117,7 @@ internal static class BirGraphDom
             Body = Field<IBirStatement[]>(fields, "body", value => ((JsonArray)value!).Select(item0 => ReadBirStatement(item0!)).ToArray()),
             LoopId = Field<int>(fields, "loopId", value => value!.GetValue<int>()),
             Label = Field<string>(fields, "label", value => value!.GetValue<string>()),
+            RangeType = Field<TypeNode>(fields, "rangeType", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 
@@ -4807,6 +4809,7 @@ internal static class BirGraphDom
                 case "currentErasedRef": break;
                 case "moveNextRef": break;
                 case "label": break;
+                case "erasedEnumeration": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirForEach at {source.GetPath()}");
             }
         return new BirForEach
@@ -4822,6 +4825,7 @@ internal static class BirGraphDom
             CurrentErasedRef = Field<BirMemberReference>(fields, "currentErasedRef", value => ReadBirMemberReference(value!)),
             MoveNextRef = Field<BirMemberReference>(fields, "moveNextRef", value => ReadBirMemberReference(value!)),
             Label = Field<string>(fields, "label", value => value!.GetValue<string>()),
+            ErasedEnumeration = Field<bool>(fields, "erasedEnumeration", value => value!.GetValue<bool>()),
         };
     }
 

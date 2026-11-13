@@ -406,9 +406,9 @@ var parameter = frozen.Methods.Value[0].Params.Value[0];
 if (!defaults.Methods.Value[0].Params.Value[0].DefaultBir.HasValue || parameter.DefaultBir.IsPresent
     || SuspendShapeAnalyzer.Analyze(frozen).FunctionCount != 1)
     throw new Exception("Freezing source defaults changed original ownership or the declaration inventory");
-var carrier = parameter.Attrs.Value[0].ToDom();
-if (!JsonNode.DeepEquals(DefaultBirCarrier.Decode(carrier),
-    ((BirGraphValue)defaults.Methods.Value[0].Params.Value[0].DefaultBir.Value.Body.Value).ToDom()))
+var carrier = parameter.Attrs.Value[0];
+if (!((BirGraphValue)DefaultBirCarrier.Decode(carrier)).StructurallyEquals(
+    (BirGraphValue)defaults.Methods.Value[0].Params.Value[0].DefaultBir.Value.Body.Value))
     throw new Exception("The typed source default changed its frame or float payload while freezing");
 
 var enumMethods = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
