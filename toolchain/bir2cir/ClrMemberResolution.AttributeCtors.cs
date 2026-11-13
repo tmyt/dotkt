@@ -14,55 +14,38 @@
 // compilation, which has no assembly identity to reference yet.
 
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
 static partial class ClrMemberResolution
 {
-    // The keys an applied attribute list rides on. A RETURN-position attribute lives under its own key, which
-    // is how 496 of them went unresolved while the walk looked convincingly complete: `attrs` covers a type, a
-    // member and a parameter, and a return is none of those. Naming the carriers is what makes the next one an
-    // entry here rather than a silent omission.
-    static readonly string[] AttributeCarriers = { "attrs", "retAttrs", "assemblyAttrs" };
-
     /// <summary>
     /// Resolve every applied EXTERNAL attribute's constructor and stamp it. Runs over the whole document
     /// because an attribute rides on any declaration — a type, a member, a parameter, a return.
     /// </summary>
-    public static void ResolveAttributeCtors(JsonNode root, ReferenceMetadataIndex refs)
+    public static void ResolveAttributeCtors(BirFileDeclaration root, ReferenceMetadataIndex refs, string file)
     {
         // One index per run; assigning rather than coalescing, for the reason MemberRefOf's own note gives.
         _refs = refs ?? throw new ArgumentNullException(nameof(refs));
-        WalkAttrs(root);
+        TypedAttributeBinding.Visit(root, attribute => {
+            ResolveAppliedAttribute(attribute);
+            // This lane follows the owning frontier. The earlier DOM crossing
+            // check can no longer inspect a constructor first selected here.
+            if (attribute.MemberRef.HasValue)
+                ForeignNullableGenericCrossing.CheckParameters(attribute.MemberRef.Value.ParameterTypes.OrEmpty(),
+                    file, "<unknown>", ".ctor");
+        });
     }
 
-    static void WalkAttrs(JsonNode node)
+    static void ResolveAppliedAttribute(BirAttribute attr)
     {
-        switch (node)
-        {
-            case JsonObject obj:
-                foreach (var carrier in AttributeCarriers)
-                    if (obj[carrier] is JsonArray attrs)
-                        foreach (var entry in attrs)
-                            if (entry is JsonObject attr) ResolveAppliedAttribute(attr);
-                foreach (var kv in obj) WalkAttrs(kv.Value);
-                break;
-            case JsonArray arr:
-                foreach (var item in arr) WalkAttrs(item);
-                break;
-        }
-    }
-
-    static void ResolveAppliedAttribute(JsonObject attr)
-    {
-        if ((attr["attrExternal"] as JsonValue)?.GetValue<bool>() != true) return;
-        if (attr.ContainsKey("memberRef")) return;
-        if (TypeJson.Read(attr["attr"]) is not TypeNode.Fqn attrFqn) return;
-        var assembly = (attr["attrAssembly"] as JsonValue)?.GetValue<string>();
-        var arguments = (attr["argTypes"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>();
+        if (!attr.AttrExternal.OrDefault() || attr.MemberRef.IsPresent) return;
+        if (attr.Attr.OrDefault() is not TypeNode.Fqn attrFqn) return;
+        var assembly = attr.AttrAssembly.OrDefault();
+        var arguments = attr.ArgTypes.OrEmpty();
         if (ResolveAppliedAttributeCtor(attrFqn, assembly, arguments) is { } selected)
-            attr["memberRef"] = selected.Write();
+            attr.MemberRef = BirMemberReference.FromPhysical(selected);
     }
 
     internal static AttributeApplication ResolveAttributeCtor(AttributeApplication attribute, ReferenceMetadataIndex refs)
