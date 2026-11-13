@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // TOP-LEVEL REIFIED ENUM INTRINSICS (#73). kotc emits the FAITHFUL top-level call for `enumValues<T>()` /
 // `enumValueOf<T>(name)` — a plain
@@ -27,15 +29,13 @@ static class EnumIntrinsicLowering
 
     // Collect the local RICH-enum type names (a `kind:"class"` decl carrying the faithful `enumRich:true` marker),
     // across ALL input files (a cross-file `enumValues<E>()` may name an enum declared in another input).
-    public static HashSet<string> CollectRichEnums(IEnumerable<JsonNode> roots)
+    public static HashSet<string> CollectRichEnums(IEnumerable<BirFileDeclaration> roots)
     {
         var set = new HashSet<string>(System.StringComparer.Ordinal);
         foreach (var root in roots)
-            if (root is JsonObject ro && ro["types"] is JsonArray ts)
-                foreach (var t in ts)
-                    if (t is JsonObject to && Str(to["kind"]) == "class"
-                        && (to["enumRich"] as JsonValue)?.TryGetValue<bool>(out var r) == true && r
-                        && Str(to["name"]) is string n)
+                foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>())
+                    if (type.Kind.OrDefault() == "class" && type.EnumRich.OrDefault()
+                        && type.Name.OrDefault() is string n)
                         set.Add(n);
         return set;
     }
@@ -130,6 +130,7 @@ static class EnumIntrinsicLowering
 
     internal static void SelfTest()
     {
+        ClrEnumLowering.SelfTest();
         var parameter = new TypeNode.Tv("method", 0);
         var genericValues = new JsonObject { ["k"] = "enumValues", ["type"] = TypeJson.Write(parameter) };
         var noRichFields = new Dictionary<string, (string Name, string Ordinal)>();
@@ -140,10 +141,14 @@ static class EnumIntrinsicLowering
             || Str(genericValues["e"]?["args"]?[0]?["k"]) != "classRef"
             || TypeJson.Read(genericValues["e"]?["args"]?[0]?["type"]) != parameter)
             throw new System.InvalidOperationException("Generic enum values lost their ordered runtime operation or exact type frame");
-        var declaration = JsonNode.Parse("""
-            {"types":[{"kind":"enum","name":"Ordinary","entries":[
-                {"name":"FIRST","ordinal":0},{"name":"SECOND","ordinal":1}]}]}
-            """);
+        var declaration = new BirFileDeclaration {
+            Types = new IBirTypeDeclaration[] { new BirEnumDefinition {
+                Kind = "enum", Name = "Ordinary", Entries = new[] {
+                    new BirEnumEntryDeclaration { Name = "FIRST", Ordinal = 0 },
+                    new BirEnumEntryDeclaration { Name = "SECOND", Ordinal = 1 },
+                },
+            } },
+        };
         var physicalEnums = ClrEnumLowering.Apply(new[] { declaration }, out var parseEnums);
         var ordinal = new JsonObject {
             ["k"] = "enumOrdinal", ["type"] = TypeJson.Fqn("Ordinary"),

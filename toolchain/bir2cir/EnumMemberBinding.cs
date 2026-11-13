@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // ENUM inherited-member binding (C2 boxed-primitive dual-representation).
 //
@@ -33,14 +35,12 @@ static class EnumMemberBinding
     // (`E.A.toString()`) may live in a DIFFERENT file from the `enum class E` declaration, while ilemit's emitted-type
     // table is assembly-wide (a same-assembly cross-file `E.ToString` still dead-ends). A RICH enum is `kind:"class"` +
     // `enumRich:true` (a singleton-field reference class that DOES synthesize its own toString) — deliberately excluded.
-    public static HashSet<string> CollectBasicEnums(IEnumerable<JsonNode> roots)
+    public static HashSet<string> CollectBasicEnums(IEnumerable<BirFileDeclaration> roots)
     {
         var set = new HashSet<string>(System.StringComparer.Ordinal);
         foreach (var root in roots)
-            if (root is JsonObject ro && ro["types"] is JsonArray ts)
-                foreach (var t in ts)
-                    if (t is JsonObject to && (to["kind"] as JsonValue)?.TryGetValue<string>(out var kind) == true
-                        && kind == "enum" && (to["name"] as JsonValue)?.TryGetValue<string>(out var n) == true)
+                foreach (var type in root.Types.OrEmpty().OfType<BirEnumDefinition>())
+                    if (type.Kind.OrDefault() == "enum" && type.Name.OrDefault() is string n)
                         set.Add(n);
         return set;
     }

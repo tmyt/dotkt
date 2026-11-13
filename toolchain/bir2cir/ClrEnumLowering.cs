@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Numerics;
 using System.Diagnostics.CodeAnalysis;
-using System.Text.Json.Nodes;
+using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 sealed record BasicEnumEntry(string Name, int Ordinal, string PhysicalValue);
 sealed record BasicEnumMetadata(string Underlying, IReadOnlyList<BasicEnumEntry> Entries);
@@ -10,7 +12,7 @@ sealed record BasicEnumMetadata(string Underlying, IReadOnlyList<BasicEnumEntry>
 // BIR carries ordered Kotlin enum declarations; @ClrEnum additionally supplies an underlying type and constants. This is the
 // Kotlin-to-CLR boundary: validate that producer fact defensively, select the legal CLR underlying type, author the
 // physical literal values, and retain the ordered map for operations and trusted round-trip metadata.
-static class ClrEnumLowering
+static partial class ClrEnumLowering
 {
     static readonly Dictionary<string, (string Clr, BigInteger Min, BigInteger Max)> Underlying = new()
     {
@@ -24,7 +26,7 @@ static class ClrEnumLowering
         ["kotlin.ULong"] = ("System.UInt64", ulong.MinValue, ulong.MaxValue),
     };
 
-    public static Dictionary<string, BasicEnumMetadata> Apply(IEnumerable<JsonNode> roots,
+    public static Dictionary<string, BasicEnumMetadata> Apply(IEnumerable<BirFileDeclaration> roots,
         out Dictionary<string, BasicEnumMetadata> parseMetadata)
     {
         // Parsing needs every declaration name; only explicit physical values need ordinal remapping.
@@ -32,53 +34,51 @@ static class ClrEnumLowering
         parseMetadata = new Dictionary<string, BasicEnumMetadata>(StringComparer.Ordinal);
         foreach (var root in roots)
         {
-            if (root is not JsonObject ro || ro["types"] is not JsonArray types) continue;
-            foreach (var type in types.OfType<JsonObject>())
+            foreach (var type in root.Types.OrEmpty().OfType<BirEnumDefinition>())
             {
-                if (Str(type["kind"]) != "enum") continue;
-                if (type["clrEnum"] is not JsonObject fact)
+                if (type.Kind.OrDefault() != "enum") continue;
+                if (!type.ClrEnum.HasValue)
                 {
                     // Ordinary Kotlin enums use their semantic ordinal as the Int32 literal value. Publish that
                     // producer-owned map too: a DLL consumer must not rediscover Kotlin order from FieldDef layout.
                     var ordinaryEntries = new List<BasicEnumEntry>();
-                    foreach (var node in type["entries"].AsArray())
+                    foreach (var entry in type.Entries.Value)
                     {
-                        var entry = node.AsObject();
-                        var ordinal = entry["ordinal"].GetValue<int>();
+                        var ordinal = entry.Ordinal.Value;
                         var value = ordinal.ToString(CultureInfo.InvariantCulture);
-                        entry["underlying"] = "System.Int32";
-                        entry["physicalValue"] = value;
-                        ordinaryEntries.Add(new BasicEnumEntry(entry["name"].GetValue<string>(), ordinal, value));
+                        entry.Underlying = "System.Int32";
+                        entry.PhysicalValue = value;
+                        ordinaryEntries.Add(new BasicEnumEntry(entry.Name.Value, ordinal, value));
                     }
                     StampMetadata(type, "System.Int32", ordinaryEntries);
-                    parseMetadata.Add(type["name"].GetValue<string>(), new BasicEnumMetadata("System.Int32", ordinaryEntries));
+                    parseMetadata.Add(type.Name.Value, new BasicEnumMetadata("System.Int32", ordinaryEntries));
                     continue;
                 }
-                var owner = Str(type["name"]);
+                var owner = type.Name.OrDefault();
                 if (owner == null) Fail(type, "an explicit enum has no name");
-                var kotlinUnderlying = TypeJson.OwnerName(fact["underlying"]);
+                var kotlinUnderlying = (type.ClrEnum.Value.Underlying.OrDefault() as TypeNode.Fqn)?.Name;
                 if (kotlinUnderlying == null || !Underlying.TryGetValue(kotlinUnderlying, out var physical))
                 {
                     Fail(type, $"'{owner}' has an unsupported underlying Kotlin type");
                     physical = default;
                 }
-                var entries = type["entries"] as JsonArray;
+                var entries = type.Entries.OrDefault();
                 if (entries == null)
                     Fail(type, $"'{owner}' has no entry map");
 
                 var ordered = new List<BasicEnumEntry>();
                 var names = new HashSet<string>(StringComparer.Ordinal);
                 var values = new HashSet<BigInteger>();
-                for (var ordinal = 0; ordinal < entries.Count; ordinal++)
+                for (var ordinal = 0; ordinal < entries.Length; ordinal++)
                 {
-                    var entry = entries[ordinal] as JsonObject;
-                    var name = entry == null ? null : Str(entry["name"]);
-                    var text = entry == null ? null : Str(entry["value"]);
+                    var entry = entries[ordinal];
+                    var name = entry?.Name.OrDefault();
+                    var text = entry?.Value.OrDefault();
                     var value = default(BigInteger);
                     var parsed = text != null && BigInteger.TryParse(
                         text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
                     if (entry == null || name == null || !names.Add(name)
-                        || Int(entry["ordinal"]) != ordinal || !parsed)
+                        || !entry.Ordinal.HasValue || entry.Ordinal.Value != ordinal || !parsed)
                     {
                         Fail(type, $"'{owner}' has a malformed ordered entry at index {ordinal}");
                         value = default;
@@ -89,13 +89,13 @@ static class ClrEnumLowering
                         Fail(type, $"'{owner}' has duplicate physical enum value {text}; aliases are not supported");
 
                     var normalized = value.ToString(CultureInfo.InvariantCulture);
-                    entry.Remove("value");
-                    entry["underlying"] = physical.Clr;
-                    entry["physicalValue"] = normalized;
+                    entry.Value = default;
+                    entry.Underlying = physical.Clr;
+                    entry.PhysicalValue = normalized;
                     ordered.Add(new BasicEnumEntry(name, ordinal, normalized));
                 }
 
-                type.Remove("clrEnum");
+                type.ClrEnum = default;
                 StampMetadata(type, physical.Clr, ordered);
                 RemoveSourceMarker(type);
                 var metadata = new BasicEnumMetadata(physical.Clr, ordered);
@@ -107,44 +107,37 @@ static class ClrEnumLowering
         return result;
     }
 
-    static void StampMetadata(JsonObject type, string underlying, IReadOnlyList<BasicEnumEntry> entries)
+    static void StampMetadata(BirEnumDefinition type, string underlying, IReadOnlyList<BasicEnumEntry> entries)
     {
-        type["underlying"] = TypeJson.Fqn(underlying);
-        type["basicEnum"] = new JsonObject
+        type.Underlying = new TypeNode.Fqn(underlying);
+        type.BasicEnum = new BirBasicEnumCarrier
         {
-            ["underlying"] = underlying,
-            ["entries"] = new JsonArray(entries.Select(entry => (JsonNode)new JsonObject
+            Underlying = underlying,
+            Entries = entries.Select(entry => new BirBasicEnumCarrierEntry
             {
-                ["name"] = entry.Name,
-                ["ordinal"] = entry.Ordinal,
-                ["physicalValue"] = entry.PhysicalValue,
-            }).ToArray()),
+                Name = entry.Name,
+                Ordinal = entry.Ordinal,
+                PhysicalValue = entry.PhysicalValue,
+            }).ToArray(),
         };
     }
 
-    static void RemoveSourceMarker(JsonObject type)
+    static void RemoveSourceMarker(BirEnumDefinition type)
     {
-        if (type["attrs"] is not JsonArray attrs) return;
-        foreach (var attr in attrs.OfType<JsonObject>().Where(attr =>
-                     TypeJson.OwnerName(attr["attr"]) == "kotlin.clr.ClrEnum").ToList())
-            attrs.Remove(attr);
+        if (!type.Attrs.HasValue) return;
+        type.Attrs = type.Attrs.Value.Where(attr =>
+            attr.Attr.OrDefault() is not TypeNode.Fqn { Name: "kotlin.clr.ClrEnum" }).ToArray();
     }
 
-    static int? Int(JsonNode node) =>
-        (node as JsonValue)?.TryGetValue<int>(out var value) == true ? value : null;
-
-    static string Str(JsonNode node) =>
-        (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
-
     [DoesNotReturn]
-    static void Fail(JsonObject type, string message)
+    static void Fail(BirEnumDefinition type, string message)
     {
         var prefix = "";
-        if (type["pos"] is JsonObject pos && Str(pos["f"]) is string file)
+        if (type.Pos.OrDefault() is { } pos && pos.F.OrDefault() is string file)
         {
             prefix = file;
-            if (Int(pos["l"]) is int line) prefix += $":{line}";
-            if (Int(pos["c"]) is int column) prefix += $":{column}";
+            if (pos.L.HasValue) prefix += $":{pos.L.Value}";
+            if (pos.C.HasValue) prefix += $":{pos.C.Value}";
             prefix += ": ";
         }
         throw new InvalidOperationException(prefix + "bir2cir: malformed @ClrEnum BIR: " + message);

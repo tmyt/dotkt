@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // A Kotlin enum entry is semantic declaration identity: owner + entry name. Local and referenced rich Kotlin enums carry an
 // explicit producer map from that identity to its singleton field; a basic local enum uses its contiguous ordinal,
@@ -7,15 +9,14 @@ using DotKt.Bir;
 // those Kotlin identities to the selected reference DLL's physical representation.
 static class EnumValueLowering
 {
-    public static IReadOnlyDictionary<string, (string Name, string Ordinal)> CollectRichInstanceFields(IEnumerable<JsonNode> roots)
+    public static IReadOnlyDictionary<string, (string Name, string Ordinal)> CollectRichInstanceFields(IEnumerable<BirFileDeclaration> roots)
     {
         var fields = new Dictionary<string, (string Name, string Ordinal)>(StringComparer.Ordinal);
         foreach (var root in roots)
-            if (root is JsonObject module && module["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>())
-                    if (type["enumRich"]?.GetValue<bool>() == true)
-                        fields.Add(type["name"].GetValue<string>(),
-                            (type["richEnum"]["name"].GetValue<string>(), type["richEnum"]["ordinal"].GetValue<string>()));
+                foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>())
+                    if (type.EnumRich.OrDefault())
+                        fields.Add(type.Name.Value,
+                            (type.RichEnum.Value.Name.Value, type.RichEnum.Value.Ordinal.Value));
         return fields;
     }
 
@@ -250,11 +251,15 @@ static class EnumValueLowering
 
     internal static void SelfTest()
     {
-        var declaration = JsonNode.Parse("""
-            {"types":[{"kind":"class","name":"MappedRich","enumRich":true,
-              "richEnum":{"entries":[],"name":"display","ordinal":"rank","values":"all","valueOf":"parse"}}]}
-            """);
-        var useSite = JsonNode.Parse("""{"types":[]}""");
+        var declaration = new BirFileDeclaration {
+            Types = new IBirTypeDeclaration[] { new BirClassDefinition {
+                Kind = "class", Name = "MappedRich", EnumRich = true,
+                RichEnum = new BirRichEnumDeclaration {
+                    Entries = Array.Empty<BirRichEnumEntry>(), Name = "display", Ordinal = "rank", Values = "all", ValueOf = "parse",
+                },
+            } },
+        };
+        var useSite = new BirFileDeclaration { Types = Array.Empty<IBirTypeDeclaration>() };
         var fields = CollectRichInstanceFields(new[] { useSite, declaration });
         var refs = ReferenceMetadataIndex.Build(System.Array.Empty<string>());
         foreach (var propertyCall in new[] { false, true })
