@@ -404,6 +404,17 @@
       "properties": { "index": { "type": "integer" }, "body": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["index", "body"], "additionalProperties": false
     },
+    "birConstructorAdapterPayload": {
+      "type": "object", "x-dotkt-model": { "name": "BirConstructorAdapterPayload", "domain": "birLoweringValues", "executablePayload": true },
+      "properties": {
+        "parameters": { "type": "array", "items": { "type": "string" } },
+        "signature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "statements": { "type": "array", "items": { "$ref": "#/$defs/birStatementNode" } },
+        "arguments": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
+        "terminalSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+      },
+      "required": ["parameters", "signature", "statements", "arguments", "terminalSignature"], "additionalProperties": false
+    },
     "birInlinePayload": {
       "type": "object", "x-dotkt-model": { "name": "BirInlinePayload", "domain": "birLoweringValues", "executablePayload": true, "loweringProperties": { "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true } } },
       "properties": {

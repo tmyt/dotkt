@@ -1212,6 +1212,29 @@ internal static class BirGraphDom
         };
     }
 
+    internal static BirConstructorAdapterPayload ReadBirConstructorAdapterPayload(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "parameters": break;
+                case "signature": break;
+                case "statements": break;
+                case "arguments": break;
+                case "terminalSignature": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirConstructorAdapterPayload at {source.GetPath()}");
+            }
+        return new BirConstructorAdapterPayload
+        {
+            Parameters = Field<string[]>(fields, "parameters", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<string>()).ToArray()),
+            Signature = Field<TypeNode[]>(fields, "signature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            Statements = Field<IBirStatement[]>(fields, "statements", value => ((JsonArray)value!).Select(item0 => ReadBirStatement(item0!)).ToArray()),
+            Arguments = Field<IBirExpression[]>(fields, "arguments", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
+            TerminalSignature = Field<TypeNode[]>(fields, "terminalSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+        };
+    }
+
     internal static BirInlinePayload ReadBirInlinePayload(JsonNode source)
     {
         var fields = source.AsObject();

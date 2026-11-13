@@ -81,11 +81,14 @@ public static class ValueStability
     {
         if (n is not JsonObject o) return false;
         var kind = Str(o["k"]);
-        return kind is "const" or "this" or "bindRef"
+        return IsReReadable(kind,
             // The physical CIR enum form is an underlying literal in a declared enum slot. Do not classify a semantic
             // BIR enum entry here: a referenced rich enum may still lower to a static singleton-field read.
-            || (kind == "enumValue" && Str(o["underlying"]) != null && Str(o["physicalValue"]) != null);
+            kind == "enumValue" && Str(o["underlying"]) != null && Str(o["physicalValue"]) != null);
     }
+
+    public static bool IsReReadable(string? kind, bool physicalEnum = false) =>
+        kind is "const" or "this" or "bindRef" || kind == "enumValue" && physicalEnum;
 
     /// <summary>
     /// Q2 — is EVALUATING this value unobservable, so a binding NOTHING reads may be dropped instead of evaluated
@@ -102,7 +105,9 @@ public static class ValueStability
     /// one because the emitted shape has no slot for its value would delete a Kotlin side effect. The cost of being
     /// wrong the other way is one local nobody reads.
     /// </remarks>
-    public static bool IsDroppable(JsonNode? n) => n is JsonObject o && Str(o["k"]) switch
+    public static bool IsDroppable(JsonNode? n) => n is JsonObject o && IsDroppable(Str(o["k"]));
+
+    public static bool IsDroppable(string? kind) => kind switch
     {
         "const" or "this" or "local" or "bindRef" or "default" or "classRef" => true,
         _ => false,

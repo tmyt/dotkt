@@ -13,6 +13,7 @@ namespace DotKt.Bir.Lowering;
 internal abstract record BirGraphValue
 {
     public virtual TypeNode? ResultTypeStamp => null;
+    public virtual TypeNode? CallBindingTypeHint => null;
     public abstract void VisitChildren(Action<BirGraphValue> visit);
     public abstract void VisitChildSlots(Action<BirGraphSlot> visit);
     // Construction operands execute in the caller; a nested declaration's body
@@ -25,12 +26,37 @@ internal abstract record BirGraphValue
         walk(this);
     }
     public abstract BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite);
+    // Snapshot ownership is stronger than Rewrite: every mutable graph/vector
+    // occurrence, including opaque byte arrays and nested type arguments, copies.
+    public abstract BirGraphValue DeepClone();
+    // Structured type slots only. Frozen source facts encoded as strings in the
+    // maintained schema are opaque to this operation, as they were on the wire.
+    public abstract BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite);
     public abstract void WriteJson(Utf8JsonWriter writer);
     // Temporary frontier to the not-yet-migrated owning passes. It builds
     // nodes directly: no serialized child, parse, or generic extension-data bag.
     public abstract JsonObject ToDom();
     public BirGraphValue Rewrite(Func<BirGraphValue, BirGraphValue> rewrite)
         => rewrite(RewriteChildren(child => child.Rewrite(rewrite)));
+
+    protected static TypeNode CopyType(TypeNode type) => type switch {
+        TypeNode.Fqn value => value with {
+            Args = value.Args?.Select(CopyType).ToArray(),
+            Classifier = value.Classifier is { } classifier
+                ? classifier with { OwnerPath = classifier.OwnerPath.ToArray() } : null,
+        },
+        TypeNode.Fn value => value with { Ret = CopyType(value.Ret), Params = value.Params.Select(CopyType).ToArray(),
+            Recv = value.Recv is { } receiver ? CopyType(receiver) : null, Ctx = value.Ctx?.Select(CopyType).ToArray() },
+        TypeNode.FnPtr value => value with { Ret = CopyType(value.Ret), Params = value.Params.Select(CopyType).ToArray() },
+        TypeNode.Projection value => value with { Of = CopyType(value.Of) },
+        TypeNode.Nullable value => value with { Of = CopyType(value.Of) },
+        TypeNode.Oblivious value => value with { Of = CopyType(value.Of) },
+        TypeNode.Array value => value with { Elem = CopyType(value.Elem) },
+        TypeNode.ByRef value => value with { Of = CopyType(value.Of) },
+        TypeNode.Ptr value => value with { Of = CopyType(value.Of) },
+        TypeNode.Mod value => value with { M = CopyType(value.M), Of = CopyType(value.Of) },
+        _ => type,
+    };
 }
 
 internal abstract record BirGraphNode : BirGraphValue

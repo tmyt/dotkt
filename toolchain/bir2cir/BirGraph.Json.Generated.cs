@@ -2780,6 +2780,56 @@ internal static partial class BirGraphJson
         };
     }
 
+    internal static BirConstructorAdapterPayload ReadBirConstructorAdapterPayload(ref Utf8JsonReader reader)
+    {
+        Require(reader, JsonTokenType.StartObject);
+        ulong seen = 0;
+        OptionalField<string[]> field0 = default;
+        OptionalField<TypeNode[]> field1 = default;
+        OptionalField<IBirStatement[]> field2 = default;
+        OptionalField<IBirExpression[]> field3 = default;
+        OptionalField<TypeNode[]> field4 = default;
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            Require(reader, JsonTokenType.PropertyName);
+            var key = reader.GetString();
+            if (!reader.Read()) throw new FormatException();
+            switch (key)
+            {
+                case "parameters":
+                    Seen(ref seen, 1UL << 0);
+                    field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<string[]>.Null : OptionalField<string[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadString(ref reader)));
+                    break;
+                case "signature":
+                    Seen(ref seen, 1UL << 1);
+                    field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
+                    break;
+                case "statements":
+                    Seen(ref seen, 1UL << 2);
+                    field2 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirStatement(ref reader)));
+                    break;
+                case "arguments":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression[]>.Null : OptionalField<IBirExpression[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirExpression(ref reader)));
+                    break;
+                case "terminalSignature":
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
+                    break;
+                default: throw new FormatException($"Unknown lowering field {key}");
+            }
+        }
+        Require(reader, JsonTokenType.EndObject);
+        return new BirConstructorAdapterPayload
+        {
+            Parameters = field0,
+            Signature = field1,
+            Statements = field2,
+            Arguments = field3,
+            TerminalSignature = field4,
+        };
+    }
+
     internal static BirInlinePayload ReadBirInlinePayload(ref Utf8JsonReader reader)
     {
         Require(reader, JsonTokenType.StartObject);
