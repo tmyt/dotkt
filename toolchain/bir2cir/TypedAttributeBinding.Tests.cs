@@ -61,16 +61,18 @@ static partial class TypedAttributeBinding
         var nullable = new TypeNode.Fqn("System.Nullable`1", new[] { integer });
         ForeignNullableGenericCrossing.CheckParameters(new[] { nullable }, "attributes", "probe.Owner", "method");
         var rejected = false;
+        var crossingAttribute = Bound();
+        crossingAttribute.MemberRef.Value.ParameterTypes = new TypeNode[] { new TypeNode.Array(nullable) };
         try
         {
-            ForeignNullableGenericCrossing.CheckParameters(new TypeNode[] { new TypeNode.Array(nullable) },
-                "attributes", "probe.Owner", "method");
+            Apply(new BirFileDeclaration { AssemblyAttrs = new[] { crossingAttribute } },
+                ReferenceMetadataIndex.Build(Array.Empty<string>()), "attributes");
         }
         catch (InvalidOperationException exception) when (exception.Message.Contains("parameter 0", StringComparison.Ordinal))
         {
             rejected = true;
         }
-        if (!rejected) throw new InvalidOperationException("Shared foreign-parameter validation lost nullable array crossings");
+        if (!rejected) throw new InvalidOperationException("Applied attribute binding lost foreign nullable-parameter validation");
         Console.WriteLine("[typed applied attributes] self-test OK (all carriers, exact identity/presence, opaque payloads, shared crossing policy)");
     }
 }
