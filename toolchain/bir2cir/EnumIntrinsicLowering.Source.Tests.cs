@@ -60,6 +60,17 @@ static partial class EnumIntrinsicLowering
         if (BirNodeType.Of(mappedValues) != new TypeNode.Array(rich) || BirNodeType.Of(mappedParse) != rich
             || ArrayConstructionLowering.ArrayElementOf(BirGraphStaticType.Surface((IBirExpression)mappedValues, new Dictionary<string, TypeNode>())) != rich)
             throw new InvalidOperationException("Typed rich enum API lost its exact array/result type before array lowering");
+        // Exercise the actual continuing owner, rather than only the static
+        // type helper that supplies its element derivation.
+        var arraySource = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
+            Name = "enumerate", Static = true, Params = Array.Empty<BirParameter>(),
+            Ret = new TypeNode.Fqn("kotlin.Unit"), Body = new IBirStatement[] {
+                new BirForArray { Var = "entry", Array = mappedValues, Body = Array.Empty<IBirStatement>() },
+            },
+        } } };
+        ArrayConstructionLowering.Apply(arraySource, refs);
+        if (((BirForArray)arraySource.Methods.Value[0].Body.Value[0]).Elem.Value != rich)
+            throw new InvalidOperationException("The continuing array owner lost the generated rich API's element type");
         Console.WriteLine("[enum intrinsic frame] self-test OK (owning declarations, shadow/owner selection, ordinary frame, rich descriptors)");
     }
 }
