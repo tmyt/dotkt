@@ -58,6 +58,7 @@ static class Bir2Cir
                 TypedPhysicalOperandNormalization.SelfTest();
                 TypedPhysicalDelegateAdapter.SelfTest();
                 ClrMemberResolution.SelfTestTypedDelegateSlots();
+                ClrMemberResolution.SelfTestTypedInterfaceSlots();
                 BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
@@ -1536,21 +1537,20 @@ sealed class Pipeline
             // the exact memberRef just resolved; fields keep their distinct load/store representation.
             ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(new[] { lowered });
             ClrMemberResolution.ResolveWellKnown(lowered, refs);
-            ClrMemberResolution.ResolveInterfaceSlots(lowered, loweredRoots.Select(file => file.Root), refs);
         }
 
         var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
             root["assemblyAttrs"] is JsonArray { Count: > 0 });
         // Every remaining owner consumes typed occurrences. Enter once before
-        // delegate construction and physical value/storage edges; no pass below
-        // returns the graph to DOM.
+        // interface-slot resolution, delegate construction and physical value
+        // edges; no pass below returns the graph to DOM.
         var physicalRoots = loweredRoots.Select(file =>
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         loweredRoots.Clear();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
-        // Every file's interface-slot resolution above needs the complete module
-        // declaration graph. Consume only the final per-operation binding facts
-        // after that graph has entered its one owning typed continuation.
+        // Interface obligations resolve against the complete final declaration
+        // graph, using the same owning records as the following consumers.
+        ClrMemberResolution.ResolveInterfaceSlots(physicalDocuments, refs);
         foreach (var (root, file) in physicalRoots)
         {
             // All member and interface-slot resolution is complete module-wide.

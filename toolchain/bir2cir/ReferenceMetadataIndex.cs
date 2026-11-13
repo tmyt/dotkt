@@ -8660,14 +8660,26 @@ sealed partial class ReferenceMetadataIndex
 
     internal static JsonNode GenericParamDeclaration(Type gp)
     {
-        var declaration = new JsonObject { ["name"] = gp.Name };
-        var constraints = new JsonArray();
+        var source = GenericParamSourceDeclaration(gp);
+        var declaration = new JsonObject { ["name"] = source.Name.Value };
+        if (source.Constraints.HasValue)
+            declaration["constraints"] = new JsonArray(source.Constraints.Value.Select(TypeJson.Write).ToArray());
+        if (source.Variance.HasValue) declaration["variance"] = source.Variance.Value;
+        if (source.SpecialConstraints.HasValue)
+            declaration["specialConstraints"] = new JsonArray(source.SpecialConstraints.Value.Select(value => (JsonNode)JsonValue.Create(value)).ToArray());
+        return declaration;
+    }
+
+    internal static BirTypeParameter GenericParamSourceDeclaration(Type gp)
+    {
+        var declaration = new BirTypeParameter { Name = gp.Name };
+        var constraints = new List<TypeNode>();
         foreach (var constraint in gp.GetGenericParameterConstraints())
             if (DeclarationTypeNode(constraint) is TypeNode node)
-                constraints.Add(TypeJson.Write(NormalizeNestedNames(node)));
-        if (constraints.Count != 0) declaration["constraints"] = constraints;
+                constraints.Add(NormalizeNestedNames(node));
+        if (constraints.Count != 0) declaration.Constraints = constraints.ToArray();
 
-        var special = new JsonArray();
+        var special = new List<string>();
         var attrs = gp.GenericParameterAttributes;
         var variance = (attrs & GenericParameterAttributes.VarianceMask) switch
         {
@@ -8675,12 +8687,12 @@ sealed partial class ReferenceMetadataIndex
             GenericParameterAttributes.Contravariant => "in",
             _ => null,
         };
-        if (variance != null) declaration["variance"] = variance;
+        if (variance != null) declaration.Variance = variance;
         if ((attrs & GenericParameterAttributes.ReferenceTypeConstraint) != 0) special.Add("class");
         if ((attrs & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0) special.Add("struct");
         if ((attrs & GenericParameterAttributes.DefaultConstructorConstraint) != 0) special.Add("new");
         if ((attrs & GenericParameterAttributes.AllowByRefLike) != 0) special.Add("allowsRefStruct");
-        if (special.Count != 0) declaration["specialConstraints"] = special;
+        if (special.Count != 0) declaration.SpecialConstraints = special.ToArray();
         return declaration;
     }
 
