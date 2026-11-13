@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Threading;
-using System.Text.Json.Nodes;
+using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // PRECONDITION / ERROR FAMILY (#73 M6). kotc emits the FAITHFUL top-level call for these stdlib symbols — it no
 // longer bakes the throw/condition. bir2cir SYNTHESIZES the semantics FQN-keyed, reproducing the exact CIR kotc used
@@ -51,151 +53,102 @@ static class PreconditionLowering
         "kotlin.UInt", "kotlin.ULong", "kotlin.UShort", "kotlin.UByte",
     };
 
-    public static void Apply(JsonNode node, ISet<string> localTopLevelFns, bool appBuild)
+    public static void Apply(BirFileDeclaration root, ISet<string> localTopLevelFns, bool appBuild)
     {
-        if (node is JsonObject o)
+        BirGraphValue Walk(BirGraphValue node)
         {
-            foreach (var kv in o) if (kv.Value != null) Apply(kv.Value, localTopLevelFns, appBuild);
-            Rewrite(o, localTopLevelFns, appBuild);
+            if (node is IBirExecutablePayload) return node;
+            node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
+            return node is BirCallStatic call ? Rewrite(call, localTopLevelFns, appBuild) : node;
         }
-        else if (node is JsonArray a)
-        {
-            for (var i = 0; i < a.Count; i++)
-                if (a[i] is JsonNode c)
-                {
-                    Apply(c, localTopLevelFns, appBuild);
-                    if (a[i] is JsonObject co) Rewrite(co, localTopLevelFns, appBuild);
-                }
-        }
+        Walk(root);
     }
 
-    static void Rewrite(JsonObject o, ISet<string> localTopLevelFns, bool appBuild)
+    static BirGraphValue Rewrite(BirCallStatic call, ISet<string> localTopLevelFns, bool appBuild)
     {
-        if (Str(o["k"]) != "callStatic") return;
-        var method = Str(o["method"]);
-        if (method == null) return;
-
-        // COMPILER INTRINSICS (collision-safe names, no user shadow possible) — the exhaustive-when synthetic else and
-        // the uninitialized-property-access throw. kotc emits them faithfully (like ieee754equals) as an intrinsic
-        // call carrying a `kotlin.*` owner; this pass realizes their Kotlin failure semantics as IllegalStateException,
-        // using the intrinsic name as the message. (On this pipeline only noWhenBranchMatchedException actually reaches
-        // here — lateinit lowers to `lateinitGet` — but recognizing both keeps kotc's defensive emission from 0-candidating.)
+        var method = call.Method.OrDefault();
+        if (method == null) return call;
         if (method is "noWhenBranchMatchedException" or "throwUninitializedPropertyAccessException"
-            && TypeJson.OwnerName(o["owner"]) is string iowner && iowner.StartsWith("kotlin", System.StringComparison.Ordinal))
-        {
-            Replace(o, ThrowExpr(NewExc("kotlin.IllegalStateException", method)));
-            return;
-        }
+            && call.Owner.OrDefault() is TypeNode.Fqn owner && owner.Name.StartsWith("kotlin", StringComparison.Ordinal))
+            return ThrowExpr(NewExc("kotlin.IllegalStateException", method));
 
-        // Top-level precondition/error helpers: `callStatic owner:null` (no ownerType). A member call carries ownerType.
-        if (o.ContainsKey("ownerType") || !o.ContainsKey("owner") || o["owner"] != null) return;
-        // A top-level PROPERTY accessor rides the same owner:null shape (`callStatic owner:null method:<propName>
-        // prop:"get"/"set"`, the #81 convention); its bare property name never enters localTopLevelFns (the decl emits
-        // `get_`/`set_`). Exclude it so a user top-level `val error`/`var check`/… is never mistaken for the helper.
-        if (o.ContainsKey("prop")) return;
-        // User top-level `fun <name>(...)` shadow (app build) is NOT the kotlin helper — leave it.
-        if (appBuild && localTopLevelFns.Contains(method)) return;
-
-        var args = o["args"] as JsonArray;
-        var sig = o["sig"] as JsonArray;
-        JsonNode repl;
+        // Presence matters: owner:null is a top-level helper; an absent owner,
+        // member ownerType, or even a null prop marker is not that declaration.
+        if (call.OwnerType.IsPresent || !call.Owner.IsNull || call.Prop.IsPresent
+            || appBuild && localTopLevelFns.Contains(method)) return call;
+        var args = call.Args.OrDefault();
+        var signature = call.Sig.OrDefault();
         switch (method)
         {
             case "TODO":
-                repl = ThrowExpr(NewExc("kotlin.NotImplementedError", "An operation is not implemented.", nullableMessage: false));
-                break;
+                // Keep the current helper contract: neither reason nor lazy
+                // messages are evaluated by the authored replacement.
+                return ThrowExpr(NewExc("kotlin.NotImplementedError", "An operation is not implemented.", nullableMessage: false));
             case "error":
-                if (args == null || args.Count < 1) return;
-                repl = ThrowExpr(NewExcExpr("kotlin.IllegalStateException", args[0].DeepClone()));
-                break;
+                return args is { Length: > 0 } ? ThrowExpr(NewExcExpr("kotlin.IllegalStateException", Copy(args[0]))) : call;
             case "require":
             case "check":
-            {
-                if (args == null || args.Count < 1) return;
-                // Guard: the first parameter must be Boolean (a user `fun require(x: Foo)` must not be miscompiled).
-                if (sig == null || sig.Count < 1 || TypeJson.OwnerName(sig[0]) != "kotlin.Boolean") return;
-                var (exc, msg) = method == "require"
-                    ? ("kotlin.IllegalArgumentException", "Failed requirement")
-                    : ("kotlin.IllegalStateException", "Check failed");
-                repl = new JsonObject
-                {
-                    ["k"] = "cond",
-                    ["cond"] = args[0].DeepClone(),
-                    ["then"] = UnitNull(),
-                    ["else"] = ThrowExpr(NewExc(exc, msg)),
+                if (args is not { Length: > 0 } || signature is not { Length: > 0 }
+                    || signature[0] is not TypeNode.Fqn { Name: "kotlin.Boolean" }) return call;
+                var (exception, message) = method == "require"
+                    ? ("kotlin.IllegalArgumentException", "Failed requirement") : ("kotlin.IllegalStateException", "Check failed");
+                return new BirConditional {
+                    Cond = OptionalField<IBirExpression>.Of(Copy(args[0])),
+                    Then = OptionalField<IBirExpression>.Of(UnitNull()),
+                    Else = OptionalField<IBirExpression>.Of(ThrowExpr(NewExc(exception, message))),
                 };
-                break;
-            }
             case "requireNotNull":
             case "checkNotNull":
-            {
-                if (args == null || args.Count < 1) return;
-                if (o["typeArgs"] is not JsonArray ta || ta.Count < 1 || ta[0] is not JsonNode elem) return;
-                var exc = method == "requireNotNull" ? "kotlin.IllegalArgumentException" : "kotlin.IllegalStateException";
+                if (args is not { Length: > 0 } || call.TypeArgs.OrDefault() is not { Length: > 0 } arguments) return call;
+                var element = arguments[0];
+                var exceptionType = method == "requireNotNull" ? "kotlin.IllegalArgumentException" : "kotlin.IllegalStateException";
                 var name = "__rn$" + Interlocked.Increment(ref _counter);
-                var local = new JsonObject { ["k"] = "local", ["name"] = name };
-                var varStmt = new JsonObject
-                {
-                    ["k"] = "var", ["name"] = name, ["type"] = Nullable(elem.DeepClone()), ["init"] = args[0].DeepClone(),
+                IBirExpression Read() => new BirLocal { Name = name };
+                var variable = new BirVariable {
+                    Name = name, Type = new TypeNode.Nullable(BirGraphValue.CopyType(element)),
+                    Init = OptionalField<IBirExpression>.Of(Copy(args[0])),
                 };
-                JsonNode cond;
-                if (ValueTypes.Contains(TypeJson.OwnerName(elem) ?? ""))
-                    // value-nullable T?: Nullable<T>.HasValue ? .Value : throw.
-                    cond = new JsonObject
-                    {
-                        ["k"] = "cond",
-                        ["cond"] = new JsonObject { ["k"] = "nullableHasValue", ["elem"] = elem.DeepClone(), ["e"] = local.DeepClone() },
-                        ["then"] = new JsonObject { ["k"] = "nullableValue", ["elem"] = elem.DeepClone(), ["e"] = local.DeepClone() },
-                        ["else"] = ThrowExpr(NewExc(exc, "Required value was null")),
+                var failure = ThrowExpr(NewExc(exceptionType, "Required value was null"));
+                BirConditional condition;
+                if (element is TypeNode.Fqn elem && ValueTypes.Contains(elem.Name))
+                    condition = new BirConditional {
+                        Cond = OptionalField<IBirExpression>.Of(new BirNullableHasValue {
+                            Elem = BirGraphValue.CopyType(element), E = OptionalField<IBirExpression>.Of(Read()),
+                        }),
+                        Then = OptionalField<IBirExpression>.Of(new BirNullableValue {
+                            Elem = BirGraphValue.CopyType(element), E = OptionalField<IBirExpression>.Of(Read()),
+                        }),
+                        Else = OptionalField<IBirExpression>.Of(failure),
                     };
                 else
-                    // reference T?: (t != null) ? t : throw.
-                    cond = new JsonObject
-                    {
-                        ["k"] = "cond",
-                        ["cond"] = new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = new JsonObject { ["k"] = "objEq", ["lhs"] = local.DeepClone(), ["rhs"] = NullLiteral() } },
-                        ["then"] = local.DeepClone(),
-                        ["else"] = ThrowExpr(NewExc(exc, "Required value was null")),
+                    condition = new BirConditional {
+                        Cond = OptionalField<IBirExpression>.Of(new BirUnaryOperation {
+                            Op = "!", E = OptionalField<IBirExpression>.Of(new BirObjectEquals {
+                                Lhs = OptionalField<IBirExpression>.Of(Read()), Rhs = OptionalField<IBirExpression>.Of(NullLiteral()),
+                            }),
+                        }),
+                        Then = OptionalField<IBirExpression>.Of(Read()),
+                        Else = OptionalField<IBirExpression>.Of(failure),
                     };
-                repl = new JsonObject { ["k"] = "valueBlock", ["stmts"] = new JsonArray { varStmt }, ["result"] = cond };
-                break;
-            }
+                return new BirValueBlock { Stmts = new IBirStatement[] { variable }, Result = OptionalField<IBirExpression>.Of(condition) };
             default:
-                return;
+                return call;
         }
-        Replace(o, repl);
     }
 
-    static JsonObject UnitNull() => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Unit"), ["value"] = null };
-    static JsonObject NullLiteral() => new() { ["k"] = "const", ["type"] = Nullable(TypeJson.Fqn("kotlin.Nothing")), ["value"] = null };
-
-    static JsonObject Nullable(JsonNode of) => new() { ["t"] = "nullable", ["of"] = of };
-
-    // `new <ExcType>(<msg>)` via the (String) ctor; or the no-arg ctor when msg is null.
-    static JsonObject NewExc(string type, string msg, bool nullableMessage = true) => new()
-    {
-        ["k"] = "new",
-        ["type"] = TypeJson.Fqn(type),
-        ["argTypes"] = new JsonArray { nullableMessage ? Nullable(TypeJson.Fqn("kotlin.String")) : TypeJson.Fqn("kotlin.String") },
-        ["args"] = new JsonArray { new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.String"), ["value"] = msg } },
+    static IBirExpression Copy(IBirExpression value) => (IBirExpression)((BirGraphValue)value).DeepClone();
+    static BirConstant UnitNull() => new() { Type = new TypeNode.Fqn("kotlin.Unit"), Value = new BirLiteral.NullLiteral() };
+    static BirConstant NullLiteral() => new() {
+        Type = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Nothing")), Value = new BirLiteral.NullLiteral(),
     };
-
-    // `new <ExcType>(<msgExpr>)` — the String-ctor over a caller-supplied message expression (error(msg)).
-    static JsonObject NewExcExpr(string type, JsonNode msgExpr) => new()
-    {
-        ["k"] = "new",
-        ["type"] = TypeJson.Fqn(type),
-        ["argTypes"] = new JsonArray { Nullable(TypeJson.Fqn("kotlin.String")) },
-        ["args"] = new JsonArray { msgExpr },
+    static BirNew NewExc(string type, string message, bool nullableMessage = true) => new() {
+        Type = new TypeNode.Fqn(type),
+        ArgTypes = new TypeNode[] { nullableMessage ? new TypeNode.Nullable(new TypeNode.Fqn("kotlin.String")) : new TypeNode.Fqn("kotlin.String") },
+        Args = new IBirExpression[] { new BirConstant { Type = new TypeNode.Fqn("kotlin.String"), Value = new BirLiteral.TextLiteral(message) } },
     };
-
-    static JsonObject ThrowExpr(JsonNode exc) => new() { ["k"] = "throwExpr", ["value"] = exc };
-
-    static void Replace(JsonObject o, JsonNode repl)
-    {
-        foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
-        foreach (var kv in (JsonObject)repl) o[kv.Key] = kv.Value?.DeepClone();
-    }
-
-    static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
+    static BirNew NewExcExpr(string type, IBirExpression message) => new() {
+        Type = new TypeNode.Fqn(type),
+        ArgTypes = new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.String")) }, Args = new[] { message },
+    };
+    static BirThrowExpression ThrowExpr(IBirExpression exception) => new() { Value = OptionalField<IBirExpression>.Of(exception) };
 }

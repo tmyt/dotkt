@@ -75,6 +75,8 @@ static class Bir2Cir
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 InlineBirStashTests.SelfTest();
+                InlineExpansion.SelfTestHygiene();
+                InlineExpansion.SelfTestPrerequisites();
                 ObjectSlotRename.SelfTest();
                 DefaultBirCarrier.SelfTest();
                 ExecutableBirCodec.SelfTest();
@@ -172,7 +174,8 @@ sealed class Pipeline
         // with no "ref scan failed" signal. An empty Diagnostics stays silent (the happy path prints nothing).
         var diagnostics = refs.Diagnostics.ToList();
         foreach (var d in diagnostics) Console.Error.WriteLine($"bir2cir: WARNING ref-scan diagnostic: {d}");
-        var module = LoadBirFiles(_options.Inputs, _options.RefBuild, _options.SubstituteStdlibBuild, refs);
+        var module = LoadBirFiles(_options.Inputs, _options.RefBuild, _options.SubstituteStdlibBuild,
+            _options.StdlibMode == BuildStdlibMode.App, refs);
         var birFiles = module.Files;
         var cirFiles = TransformFiles(module, refs);
         if (_options.ReflectionRestricted
@@ -199,7 +202,7 @@ sealed class Pipeline
             $"bir2cir: lowered {birFiles.Count} BIR file(s) -> {_options.OutDir} ({refs.Count} ref(s), build: {(_options.RefBuild ? "reference" : "substitute/app")}, suspend: {suspend.FunctionCount} fn)");
     }
 
-    static LoadedBirModule LoadBirFiles(IReadOnlyList<string> inputs, bool referenceBuild, bool substituteStdlibBuild,
+    static LoadedBirModule LoadBirFiles(IReadOnlyList<string> inputs, bool referenceBuild, bool substituteStdlibBuild, bool appBuild,
         ReferenceMetadataIndex refs)
     {
         var inputsWithSources = new List<(string Path, DotKt.Bir.Lowering.BirFileDeclaration Source, SuspendShapeAnalysis Suspend)>();
@@ -328,6 +331,20 @@ sealed class Pipeline
         // the explicit opaque-carrier binder still owns classifier binding.
         InlineBirStash.Reset();
         foreach (var source in captured) InlineBirStash.Stash(source);
+        var appLocalFileClassMethods = InlineSplice.CollectAppLocalMethodNames(captured);
+        var inlineDispatchHierarchy = InlineSplice.CollectDispatchHierarchy(captured);
+        // Intrinsic failures and non-literal repeat lower before expansion, so
+        // discarded closures remain ingredients rather than orphan TypeDefs.
+        // Expand original files in order against the complete frozen stash;
+        // each file drains generated helpers before its DOM continuation.
+        foreach (var source in captured)
+        {
+            PreconditionLowering.Apply(source, inventory.LocalTopLevelFunctions, appBuild);
+            RepeatInlineLowering.Apply(source, inventory.LocalTopLevelFunctions, appBuild);
+            if (appBuild) CompanionRepresentationLowering.BindSpliceUses(source, refs);
+            InlineSplice.Apply(source, refs, appLocalFileClassMethods, inlineDispatchHierarchy,
+                companionExtensionBindings, requireCompleteDefaults: appBuild);
+        }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -467,14 +484,6 @@ sealed class Pipeline
         var propertyFunctionFields = PropertyReferenceFunctionLowering.CollectFieldSlots(
             birFiles.Select(f => f.Root));
 
-        // #63 (F4): the app-local file-class method names a `newDelegate` target `ldftn`-resolves against, collected
-        // MODULE-WIDE across every input file — ilemit's FindStatic binds a delegate method by bare name against ALL
-        // IsFileClass types in the module (and the inline stash spans all files), so a carrier materializing a SIBLING
-        // file's lifted generated method is app-local. Pre-collect ONCE (InlineSplice.Apply runs per file) and pass in, so a
-        // cross-file materialization is not mis-judged non-app-local and refused loud. Nested-TYPE member methods stay
-        // excluded (ilemit's file-class-only ldftn universe) — only the FILE scope was wrong (regression from 923a820).
-        var appLocalFileClassMethods = InlineSplice.CollectAppLocalMethodNames(birFiles.Select(f => f.Root));
-        var inlineDispatchHierarchy = InlineSplice.CollectDispatchHierarchy(birFiles.Select(f => f.Root));
         var genericDowncastHierarchy = GenericDowncastRealignment.Collect(birFiles.Select(f => f.Root));
         var iterableHierarchy = SupertypeGraph.Collect(birFiles.Select(f => f.Root));
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
@@ -488,35 +497,10 @@ sealed class Pipeline
             var outputName = OutputNameFor(bir.Path);
             // SYNTHETIC CLR-REPRESENTATION TYPES (#52 kotc-purity): kotc emits only the FACTS — a capturing lambda's
             // `newClosure` carries a transient `synthClass` ingredient bag; a CharSequence use references the generated
-            // bridge identity; a heap ref-cell rides the `refTypes` registry. After raw payload splicing and witness
-            // capture below, ClosureSynthesis and SharedSyntheticSynthesis materialize those CLR types into `types`.
+            // bridge identity; a heap ref-cell rides the `refTypes` registry. Raw payloads were expanded on typed BIR;
+            // after witness capture below, ClosureSynthesis and SharedSyntheticSynthesis materialize these `types`.
             // They run before ForIn classification and the global SuspendColdLowering declaration index; closure
             // synthesis runs first so SharedSyntheticSynthesis can scan the completed invoke bodies.
-            // PRECONDITION / ERROR FAMILY (#73 M6): kotc emits the FAITHFUL top-level call (require/check/error/TODO/
-            // requireNotNull/checkNotNull as `callStatic owner:null`, noWhenBranchMatchedException as the faithful
-            // `kotlin.internal.ir` intrinsic). These @InlineOnly helpers have NO rt.dll body, so bir2cir realizes their
-            // Kotlin failure semantics as FQN-keyed cond/throwExpr/valueBlock CIR over bare Kotlin
-            // exception FQNs (the IllegalArgumentException->System.ArgumentException BCL mapping happens downstream off
-            // the ref.dll @ClrTypeAlias). Runs BEFORE ClosureSynthesis so a discarded `require(cond){ lazyMessage }`
-            // closure is never synthesized into an orphan type, and before MemberCallSubstitution (which would else
-            // 0-candidate the bodiless helper).
-            PreconditionLowering.Apply(bir.Root, localTopLevelFns, attributeTopLevelOwner);
-            // TOP-LEVEL `repeat(n){}` INLINE LOOP (#73 M7): kotc emits the FAITHFUL `callStatic owner:null method:repeat
-            // args:[n, <lambda>]`. Re-emit the counted loop (n once, index 0..n-1) invoking the action delegate — shape-
-            // agnostic over the lambda's newClosure/newDelegate form. Runs BEFORE ClosureSynthesis so the action closure
-            // (moved into the hoist var) is synthesized there exactly once, and before MemberCallSubstitution.
-            RepeatInlineLowering.Apply(bir.Root, localTopLevelFns, attributeTopLevelOwner);
-            // INLINE SPLICE (#71/#75): kotc emits a `callInline` node for an inline fn whose lambda body must live inline
-            // at the call site (a NON-LOCAL `return`/suspend through the lambda). `kotlin.repeat` -> the counted loop; the
-            // GENERIC cross-module arm RESOLVES the callee's RAW BIR body ([KotlinInline] off `refs`, or InlineBirStash's
-            // same-module index) and SPLICES it (positional tv-subst, temp-bound params, lambda-invoke splicing, routed
-            // returns, hygiene) into a value-producing valueBlock — which then re-lowers IN THIS app's context. Runs here
-            // (before ClosureSynthesis, like RepeatInlineLowering) so nested closures in the spliced body synthesize once.
-            if (_options.StdlibMode == BuildStdlibMode.App)
-                CompanionRepresentationLowering.BindSpliceUses(bir.Root, refs);
-            InlineSplice.Apply(
-                bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy, companionExtensionBindings,
-                requireCompleteDefaults: attributeTopLevelOwner);
             // VALUE-POSITION JOIN WIDENING (#86 §3): a `try`/`catch` or `if/when` join the frontend resolved to a
             // NON-nullable type while one branch yields a literal `null` — kotc records exactly that fact on the
             // declaration it mints for the join, and the physical consequence is decided HERE: a VALUE join widens to

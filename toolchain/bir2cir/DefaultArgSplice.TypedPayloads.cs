@@ -11,6 +11,17 @@ static partial class DefaultArgSplice
 
     static IBirExpression ParameterDefault(BirParameter parameter) => DefaultBirCarrier.OfParameter(parameter);
 
+    // Preparation already selected representation and type arguments. Expansion
+    // consumes that exact occurrence; repeating SpliceOne would substitute twice.
+    internal static IBirExpression InstantiatePreparedInlineDefault(IBirExpression prepared,
+        string semanticOwner, int spliceCloneId, IBirExpression dispatch, IBirExpression extension,
+        IReadOnlyList<IBirExpression> arguments)
+    {
+        var expression = Rehome((BirGraphValue)Clone(prepared), semanticOwner, spliceCloneId);
+        expression = TypedExecutableFrames.Prebind(expression);
+        return SubstituteTokens((IBirExpression)expression, dispatch, extension, null, arguments);
+    }
+
     internal static IBirExpression MaterializeDefault(IBirExpression source, List<BirFunctionDeclaration> hoist, string localOwner)
     {
         var parsed = (IBirExpression)ObjectSlotRename.Apply((BirGraphValue)Clone(source));

@@ -62,6 +62,9 @@ internal abstract record BirGraphValue
     public abstract BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
         Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child);
+    public abstract void VisitGenericFrame(
+        Action<BirGenericFrameRole, TypeNode> type,
+        Action<BirGenericFrameRole, BirGraphValue> child);
     public abstract void RewriteGenericFrameInPlace(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirGraphValue> child);
@@ -155,7 +158,8 @@ internal readonly record struct BirGraphSlot(Func<BirGraphValue> Read, Action<Bi
 
 // A result belongs to the final environment of its own statement sequence,
 // not to another region or to the surrounding declaration's environment.
-internal readonly record struct BirSourceRegion(IBirStatement[] Statements, BirGraphSlot? Result = null);
+internal readonly record struct BirSourceRegion(IBirStatement[] Statements, BirGraphSlot? Result = null,
+    Action<IBirStatement[]>? ReplaceStatements = null);
 
 internal interface IBirExpression : IBirAttributeValue;
 internal interface IBirStatement;

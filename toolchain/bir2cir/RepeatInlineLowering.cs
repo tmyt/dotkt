@@ -1,7 +1,8 @@
 using System.Collections.Generic;
 using System.Threading;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // TOP-LEVEL `repeat(n, <action>)` INLINE LOOP — the NON-LITERAL-lambda fallback (#73 M7 / #75). A LITERAL-lambda
 // `repeat(n){…}` is now spliced by kotc into a `callInline` node and lowered by InlineSplice (which honors a non-local
@@ -36,77 +37,53 @@ static class RepeatInlineLowering
 {
     static int _counter;
 
-    public static void Apply(JsonNode node, ISet<string> localTopLevelFns, bool appBuild)
+    public static void Apply(BirFileDeclaration root, ISet<string> localTopLevelFns, bool appBuild)
     {
-        if (node is JsonObject o)
+        BirGraphValue Walk(BirGraphValue node)
         {
-            foreach (var kv in o) if (kv.Value != null) Apply(kv.Value, localTopLevelFns, appBuild);
-            Rewrite(o, localTopLevelFns, appBuild);
+            if (node is IBirExecutablePayload) return node;
+            node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
+            return node is BirCallStatic call ? Rewrite(call, localTopLevelFns, appBuild) : node;
         }
-        else if (node is JsonArray a)
-        {
-            for (var i = 0; i < a.Count; i++)
-                if (a[i] is JsonNode c)
-                {
-                    Apply(c, localTopLevelFns, appBuild);
-                    if (a[i] is JsonObject co) Rewrite(co, localTopLevelFns, appBuild);
-                }
-        }
+        Walk(root);
     }
 
-    static void Rewrite(JsonObject o, ISet<string> localTopLevelFns, bool appBuild)
+    static BirGraphValue Rewrite(BirCallStatic call, ISet<string> localTopLevelFns, bool appBuild)
     {
-        if (Str(o["k"]) != "callStatic" || Str(o["method"]) != "repeat") return;
-        // Top-level call only (owner:null, no ownerType) — the member `CharSequence.repeat(n)` carries ownerType.
-        if (o.ContainsKey("ownerType") || !o.ContainsKey("owner") || o["owner"] != null) return;
-        // A top-level PROPERTY accessor rides the same owner:null shape (`prop:` marker, #81) — exclude a user `val repeat`.
-        if (o.ContainsKey("prop")) return;
-        // User top-level `fun repeat(...)` shadow (app build) is NOT the kotlin intrinsic — leave it.
-        if (appBuild && localTopLevelFns.Contains("repeat")) return;
-        if (o["args"] is not JsonArray args || args.Count != 2
-            || args[0] is not JsonNode count || args[1] is not JsonNode action) return;
-        // The action parameter must be a function type (distinguishes the top-level repeat(n){} from any other overload).
-        if (o["sig"] is not JsonArray sig || sig.Count < 2 || sig[0] is not JsonNode countType || sig[1] is not JsonNode funcType
-            || TypeJson.Read(funcType) is not TypeNode.Fn) return;
+        if (call.Method.OrDefault() != "repeat" || call.OwnerType.IsPresent || !call.Owner.IsNull
+            || call.Prop.IsPresent || appBuild && localTopLevelFns.Contains("repeat")) return call;
+        if (call.Args.OrDefault() is not { Length: 2 } args
+            || call.Sig.OrDefault() is not { Length: >= 2 } signature || signature[1] is not TypeNode.Fn) return call;
 
-        var n = "$" + Interlocked.Increment(ref _counter);
-        var repnVar = "__repn" + n;   // `times` evaluated ONCE, FIRST (Kotlin evaluates arg0 before the action arg1)
-        var repcVar = "__repc" + n;   // the hoisted action delegate (allocated once)
-        var repVar = "__rep" + n;     // the loop index local (0..times-1)
-
-        var repl = new JsonObject
-        {
-            ["k"] = "valueBlock",
-            ["stmts"] = new JsonArray
-            {
-                new JsonObject { ["k"] = "var", ["name"] = repnVar, ["type"] = countType.DeepClone(), ["init"] = count.DeepClone() },
-                new JsonObject { ["k"] = "var", ["name"] = repcVar, ["type"] = funcType.DeepClone(), ["init"] = action.DeepClone() },
-            },
-            ["result"] = new JsonObject
-            {
-                ["k"] = "repeatInline",
-                ["var"] = repVar,
-                ["count"] = new JsonObject { ["k"] = "local", ["name"] = repnVar },
-                ["body"] = new JsonArray
-                {
-                    new JsonObject
-                    {
-                        ["k"] = "exprStmt",
-                        ["expr"] = new JsonObject
-                        {
-                            ["k"] = "delegateInvoke",
-                            ["funcType"] = funcType.DeepClone(),
-                            ["recv"] = new JsonObject { ["k"] = "local", ["name"] = repcVar },
-                            ["args"] = new JsonArray { new JsonObject { ["k"] = "local", ["name"] = repVar } },
-                        },
-                    },
+        var id = "$" + Interlocked.Increment(ref _counter);
+        var countName = "__repn" + id;
+        var actionName = "__repc" + id;
+        var indexName = "__rep" + id;
+        return new BirValueBlock {
+            Stmts = new IBirStatement[] {
+                new BirVariable {
+                    Name = countName, Type = BirGraphValue.CopyType(signature[0]),
+                    Init = OptionalField<IBirExpression>.Of(Copy(args[0])),
+                },
+                new BirVariable {
+                    Name = actionName, Type = BirGraphValue.CopyType(signature[1]),
+                    Init = OptionalField<IBirExpression>.Of(Copy(args[1])),
                 },
             },
+            Result = OptionalField<IBirExpression>.Of(new BirRepeat {
+                Var = indexName, Count = OptionalField<IBirExpression>.Of(new BirLocal { Name = countName }),
+                Body = new IBirStatement[] {
+                    new BirExpressionStatement {
+                        Expr = OptionalField<IBirExpression>.Of(new BirDelegateInvoke {
+                            FuncType = BirGraphValue.CopyType(signature[1]),
+                            Recv = OptionalField<IBirExpression>.Of(new BirLocal { Name = actionName }),
+                            Args = new IBirExpression[] { new BirLocal { Name = indexName } },
+                        }),
+                    },
+                },
+            }),
         };
-
-        foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
-        foreach (var kv in repl) o[kv.Key] = kv.Value?.DeepClone();
     }
 
-    static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
+    static IBirExpression Copy(IBirExpression value) => (IBirExpression)((BirGraphValue)value).DeepClone();
 }

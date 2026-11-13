@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // Consumes kotc's representation-neutral companion declarations before any ordinary BIR pass sees them.
 // Every companion becomes one compiler-named ordinary CLR class carrying exactly one `$INSTANCE`, so the Kotlin
@@ -41,23 +42,12 @@ static partial class CompanionRepresentationLowering
     // A ProjectReference KLIB preserves the semantic companion owner on callInline, while the trusted inline payload
     // is indexed by its selected CLR declaration owner. Resolve only that declaration identity here, before the splice;
     // value binding remains the later BindUses decision.
-    public static void BindSpliceUses(JsonNode root, ReferenceMetadataIndex refs)
-    {
-        void Visit(JsonNode node)
-        {
-            if (node is JsonObject obj)
-            {
-                if (Str(obj["k"]) == "callInline" &&
-                    obj["owner"] is JsonObject owner && Str(owner["name"]) is string semanticOwner &&
-                    refs.TryCompanionPhysicalOwner(semanticOwner, out var physicalOwner))
-                    owner["name"] = physicalOwner;
-                foreach (var child in obj.ToArray()) if (child.Value is not null) Visit(child.Value);
-            }
-            else if (node is JsonArray array)
-                foreach (var child in array.ToArray()) if (child is not null) Visit(child);
-        }
-        Visit(root);
-    }
+    public static void BindSpliceUses(BirFileDeclaration root, ReferenceMetadataIndex refs)
+        => root.Visit(node => {
+            if (node is BirCallInline call && call.Owner.OrDefault() is TypeNode.Fqn owner
+                && refs.TryCompanionPhysicalOwner(owner.Name, out var physicalOwner))
+                call.Owner = owner with { Name = physicalOwner };
+        });
 
     // Every companion carrier — nested or hoisted — is a non-generic TypeDef, so a use names it with no type
     // arguments and there is no representative closure to choose.

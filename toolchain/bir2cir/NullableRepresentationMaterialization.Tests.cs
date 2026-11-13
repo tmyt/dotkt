@@ -373,9 +373,9 @@ static partial class NullableRepresentationMaterialization
         var specialized = TestClass("SpecializedSam", TestParameter("P"), TestParameter("T"));
         specialized.KotlinSupertypesPre = SourceTypeFacts.Empty.Merge(null,
             new TypeNode[] { TestType("SourceContract", TestTv(0, "type")) }, null).MergeNullableFrame(dispatchFrame);
-        var specializedNode = new BirNewSam { SynthClass = specialized, TypeArgs = new TypeNode[] { TestType("object"), TestType("kotlin.String") } }.ToDom();
-        InlineSplice.PruneConcreteSynthClasses(specializedNode);
-        var pruned = BirGraphDom.ReadBirNewSam(specializedNode);
+        var specializedNode = new BirNewSam { SynthClass = specialized, TypeArgs = new TypeNode[] { TestType("object"), TestType("kotlin.String") } };
+        InlineExpansion.PruneConcreteSynthClasses(specializedNode);
+        var pruned = specializedNode;
         TestRequire(!pruned.SynthClass.Value.TypeParams.IsPresent && !pruned.TypeArgs.IsPresent
             && pruned.SynthClass.Value.KotlinSupertypesPre.Value.NullableFrame == null
             && TestSame(pruned.SynthClass.Value.KotlinSupertypesPre.Value.Interfaces[0], TestType("SourceContract", TestType("kotlin.String"))),
