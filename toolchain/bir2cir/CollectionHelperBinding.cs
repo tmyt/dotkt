@@ -57,52 +57,61 @@ static partial class CollectionHelperBinding
     {
         var variable = new TypeNode.Tv("method", 0);
         var collection = new TypeNode.Fqn("kotlin.collections.Collection", new TypeNode[] { variable });
-        var body = new JsonArray();
-        var root = new JsonObject {
-            ["fileClass"] = "kotlin.collections.ClrCollectionDefaultsKt",
-            ["methods"] = new JsonArray(
-                new JsonObject { ["name"] = "clrCollToString", ["declarationId"] = "render-collection",
-                    ["static"] = true, ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
-                    ["params"] = new JsonArray(new JsonObject { ["name"] = "value", ["type"] = TypeJson.Write(collection) }),
-                    ["ret"] = TypeJson.Fqn("kotlin.String"), ["body"] = new JsonArray() },
-                new JsonObject { ["name"] = "render", ["declarationId"] = "render-caller", ["static"] = true,
-                    ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }), ["params"] = new JsonArray(),
-                    ["ret"] = TypeJson.Fqn("kotlin.String"), ["body"] = body }) };
+        var caller = new BirFunctionDeclaration {
+            Name = "render", DeclarationId = "render-caller", Static = true,
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Params = Array.Empty<BirParameter>(),
+            Ret = new TypeNode.Fqn("kotlin.String"), Body = Array.Empty<IBirStatement>(),
+        };
+        var source = new BirFileDeclaration {
+            FileClass = "kotlin.collections.ClrCollectionDefaultsKt",
+            Methods = new[] {
+                new BirFunctionDeclaration {
+                    Name = "clrCollToString", DeclarationId = "render-collection", Static = true,
+                    TypeParams = new[] { new BirTypeParameter { Name = "T" } },
+                    Params = new[] { new BirParameter { Name = "value", Type = collection } },
+                    Ret = new TypeNode.Fqn("kotlin.String"), Body = Array.Empty<IBirStatement>(),
+                }, caller,
+            },
+        };
         var aliases = new Dictionary<string, string> {
             ["kotlin.collections.Collection"] = "System.Collections.Generic.IReadOnlyCollection",
         };
-        JsonObject Render() => FaithfulHints.CollToString(new JsonObject { ["k"] = "local", ["name"] = "value" },
+        BirCallStatic Render() => FaithfulHints.CollToString(new BirLocal { Name = "value" },
             FaithfulHints.CollKind.Coll, new TypeNode[] { variable });
-        JsonObject Operand() => new JsonObject { ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(collection) };
+        BirLocal Operand() => new() { Name = "value", Sty = collection };
+        BirExpressionStatement Statement(IBirExpression expression) => new() { Expr = OptionalField<IBirExpression>.Of(expression) };
         var typedArguments = new IBirExpression[] { new BirLocal { Name = "value" } };
         BirCallStatic typedRender = null;
-        var captured = CaptureFixture(root);
+        var captured = new SourceCollectionInputs(new[] { source }, null);
         var bind = captured.Helpers.Bind;
         FaithfulHints.WithHelperBinding(bind, () => {
-                typedRender = bind(new BirCallStatic {
-                    Owner = new TypeNode.Fqn("kotlin.collections.ClrCollectionDefaultsKt"), Method = "clrCollToString",
-                    Sig = new TypeNode[] { collection }, TypeArgs = new TypeNode[] { variable }, Args = typedArguments,
-                });
-                body.Add(Render());
-                body.Add(new JsonObject { ["k"] = "concat", ["parts"] = new JsonArray(Operand()) });
-                body.Add(new JsonObject { ["k"] = "objMethod", ["method"] = "toString", ["recv"] = Operand() });
-                ObjectSlotRename.Apply(root);
-                FaithfulHintRecognition.Apply(root, null, new HashSet<string>());
+            typedRender = bind(new BirCallStatic {
+                Owner = new TypeNode.Fqn("kotlin.collections.ClrCollectionDefaultsKt"), Method = "clrCollToString",
+                Sig = new TypeNode[] { collection }, TypeArgs = new TypeNode[] { variable }, Args = typedArguments,
             });
-        ApplyFixture(root, null, aliases, captured);
+            caller.Body = new IBirStatement[] {
+                Statement(Render()),
+                Statement(new BirConcat { Parts = new IBirExpression[] { Operand() } }),
+                Statement(new BirObjectMethod { Method = "toString", Recv = Operand() }),
+            };
+            source = (BirFileDeclaration)ObjectSlotRename.Apply(source);
+            source = (BirFileDeclaration)FaithfulHintRecognition.Apply(source, new HashSet<string>());
+        });
+        Apply(new[] { source }, null, aliases, captured);
+        var body = caller.Body.Value;
         if (typedRender.DeclarationId.Value != "render-collection"
             || !ReferenceEquals(typedRender.Args.Value, typedArguments)
             || typedRender.TypeArgs.Value.Single() != variable
-            || Text(body[0][DeclarationIdentityBinding.Key]) != "render-collection"
-            || Text(body[1]["parts"][0][DeclarationIdentityBinding.Key]) != "render-collection"
-            || Text(body[2][DeclarationIdentityBinding.Key]) != "render-collection"
-            || Render()[DeclarationIdentityBinding.Key] != null)
+            || ((BirExpressionStatement)body[0]).Expr.Value is not BirCallStatic { DeclarationId.Value: "render-collection" }
+            || ((BirExpressionStatement)body[1]).Expr.Value is not BirConcat {
+                Parts.Value: [BirCallStatic { DeclarationId.Value: "render-collection" }] }
+            || ((BirExpressionStatement)body[2]).Expr.Value is not BirCallStatic { DeclarationId.Value: "render-collection" }
+            || Render().DeclarationId.IsPresent)
             throw new InvalidOperationException("Semantic helper source binding escaped its lowering scope");
-        var materialized = ReadFixture(root);
-        NullableRepresentationMaterialization.Apply(new[] { materialized }, _ => false,
+        NullableRepresentationMaterialization.Apply(new[] { source }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));
         var materializedCalls = new List<BirCallStatic>();
-        materialized.Methods.Value[1].Visit(node => {
+        caller.Visit(node => {
             if (node is BirCallStatic selected && selected.DeclarationId.OrDefault() == "render-collection") materializedCalls.Add(selected);
         });
         if (materializedCalls.Count != 3 || materializedCalls.Any(selected => selected.TypeArgs.Value.Length != 1)

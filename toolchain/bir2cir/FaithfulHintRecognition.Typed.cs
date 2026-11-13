@@ -1,7 +1,6 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
-using System.Text.Json.Nodes;
 
 static partial class FaithfulHints
 {
@@ -45,12 +44,6 @@ static partial class FaithfulHintRecognition
         return site == RenderSite.Concat && FaithfulHints.IsNullable(value) ? new(Renderer.Nullable) : default;
     }
 
-    static JsonNode Render(JsonNode operand, Rendering rendering) => rendering.Kind switch {
-        Renderer.Collection => FaithfulHints.CollToString(FaithfulHints.StripAnyCast(operand), rendering.Collection, rendering.Arguments),
-        Renderer.Element => FaithfulHints.ElemToString(operand),
-        Renderer.Nullable => FaithfulHints.LibraryToString(operand),
-        _ => operand,
-    };
     static IBirExpression Render(IBirExpression operand, Rendering rendering) => rendering.Kind switch {
         Renderer.Collection => FaithfulHints.CollToString(FaithfulHints.StripAnyCast(operand), rendering.Collection, rendering.Arguments),
         Renderer.Element => FaithfulHints.ElemToString(operand),
