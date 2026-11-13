@@ -420,6 +420,10 @@ def outputs(root, definitions):
                   if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
         if stamps:
             model += ["    public override TypeNode? ResultTypeStamp => " + " ?? ".join(stamps) + ";"]
+        function_stamps = [member(field) + ".OrDefault()" for field in ("funcType", "sty")
+                           if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
+        if function_stamps:
+            model += ["    public override TypeNode? FunctionTypeStamp => " + " ?? ".join(function_stamps) + ";"]
         binding_hints = [member(field) + ".OrDefault()" for field in ("sty", "type")
                          if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
         if binding_hints:
