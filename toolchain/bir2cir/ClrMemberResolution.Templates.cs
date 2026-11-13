@@ -183,17 +183,21 @@ static partial class ClrMemberResolution
         if (ReadOwnerNode(node["ownerType"] ?? node["type"]) is not TypeNode.Fqn owner
             || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
             return;
+        if (StaticFieldReference(owner, name) is { } reference) node["fieldRef"] = reference.Write();
+    }
+
+    static MemberRefNode StaticFieldReference(TypeNode.Fqn owner, string name)
+    {
         // A type this compilation emits keeps the local axis (#395) and must not be given an external identity,
         // even though the reference surface can answer for it: the stdlib runtime build compiles against a
         // PREVIOUS build of the assembly it is producing, so kotlin.text.HexFormat+$Companion resolved there and
         // was handed a reference to itself that the emitter's own universe then could not contain.
-        if (_localTypes.Contains(owner.Name)) return;
+        if (_localTypes.Contains(owner.Name)) return null;
         var open = ResolveOwnerType(owner);
-        if (open == null) return;
+        if (open == null) return null;
         var field = open.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         if (field != null && !(field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly)) field = null;
-        if (field == null) return;
-        node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
+        return field == null ? null : FieldRefOf(field, open, owner.Args ?? Array.Empty<TypeNode>());
     }
 
     /// <summary>
@@ -319,23 +323,7 @@ static partial class ClrMemberResolution
         if (node.ContainsKey("invokeRef")) return;
         // The document states the Kotlin function type; the lowering already turned it into the delegate the
         // value physically is. Ask that same lowering rather than re-deriving the delegate here.
-        var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
-        if (physical is TypeNode.Fn fnNode)
-            physical = BirTypeLowering.DelegateFqnOf(
-                (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
-        if (physical is not TypeNode.Fqn delegateFqn)
-            throw new InvalidOperationException(
-                $"bir2cir: a function-type call lowers to {TypeNode.ToJson(physical)}, which is not a named type");
-        var open = ResolveOwnerType(delegateFqn)
-            ?? throw new InvalidOperationException(
-                $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type");
-        var invoke = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Where(m => m.Name == "Invoke").ToList();
-        if (invoke.Count != 1)
-            throw new InvalidOperationException(
-                $"bir2cir: '{delegateFqn.Name}' has {invoke.Count} Invoke declarations, not one");
-        node["invokeRef"] = MemberRefJson(invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args,
-            ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
+        node["invokeRef"] = DelegateInvokeReference(stated).Write();
     }
 
     /// <summary>
@@ -362,26 +350,7 @@ static partial class ClrMemberResolution
         if (node.ContainsKey(carrier)) return;
         // A function type stays an `fn` node through the general lowering — its DELEGATE form is a separate
         // step, and the same one the emitter's own mapping uses. Ask for it rather than assembling `Func`N` here.
-        var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
-        if (physical is TypeNode.Fn fnNode)
-            physical = BirTypeLowering.DelegateFqnOf(
-                (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
-        if (physical is not TypeNode.Fqn delegateFqn)
-            throw new InvalidOperationException(
-                $"bir2cir: a delegate construction lowers to {TypeNode.ToJson(physical)}, which is not a named type");
-        var open = ResolveOwnerType(delegateFqn)
-            ?? throw new InvalidOperationException(
-                $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type");
-        var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
-            .Where(c => c.GetParameters().Length == 2).ToList();
-        var win = TryPickUniqueCtor(ctors,
-            new List<TypeNode> { new TypeNode.Fqn("System.Object"), new TypeNode.Fqn("System.IntPtr") },
-            delegateFqn.Args ?? Array.Empty<TypeNode>())
-            ?? throw new InvalidOperationException(
-                $"bir2cir: '{delegateFqn.Name}' has no unique (object, native int) constructor — "
-                + $"{ctors.Count} two-argument candidate(s)");
-        node[carrier] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open,
-            delegateFqn.Args ?? Array.Empty<TypeNode>(), ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
+        node[carrier] = DelegateConstructorReference(stated).Write();
     }
 
     static bool IsFunctionShape(TypeNode type) => type switch

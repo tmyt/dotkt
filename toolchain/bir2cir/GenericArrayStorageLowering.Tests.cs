@@ -78,6 +78,7 @@ static partial class GenericArrayStorageLowering
         var nextPhase = new FreshNames(file);
         Expect(nextPhase.Next("$arrayStorage$") == "$arrayStorage$1", "new phase retained removed names");
         EntryPointFreshNamesSelfTest(refs);
+        TypedGenericArrayStorageLowering.SelfTest(refs);
         Console.WriteLine("[array fresh names] self-test OK (file lifetime, later declarations, detached rewrites, reservations, evaluation order)");
     }
 
@@ -100,7 +101,7 @@ static partial class GenericArrayStorageLowering
             var second = File("SecondArrayFile", "$arrayStorage$1");
             var roots = new JsonNode[] { first, second };
             if (physical)
-                PhysicalValueCoercion.ApplyAll(roots,
+                PhysicalValueCoercion.ApplyFixtureForSelfTest(roots,
                     () => throw new InvalidOperationException("Unexpected array Unit conversion"),
                     type => type.Name == "System.Int32", references: refs);
             else

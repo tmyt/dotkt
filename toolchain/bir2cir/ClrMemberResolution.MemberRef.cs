@@ -58,6 +58,13 @@ static partial class ClrMemberResolution
     }
 
     /// <summary>The scalar reference for a resolved method/constructor, ready to be stamped on a node.</summary>
+    internal static MemberRefNode MemberRefOf(ReferenceMetadataIndex refs, MethodBase member,
+        string kind, Type openOwner, TypeNode[] ownerArgs, bool? ownerArgumentsAreMethodSlots = null)
+    {
+        _refs = refs;
+        return MemberRefOf(member, kind, openOwner, ownerArgs, ownerArgumentsAreMethodSlots);
+    }
+
     internal static JsonNode MemberRefJson(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs,
         bool? ownerArgumentsAreMethodSlots = null)
         => MemberRefOf(member, kind, openOwner, ownerArgs, ownerArgumentsAreMethodSlots).Write();
@@ -130,6 +137,10 @@ static partial class ClrMemberResolution
 
     internal static JsonNode ArrayStorageMethodRef(ReferenceMetadataIndex refs, string name, string[] parameters,
         string ownerName = "System.Array", bool isStatic = false)
+        => ArrayStorageMethodOf(refs, name, parameters, ownerName, isStatic).Write();
+
+    internal static MemberRefNode ArrayStorageMethodOf(ReferenceMetadataIndex refs, string name, string[] parameters,
+        string ownerName = "System.Array", bool isStatic = false)
     {
         _refs = refs;
         var owner = refs.ResolveRefType(ownerName);
@@ -137,7 +148,7 @@ static partial class ClrMemberResolution
                 | BindingFlags.Public | BindingFlags.DeclaredOnly)
             .Single(m => m.Name == name && m.GetParameters().Select(p => p.ParameterType.FullName)
                 .SequenceEqual(parameters));
-        return MemberRefJson(method, "method", owner, null);
+        return MemberRefOf(method, "method", owner, null);
     }
 
     // A member reflected off a CONSTRUCTED generic type reports its signature ALREADY SUBSTITUTED —
