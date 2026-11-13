@@ -109,8 +109,8 @@ static partial class FaithfulHints
     // Double structural equality uses total order only when BOTH sides are statically non-null Double.
     public static bool IsNonNullFqn(TypeNode t, string name) => t is TypeNode.Fqn f && f.Name == name;
 
-    // "Cast-stripped operand": drop a leading `{k:cast, type:<kotlin.Any/System.Object/object>, e:X}` (an IMPLICIT_CAST
-    // to Any renders as such a node) so recognition sees the semantic operand below the representation-only box.
+    // Drop a leading BirCast to kotlin.Any/System.Object/object so recognition
+    // sees the semantic operand below a representation-only box.
     // Returns the inner operand for transfer into the owning helper, else the original expression.
     public static IBirExpression StripAnyCast(IBirExpression value) => value is BirCast { E.HasValue: true } cast
         && IsAnyCastType(cast.Type.OrDefault()) ? cast.E.Value : value;

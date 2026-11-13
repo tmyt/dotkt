@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// STATIC-TYPE CONSUMPTION (#59/#122): the single uniform source bir2cir reads an operand's Kotlin static type from.
+// STATIC-TYPE CONSUMPTION (#59/#122): the remaining DOM paths read an operand's Kotlin static type here.
 // The frontend already resolved every expression's type in FIR, so bir2cir CONSUMES that fact rather than re-deriving
 // it (the no-re-resolution-downstream invariant): kotc STAMPS the instantiated `node.type` as a `sty` slot on every
 // value node at its expr() chokepoint, and bir2cir's lowering carries it (MemberCallSubstitution / NetInteropBinding /
@@ -12,11 +12,8 @@ using DotKt.Bir;
 // stamp directly — it no longer re-does overload return-type resolution against the ref.dll (the deleted
 // ResolveCallReturn / ResolveFieldType / LocalMemberType / SubstMemberTv path, and the cross-file GlobalTypes hack).
 //
-// Two flavors answer distinct current lowering questions:
-//   Surface — the operand expression's OWN static type (`sty`, or a structural type slot — a boxing/narrowing `cast`
-//             node's target IS the surface type). Reproduces EQEQ `argTypes` (the primitive fast-path key).
-//   Value   — peel a compiler/boxing `cast` (and the value-nullable unwrap) to the UNDERLYING value type.
-//             Reproduces `argValueTypes` / `partTypes` (the collection/float/nullable Kotlin-semantic key).
+// Surface returns the operand expression's own static type (`sty` or a structural type slot): a boxing/narrowing
+// cast's target is its surface type. Underlying-value recognition belongs to the owning typed graph reader.
 //
 // `sty` already carries the frontend's smart-cast refinement, generic args and nullability, so a smart-cast operand
 // resolves to its refined type with no local re-inference. A bir2cir-SYNTHESIZED node that carries no stamp resolves
@@ -145,20 +142,4 @@ static class StaticType
     // `kotlin.Int`), passed to it as the one table the toolchain already keeps.
     static string PrimArrayElem(string name) => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var e) ? e : null;
 
-    // The operand's UNDERLYING value type: peel a `cast` (a compiler boxing/narrowing OR explicit `as`; the BIR does
-    // not distinguish them, so this peels both — the CLR twin of kotc's `stripCast`) and the value-nullable unwrap,
-    // then read the inner. Reproduces `argValueTypes` / `partTypes` (the collection/float/nullable recognition key).
-    public static TypeNode Value(JsonNode node, BirScope scope)
-    {
-        if (node is not JsonObject o) return null;
-        var k = (o["k"] as JsonValue)?.GetValue<string>();
-        if (k == "cast" && o["e"] is JsonNode ce) return Value(ce, scope);
-        if (k == "nullableValue" && o["e"] is JsonNode ne)
-        {
-            // A value-nullable unwrap's underlying value type is its `elem` (the non-null value); prefer it over the
-            // wrapped `e` (which is the Nullable<T> local).
-            return TypeJson.Read(o["elem"]) ?? Value(ne, scope);
-        }
-        return Surface(node, scope);
-    }
 }
