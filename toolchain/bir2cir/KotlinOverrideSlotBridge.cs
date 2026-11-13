@@ -79,7 +79,6 @@ static partial class KotlinOverrideSlotBridge
     // one unimplemented. Nothing between the two points can introduce a new nested move — an existential view's slots
     // are copies of the erased ones — so the halves do not race.
     //
-    // The declaration half, over every file at once (a base may be declared in another file of this compilation).
     // Adapt differing suspend results before they become invariant Task<T> signatures. This includes Unit in a
     // value slot and a covariant result supplied by an inherited implementation. Cold lowering drives a Task of the
     // slot's result from the selected implementation's cold call; it must not cast the public Task result.
@@ -116,7 +115,6 @@ static partial class KotlinOverrideSlotBridge
         IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null,
         IReadOnlyDictionary<string, string> localCarriers = null)
     {
-        var emitBridges = phase != Phase.DeclarationMoves;
         var rootList = roots.ToArray();
         var defs = SupertypeGraph.Collect(rootList);
         IReadOnlyDictionary<string, JsonObject> assignabilityDefinitions = null;
@@ -154,20 +152,17 @@ static partial class KotlinOverrideSlotBridge
         // The source accessor relation is needed only between the two halves of this one pass. Keep it in memory by
         // JsonObject identity rather than minting another BIR/CIR identifier or parsing the bridge's metadata
         // association. The relation cannot escape this ApplyAll invocation.
-        var exactBridgeSources = emitBridges
-            ? new Dictionary<JsonObject, string>(ReferenceEqualityComparer.Instance)
-            : null;
+        var exactBridgeSources = new Dictionary<JsonObject, string>(ReferenceEqualityComparer.Instance);
         // An earlier physical-slot owner (notably CovariantInterfaceReturnBridge) can already have authored an exact
         // interface property bridge. Its carrier explicitly preserves the selected source association; seed this
         // pass-local hand-off from that fact so inherited-DIM collision repair can consume the bridge without asking
         // this pass to synthesize a duplicate or reconstructing the property relation from CLR names.
-        if (exactBridgeSources != null)
-            foreach (var method in defs.Values.Where(def => def.Kind == "interface")
-                         .SelectMany(def => def.Methods.OfType<JsonObject>()))
-                if (Bool(method[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey])
-                    && Str((method[KotlinPropertyAccessors.MetadataCarrierKey] as JsonObject)?["sourceAssociation"])
-                        is string sourceAssociation)
-                    exactBridgeSources[method] = sourceAssociation;
+        foreach (var method in defs.Values.Where(def => def.Kind == "interface")
+                     .SelectMany(def => def.Methods.OfType<JsonObject>()))
+            if (Bool(method[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey])
+                && Str((method[KotlinPropertyAccessors.MetadataCarrierKey] as JsonObject)?["sourceAssociation"])
+                    is string sourceAssociation)
+                exactBridgeSources[method] = sourceAssociation;
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
             ApplyClass(cls, defs, isValue, refs, phase, refBuild, exactBridgeSources, localTypeNames,
                 covariantBridgedSlots, AnnotationArguments, SourceMapping(cls), sourceParameters, representations,
@@ -204,7 +199,6 @@ static partial class KotlinOverrideSlotBridge
         Func<TypeNode, TypeNode, bool> CarrierParameterSeam, Func<TypeNode, TypeNode, bool> CanForwardPhysicalValue,
         Func<TypeNode, TypeNode, bool> CanForwardReturn)
     {
-        var emitBridges = phase != Phase.DeclarationMoves;
         if (cls.Node["methods"] is not JsonArray methods) return;
         var ownArgs = ClassOwnArgs(cls);
         var bridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -260,9 +254,8 @@ static partial class KotlinOverrideSlotBridge
             }
             return Prove(source);
         }
-        if (emitBridges)
-            CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners, inheritedSignatures,
-                phase == Phase.SuspendValueBridges);
+        CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners, inheritedSignatures,
+            phase == Phase.SuspendValueBridges);
 
         // EVERY EARLY EXIT BELOW MEANS "THIS SUPERTYPE OR SLOT IS NOT ONE THIS ERASURE DIVERGED", never "give up on a
         // slot that needs filling". A supertype absent from `defs` is declared elsewhere and goes to the referenced

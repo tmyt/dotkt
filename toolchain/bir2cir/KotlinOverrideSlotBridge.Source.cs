@@ -122,13 +122,14 @@ static partial class KotlinOverrideSlotBridge
     {
         if (phase == Phase.DeclarationMoves && implementation.Suspend && fit.Return == Fit.Bridge
             && ErasureAligned(slotReturn, SupertypeGraph.SubstOwnerTvs(implementation.Return, ownArgs)))
-            implementation.SetSuspendTaskResult(slotReturn);
+            implementation.Source.SuspendTaskResult = slotReturn;
         var parameters = implementation.Parameters;
         for (var index = 0; index < slotParameters.Length; index++)
             if (fit.Parameters[index] == Fit.Rewrite) parameters[index].Move(slotParameters[index], isValue, annotationArguments);
         if (fit.Return == Fit.Rewrite) implementation.MoveReturn(slotReturn, isValue, annotationArguments);
     }
 
+    // The declaration half spans every file: a selected base may be declared in a sibling file.
     public static void PropagateErasedSlots(IReadOnlyList<BirFileDeclaration> roots, ValueTypeOracle isValue,
         ReferenceMetadataIndex references, bool refBuild, GenericRepresentationPolicy representations, Func<TypeNode,bool> hasClassifier)
     {
