@@ -9,14 +9,14 @@ sealed record ValueRepresentationBinding(string Classifier, string ClassifierFac
 
 // Declaration-owned Kotlin classifiers can be narrower than their CLR alias face.
 // The trusted stdlib supplies all type/member/classifier choices. No source name selects a rule.
-sealed class ValueRepresentationLowering
+sealed partial class ValueRepresentationLowering
 {
     internal const string TypeAttribute = "kotlin.clr.ClrValueRepresentation";
     internal const string MemberAttribute = "kotlin.clr.ClrValueMember";
     readonly IReadOnlyDictionary<string, ValueRepresentationBinding> bindings;
     readonly IReadOnlyDictionary<string, string> aliases;
     readonly ValueRepresentationSourcePolicy sourcePolicy;
-    readonly Dictionary<string, JsonArray> localParameters = new(StringComparer.Ordinal);
+    readonly Dictionary<string, IReadOnlyList<string>> localParameters = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> adapters = new(StringComparer.Ordinal);
     readonly Dictionary<string, (string Owner, JsonObject Method, string Slot)> members = new(StringComparer.Ordinal);
     readonly Dictionary<string, (string Owner, JsonObject Method)> locals = new(StringComparer.Ordinal);
@@ -27,13 +27,8 @@ sealed class ValueRepresentationLowering
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
     static bool Bool(JsonNode node) => node is JsonValue value && value.TryGetValue<bool>(out var result) && result;
-    static JsonObject Attribute(JsonObject declaration, string name) =>
-        (declaration["attrs"] as JsonArray)?.OfType<JsonObject>()
-            .SingleOrDefault(attribute => TypeJson.OwnerName(attribute["attr"]) == name);
-    static string Argument(JsonObject attribute, int index) => Text(attribute?["args"]?[index]?["value"]);
-
     internal ValueRepresentationLowering(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex references, bool refBuild,
-        ValueRepresentationSourcePolicy sourcePolicy, IReadOnlySet<string> indexedDeclarationIds = null)
+        ValueRepresentationSourcePolicy sourcePolicy, SourceIndex sourceIndex)
     {
         refs = references;
         referenceBuild = refBuild;
@@ -53,31 +48,7 @@ sealed class ValueRepresentationLowering
                 ["ret"] = TypeJson.Write(member.DeclarationSemanticReturn ?? member.ReturnTypeNode),
             }, member.ValueSlot);
         }
-        void Index(JsonObject declaration)
-        {
-            if (Text(declaration["name"]) is string name)
-            {
-                if (declaration["typeParams"] is JsonArray parameters) localParameters[name] = parameters;
-            }
-            var owner = Text(declaration["fileClass"]) ?? Text(declaration["name"]);
-            foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                // The source index includes preexisting generated/lifted methods,
-                // but not physical-only forwarders materialized after its capture.
-                // Retain these actual DOM occurrences: later representation passes
-                // deliberately update their signatures before this index reads them.
-                if (Text(method[DeclarationIdentityBinding.Key]) is string id
-                    && (indexedDeclarationIds == null || indexedDeclarationIds.Contains(id)))
-                {
-                    locals[id] = (owner, method);
-                    if (Attribute(method, MemberAttribute) is { } marker)
-                    {
-                        adapters[id] = Argument(marker, 0);
-                        members[id] = (owner, method, Argument(marker, 1));
-                    }
-                }
-            foreach (var type in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Index(type);
-        }
-        foreach (var root in roots.OfType<JsonObject>()) Index(root);
+        BindSource(roots, sourceIndex);
     }
 
     internal JsonNode Predicate(TypeNode type)
@@ -133,7 +104,7 @@ sealed class ValueRepresentationLowering
         if (binding == null || shape.Length != 0) return false;
         while (type is TypeNode.Nullable or TypeNode.Oblivious)
             type = type is TypeNode.Nullable nullable ? nullable.Of : ((TypeNode.Oblivious)type).Of;
-        return type is TypeNode.Fqn application && AliasVarianceRepresentation.RequiresErasure(application, refs,
+        return type is TypeNode.Fqn application && AliasVarianceRepresentation.RequiresErasureFromSource(application, refs,
             localParameters.GetValueOrDefault(application.Name), aliases.GetValueOrDefault(application.Name));
     }
 
@@ -625,8 +596,10 @@ sealed class ValueRepresentationLowering
         var referenceRoot = root.DeepClone();
         var source = ReadFixture(root);
         var sourcePolicy = new ValueRepresentationSourcePolicy(new[] { source }, null, false);
-        root = sourcePolicy.EraseBounds(source).ToDom();
-        var policy = new ValueRepresentationLowering(new[] { root }, null, false, sourcePolicy);
+        source = sourcePolicy.EraseBounds(source);
+        var sourceIndex = CaptureSource(new[] { source });
+        root = source.ToDom();
+        var policy = new ValueRepresentationLowering(new[] { root }, null, false, sourcePolicy, sourceIndex);
         var inheritedCall = JsonNode.Parse("""
             {"k":"callInstance","overrides":[{"declarationId":"convert"}],
              "recv":{"k":"local","name":"value"},"args":[],"sig":[],"ret":{"t":"fqn","name":"kotlin.Int"}}
@@ -760,9 +733,12 @@ sealed class ValueRepresentationLowering
     static BirFileDeclaration ReadFixture(JsonNode root) =>
         BirGraphJson.ReadFile(System.Text.Encoding.UTF8.GetBytes(root.ToJsonString()));
 
-    static ValueRepresentationLowering FixturePolicy(JsonNode root, bool referenceBuild) =>
-        new(new[] { root }, null, referenceBuild,
-            new ValueRepresentationSourcePolicy(new[] { ReadFixture(root) }, null, referenceBuild));
+    static ValueRepresentationLowering FixturePolicy(JsonNode root, bool referenceBuild)
+    {
+        var source = ReadFixture(root);
+        return new(new[] { root }, null, referenceBuild,
+            new ValueRepresentationSourcePolicy(new[] { source }, null, referenceBuild), CaptureSource(new[] { source }));
+    }
 
     static void SourceMembershipSelfTest()
     {
@@ -772,17 +748,19 @@ sealed class ValueRepresentationLowering
         } };
         var membership = new SourceModuleIndex(new[] { source }, new Dictionary<string, string>()).DeclarationIds;
         var policy = new ValueRepresentationSourcePolicy(new[] { source }, null, false);
+        var index = CaptureSource(new[] { source }, membership);
         var root = source.ToDom();
         root["methods"].AsArray().Add(new BirFunctionDeclaration {
             Name = "forwarder", DeclarationId = "new-physical-only", Generated = true,
             Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.String"),
         }.ToDom());
-        var indexed = new ValueRepresentationLowering(new[] { root }, null, false, policy, membership);
+        var indexed = new ValueRepresentationLowering(new[] { root }, null, false, policy, index);
         var method = root["methods"][0].AsObject();
         method["ret"] = TypeJson.Fqn("kotlin.Int");
         if (!indexed.locals.ContainsKey("existing-generated") || indexed.locals.ContainsKey("new-physical-only")
             || !ReferenceEquals(indexed.locals["existing-generated"].Method, method)
             || TypeJson.Read(indexed.locals["existing-generated"].Method["ret"]) is not TypeNode.Fqn { Name: "kotlin.Int" })
             throw new InvalidOperationException("Source membership lost preexisting generated declarations or live representation signatures");
+        SourceIndexSelfTest();
     }
 }
