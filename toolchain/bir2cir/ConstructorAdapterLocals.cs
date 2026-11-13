@@ -13,6 +13,8 @@ static class ConstructorAdapterLocals
     static Region Body(BirGraphValue node) => node switch {
         BirConstructorAdapterPayload value => new(value.Statements.Value, Array.Empty<string>(), Results: value.Arguments.Value),
         BirBlock value => new(value.Body.OrEmpty(), Array.Empty<string>()),
+        BirWhile value => new(value.Body.OrEmpty(), Array.Empty<string>()),
+        BirBranch value => new(value.Body.OrEmpty(), Array.Empty<string>()),
         BirValueBlock value => new(value.Stmts.OrEmpty(), Array.Empty<string>(), Result: () => value.Result.OrDefault(),
             SetResult: result => value.Result = OptionalField<IBirExpression>.Of(result)),
         BirFunctionDeclaration value => new(value.Body.OrEmpty(), value.Params.OrEmpty().Select(parameter => parameter.Name.OrDefault()).ToArray()),
@@ -30,6 +32,18 @@ static class ConstructorAdapterLocals
         BirRepeat value => new(value.Body.OrEmpty(), Array.Empty<string>(), value.Var.OrDefault(), name => value.Var = name),
         _ => null,
     };
+
+    static IEnumerable<Region> Regions(BirGraphValue node)
+    {
+        if (node is BirTry value)
+        {
+            // The try body, each catch, and the finally body have independent
+            // lexical frames. Catches own their regions through BirCatch.
+            yield return new(value.Body.OrEmpty(), Array.Empty<string>());
+            yield return new(value.Finally.OrEmpty(), Array.Empty<string>());
+        }
+        else if (Body(node) is { } body) yield return body;
+    }
 
     internal static BirGraphValue Substitute(BirGraphValue source, IReadOnlyDictionary<string, IBirExpression> replacements)
         => Rewrite(source.DeepClone(), replacements, null);
@@ -55,9 +69,9 @@ static class ConstructorAdapterLocals
         if (node is BirSetLocal write && write.Name.HasValue
             && replacements.TryGetValue(write.Name.Value, out var target) && target is BirLocal local)
             write.Name = local.Name;
-        var region = Body(node);
+        var regions = Regions(node).ToArray();
         var handled = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
-        if (region != null)
+        foreach (var region in regions)
         {
             foreach (var statement in region.Statements) handled.Add((BirGraphValue)statement);
             if (region.Result?.Invoke() is { } result) handled.Add((BirGraphValue)result);
@@ -66,26 +80,27 @@ static class ConstructorAdapterLocals
         node.VisitChildSlots(slot => {
             if (!handled.Contains(slot.Value)) slot.Replace(Rewrite(slot.Value, replacements, freshName));
         });
-        if (region == null) return node;
-
-        var nested = new Dictionary<string, IBirExpression>(replacements, StringComparer.Ordinal);
-        foreach (var parameter in region.Parameters) if (parameter != null) nested.Remove(parameter);
-        if (region.Binder != null)
+        foreach (var region in regions)
         {
-            nested.Remove(region.Binder);
-            if (freshName != null)
+            var nested = new Dictionary<string, IBirExpression>(replacements, StringComparer.Ordinal);
+            foreach (var parameter in region.Parameters) if (parameter != null) nested.Remove(parameter);
+            if (region.Binder != null)
             {
-                var fresh = freshName(region.Binder);
-                region.RenameBinder(fresh);
-                nested[region.Binder] = new BirLocal { Name = fresh };
+                nested.Remove(region.Binder);
+                if (freshName != null)
+                {
+                    var fresh = freshName(region.Binder);
+                    region.RenameBinder(fresh);
+                    nested[region.Binder] = new BirLocal { Name = fresh };
+                }
             }
+            RewriteStatements(region.Statements, nested, freshName);
+            if (region.Result?.Invoke() is { } value)
+                region.SetResult((IBirExpression)Rewrite((BirGraphValue)value, nested, freshName));
+            if (region.Results != null)
+                for (var index = 0; index < region.Results.Length; index++)
+                    region.Results[index] = (IBirExpression)Rewrite((BirGraphValue)region.Results[index], nested, freshName);
         }
-        RewriteStatements(region.Statements, nested, freshName);
-        if (region.Result?.Invoke() is { } value)
-            region.SetResult((IBirExpression)Rewrite((BirGraphValue)value, nested, freshName));
-        if (region.Results != null)
-            for (var index = 0; index < region.Results.Length; index++)
-                region.Results[index] = (IBirExpression)Rewrite((BirGraphValue)region.Results[index], nested, freshName);
         return node;
     }
 
