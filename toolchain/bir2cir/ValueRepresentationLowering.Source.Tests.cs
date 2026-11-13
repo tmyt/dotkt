@@ -5,6 +5,72 @@ using DotKt.Cir;
 
 sealed partial class ValueRepresentationLowering
 {
+    // Reuse SelfTest's actual Union binding and the same saved-bound frame on both real entry points.
+    // Prepare the typed cases before the one-way declaration handoff; run the detached materialized cases after it.
+    static Action PrepareNestedBoundGuardSelfTest(ValueRepresentationLowering policy)
+    {
+        var cases = new List<(int Depth, BirFunctionDeclaration Source, JsonObject Materialized)>();
+        var variable = new TypeNode.Tv("method", 0);
+        var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+        foreach (var depth in new[] { 2, 3, 4 })
+        {
+            IBirExpression operand = new BirLocal { Name = "value", Sty = any };
+            for (var index = 0; index < depth; index++)
+                operand = new BirCast { Type = variable, ReifiedTypeOperand = false,
+                    E = OptionalField<IBirExpression>.Of(operand) };
+            var method = new BirFunctionDeclaration {
+                Name = "nestedBoundGuard" + depth, Ret = variable,
+                Params = new[] { new BirParameter { Name = "value", Type = any } },
+                TypeParams = new[] { new BirTypeParameter { Name = "T", Constraints = Array.Empty<TypeNode>() } },
+                MethodTypeParameterBoundsPre = new SourceBoundsSnapshot(new Dictionary<int, TypeNode[]> {
+                    [0] = new TypeNode[] { new TypeNode.Fqn("Union") } }),
+                Body = new IBirStatement[] { new BirReturn { Value = OptionalField<IBirExpression>.Of(operand) } },
+            };
+            var materialized = method.ToDom();
+            policy.BindOperations(new BirFileDeclaration { Methods = new[] { method } });
+            cases.Add((depth, method, materialized));
+        }
+        return () => {
+            var differences = new List<string>();
+            foreach (var (depth, source, materialized) in cases)
+            {
+                policy.BindMaterializedOperations(materialized);
+                var typed = source.ToDom();
+                var sourceCounts = Count(typed);
+                var materializedCounts = Count(materialized);
+                var report = $"depth={depth}: typed nodes={sourceCounts.Nodes}, generic casts={sourceCounts.GenericCasts}, classifier blocks={sourceCounts.Blocks}; " +
+                    $"materialized nodes={materializedCounts.Nodes}, generic casts={materializedCounts.GenericCasts}, classifier blocks={materializedCounts.Blocks}";
+                Console.WriteLine("[nested bound guard] " + report);
+                if (!JsonNode.DeepEquals(typed, materialized)
+                    || sourceCounts != materializedCounts || sourceCounts.GenericCasts != depth)
+                    differences.Add(report);
+            }
+            if (differences.Count != 0)
+                throw new InvalidOperationException("Source and actual materialized nested bound guards diverged: " + string.Join("; ", differences));
+        };
+
+        static (int Nodes, int GenericCasts, int Blocks) Count(JsonNode node)
+        {
+            var nodes = 0;
+            var casts = 0;
+            var blocks = 0;
+            void Walk(JsonNode current)
+            {
+                if (current is JsonObject obj)
+                {
+                    var kind = Text(obj["k"]);
+                    if (kind != null) nodes++;
+                    if (kind == "cast" && TypeJson.Read(obj["type"]) is TypeNode.Tv) casts++;
+                    if (kind == "valueBlock") blocks++;
+                    foreach (var child in obj) Walk(child.Value);
+                }
+                else if (current is JsonArray array) foreach (var child in array) Walk(child);
+            }
+            Walk(node);
+            return (nodes, casts, blocks);
+        }
+    }
+
     static void SourceIndexSelfTest()
     {
         var sourceParameter = new BirTypeParameter { Name = "T", Variance = "out" };
