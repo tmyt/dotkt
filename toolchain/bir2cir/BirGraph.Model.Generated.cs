@@ -20618,9 +20618,11 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
     public OptionalField<IBirStatement[]> Body { get; set; }
     public OptionalField<int> LoopId { get; set; }
     public OptionalField<string> Label { get; set; }
+    public OptionalField<TypeNode> RangeType { get; set; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (AccessOwner.HasValue) { visit("accessOwner", (TypeNode)AccessOwner.Value); }
+        if (RangeType.HasValue) { visit("rangeType", (TypeNode)RangeType.Value); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -20630,11 +20632,13 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         if (LastM.HasValue) { visit((string)LastM.Value); }
         if (StepM.HasValue) { visit((string)StepM.Value); }
         if (Label.HasValue) { visit((string)Label.Value); }
+        if (RangeType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)RangeType.Value, visit); }
     }
     public override void VisitNameFields(Action<string> visit)
     {
         if (Var.HasValue) visit(Var.Value);
         if (AccessOwner.HasValue) { BirGraphNameFields.VisitType((TypeNode)AccessOwner.Value, visit); }
+        if (RangeType.HasValue) { BirGraphNameFields.VisitType((TypeNode)RangeType.Value, visit); }
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -20661,10 +20665,12 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         Range = Range.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Range.Value).DeepClone()) : Range,
         AccessOwner = AccessOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessOwner.Value)) : AccessOwner,
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
+        RangeType = RangeType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RangeType.Value)) : RangeType,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         AccessOwner = AccessOwner.HasValue ? OptionalField<TypeNode>.Of(rewrite(AccessOwner.Value)) : AccessOwner,
+        RangeType = RangeType.HasValue ? OptionalField<TypeNode>.Of(rewrite(RangeType.Value)) : RangeType,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -20673,10 +20679,12 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         Range = Range.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Range.Value)) : Range,
         AccessOwner = AccessOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessOwner.Value)) : AccessOwner,
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        RangeType = RangeType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, RangeType.Value)) : RangeType,
     };
     public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
     {
         if (AccessOwner.HasValue) AccessOwner = OptionalField<TypeNode>.Of(rewrite(AccessOwner.Value));
+        if (RangeType.HasValue) RangeType = OptionalField<TypeNode>.Of(rewrite(RangeType.Value));
     }
     public override void VisitGenericFrame(
         Action<BirGenericFrameRole, TypeNode> type,
@@ -20685,6 +20693,7 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         if (Range.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Range.Value); }
         if (AccessOwner.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)AccessOwner.Value); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
+        if (RangeType.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)RangeType.Value); }
     }
     public override void RewriteGenericFrameInPlace(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -20693,6 +20702,7 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         if (Range.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Range.Value); }
         if (AccessOwner.HasValue) { AccessOwner = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessOwner.Value)); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
+        if (RangeType.HasValue) { RangeType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, RangeType.Value)); }
     }
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
@@ -20701,6 +20711,7 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         if (Range.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Range.Value); }
         if (AccessOwner.HasValue) { AccessOwner = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, AccessOwner.Value)); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+        if (RangeType.HasValue) { RangeType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, RangeType.Value)); }
     }
     public override void RewriteOwnershipInPlace(
         Func<BirOwnershipRole, TypeNode, TypeNode> type,
@@ -20709,6 +20720,7 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         if (Range.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Range.Value); }
         if (AccessOwner.HasValue) { AccessOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessOwner.Value)); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (RangeType.HasValue) { RangeType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, RangeType.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirForRange value
@@ -20720,7 +20732,8 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
             && EqualField(StepM, value.StepM, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(Body, value.Body, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(LoopId, value.LoopId, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
-            && EqualField(Label, value.Label, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
+            && EqualField(Label, value.Label, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(RangeType, value.RangeType, (left, right) => TypeNodeDataEquality.Equal(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -20734,6 +20747,7 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         WriteOptional(writer, "body", Body, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "loopId", LoopId, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "label", Label, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "rangeType", RangeType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -20749,6 +20763,7 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         if (Body.IsPresent) result["body"] = Body.IsNull ? null : new JsonArray(Body.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (LoopId.IsPresent) result["loopId"] = LoopId.IsNull ? null : JsonValue.Create(LoopId.Value);
         if (Label.IsPresent) result["label"] = Label.IsNull ? null : JsonValue.Create(Label.Value);
+        if (RangeType.IsPresent) result["rangeType"] = RangeType.IsNull ? null : TypeNode.Write(RangeType.Value);
         return result;
     }
 }
@@ -24365,6 +24380,7 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
     public OptionalField<BirMemberReference> CurrentErasedRef { get; set; }
     public OptionalField<BirMemberReference> MoveNextRef { get; set; }
     public OptionalField<string> Label { get; set; }
+    public OptionalField<bool> ErasedEnumeration { get; set; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (Elem.HasValue) { visit("elem", (TypeNode)Elem.Value); }
@@ -24516,7 +24532,8 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
             && EqualField(CurrentRef, value.CurrentRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(CurrentErasedRef, value.CurrentErasedRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(MoveNextRef, value.MoveNextRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
-            && EqualField(Label, value.Label, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
+            && EqualField(Label, value.Label, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(ErasedEnumeration, value.ErasedEnumeration, (left, right) => EqualityComparer<bool>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -24532,6 +24549,7 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
         WriteOptional(writer, "currentErasedRef", CurrentErasedRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "moveNextRef", MoveNextRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "label", Label, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "erasedEnumeration", ErasedEnumeration, (writer, value) => { writer.WriteBooleanValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -24549,6 +24567,7 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
         if (CurrentErasedRef.IsPresent) result["currentErasedRef"] = CurrentErasedRef.IsNull ? null : ((BirGraphValue)CurrentErasedRef.Value).ToDom();
         if (MoveNextRef.IsPresent) result["moveNextRef"] = MoveNextRef.IsNull ? null : ((BirGraphValue)MoveNextRef.Value).ToDom();
         if (Label.IsPresent) result["label"] = Label.IsNull ? null : JsonValue.Create(Label.Value);
+        if (ErasedEnumeration.IsPresent) result["erasedEnumeration"] = ErasedEnumeration.IsNull ? null : JsonValue.Create(ErasedEnumeration.Value);
         return result;
     }
 }

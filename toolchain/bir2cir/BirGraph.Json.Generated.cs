@@ -9434,6 +9434,7 @@ internal static partial class BirGraphJson
         OptionalField<IBirStatement[]> field6 = default;
         OptionalField<int> field7 = default;
         OptionalField<string> field8 = default;
+        OptionalField<TypeNode> field9 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -9441,7 +9442,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 9); if (ReadString(ref reader) != "forRange") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 10); if (ReadString(ref reader) != "forRange") throw new FormatException(); break;
                 case "var":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
@@ -9478,6 +9479,10 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
+                case "rangeType":
+                    Seen(ref seen, 1UL << 9);
+                    field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
         }
@@ -9493,6 +9498,7 @@ internal static partial class BirGraphJson
             Body = field6,
             LoopId = field7,
             Label = field8,
+            RangeType = field9,
         };
     }
 
@@ -11185,6 +11191,7 @@ internal static partial class BirGraphJson
         OptionalField<BirMemberReference> field8 = default;
         OptionalField<BirMemberReference> field9 = default;
         OptionalField<string> field10 = default;
+        OptionalField<bool> field11 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -11192,7 +11199,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 11); if (ReadString(ref reader) != "forEachInline") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 12); if (ReadString(ref reader) != "forEachInline") throw new FormatException(); break;
                 case "elem":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
@@ -11237,6 +11244,10 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 10);
                     field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
+                case "erasedEnumeration":
+                    Seen(ref seen, 1UL << 11);
+                    field11 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
         }
@@ -11254,6 +11265,7 @@ internal static partial class BirGraphJson
             CurrentErasedRef = field8,
             MoveNextRef = field9,
             Label = field10,
+            ErasedEnumeration = field11,
         };
     }
 

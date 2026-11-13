@@ -1834,7 +1834,7 @@
       "required": ["k", "var", "array", "elem", "body", "loopId"], "additionalProperties": false
     },
     "cirForRange": {
-      "type": "object", "x-dotkt-model": { "name": "CirForRange", "domain": "cirExecutable", "roles": ["statement"], "loweringProperties": { "label": { "type": "string" } } },
+      "type": "object", "x-dotkt-model": { "name": "CirForRange", "domain": "cirExecutable", "roles": ["statement"], "loweringProperties": { "label": { "type": "string" }, "rangeType": { "$ref": "#/$defs/type" } } },
       "properties": { "k": { "const": "forRange" }, "var": { "type": "string" }, "range": { "$ref": "#/$defs/cirExpressionNode" }, "accessOwner": { "$ref": "#/$defs/type" }, "firstM": { "type": "string" }, "lastM": { "type": "string" }, "stepM": { "type": "string" }, "body": { "type": "array", "items": { "$ref": "#/$defs/cirStatementNode" } }, "loopId": { "type": "integer" } },
       "required": ["k", "var", "range", "accessOwner", "firstM", "lastM", "stepM", "body", "loopId"], "additionalProperties": false
     },
@@ -2264,7 +2264,7 @@
       "properties": { "k": { "const": "enumValues" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" }, "values": { "type": "array", "items": { "$ref": "#/$defs/cirPhysicalEnumValue" } } }, "required": ["k", "type"], "additionalProperties": false
     },
     "cirForEachNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirForEach", "domain": "cirExecutable", "roles": ["statement", "expression"], "loweringProperties": { "label": { "type": "string" } } },
+      "type": "object", "x-dotkt-model": { "name": "CirForEach", "domain": "cirExecutable", "roles": ["statement", "expression"], "loweringProperties": { "label": { "type": "string" }, "erasedEnumeration": { "type": "boolean" } } },
       "properties": { "k": { "const": "forEachInline" }, "elem": { "x-dotkt-representation-role": "Element", "$ref": "#/$defs/type" }, "src": { "$ref": "#/$defs/cirExpressionNode" }, "var": { "type": "string" }, "body": { "type": "array", "items": { "$ref": "#/$defs/cirStatementNode" } }, "loopId": { "type": "integer" }, "enumerableGetRef": { "$ref": "#/$defs/memberRef" }, "enumerableGetErasedRef": { "$ref": "#/$defs/memberRef" }, "currentRef": { "$ref": "#/$defs/memberRef" }, "currentErasedRef": { "$ref": "#/$defs/memberRef" }, "moveNextRef": { "$ref": "#/$defs/memberRef" } },
       "required": ["k", "elem", "src", "var", "body", "loopId", "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef"], "additionalProperties": false
     },
