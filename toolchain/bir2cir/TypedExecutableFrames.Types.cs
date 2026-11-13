@@ -4,7 +4,7 @@ static partial class TypedExecutableFrames
 {
     // A selected application is inserted as a whole. In particular, an owner
     // TV inside a substituted method argument must not be substituted again.
-    static TypeNode SubstituteType(TypeNode type, TypeNode[] methodArguments, int arity,
+    internal static TypeNode SubstituteType(TypeNode type, TypeNode[] methodArguments, int arity,
         TypeNode[] ownerArguments, bool typeScope) => RewriteType(type, variable => variable.Scope switch {
             "method" when variable.I >= 0 && variable.I < arity
                 && variable.I < methodArguments.Length => methodArguments[variable.I],
@@ -15,7 +15,7 @@ static partial class TypedExecutableFrames
 
     static TypeNode CopyType(TypeNode type) => RewriteType(type, _ => null);
 
-    static TypeNode RewriteType(TypeNode type, Func<TypeNode.Tv, TypeNode> variable)
+    internal static TypeNode RewriteType(TypeNode type, Func<TypeNode.Tv, TypeNode> variable)
     {
         if (type == null) return null;
         if (type is TypeNode.Tv tv) return variable(tv) is { } replacement ? CopyType(replacement) : tv;

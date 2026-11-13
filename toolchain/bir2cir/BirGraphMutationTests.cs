@@ -87,6 +87,23 @@ internal static class BirGraphMutationTests
             (role, type) => role == BirGenericFrameRole.Lexical ? target : type, (_, _) => { });
         Require(genericCall.TypeArgs.Value[0] == target && genericCall.Sig.Value[0] == source,
             "generic frame lexical versus referenced declaration");
+        var observedArguments = genericCall.TypeArgs.Value;
+        var observedSignature = genericCall.Sig.Value;
+        var observedTypes = new List<(BirGenericFrameRole Role, TypeNode Type)>();
+        genericCall.VisitGenericFrame((role, type) => observedTypes.Add((role, type)), (_, _) => { });
+        Require(observedTypes.Contains((BirGenericFrameRole.Lexical, target))
+            && observedTypes.Contains((BirGenericFrameRole.ReferencedDeclaration, source))
+            && ReferenceEquals(observedArguments, genericCall.TypeArgs.Value)
+            && ReferenceEquals(observedSignature, genericCall.Sig.Value),
+            "generic-frame observation retains vector identity and owning roles");
+
+        var statementOwner = new BirFunctionDeclaration { Body = new IBirStatement[] { statement } };
+        var statementFile = new BirFileDeclaration { Methods = new[] { statementOwner } };
+        statementOwner.VisitSourceChildren(_ => { }, region =>
+            region.ReplaceStatements!(new IBirStatement[] { statement, new BirExpressionStatement { Expr = local } }));
+        Require(ReferenceEquals(statementFile.Methods.Value[0], statementOwner)
+            && statementOwner.Body.Value.Length == 2 && ReferenceEquals(statementOwner.Body.Value[0], statement),
+            "statement-vector replacement keeps the owning declaration and continuing statements");
 
         var ownershipCall = new BirCallStatic {
             TypeArgs = new[] { source }, Sig = new[] { source },

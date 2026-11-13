@@ -38,6 +38,12 @@ sealed class SourceTypeFacts
 
     internal SourceTypeFacts Merge(IReadOnlyDictionary<int, TypeNode[]> bounds) => Merge(null, null, bounds);
 
+    // A concretized synthetic declaration no longer owns generic bounds or a
+    // nullable companion frame. Its source supertypes retain their authored order.
+    internal SourceTypeFacts ConcretizeSynthetic(Func<TypeNode, TypeNode> rewrite)
+        => new(Base == null ? null : rewrite(Base), Interfaces?.Select(rewrite).ToArray(),
+            new Dictionary<int, TypeNode[]>(), order.Where(part => part is Part.Base or Part.Interfaces).ToArray());
+
     internal SourceTypeFacts MergeNullableFrame(NullableRepresentationFrame frame)
     {
         if (NullableFrame is { } prior && (prior.SourceArity != frame.SourceArity

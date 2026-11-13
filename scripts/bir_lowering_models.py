@@ -325,14 +325,14 @@ def outputs(root, definitions):
             return f"{value}.Select({item} => {expr}).ToArray()"
         return f"{callback}({prefix}{value})"
 
-    def visit(field, value, depth=0, callback="visit", prefix=""):
+    def visit(field, value, depth=0, callback="visit", prefix="", cast="BirGraphValue"):
         field = base(field)
         if field.get("type") == "array":
             item = f"item{depth}"
-            body = visit(field["items"], item, depth + 1, callback, prefix)
+            body = visit(field["items"], item, depth + 1, callback, prefix, cast)
             if is_nullable(field["items"]): body = f"if ({item} is not null) {{ {body} }}"
             return f"foreach (var {item} in {value}) {{ {body} }}"
-        return f"{callback}({prefix}(BirGraphValue){value});"
+        return f"{callback}({prefix}({cast}){value});"
 
     def equal(field, left, right, depth=0):
         field = base(field)
@@ -478,9 +478,9 @@ def outputs(root, definitions):
                     result_prop = member(result)
                     result_slot = slot(shape["properties"][result], result_prop + ".Value", target=result_prop, optional=True)
                     model += [f"        if ({prop}.HasValue || {result_prop}.HasValue) region(new BirSourceRegion(",
-                              f"            {prop}.OrEmpty(), {result_prop}.HasValue ? {result_slot} : (BirGraphSlot?)null));"]
+                              f"            {prop}.OrEmpty(), {result_prop}.HasValue ? {result_slot} : (BirGraphSlot?)null, statements => {prop} = statements));"]
                 else:
-                    body = f"region(new BirSourceRegion({prop}.Value));" if cs(value) == "IBirStatement[]" else slots(
+                    body = f"region(new BirSourceRegion({prop}.Value, ReplaceStatements: statements => {prop} = statements));" if cs(value) == "IBirStatement[]" else slots(
                         value, prop + '.Value', target=prop, optional=True, visitor="child")
                     model += [f"        if ({prop}.HasValue) {{ {body} }}"]
             model += ["    }"]
@@ -533,6 +533,17 @@ def outputs(root, definitions):
             if is_type_slot(value):
                 prop = member(field)
                 model += [f"        if ({prop}.HasValue) {prop} = OptionalField<{cs(value)}>.Of({rewrite_type(value, prop + '.Value')});"]
+        model += ["    }", "    public override void VisitGenericFrame(",
+                  "        Action<BirGenericFrameRole, TypeNode> type,",
+                  "        Action<BirGenericFrameRole, BirGraphValue> child)", "    {"]
+        for field, value in fields:
+            type_slot = is_type_slot(value) or cs(value) == "TypeNode"
+            if not is_child(value) and not type_slot: continue
+            role = value.get("x-dotkt-frame-role", "FrozenSourceFact" if not is_type_slot(value) and type_slot else "Lexical")
+            prop, prefix = member(field), f"BirGenericFrameRole.{role}, "
+            body = visit(value, prop + ".Value", callback="child", prefix=prefix) if is_child(value) else visit(
+                value, prop + ".Value", callback="type", prefix=prefix, cast="TypeNode")
+            model += [f"        if ({prop}.HasValue) {{ {body} }}"]
         model += ["    }", "    public override void RewriteGenericFrameInPlace(",
                   "        Func<BirGenericFrameRole, TypeNode, TypeNode> type,",
                   "        Action<BirGenericFrameRole, BirGraphValue> child)", "    {"]

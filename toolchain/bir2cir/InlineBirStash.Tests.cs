@@ -1,6 +1,5 @@
 using System;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -81,22 +80,21 @@ static class InlineBirStashTests
             || index.OwnerlessCandidates("dispatch", 0, 0) != null)
             throw new InvalidOperationException("Executable stash lost physical/semantic owner association or receiver eligibility");
 
-        JsonObject Call(TypeNode signature, string identity = null) => new() {
-            ["k"] = "callInline", ["owner"] = TypeJson.Fqn(facade), ["callee"] = TypeJson.Fqn(facade + ".pick"),
-            ["pc"] = 1, ["ga"] = 0, ["paramSig"] = new JsonArray(TypeJson.Write(signature)),
-            [DeclarationIdentityBinding.Key] = identity,
+        BirCallInline Call(TypeNode signature, string identity = null) => new() {
+            Owner = new TypeNode.Fqn(facade), Callee = new TypeNode.Fqn(facade + ".pick"),
+            Pc = 1, Ga = 0, ParamSig = new[] { signature }, DeclarationId = identity == null ? default : identity,
         };
         var exact = InlineSplice.ResolvePayload(Call(text, "pick-int"), index, null);
         var selected = InlineSplice.ResolvePayload(Call(text), index, null);
-        var ownerlessCall = Call(integer); ownerlessCall.Remove("owner");
+        var ownerlessCall = Call(integer); ownerlessCall.Owner = default;
         var selectedOwnerless = InlineSplice.ResolvePayload(ownerlessCall, index, null);
-        if (!exact.sameModule || exact.payload?[DeclarationIdentityBinding.Key]?.GetValue<string>() != "pick-int"
-            || !selected.sameModule || selected.payload?[DeclarationIdentityBinding.Key]?.GetValue<string>() != "pick-string"
-            || !selectedOwnerless.sameModule || selectedOwnerless.payload?[DeclarationIdentityBinding.Key]?.GetValue<string>() != "pick-int")
+        if (!exact.SameModule || exact.Payload?.DeclarationId.OrDefault() != "pick-int"
+            || !selected.SameModule || selected.Payload?.DeclarationId.OrDefault() != "pick-string"
+            || !selectedOwnerless.SameModule || selectedOwnerless.Payload?.DeclarationId.OrDefault() != "pick-int")
             throw new InvalidOperationException("Executable stash selection diverged from exact identity, overload or ownerless policy");
-        exact.payload["body"][0]["span"] = null;
+        ((BirSourcePoint)exact.Payload.Body.Value[0]).Span = OptionalField<BirSourceSpan>.Null;
         if (local.Body.Value[0] is not BirSourcePoint { Span.HasValue: true }
-            || InlineSplice.ResolvePayload(Call(integer, "pick-int"), index, null).payload["body"][0]["span"] == null)
+            || InlineSplice.ResolvePayload(Call(integer, "pick-int"), index, null).Payload.Body.Value[0] is not BirSourcePoint { Span.HasValue: true })
             throw new InvalidOperationException("Executable splice materializations share mutable stash nodes");
         Console.WriteLine("[typed executable inline stash] self-test OK (transitive lifted, receivers, selection, source spans, independent materialization)");
     }
