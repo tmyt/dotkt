@@ -180,29 +180,12 @@ static partial class OpaqueCarrierTypeBinding
     // explicit metadata-leaf path separate from the owning executable traversal.
     static void BindJsonMetadataPayload(JsonNode payload, IReadOnlyDictionary<string, string> physicalBySemantic)
     {
-        // A synthClass is a complete declaration carried into the consumer and gets a new consumer-side owner. Its own
-        // identity must remain semantic here; only references to producer-resident declarations become physical tokens.
-        var carried = new HashSet<string>(StringComparer.Ordinal);
-        void CollectCarried(JsonNode current)
-        {
-            if (current is JsonObject obj)
-            {
-                if (obj["synthClass"] is JsonObject synth && Str(synth["name"]) is string name)
-                    carried.Add(name);
-                foreach (var child in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
-                    CollectCarried(child);
-            }
-            else if (current is JsonArray array)
-                foreach (var child in array.Where(value => value != null).ToList()) CollectCarried(child);
-        }
-        CollectCarried(payload);
-
         void Rewrite(JsonNode current)
         {
             if (current is JsonObject obj)
             {
                 if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name
-                    && !carried.Contains(name) && physicalBySemantic.TryGetValue(name, out var physical))
+                    && physicalBySemantic.TryGetValue(name, out var physical))
                     obj["name"] = physical;
                 foreach (var child in obj.Select(kv => kv.Value).Where(child => child != null).ToList())
                 {
