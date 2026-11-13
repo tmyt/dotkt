@@ -14,7 +14,7 @@ using DotKt.Cir;
 // by PrimitiveOperatorLowering.
 
 // Shared recognition primitives used by BOTH this pass and PrimitiveOperatorLowering's EQEQ arm.
-static class FaithfulHints
+static partial class FaithfulHints
 {
     static Func<BirCallStatic, BirCallStatic> _bindHelper;
 
@@ -131,35 +131,42 @@ static class FaithfulHints
 
     // The Kotlin `[a, b]` / `{a=1, b=2}` renderer: clrCollToString (1 type-arg) for List/Set/Collection, clrMapToString
     // (2 type-args) for Map. `op` is DeepCloned because the helper node takes ownership of its argument tree.
-    public static JsonObject CollToString(JsonNode op, CollKind kind, TypeNode[] args) =>
-        kind == CollKind.Map
-            ? Helper(MapDefaults, "clrMapToString", new JsonArray { op.DeepClone(),
-                    MemberCallSubstitution.StaticMapPreference(new TypeNode.Fqn("kotlin.collections.Map", args), null,
-                        MemberCallSubstitution.CollectionOperationPhase.Source) },
-                new JsonArray { TypeJson.Fqn("kotlin.Any"), TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) }, CollTypeArgs(kind, args))
-            : Helper(CollDefaults, "clrCollToString", new JsonArray { op.DeepClone() },
-                new JsonArray { CollectionMethodTv() }, CollTypeArgs(kind, args));
+    public static JsonObject CollToString(JsonNode op, CollKind kind, TypeNode[] args)
+    {
+        var specification = CollectionRenderer(kind, args);
+        var operands = new JsonArray(op.DeepClone());
+        if (specification.MapPreference)
+            operands.Add(MemberCallSubstitution.StaticMapPreference(new TypeNode.Fqn("kotlin.collections.Map", args), null,
+                MemberCallSubstitution.CollectionOperationPhase.Source));
+        return Helper(specification, operands);
+    }
+
+    sealed record HelperSpecification(string Owner, string Method, TypeNode[] Signature, TypeNode[] TypeArguments = null,
+        bool MapPreference = false);
+    static TypeNode Any() => new TypeNode.Fqn("kotlin.Any");
+    static TypeNode AnyNullable() => new TypeNode.Nullable(Any());
+    static TypeNode TypeArgOr(TypeNode[] args, int index) => index < args.Length ? args[index] : Any();
+    static HelperSpecification CollectionRenderer(CollKind kind, TypeNode[] args) => kind == CollKind.Map
+        ? new(MapDefaults, "clrMapToString", new[] { Any(), AnyNullable() },
+            new[] { TypeArgOr(args, 0), TypeArgOr(args, 1) }, MapPreference: true)
+        : new(CollDefaults, "clrCollToString",
+            new TypeNode[] { new TypeNode.Fqn("kotlin.collections.Collection", new TypeNode[] { new TypeNode.Tv("method", 0) }) },
+            new[] { TypeArgOr(args, 0) });
+    static HelperSpecification FloatHelper(string method)
+    {
+        TypeNode floating = new TypeNode.Fqn(method.Contains("Float", StringComparison.Ordinal) ? "kotlin.Float" : "kotlin.Double");
+        return new(Numbers, method, new[] { floating, floating });
+    }
+    static HelperSpecification NullableRenderer() => new(Library, "toString", new[] { AnyNullable() });
+    static HelperSpecification ElementRenderer() => new(NestedToString, "clrElemToString", new[] { AnyNullable() });
 
     // Double/Float total-order helpers on kotlin.NumbersKt (NO type-args). `method` = clrDoubleCompare/clrFloatCompare
     // (compareTo) or clrDoubleEquals/clrFloatEquals (boxed `==` / explicit `.equals`).
     public static JsonObject FloatCall(string method, JsonNode a, JsonNode b) =>
-        Helper(Numbers, method, new JsonArray { a.DeepClone(), b.DeepClone() },
-            new JsonArray
-            {
-                TypeJson.Fqn(method.Contains("Float", StringComparison.Ordinal) ? "kotlin.Float" : "kotlin.Double"),
-                TypeJson.Fqn(method.Contains("Float", StringComparison.Ordinal) ? "kotlin.Float" : "kotlin.Double"),
-            }, null);
+        Helper(FloatHelper(method), new JsonArray { a.DeepClone(), b.DeepClone() });
 
     internal static BirCallStatic FloatCall(string method, IBirExpression a, IBirExpression b)
-    {
-        TypeNode floating = new TypeNode.Fqn(method.Contains("Float", StringComparison.Ordinal)
-            ? "kotlin.Float" : "kotlin.Double");
-        var call = new BirCallStatic {
-            Owner = new TypeNode.Fqn(Numbers), Method = method,
-            Sig = new[] { floating, floating }, Args = new[] { a, b },
-        };
-        return _bindHelper?.Invoke(call) ?? call;
-    }
+        => Helper(FloatHelper(method), new[] { a, b });
 
     // The remaining DOM producers cross only the binding-fact boundary, not their executable arguments.
     internal static void BindHelper(JsonObject call, Func<BirCallStatic, BirCallStatic> bind)
@@ -178,64 +185,46 @@ static class FaithfulHints
 
     // Null-safe `Any?.toString()` (renders null as "null") on kotlin.LibraryKt (NO type-args).
     public static JsonObject LibraryToString(JsonNode op) =>
-        Helper(Library, "toString", new JsonArray { op.DeepClone() },
-            new JsonArray { Nullable(TypeJson.Fqn("kotlin.Any")) }, null);
+        Helper(NullableRenderer(), new JsonArray { op.DeepClone() });
 
     // Runtime-erased Kotlin renderer `clrElemToString(x: Any?)`: detects a collection/map at RUNTIME via the non-generic
     // BCL facades (ICollection/IDictionary) and renders `[a, b]` / `{k=v}`, else plain `toString()`. The star-projected /
     // `Any`-erased path (a value-type dict smart-cast to `Map<*,*>`) has no bindable generic helper, so it routes here.
     public static JsonObject ElemToString(JsonNode op) =>
-        Helper(NestedToString, "clrElemToString", new JsonArray { op.DeepClone() },
-            new JsonArray { Nullable(TypeJson.Fqn("kotlin.Any")) }, null);
+        Helper(ElementRenderer(), new JsonArray { op.DeepClone() });
 
-    static JsonObject Helper(string owner, string method, JsonArray args, JsonArray sig, JsonArray typeArgs)
+    static JsonObject Helper(HelperSpecification specification, JsonArray args)
     {
         // `typeArgs` is omitted when the helper is non-generic; consumers bind every field by key.
         var o = new JsonObject
         {
             ["k"] = "callStatic",
-            ["owner"] = TypeJson.Fqn(owner),
-            ["method"] = method,
-            ["sig"] = sig,
+            ["owner"] = TypeJson.Fqn(specification.Owner),
+            ["method"] = specification.Method,
+            ["sig"] = new JsonArray(specification.Signature.Select(TypeJson.Write).ToArray()),
             ["args"] = args,
         };
-        if (typeArgs != null) o["typeArgs"] = typeArgs;
+        if (specification.TypeArguments != null)
+            o["typeArgs"] = new JsonArray(specification.TypeArguments.Select(TypeJson.Write).ToArray());
         if (_bindHelper != null) BindHelper(o, _bindHelper);
         return o;
     }
 
-    static JsonNode Nullable(JsonNode of) => new JsonObject { ["t"] = "nullable", ["of"] = of };
-    static JsonNode CollectionMethodTv() => TypeJson.Write(new TypeNode.Fqn(
-        "kotlin.collections.Collection", new TypeNode[] { new TypeNode.Tv("method", 0) }));
-
-    static JsonArray CollTypeArgs(CollKind kind, TypeNode[] args)
-    {
-        var arr = new JsonArray { TypeArgOr(args, 0) };
-        if (kind == CollKind.Map) arr.Add(TypeArgOr(args, 1));
-        return arr;
-    }
-
-    // The i-th type-arg, or `kotlin.Any` when absent (matches kotc's default for a missing generic argument).
-    static JsonNode TypeArgOr(TypeNode[] args, int i) =>
-        i < args.Length ? TypeNode.Write(args[i]) : TypeJson.Fqn("kotlin.Any");
 }
 
-static class FaithfulHintRecognition
+static partial class FaithfulHintRecognition
 {
     // This assembly's own top-level fun names — so the M9 reinterpret recognition can distinguish a user function that
     // shadows `toByteArray`/`toUByteArray` from the stdlib extension whose identity this pass realizes.
-    static IReadOnlySet<string> _localTopLevelFns = new HashSet<string>(StringComparer.Ordinal);
-
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null, IReadOnlySet<string> localTopLevelFns = null)
     {
-        _localTopLevelFns = localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal);
-        Walk(root, BirScope.Empty);
+        Walk(root, BirScope.Empty, localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal));
     }
 
     // Bottom-up: recurse into a node's children (so an inner site is recognized first), THEN transform the node itself,
     // replacing it in its parent when the transform produced a fresh node. A declaration node extends `scope` with its
     // params + body locals so StaticType can recover a bare operand `local`'s declared type (#59 — the former hints).
-    static void Walk(JsonNode node, BirScope scope)
+    static void Walk(JsonNode node, BirScope scope, IReadOnlySet<string> localTopLevelFns)
     {
         switch (node)
         {
@@ -244,8 +233,8 @@ static class FaithfulHintRecognition
                 foreach (var key in o.Select(kv => kv.Key).ToList())
                 {
                     var c = o[key];
-                    if (c != null) Walk(c, child);
-                    if (o[key] is JsonObject co && Transform(co, child) is JsonNode r && !ReferenceEquals(r, co)) o[key] = r;
+                    if (c != null) Walk(c, child, localTopLevelFns);
+                    if (o[key] is JsonObject co && Transform(co, child, localTopLevelFns) is JsonNode r && !ReferenceEquals(r, co)) o[key] = r;
                 }
                 break;
             case JsonArray a:
@@ -255,8 +244,8 @@ static class FaithfulHintRecognition
                 for (var i = 0; i < a.Count; i++)
                 {
                     var c = a[i];
-                    if (c != null) Walk(c, cur);
-                    if (a[i] is JsonObject co && Transform(co, cur) is JsonNode r && !ReferenceEquals(r, co)) a[i] = r;
+                    if (c != null) Walk(c, cur, localTopLevelFns);
+                    if (a[i] is JsonObject co && Transform(co, cur, localTopLevelFns) is JsonNode r && !ReferenceEquals(r, co)) a[i] = r;
                     if (a[i] is JsonObject vo && (vo["k"] as JsonValue)?.GetValue<string>() == "var")
                     {
                         if (ReferenceEquals(cur, scope)) cur = scope.Child();
@@ -267,10 +256,10 @@ static class FaithfulHintRecognition
         }
     }
 
-    static JsonNode Transform(JsonObject o, BirScope scope) => (o["k"] as JsonValue)?.GetValue<string>() switch
+    static JsonNode Transform(JsonObject o, BirScope scope, IReadOnlySet<string> localTopLevelFns) => (o["k"] as JsonValue)?.GetValue<string>() switch
     {
         "objMethod" => TransformObjMethod(o, scope),
-        "callStatic" => TransformCallStatic(o, scope),
+        "callStatic" => TransformCallStatic(o, scope, localTopLevelFns),
         "concat" => TransformConcat(o, scope),
         "callInstance" => TransformCompareTo(o),
         _ => o,
@@ -278,9 +267,9 @@ static class FaithfulHintRecognition
 
     // A top-level `callStatic owner=null`: try the unsigned<->signed byte-array reinterpret recognition (M9) first,
     // else the println/print collection-arg wrap.
-    static JsonNode TransformCallStatic(JsonObject o, BirScope scope)
+    static JsonNode TransformCallStatic(JsonObject o, BirScope scope, IReadOnlySet<string> localTopLevelFns)
     {
-        if (TransformUnsignedByteArrayReinterpret(o, scope) is JsonNode r && !ReferenceEquals(r, o)) return r;
+        if (TransformUnsignedByteArrayReinterpret(o, scope, localTopLevelFns) is JsonNode r && !ReferenceEquals(r, o)) return r;
         return TransformPrintln(o, scope);
     }
 
@@ -292,23 +281,15 @@ static class FaithfulHintRecognition
     // args=[recv]`, no CLR knowledge); bir2cir recognizes it off the receiver's recovered static type and emits the CIR
     // reinterpret `cast` required by that documented view operation. Guarded on the EXACT receiver array identity so the
     // Collection<Byte>/Array<out Byte> overloads of the same names are untouched.
-    static JsonNode TransformUnsignedByteArrayReinterpret(JsonObject o, BirScope scope)
+    static JsonNode TransformUnsignedByteArrayReinterpret(JsonObject o, BirScope scope, IReadOnlySet<string> localTopLevelFns)
     {
         // Only the plain stdlib-extension shape (`owner=null`, no `ownerType`): an `ownerType`-keyed callStatic is a
         // dll2klib .NET interop static (e.g. a user `SomeType.toByteArray(...)`), never the stdlib reinterpret.
         if (o["owner"] != null || o["ownerType"] != null) return o;
         var method = (o["method"] as JsonValue)?.GetValue<string>();
-        var (need, elem) = method switch
-        {
-            "toByteArray" => ("kotlin.UByteArray", "kotlin.Byte"),
-            "toUByteArray" => ("kotlin.ByteArray", "kotlin.UByte"),
-            _ => (null, null),
-        };
-        if (need == null) return o;
-        // A user top-level fun in THIS assembly that shadows the name is not the stdlib extension, so defer to its body.
-        if (_localTopLevelFns.Contains(method)) return o;
         if (o["args"] is not JsonArray args || args.Count != 1) return o;
-        if (StaticType.Surface(args[0], scope) is not TypeNode.Fqn rf || rf.Name != need) return o;
+        var elem = ReinterpretElement(method, StaticType.Surface(args[0], scope), localTopLevelFns);
+        if (elem == null) return o;
         return new JsonObject
         {
             ["k"] = "cast",
@@ -325,8 +306,8 @@ static class FaithfulHintRecognition
         var method = (o["method"] as JsonValue)?.GetValue<string>();
         if (method == "ToString" && o["recv"] is JsonNode recv)
         {
-            if (StaticType.Value(recv, scope) is TypeNode rt && FaithfulHints.ClassifyColl(rt) is { } c)
-                return FaithfulHints.CollToString(FaithfulHints.StripAnyCast(o["recv"]), c.kind, c.args);
+            var rendering = SelectRendering(RenderSite.Object, null, StaticType.Value(recv, scope));
+            if (rendering.Kind != Renderer.None) return Render(recv, rendering);
             return o;
         }
         return o;
@@ -347,10 +328,10 @@ static class FaithfulHintRecognition
                 // clrCollToString/clrMapToString below can't bind (no value-type covariance on the CLR). Route to
                 // clrElemToString(Any?), which detects the collection at runtime via the non-generic BCL facades. The
                 // cast node is kept (StarProjectionLowering re-points it to the non-generic interface, assignable to Any?).
-                if (FaithfulHints.IsStarProjectedColl(StaticType.Surface(args[i], scope)))
-                    args[i] = FaithfulHints.ElemToString(args[i]);
-                else if (StaticType.Value(args[i], scope) is TypeNode t && FaithfulHints.ClassifyColl(t) is { } c)
-                    args[i] = FaithfulHints.CollToString(FaithfulHints.StripAnyCast(args[i]), c.kind, c.args);
+            {
+                var rendering = SelectRendering(RenderSite.Print, StaticType.Surface(args[i], scope), StaticType.Value(args[i], scope));
+                if (rendering.Kind != Renderer.None) args[i] = Render(args[i], rendering);
+            }
         return o;
     }
 
@@ -362,14 +343,12 @@ static class FaithfulHintRecognition
         if (o["parts"] is JsonArray parts)
             for (var i = 0; i < parts.Count; i++)
             {
-                if (StaticType.Value(parts[i], scope) is not TypeNode t) continue;
-                if (FaithfulHints.ClassifyColl(t) is { } c)
-                    parts[i] = FaithfulHints.CollToString(FaithfulHints.StripAnyCast(parts[i]), c.kind, c.args);
-                else if (FaithfulHints.IsNullable(t))
+                var rendering = SelectRendering(RenderSite.Concat, null, StaticType.Value(parts[i], scope));
+                if (rendering.Kind != Renderer.None)
                     // The null-safe stringifier keeps the ORIGINAL part (kotc's former concatOperand passed the
                     // un-unwrapped `expr(op)` — only the collToString path unwrapped). Stripping an Any-box off a
                     // nullable value operand would feed a raw value to LibraryKt.toString's Any? param.
-                    parts[i] = FaithfulHints.LibraryToString(parts[i]);
+                    parts[i] = Render(parts[i], rendering);
             }
         return o;
     }
@@ -379,14 +358,7 @@ static class FaithfulHintRecognition
     // MemberCallSubstitution's primitive-compareTo -> System.Double.CompareTo routing.
     static JsonNode TransformCompareTo(JsonObject o)
     {
-        if ((o["method"] as JsonValue)?.GetValue<string>() != "compareTo") return o;
-        if (TypeJson.Read(o["ownerType"]) is not TypeNode.Fqn f) return o;
-        var method = ReferenceMetadataIndex.BareOwnerFqn(f.Name) switch
-        {
-            "kotlin.Double" => "clrDoubleCompare",
-            "kotlin.Float" => "clrFloatCompare",
-            _ => null,
-        };
+        var method = CompareHelper((o["method"] as JsonValue)?.GetValue<string>(), TypeJson.Read(o["ownerType"]));
         if (method == null) return o;
         if (o["args"] is not JsonArray args || args.Count != 1 || o["recv"] == null) return o;
         return FaithfulHints.FloatCall(method, o["recv"], args[0]);

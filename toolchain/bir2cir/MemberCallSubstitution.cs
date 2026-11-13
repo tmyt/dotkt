@@ -2293,36 +2293,69 @@ static class MemberCallSubstitution
                 : NullableGenericErasure.EraseArgument(argument, refs == null ? _isValue : refs.IsValueType)).ToArray())) };
     }
 
-    internal static JsonNode StaticMapPreference(TypeNode.Fqn owner, ReferenceMetadataIndex refs,
-        CollectionOperationPhase phase = CollectionOperationPhase.Physical)
+    readonly record struct MapPreferenceArgument(TypeNode Type, int Variance);
+    readonly record struct MapPreferencePlan(MapPreferenceArgument Key, MapPreferenceArgument Value)
     {
-        JsonObject Unknown() => new() {
-            ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(ObjType)), ["value"] = null };
+        internal bool Unknown => Key.Type == null && Value.Type == null;
+    }
+
+    const string MapPreferenceOwner = "kotlin.collections.ClrNativeMapAccessKt";
+    const string MapPreferenceMethod = "clrMapViewPreference";
+    static TypeNode[] MapPreferenceSignature() => new TypeNode[] {
+        new TypeNode.Nullable(ObjType), new TypeNode.Fqn("kotlin.Int"),
+        new TypeNode.Nullable(ObjType), new TypeNode.Fqn("kotlin.Int"),
+    };
+
+    static MapPreferencePlan SelectMapPreference(TypeNode.Fqn owner, ReferenceMetadataIndex refs, CollectionOperationPhase phase)
+    {
         var arguments = CollectionPreferenceArguments(owner.Args, refs?.NullableTypeFrames.GetValueOrDefault(owner.Name), phase);
-        if (arguments is not { Length: 2 }) return Unknown();
-        (JsonNode type, int variance) Argument(TypeNode argument, int variance)
+        if (arguments is not { Length: 2 }) return default;
+        MapPreferenceArgument Argument(TypeNode argument, int variance)
         {
             if (argument is TypeNode.Projection projection)
             {
                 variance = projection.Variance == "out" ? 1 : -1;
                 argument = projection.Of;
             }
-            if (HasProjection(argument)) return (Unknown(), 0);
+            if (HasProjection(argument)) return default;
             var physical = phase == CollectionOperationPhase.Source ? argument
                 : NullableGenericErasure.EraseArgument(argument, refs == null ? _isValue : refs.IsValueType);
-            return (new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(physical) }, variance);
+            return new(physical, variance);
         }
+        return new(Argument(arguments[0], 0), Argument(arguments[1], owner.Name == "kotlin.collections.MutableMap" ? 0 : 1));
+    }
+
+    internal static JsonNode StaticMapPreference(TypeNode.Fqn owner, ReferenceMetadataIndex refs,
+        CollectionOperationPhase phase = CollectionOperationPhase.Physical)
+    {
+        JsonObject Unknown() => new() {
+            ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(ObjType)), ["value"] = null };
+        JsonNode Token(MapPreferenceArgument argument) => argument.Type == null ? Unknown()
+            : new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(argument.Type) };
         JsonObject Variance(int value) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = value };
-        var key = Argument(arguments[0], 0);
-        var value = Argument(arguments[1], owner.Name == "kotlin.collections.MutableMap" ? 0 : 1);
-        if (Str(key.type["k"]) == "const" && Str(value.type["k"]) == "const") return Unknown();
+        var plan = SelectMapPreference(owner, refs, phase);
+        if (plan.Unknown) return Unknown();
         return new JsonObject {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrNativeMapAccessKt"),
-            ["method"] = "clrMapViewPreference", ["typeArgs"] = new JsonArray(),
-            ["sig"] = new JsonArray(TypeJson.Write(new TypeNode.Nullable(ObjType)), TypeJson.Fqn("kotlin.Int"),
-                TypeJson.Write(new TypeNode.Nullable(ObjType)), TypeJson.Fqn("kotlin.Int")),
+            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(MapPreferenceOwner),
+            ["method"] = MapPreferenceMethod, ["typeArgs"] = new JsonArray(),
+            ["sig"] = new JsonArray(MapPreferenceSignature().Select(TypeJson.Write).ToArray()),
             ["ret"] = TypeJson.Write(ObjType),
-            ["args"] = new JsonArray(key.type, Variance(key.variance), value.type, Variance(value.variance)),
+            ["args"] = new JsonArray(Token(plan.Key), Variance(plan.Key.Variance), Token(plan.Value), Variance(plan.Value.Variance)),
+        };
+    }
+
+    internal static IBirExpression StaticMapPreferenceValue(TypeNode.Fqn owner, ReferenceMetadataIndex refs,
+        CollectionOperationPhase phase = CollectionOperationPhase.Physical)
+    {
+        BirConstant Unknown() => new() { Type = new TypeNode.Nullable(ObjType), Value = new BirLiteral.NullLiteral() };
+        IBirExpression Token(MapPreferenceArgument argument) => argument.Type == null ? Unknown()
+            : new BirClassReference { Type = argument.Type };
+        BirConstant Variance(int value) => new() { Type = new TypeNode.Fqn("kotlin.Int"), Value = new BirLiteral.IntegerLiteral(value) };
+        var plan = SelectMapPreference(owner, refs, phase);
+        return plan.Unknown ? Unknown() : new BirCallStatic {
+            Owner = new TypeNode.Fqn(MapPreferenceOwner), Method = MapPreferenceMethod, TypeArgs = Array.Empty<TypeNode>(),
+            Sig = MapPreferenceSignature(), Ret = ObjType,
+            Args = new[] { Token(plan.Key), Variance(plan.Key.Variance), Token(plan.Value), Variance(plan.Value.Variance) },
         };
     }
 
