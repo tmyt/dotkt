@@ -11,7 +11,7 @@ using DotKt.Cir;
 // Kotlin overloads can have identical CLR value signatures while
 // their nominal parameter types or generic parameter bounds remain distinct.
 // Keep the value/generic frame unchanged; state that distinction in modopt.
-static class DeclarationSignatureIdentity
+static partial class DeclarationSignatureIdentity
 {
     const string BoundsKey = "genericParameterSignatureBounds";
     const string NominalKey = "nominalParameterSignatureIdentity";

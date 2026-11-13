@@ -1,198 +1,110 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
-// INLINE-BIR STASH (#71/#75 S1). Runs after module-wide companion representation selection but before the ordinary
-// per-file lowering passes. For each `mods.inline` method it deep-clones the representation-selected, otherwise raw BIR
-// facts {v,fqn,owner,recv,typeParams,params,ret,body,lifted} and stores them as ONE
-// OPAQUE STRING field `"inlineBir"` = base64(MessagePack payload). Encoding AT STASH TIME is load-
-// bearing: every downstream walker (BirTypeLowering, RefBodySquash, …) then sees an inert JsonValue string and cannot
-// descend into / rewrite the captured body. ilemit later stamps that string VERBATIM as the [KotlinInline] carrier
-// (base64-decode -> the (version, byte[]) ctor args). The payload remains re-lowerable BIR in the app context rather
-// than CIR: consumers must apply their own current lowering and reference context after splicing.
-//
-// Also feeds the in-memory index `owner|name|pc|ga -> [decl facts]` for SAME-module splices (InlineSplice reads it once
-// kotc emits `inlineSpliceCallSameModule` in #75 S4b). RefBodySquash is UNTOUCHED: it squashes `body` to the throw sentinel;
-// the opaque `inlineBir` string rides through unmodified (the [KotlinInline] carrier survives on the squashed ref decl).
-//
-// OWNER: a TOP-LEVEL fun lives in `root.methods` — its owner is the file-facade class `root.fileClass` (the .NET type
-// ilemit defines and stamps [KotlinInline] on, and the type callInline.owner names). A MEMBER fun lives in a
-// `root.types[].methods` — owner = that type's `name`. `pc` = params.Count (kotc emits an extension receiver as a
-// leading `__self` param, so this already counts it); `ga` = typeParams.Count.
-//
-// OVERLOAD KEY (§4.2, #75 S4b): the key is `owner|name|pc|ga` and maps to a LIST of candidate payloads — same-name inline
-// OVERLOADS collide on it (Duration.toComponents ×4 differ in lambda arity; flatMap/maxOf differ in the lambda RETURN type;
-// the retired recv0 = first-param FQN could see NONE of those). The call site disambiguates by a STRUCTURAL match of each
-// candidate's declared `params[i].type` against the callInline's `paramSig[i]` (see SelectByParamSig). The cross-module read
-// (ReferenceMetadataIndex) keys + disambiguates identically.
+// Capture representation-selected executable BIR before per-file lowering.
+// The local index retains producer source positions; the outgoing opaque DLL
+// carrier hides those positions without changing the live method body.
 static class InlineBirStash
 {
     internal static InlineBirIndex Current { get; private set; } = new();
     public static void Reset() => Current = new();
-    public static void Stash(JsonNode root) => Current.Stash(root);
+    public static void Stash(BirFileDeclaration root) => Current.Stash(root);
 }
 
-// Separate snapshots let source-level analyses use the same declaration selection as executable splicing
-// without replacing the representation-selected stash or mutating executable source graphs.
+// This is the executable publication authority. The earlier TypedInlineBirIndex
+// is an independent analysis snapshot and neither publishes nor replaces it.
 sealed class InlineBirIndex
 {
-    // owner|name|pc|ga -> candidate decl-fact payloads (one per overload sharing that key). Spans all files of ONE run.
-    public readonly Dictionary<string, List<JsonObject>> Index = new(StringComparer.Ordinal);
+    readonly Dictionary<string, List<BirInlinePayload>> candidates = new(StringComparer.Ordinal);
+    readonly Dictionary<string, List<BirInlinePayload>> ownerless = new(StringComparer.Ordinal);
+    readonly Dictionary<string, BirInlinePayload> identities = new(StringComparer.Ordinal);
 
-    // OWNER-LESS same-module index: "name|pc|ga" -> the `kotlin.*` candidate payloads across owners (the SAME-MODULE twin of
-    // ReferenceMetadataIndex._ownerlessInlineCandidates). In the stdlib SELF-BUILD a `kotlin.*` scope-fn/@InlineOnly call
-    // (apply/let/also/run/with, forwarded map->mapTo, …) is emitted OWNER-LESS by kotc (it does not name the klib file class)
-    // but its target is being compiled THIS run — so it is in the stash, NOT the ref.dll. InlineSplice consults this to
-    // resolve/forward such a call same-module (the winner's own `owner` names the host). Restricted to `kotlin.*` (a user
-    // owner-less inline fn cannot exist — kotc names user owners).
-    public readonly Dictionary<string, List<JsonObject>> OwnerlessIndex = new(StringComparer.Ordinal);
+    // Selection reads these frozen snapshots. Only the selected payload is
+    // materialized into an independently owned graph at the execution boundary.
+    internal BirInlinePayload Declaration(string id) => id == null ? null : identities.GetValueOrDefault(id);
+    internal IReadOnlyList<BirInlinePayload> Candidates(string owner, string name, int parameters, int arity) =>
+        candidates.GetValueOrDefault($"{owner}|{name}|{parameters}|{arity}");
+    internal IReadOnlyList<BirInlinePayload> OwnerlessCandidates(string name, int parameters, int arity) =>
+        name == null ? null : ownerless.GetValueOrDefault($"{name}|{parameters}|{arity}");
 
-    // #395: frontend-selected declaration identity is the authoritative overload key. The structural indexes remain
-    // for CLR imports and untagged compiler intrinsics; a Kotlin call carrying an identity never re-resolves by shape.
-    public readonly Dictionary<string, JsonObject> ByDeclarationId = new(StringComparer.Ordinal);
-
-    public JsonObject Declaration(string id) =>
-        id != null && ByDeclarationId.TryGetValue(id, out var payload) ? payload : null;
-
-    // The same-module owner-less candidates for name|pc|ga (kotlin.* across owners), or null. InlineSplice selects the
-    // unique paramSig match and reads the winner's `owner`.
-    public List<JsonObject> OwnerlessCandidates(string name, int pc, int ga) =>
-        name != null && OwnerlessIndex.TryGetValue($"{name}|{pc}|{ga}", out var lst) && lst.Count > 0 ? lst : null;
-
-    public void Stash(JsonNode root)
+    internal void Stash(BirFileDeclaration root)
     {
-        if (root is not JsonObject o) return;
-        var fileClass = Str(o["fileClass"]);
-        var topMethods = o["methods"] as JsonArray;
-        var generatedMethods = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        if (topMethods != null)
-            foreach (var m in topMethods.OfType<JsonObject>())
-                if (Bool(m["generated"]) == true && Str(m["name"]) is string name)
-                    generatedMethods.TryAdd(name, m);
-        if (fileClass != null && topMethods != null)
-            foreach (var m in topMethods) if (m is JsonObject mo) StashMethod(fileClass, mo, fileClass, generatedMethods);
-        if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) StashType(to, fileClass, generatedMethods);
-    }
-
-    void StashType(JsonObject type, string fileClass, IReadOnlyDictionary<string, JsonObject> generatedMethods)
-    {
-        if (Str(type["name"]) is string owner && type["methods"] is JsonArray methods)
+        var fileClass = root.FileClass.OrDefault();
+        var generated = new Dictionary<string, BirFunctionDeclaration>(StringComparer.Ordinal);
+        foreach (var method in root.Methods.OrEmpty())
+            if (method.Generated.OrDefault() && method.Name.HasValue)
+                generated.TryAdd(method.Name.Value, method);
+        if (fileClass != null)
+            foreach (var method in root.Methods.OrEmpty()) StashMethod(fileClass, method, fileClass, generated);
+        foreach (var type in root.Types.OrEmpty())
         {
-            // A generic companion-static declaration has moved to a non-generic physical carrier, but kotc's resolved
-            // callInline still names the semantic generic owner. Index the payload under that explicit association while
-            // retaining the physical owner inside the carrier payload stamped on the actual MethodDef.
-            var lookupOwner = type["staticCarrier"] is JsonObject carrier && Str(carrier["owner"]) is string semantic
-                ? semantic : owner;
-            foreach (var m in methods)
-                if (m is JsonObject mo) StashMethod(owner, mo, fileClass, generatedMethods, lookupOwner);
+            if (!type.Name.HasValue) continue;
+            var owner = type.Name.Value;
+            // Keep the physical owner in the published payload, but index a
+            // moved generic companion static by its explicit semantic owner.
+            var lookupOwner = type.StaticCarrier.OrDefault()?.Owner.OrDefault() ?? owner;
+            foreach (var method in type.Methods.OrEmpty()) StashMethod(owner, method, fileClass, generated, lookupOwner);
         }
-        if (type["types"] is JsonArray nested)
-            foreach (var t in nested) if (t is JsonObject to) StashType(to, fileClass, generatedMethods);
     }
 
-    void StashMethod(string owner, JsonObject mo, string fileClass,
-        IReadOnlyDictionary<string, JsonObject> generatedMethods, string lookupOwner = null)
+    void StashMethod(string owner, BirFunctionDeclaration method, string fileClass,
+        IReadOnlyDictionary<string, BirFunctionDeclaration> generated, string lookupOwner = null)
     {
-        if (mo["mods"] is not JsonObject mods || Bool(mods["inline"]) != true) return;
-        if (Str(mo["name"]) is not string name || mo["body"] is not JsonArray) return;
-
-        var typeParams = mo["typeParams"] as JsonArray;
-        var prms = mo["params"] as JsonArray;
-        int pc = prms?.Count ?? 0;
-        int ga = typeParams?.Count ?? 0;
-
-        // Receiver meaning is an explicit Kotlin role, never a physical parameter-name convention.
-        bool extensionReceiver = prms != null && prms.Count > 0 && prms[0] is JsonObject first
-            && first["mods"] is JsonObject firstMods && Bool(firstMods["extensionReceiver"]) == true;
-        bool isStatic = Bool(mo["static"]) == true;
-        string recv = InlinePayloadSelection.ReceiverRole(extensionReceiver, isStatic);
-
-        // #23: carry the post-representation `static` flag. For a member-EXTENSION (recv==extensionParam) the
-        // single-valued `recv` cannot express the enclosing dispatch receiver, so InlineSplice reads THIS flag to decide
-        // whether a surviving payload `{k:this}` must be co-bound. CompanionRepresentationLowering runs before this
-        // stash: every companion self-use retains the nested carrier receiver and arrives here non-static. Rides the
-        // [KotlinInline] carrier to the cross-module reader.
-        var payload = new JsonObject
-        {
-            ["v"] = 1,
-            ["fqn"] = owner + "." + name,
-            ["owner"] = owner,
-            ["fileClass"] = fileClass,
-            ["recv"] = recv,
-            ["static"] = isStatic,
-            ["typeParams"] = typeParams?.DeepClone() ?? new JsonArray(),
-            ["params"] = prms?.DeepClone() ?? new JsonArray(),
-            ["ret"] = mo["ret"]?.DeepClone(),
-            ["body"] = mo["body"].DeepClone(),
-        };
-        if (Str(mo[DeclarationIdentityBinding.Key]) is string declarationId)
-            payload[DeclarationIdentityBinding.Key] = declarationId;
-        // #43: close the raw inline term over compiler-generated file-class methods. A non-capturing lambda /
-        // callable-reference adapter is represented by `newDelegate(method, calleeOwner)` plus a generated top-level
-        // method holding its body. The executable producer needs that method too, so do not detach it; embed a raw clone
-        // in the carrier. Follow generated newDelegate targets transitively so a lifted body may itself create another
-        // delegate. User-authored function references are deliberately NOT copied: their calleeOwner continues to name
-        // the referenced assembly method. The structural `generated` fact comes from kotc; no generated-name sniffing.
-        var lifted = new JsonArray();
-        var seenLifted = new HashSet<string>(StringComparer.Ordinal);
-        CollectLifted(payload["body"], fileClass, generatedMethods, seenLifted, lifted);
-        payload["lifted"] = lifted;
+        if (method.Mods.OrDefault()?.Inline.OrDefault() != true || !method.Name.HasValue || !method.Body.HasValue) return;
+        var parameters = method.Params.OrEmpty();
+        var arity = method.TypeParams.OrEmpty().Length;
+        var extension = parameters.Length != 0 && parameters[0].Mods.OrDefault()?.ExtensionReceiver.OrDefault() == true;
+        var isStatic = method.Static.OrDefault();
+        var role = InlinePayloadSelection.ReceiverRole(extension, isStatic);
+        var name = method.Name.Value;
+        var payload = (BirInlinePayload)new BirInlinePayload {
+            V = 1, Fqn = owner + "." + name, Owner = owner, FileClass = OptionalField<string>.Of(fileClass),
+            Recv = role, Static = isStatic,
+            TypeParams = method.TypeParams.OrEmpty(), Params = parameters,
+            Ret = method.Ret.HasValue ? method.Ret : OptionalField<TypeNode>.Null,
+            Body = method.Body.Value,
+            DeclarationId = method.DeclarationId.HasValue ? method.DeclarationId : default,
+        }.DeepClone();
+        var lifted = new List<BirFunctionDeclaration>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var statement in payload.Body.Value) CollectLifted((BirGraphValue)statement, fileClass, generated, seen, lifted);
+        payload.Lifted = lifted.ToArray();
         DeclarationSignatureIdentity.RemoveCapturedFacts(payload);
-        if (Str(payload[DeclarationIdentityBinding.Key]) is string declarationIdKey
-            && !ByDeclarationId.TryAdd(declarationIdKey, (JsonObject)payload.DeepClone()))
-            throw new InvalidOperationException($"duplicate inline declaration identity '{declarationIdKey}'");
 
-        // §4.2 (#75 S4b): the overload key is `owner|name|pc|ga` -> a LIST of candidates (same-name inline OVERLOADS share
-        // it). The call site picks the UNIQUE candidate whose declared `params[i].type` structurally equals the call's
-        // `paramSig[i]` (SelectByParamSig). The cross-module reader (ReferenceMetadataIndex) keys + disambiguates the same.
-        var key = $"{lookupOwner ?? owner}|{name}|{pc}|{ga}";
-        if (!Index.TryGetValue(key, out var lst)) Index[key] = lst = new List<JsonObject>();
-        lst.Add((JsonObject)payload.DeepClone());
-
-        // Same-module owner-less index (kotlin.* only): the twin lookup an owner-less self-build call resolves against.
-        // Restricted to owner-less-ELIGIBLE fns (top-level statics + extensions — recv != "dispatch"): kotc names a MEMBER
-        // owner, so a member never arrives owner-less, and admitting one only adds a false paramSig-tie/dispatch candidate.
-        if (owner.StartsWith("kotlin.", StringComparison.Ordinal) && recv != "dispatch")
+        if (payload.DeclarationId.HasValue && !identities.TryAdd(payload.DeclarationId.Value, payload))
+            throw new InvalidOperationException($"duplicate inline declaration identity '{payload.DeclarationId.Value}'");
+        var key = $"{lookupOwner ?? owner}|{name}|{parameters.Length}|{arity}";
+        if (!candidates.TryGetValue(key, out var choices)) candidates[key] = choices = new();
+        choices.Add(payload);
+        if (owner.StartsWith("kotlin.", StringComparison.Ordinal) && role != "dispatch")
         {
-            var npg = $"{name}|{pc}|{ga}";
-            if (!OwnerlessIndex.TryGetValue(npg, out var olst)) OwnerlessIndex[npg] = olst = new List<JsonObject>();
-            olst.Add((JsonObject)payload.DeepClone());
+            var shortKey = $"{name}|{parameters.Length}|{arity}";
+            if (!ownerless.TryGetValue(shortKey, out var local)) ownerless[shortKey] = local = new();
+            local.Add(payload);
         }
 
-        // Same-module lookups above own the original source spans. Only the outgoing DLL carrier hides
-        // them: the consumer doesn't own those documents, and the producer's paths aren't part of its ABI.
-        MaterializedBirPayload.HideSourceSpans(payload);
-        byte[] enc = ExecutableBirCodec.EncodeInlineDom(ExecutableBirCodec.Codec, payload);
-        mo["inlineBir"] = Convert.ToBase64String(enc);
+        var outgoing = (BirInlinePayload)payload.DeepClone();
+        MaterializedBirPayload.HideSourceSpans(outgoing);
+        method.InlineBir = ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, outgoing);
     }
 
-    static void CollectLifted(JsonNode node, string fileClass,
-        IReadOnlyDictionary<string, JsonObject> generatedMethods, HashSet<string> seen, JsonArray into)
+    static void CollectLifted(BirGraphValue node, string fileClass,
+        IReadOnlyDictionary<string, BirFunctionDeclaration> generated, HashSet<string> seen,
+        List<BirFunctionDeclaration> into)
     {
-        if (node is JsonObject obj)
+        if (node is BirNewDelegate target && target.CalleeOwner.OrDefault() is TypeNode.Fqn owner && owner.Name == fileClass
+            && target.Method.HasValue && generated.TryGetValue(target.Method.Value, out var declaration) && seen.Add(target.Method.Value))
         {
-            if (Str(obj["k"]) == "newDelegate"
-                && TypeJson.OwnerName(obj["calleeOwner"]) == fileClass
-                && Str(obj["method"]) is string method
-                && generatedMethods.TryGetValue(method, out var decl)
-                && seen.Add(method))
-            {
-                var clone = decl.DeepClone();
-                into.Add(clone);
-                // Reachability is transitive: the lifted implementation may create another generated delegate.
-                CollectLifted(clone, fileClass, generatedMethods, seen, into);
-            }
-            foreach (var kv in obj)
-                if (kv.Value != null) CollectLifted(kv.Value, fileClass, generatedMethods, seen, into);
+            var clone = (BirFunctionDeclaration)declaration.DeepClone();
+            into.Add(clone);
+            // A generated delegate target may itself create another generated
+            // delegate. User-authored references are never copied into carriers.
+            CollectLifted(clone, fileClass, generated, seen, into);
         }
-        else if (node is JsonArray arr)
-            foreach (var child in arr)
-                if (child != null) CollectLifted(child, fileClass, generatedMethods, seen, into);
+        node.VisitChildren(child => CollectLifted(child, fileClass, generated, seen, into));
     }
-
-    static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
-    static bool? Bool(JsonNode n) => (n as JsonValue)?.TryGetValue<bool>(out var b) == true ? b : (bool?)null;
 }
