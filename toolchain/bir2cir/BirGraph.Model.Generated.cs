@@ -2796,9 +2796,9 @@ internal sealed record BirConstructorAdapterPayload : BirGraphValue, IBirExecuta
         if (Statements.HasValue) { for (var index0 = 0; index0 < Statements.Value.Length; index0++) { var at0 = index0; var child0 = Statements.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Statements.Value[at0]!, replacement => Statements.Value[at0] = (IBirStatement)replacement)); } }
         if (Arguments.HasValue) { for (var index0 = 0; index0 < Arguments.Value.Length; index0++) { var at0 = index0; var child0 = Arguments.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Arguments.Value[at0]!, replacement => Arguments.Value[at0] = (IBirExpression)replacement)); } }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
-        if (Statements.HasValue) { statements(Statements.Value); }
+        if (Statements.HasValue) { region(new BirSourceRegion(Statements.Value)); }
         if (Arguments.HasValue) { for (var index0 = 0; index0 < Arguments.Value.Length; index0++) { var at0 = index0; var child0 = Arguments.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Arguments.Value[at0]!, replacement => Arguments.Value[at0] = (IBirExpression)replacement)); } }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
@@ -2875,11 +2875,11 @@ internal sealed record BirInlinePayload : BirGraphValue, IBirExecutablePayload
         if (Params.HasValue) foreach (var parameter in Params.Value)
             if (parameter.Name.HasValue && parameter.Type.HasValue) visit(parameter.Name.Value, parameter.Type.Value);
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
         if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
         if (Lifted.HasValue) { for (var index0 = 0; index0 < Lifted.Value.Length; index0++) { var at0 = index0; var child0 = Lifted.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Lifted.Value[at0]!, replacement => Lifted.Value[at0] = (BirFunctionDeclaration)replacement)); } }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
@@ -3458,10 +3458,10 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (Params.HasValue) foreach (var parameter in Params.Value)
             if (parameter.Name.HasValue && parameter.Type.HasValue) visit(parameter.Name.Value, parameter.Type.Value);
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
         if (Mods.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
         if (Overrides.HasValue) { for (var index0 = 0; index0 < Overrides.Value.Length; index0++) { var at0 = index0; var child0 = Overrides.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Overrides.Value[at0]!, replacement => Overrides.Value[at0] = (BirOverride)replacement)); } }
@@ -3712,16 +3712,16 @@ internal sealed record BirConstructor : BirGraphValue
         if (Params.HasValue) foreach (var parameter in Params.Value)
             if (parameter.Name.HasValue && parameter.Type.HasValue) visit(parameter.Name.Value, parameter.Type.Value);
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
         if (BaseArgs.HasValue) { for (var index0 = 0; index0 < BaseArgs.Value.Length; index0++) { var at0 = index0; var child0 = BaseArgs.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)BaseArgs.Value[at0]!, replacement => BaseArgs.Value[at0] = (IBirExpression)replacement)); } }
         if (ThisArgs.HasValue) { for (var index0 = 0; index0 < ThisArgs.Value.Length; index0++) { var at0 = index0; var child0 = ThisArgs.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)ThisArgs.Value[at0]!, replacement => ThisArgs.Value[at0] = (IBirExpression)replacement)); } }
         if (DelegationBindings.HasValue) { for (var index0 = 0; index0 < DelegationBindings.Value.Length; index0++) { var at0 = index0; var child0 = DelegationBindings.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)DelegationBindings.Value[at0]!, replacement => DelegationBindings.Value[at0] = (BirCallBinding)replacement)); } }
         if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
         if (BaseCtorRef.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)BaseCtorRef.Value!, replacement => BaseCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
-        if (PreStmts.HasValue) { statements(PreStmts.Value); }
+        if (PreStmts.HasValue) { region(new BirSourceRegion(PreStmts.Value)); }
         if (Pos.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
     }
     public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)
@@ -5528,11 +5528,11 @@ internal sealed record BirClosureDefinition : BirGraphValue
         if (Params.HasValue) foreach (var parameter in Params.Value)
             if (parameter.Name.HasValue && parameter.Type.HasValue) visit(parameter.Name.Value, parameter.Type.Value);
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Fields.HasValue) { for (var index0 = 0; index0 < Fields.Value.Length; index0++) { var at0 = index0; var child0 = Fields.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Fields.Value[at0]!, replacement => Fields.Value[at0] = (BirCaptureDescriptor)replacement)); } }
         if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirLambdaParameter)replacement)); } }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
     }
     public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)
@@ -5807,13 +5807,13 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
         if (Params.HasValue) foreach (var parameter in Params.Value)
             if (parameter.Name.HasValue && parameter.Type.HasValue) visit(parameter.Name.Value, parameter.Type.Value);
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Captures.HasValue) { for (var index0 = 0; index0 < Captures.Value.Length; index0++) { var at0 = index0; var child0 = Captures.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Captures.Value[at0]!, replacement => Captures.Value[at0] = (BirCaptureDescriptor)replacement)); } }
         if (CapValues.HasValue) { for (var index0 = 0; index0 < CapValues.Value.Length; index0++) { var at0 = index0; var child0 = CapValues.Value[at0]; if (child0 is not null) { child(new BirGraphSlot(() => (BirGraphValue)CapValues.Value[at0]!, replacement => CapValues.Value[at0] = (IBirExpression)replacement)); } } }
         if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirLambdaParameter)replacement)); } }
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
     }
     public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)
     {
@@ -6173,12 +6173,12 @@ internal sealed record BirInlineLambda : BirGraphNode, IBirExpression, IBirAttri
         if (Params.HasValue) foreach (var parameter in Params.Value)
             if (parameter.Name.HasValue && parameter.Type.HasValue) visit(parameter.Name.Value, parameter.Type.Value);
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirLambdaParameter)replacement)); } }
         if (Captures.HasValue) { for (var index0 = 0; index0 < Captures.Value.Length; index0++) { var at0 = index0; var child0 = Captures.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Captures.Value[at0]!, replacement => Captures.Value[at0] = (BirInlineCapture)replacement)); } }
-        if (Body.HasValue) { statements(Body.Value); }
-        if (Result.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Result.Value!, replacement => Result = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Body.HasValue || Result.HasValue) region(new BirSourceRegion(
+            Body.OrEmpty(), Result.HasValue ? new BirGraphSlot(() => (BirGraphValue)Result.Value!, replacement => Result = OptionalField<IBirExpression>.Of((IBirExpression)replacement)) : (BirGraphSlot?)null));
     }
     public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)
     {
@@ -7790,10 +7790,10 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
         if (Stmts.HasValue) { for (var index0 = 0; index0 < Stmts.Value.Length; index0++) { var at0 = index0; var child0 = Stmts.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Stmts.Value[at0]!, replacement => Stmts.Value[at0] = (IBirStatement)replacement)); } }
         if (Result.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Result.Value!, replacement => Result = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
-        if (Stmts.HasValue) { statements(Stmts.Value); }
-        if (Result.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Result.Value!, replacement => Result = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Stmts.HasValue || Result.HasValue) region(new BirSourceRegion(
+            Stmts.OrEmpty(), Result.HasValue ? new BirGraphSlot(() => (BirGraphValue)Result.Value!, replacement => Result = OptionalField<IBirExpression>.Of((IBirExpression)replacement)) : (BirGraphSlot?)null));
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -8235,9 +8235,9 @@ internal sealed record BirBlock : BirGraphNode, IBirStatement
     {
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -8327,9 +8327,9 @@ internal sealed record BirCatch : BirGraphValue
     {
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -8383,11 +8383,11 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
         if (Catches.HasValue) { for (var index0 = 0; index0 < Catches.Value.Length; index0++) { var at0 = index0; var child0 = Catches.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Catches.Value[at0]!, replacement => Catches.Value[at0] = (BirCatch)replacement)); } }
         if (Finally.HasValue) { for (var index0 = 0; index0 < Finally.Value.Length; index0++) { var at0 = index0; var child0 = Finally.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Finally.Value[at0]!, replacement => Finally.Value[at0] = (IBirStatement)replacement)); } }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
         if (Catches.HasValue) { for (var index0 = 0; index0 < Catches.Value.Length; index0++) { var at0 = index0; var child0 = Catches.Value[at0]; child(new BirGraphSlot(() => (BirGraphValue)Catches.Value[at0]!, replacement => Catches.Value[at0] = (BirCatch)replacement)); } }
-        if (Finally.HasValue) { statements(Finally.Value); }
+        if (Finally.HasValue) { region(new BirSourceRegion(Finally.Value)); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -8450,10 +8450,10 @@ internal sealed record BirForArray : BirGraphNode, IBirStatement
         if (Array.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Array.Value!, replacement => Array = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Array.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Array.Value!, replacement => Array = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -8518,10 +8518,10 @@ internal sealed record BirForIn : BirGraphNode, IBirStatement
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
         if (Fallback.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Fallback.Value!, replacement => Fallback = OptionalField<BirBlock>.Of((BirBlock)replacement))); }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Src.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Src.Value!, replacement => Src = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
         if (Fallback.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Fallback.Value!, replacement => Fallback = OptionalField<BirBlock>.Of((BirBlock)replacement))); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
@@ -8977,10 +8977,10 @@ internal sealed record BirWhile : BirGraphNode, IBirStatement
         if (Cond.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Cond.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -9040,11 +9040,11 @@ internal sealed record BirFor : BirGraphNode, IBirStatement
         if (To.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)To.Value!, replacement => To = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (From.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)From.Value!, replacement => From = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (To.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)To.Value!, replacement => To = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -9113,10 +9113,10 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         if (Range.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Range.Value!, replacement => Range = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Range.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Range.Value!, replacement => Range = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -10739,10 +10739,10 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
         if (CurrentErasedRef.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)CurrentErasedRef.Value!, replacement => CurrentErasedRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (MoveNextRef.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)MoveNextRef.Value!, replacement => MoveNextRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Src.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Src.Value!, replacement => Src = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
         if (EnumerableGetRef.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)EnumerableGetRef.Value!, replacement => EnumerableGetRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (EnumerableGetErasedRef.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)EnumerableGetErasedRef.Value!, replacement => EnumerableGetErasedRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (CurrentRef.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)CurrentRef.Value!, replacement => CurrentRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
@@ -11026,10 +11026,10 @@ internal sealed record BirRepeat : BirGraphNode, IBirStatement, IBirExpression, 
         if (Count.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Count.Value!, replacement => Count = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Count.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Count.Value!, replacement => Count = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -11269,10 +11269,10 @@ internal sealed record BirBranch : BirGraphValue
         if (Cond.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
-    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<IBirStatement[]> statements)
+    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
     {
         if (Cond.HasValue) { child(new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
-        if (Body.HasValue) { statements(Body.Value); }
+        if (Body.HasValue) { region(new BirSourceRegion(Body.Value)); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {

@@ -13,8 +13,9 @@ using DotKt.Bir;
 // kotc (recvExpr/argExpr — nullable-unwrap + boxed-Any cast). The primitive-op GATE and the IL-op selection are
 // the Kotlin<->CLR relation, so they live HERE now, keyed off the pure-Kotlin owner FQN.
 //
-// Runs UNCONDITIONALLY (reference AND app builds) after the range realizations and before every consumer that requires
-// physical primitive operations (ref body-squash, type lowering, suspend). A primitive operator is a bodyless builtin
+// Runs UNCONDITIONALLY (reference AND app builds) on owning source BIR at representation entry, then again on
+// remaining DOM nodes synthesized by range and other lowerings, before ref body-squash/type/suspend consumers.
+// A primitive operator is a bodyless builtin
 // member with NO ref.dll symbol — in the reference build a ctor
 // field-initializer / base-arg is NOT body-squashed, so a surviving `callInstance kotlin.Int.inv` would reach
 // ilemit as an unresolvable method call. Lowering it to the CIR `unaryOp`/`binOp` vocabulary here states the raw CIL
@@ -186,7 +187,7 @@ static partial class PrimitiveOperatorLowering
 
         // String concatenation (`a + b`, receiver `kotlin.String`). kotc emits the faithful
         // `callInstance kotlin.String.plus(a, b)` with no CLR hint; realize it as a two-part CIR `concat`.
-        // FaithfulHintRecognition (runs next) recovers each part's static type via StaticType and applies the shared
+        // The following faithful-recognition stage recovers each part's static type and applies the shared
         // string-template routing (collection -> clrCollToString, nullable -> LibraryKt.toString).
         if (ownerFqn == "kotlin.String" && member == "plus" && args.Count == 1)
             return new JsonObject

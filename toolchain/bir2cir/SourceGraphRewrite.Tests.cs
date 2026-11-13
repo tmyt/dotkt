@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class SourceGraphRewrite
 {
@@ -20,6 +21,17 @@ static partial class SourceGraphRewrite
         BirExpressionStatement Use(TypeNode type) => new() { Expr = Read(type) };
         BirVariable Declare(TypeNode type, TypeNode initializer) => new() {
             Name = "x", Type = type, Init = Read(initializer),
+        };
+        var absentStatements = new BirValueBlock { Result = Read(integer) };
+        var nullStatements = new BirValueBlock {
+            Stmts = OptionalField<IBirStatement[]>.Null, Result = Read(integer),
+        };
+        var absentBody = new BirInlineLambda {
+            Params = new[] { new BirLambdaParameter { Name = "x", Type = text } }, Result = Read(text),
+        };
+        var nullBody = new BirInlineLambda {
+            Params = new[] { new BirLambdaParameter { Name = "x", Type = text } },
+            Body = OptionalField<IBirStatement[]>.Null, Result = Read(text),
         };
         var method = new BirFunctionDeclaration {
             Name = "sourceScopes", Ret = new TypeNode.Fqn("kotlin.Unit"),
@@ -44,15 +56,31 @@ static partial class SourceGraphRewrite
                         Body = new IBirStatement[] { Declare(wide, integer), Use(wide) } },
                     new BirBranch { Else = true, Body = new IBirStatement[] { Use(integer) } },
                 } },
+                new BirExpressionStatement { Expr = new BirValueBlock {
+                    Stmts = new IBirStatement[] { Declare(wide, integer) }, Result = Read(wide),
+                } },
+                Use(integer),
+                new BirExpressionStatement { Expr = new BirInlineLambda {
+                    Params = new[] { new BirLambdaParameter { Name = "x", Type = text } },
+                    Captures = Array.Empty<BirInlineCapture>(),
+                    Body = new IBirStatement[] { Declare(wide, text) }, Result = Read(wide),
+                } },
+                Use(integer),
+                new BirExpressionStatement { Expr = absentStatements },
+                new BirExpressionStatement { Expr = nullStatements },
+                new BirExpressionStatement { Expr = absentBody },
+                new BirExpressionStatement { Expr = nullBody },
                 Use(integer),
             },
         };
         var observed = new List<(IReadOnlyDictionary<string, TypeNode> Scope, TypeNode Type)>();
+        var visited = new HashSet<BirLocal>(ReferenceEqualityComparer.Instance);
         var checkedReads = 0;
         Rewrite(method, (node, scope) => {
             if (node is BirLocal read)
             {
-                var type = expected[read];
+                if (!visited.Add(read) || !expected.TryGetValue(read, out var type))
+                    throw new InvalidOperationException("Source lexical rewrite visited a result more than once");
                 if (BirGraphStaticType.Surface((IBirExpression)read, scope) != type)
                     throw new InvalidOperationException("Source lexical rewrite leaked or prematurely declared a local");
                 observed.Add((scope, type));
@@ -66,6 +94,9 @@ static partial class SourceGraphRewrite
         });
         if (checkedReads != expected.Count || observed.Any(item => item.Scope["x"] != item.Type))
             throw new InvalidOperationException("Source lexical callbacks did not retain immutable scope snapshots");
+        if (absentStatements.Stmts.IsPresent || !nullStatements.Stmts.IsNull
+            || absentBody.Body.IsPresent || !nullBody.Body.IsNull)
+            throw new InvalidOperationException("Source result regions changed absent/null statement-field presence");
 
         var payload = new BirInlinePayload {
             Params = new[] { new BirParameter { Name = "x", Type = text } },
