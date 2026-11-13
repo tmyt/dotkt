@@ -1,7 +1,6 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
-using System.Text.Json.Nodes;
 
 static partial class TypeOwnershipLowering
 {
@@ -51,7 +50,9 @@ static partial class TypeOwnershipLowering
         var createSam = new BirNewSam { SynthClass = sam, TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 0) } };
         var live = new BirFileDeclaration { FileClass = "LiveFile", Types = new IBirTypeDeclaration[] { liveOwner },
             Methods = new[] { new BirFunctionDeclaration { Name = "use", Body = new IBirStatement[] { Expr(createDense), Expr(createSam) } } } };
-        var facts = PrepareOwnershipFacts(new[] { live });
+        var consumerMethod = new BirFunctionDeclaration { Name = "consume", Body = Array.Empty<IBirStatement>() };
+        var consumer = new BirFileDeclaration { FileClass = "Consumer", Methods = new[] { consumerMethod } };
+        var facts = PrepareOwnershipFacts(new[] { live, consumer });
         if (dense.Ret.Value != Tv(2) || denseRead.Sty.Value != Tv(2) || denseRead.MemberType.Value != Tv(0)
             || nested.Ret.Value != Tv(0) || nestedCall.TypeArgs.Value[0] != Tv(2))
             throw new InvalidOperationException("Synthetic owner remapping entered a foreign descriptor or nested declaration frame");
@@ -60,25 +61,29 @@ static partial class TypeOwnershipLowering
             || sam.OuterTypeParamCount.Value != 2 || createSam.TypeArgs.Value.Length != 3)
             throw new InvalidOperationException("Synthetic owner preparation lost SAM coverage or entered a foreign signature vector");
 
-        // This terminal projection is the actual still-live splice boundary.
-        // Mutate the continuing owner afterwards, proving no frozen typed copy
-        // supplies its parameter constraints/source bounds to a late splice.
-        var continuing = live.ToDom();
-        facts.BindDomDeclarations(new JsonNode[] { continuing });
-        var continuingOwner = continuing["types"]![0]!;
-        continuingOwner["typeParams"]![0]!["constraints"] = new JsonArray(TypeJson.Write(Named("CurrentBound")));
-        continuingOwner[KotlinSupertypesRecord.PreKey] = SourceTypeFacts.ToDom(new SourceTypeFacts(
-            new Dictionary<int, TypeNode[]> { [0] = new TypeNode[] { Named("CurrentBound") } }).MergeNullableFrame(ownerFrame));
-        var late = new BirNewClosure { SynthClass = new BirClosureDefinition { Name = "Late", SemanticOwner = "LiveOwner",
-            TypeParams = Array.Empty<BirTypeParameter>() }, TypeArgs = Array.Empty<TypeNode>() }.ToDom();
-        ((JsonArray)continuing["methods"]![0]!["body"]!).Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = late });
-        PrepareSplicedOwnershipFacts(continuing, facts);
-        var lateOwner = late["synthClass"]!.AsObject();
-        var lateFacts = SourceTypeFacts.ReadFrozenText(lateOwner[KotlinSupertypesRecord.PreKey]!.GetValue<string>());
-        if (TypeJson.Read(lateOwner["typeParams"]![0]!["constraints"]![0]) != Named("CurrentBound")
-            || lateFacts.Bounds[0].Single() != Named("CurrentBound") || liveOwner.TypeParams.Value[0].Constraints.IsPresent)
-            throw new InvalidOperationException("Ownership handoff read a stale owner rather than the continuing declaration");
-        Console.WriteLine("[source ownership] self-test OK (prefix composition, descriptor roles, frozen facts, dense nested frames, live one-way handoff)");
+        // All inline files finish before this continuation. The existing module
+        // index must read the current actual owner, even from another file; it
+        // must not freeze constraints or rerun initial prefix normalization.
+        liveOwner.TypeParams.Value[0].Constraints = new TypeNode[] { Named("CurrentBound") };
+        liveOwner.KotlinSupertypesPre = new SourceTypeFacts(new Dictionary<int, TypeNode[]> {
+            [0] = new TypeNode[] { Named("CurrentBound") },
+        }).MergeNullableFrame(ownerFrame);
+        var lateOwner = new BirClosureDefinition { Name = "Late", SemanticOwner = "LiveOwner", TypeParams = Array.Empty<BirTypeParameter>() };
+        var late = new BirNewClosure { SynthClass = lateOwner, TypeArgs = Array.Empty<TypeNode>() };
+        consumerMethod.Body = new IBirStatement[] { Expr(late) };
+        PrepareSplicedOwnershipFacts(consumer, facts);
+        if (lateOwner.TypeParams.Value[0].Constraints.Value.Single() != Named("CurrentBound")
+            || lateOwner.KotlinSupertypesPre.Value.Bounds[0].Single() != Named("CurrentBound")
+            || !ReferenceEquals(facts.SourceTypes["LiveOwner"], liveOwner)
+            || !ReferenceEquals(live.Types.Value[0], liveOwner) || !ReferenceEquals(consumer.Methods.Value[0], consumerMethod)
+            || !ReferenceEquals(late.SynthClass.Value, lateOwner))
+            throw new InvalidOperationException("Post-inline ownership read stale source facts or replaced a continuing declaration");
+        facts.ReleaseSourceDeclarations();
+        var released = false;
+        try { PrepareSplicedOwnershipFacts(consumer, facts); }
+        catch (InvalidOperationException) { released = true; }
+        if (!released) throw new InvalidOperationException("Ownership source declarations remained live after their continuation");
+        Console.WriteLine("[source ownership] self-test OK (prefix composition, descriptor roles, frozen facts, dense nested frames, live post-inline owners and release)");
 
         static TypeNode Tv(int index) => new TypeNode.Tv("type", index);
         static TypeNode Named(string name) => new TypeNode.Fqn(name);

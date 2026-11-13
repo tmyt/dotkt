@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // A VALUE-POSITION JOIN THAT ONE BRANCH LEAVES NULL (#86 §3).
 //
@@ -29,42 +30,35 @@ using DotKt.Bir;
 // former hardcoded primitive/unsigned list in kotc covered neither.
 static class ValueJoinNullWidening
 {
-    const string Fact = "joinNullBranch";
-
-    public static void Apply(JsonNode root, ValueTypeOracle isValue) => Walk(root, isValue);
-
-    static void Walk(JsonNode node, ValueTypeOracle isValue)
+    public static void Apply(BirGraphValue root, ValueTypeOracle isValue)
     {
-        switch (node)
+        if (root == null || root is IBirExecutablePayload) return;
+        // The current producer marks exactly these three owning join records.
+        // Consume only true; explicit false/null and absent facts stay distinct.
+        switch (root)
         {
-            case JsonArray a:
-                foreach (var e in a.ToList()) Walk(e, isValue);
-                return;
-            case JsonObject o:
-            {
-                // Snapshot before mutating: consuming the fact and rewriting `type` both edit this object.
-                var children = o.Select(kv => kv.Value).ToList();
-                if (Bool(o[Fact]))
-                {
-                    o.Remove(Fact);   // a producer->consumer hint, never emitted as CIR
-                    // ASK THE ORACLE ABOUT THE FQN, WHATEVER ITS ARGUMENTS. A CONSTRUCTED struct is a struct —
-                    // `KeyValuePair<String, Int>` holds a null no better than `Int` does — and `Nullable<V>` is as
-                    // legal over it as over a primitive (BirTypeLowering builds exactly that). Requiring `Args: null`
-                    // here consumed the fact and left the join a bare struct, which is the same defect this family
-                    // already had at the array-element oracle site (#86 D2).
-                    if (TypeJson.Read(o["type"]) is TypeNode.Fqn t && isValue(t) && !IsVoidish(t.Name))
-                        o["type"] = TypeJson.Write(new TypeNode.Nullable(t));
-                }
-                foreach (var c in children) Walk(c, isValue);
-                return;
-            }
+            case BirVariable value when value.JoinNullBranch.OrDefault():
+                value.JoinNullBranch = default;
+                if (value.Type.HasValue) value.Type = Widen(value.Type.Value, isValue);
+                break;
+            case BirConditional value when value.JoinNullBranch.OrDefault():
+                value.JoinNullBranch = default;
+                if (value.Type.HasValue) value.Type = Widen(value.Type.Value, isValue);
+                break;
+            case BirValueBlock value when value.JoinNullBranch.OrDefault():
+                value.JoinNullBranch = default;
+                if (value.Type.HasValue) value.Type = Widen(value.Type.Value, isValue);
+                break;
         }
+        root.VisitChildren(child => Apply(child, isValue));
     }
 
-    // A join that produces no value has nothing to widen, and `Nullable<void>` is not a type. `Nothing` is the
-    // bottom: a join typed by it never completes normally, so no slot holds its result either.
+    // Constructed structs follow the same oracle as ordinary value types.
+    // Unit/void and bottom joins never produce a slot that can hold null.
+    static TypeNode Widen(TypeNode type, ValueTypeOracle isValue) =>
+        type is TypeNode.Fqn named && isValue(named) && !IsVoidish(named.Name)
+            ? new TypeNode.Nullable(named) : type;
+
     static bool IsVoidish(string name) =>
         name is "kotlin.Unit" or "void" or "System.Void" or "kotlin.Nothing";
-
-    static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 }

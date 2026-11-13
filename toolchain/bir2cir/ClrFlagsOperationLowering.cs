@@ -1,140 +1,128 @@
 using System;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // A dll2klib-synthesized CLR [Flags] member is a metadata-only Kotlin declaration. kotc carries the exact selected
 // declaration's ClrFlagsOperation role; this pass consumes that source meaning and resolves the target enum's concrete
 // CLR width. No fabricated MethodDef call survives. enumBits states that an explicitly converted integral expression
 // inhabits the named enum slot, leaving ilemit only the one-to-one conv/bit/comparison emission.
-static class ClrFlagsOperationLowering
+static partial class ClrFlagsOperationLowering
 {
     static int _binding;
 
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    public static void Apply(BirFileDeclaration root, ReferenceMetadataIndex refs)
     {
         _binding = 0;
-        Walk(root, refs);
+        BirGraphValue Walk(BirGraphValue node)
+        {
+            if (node is IBirExecutablePayload) return node;
+            node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
+            if (Carrier(node).HasValue)
+            {
+                if (node is not BirCallInstance call)
+                    throw new InvalidOperationException("bir2cir: ClrFlagsOperation must annotate an instance call");
+                return Lower(call, refs);
+            }
+            return node;
+        }
+        Walk(root);
+        void AssertConsumed(BirGraphValue node)
+        {
+            if (node is IBirExecutablePayload) return;
+            if (Carrier(node).IsPresent)
+                throw new InvalidOperationException("bir2cir: ClrFlagsOperation carrier survived lowering");
+            node.VisitChildren(AssertConsumed);
+        }
         AssertConsumed(root);
     }
 
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs)
-    {
-        if (node is JsonObject obj)
-        {
-            foreach (var child in obj.ToList())
-                if (child.Value != null) Walk(child.Value, refs);
-            if (obj["clrFlagsOperation"] is JsonValue) Lower(obj, refs);
-        }
-        else if (node is JsonArray array)
-            foreach (var child in array.ToList())
-                if (child != null) Walk(child, refs);
-    }
+    static OptionalField<string> Carrier(BirGraphValue node) => node switch {
+        BirCallInstance value => value.ClrFlagsOperation, BirCallStatic value => value.ClrFlagsOperation, _ => default,
+    };
 
-    static void Lower(JsonObject call, ReferenceMetadataIndex refs)
+    static BirCallEvaluation Lower(BirCallInstance call, ReferenceMetadataIndex refs)
     {
-        var role = Str(call["clrFlagsOperation"]);
-        if (Str(call["k"]) != "callInstance" || role is null)
-            throw new InvalidOperationException("bir2cir: ClrFlagsOperation must annotate an instance call");
+        var role = call.ClrFlagsOperation.Value;
         if (role is not ("or" or "and" or "xor" or "inv" or "contains"))
             throw new InvalidOperationException($"bir2cir: unknown ClrFlagsOperation role '{role}'");
-        var owner = TypeJson.Read(call["ownerType"])
+        var owner = call.OwnerType.OrDefault()
             ?? throw new InvalidOperationException("bir2cir: ClrFlagsOperation call carries no owner type");
         var representation = refs.ResolveFlagsEnum(owner)
             ?? throw new InvalidOperationException(
-                $"bir2cir: ClrFlagsOperation owner '{TypeJson.OwnerName(call["ownerType"])}' is not an exact referenced CLR [Flags] enum");
-        var args = call["args"] as JsonArray
+                $"bir2cir: ClrFlagsOperation owner '{(owner as TypeNode.Fqn)?.Name}' is not an exact referenced CLR [Flags] enum");
+        var args = call.Args.OrDefault()
             ?? throw new InvalidOperationException("bir2cir: ClrFlagsOperation call carries no argument vector");
-        var argTypes = call["argTypes"] as JsonArray
+        var argumentTypes = call.ArgTypes.OrDefault()
             ?? throw new InvalidOperationException("bir2cir: ClrFlagsOperation call carries no argument-type vector");
         var unary = role == "inv";
-        if (args.Count != (unary ? 0 : 1) || argTypes.Count != args.Count)
-            throw new InvalidOperationException(
-                $"bir2cir: ClrFlagsOperation '{role}' has an invalid argument vector");
-        if (!unary && !SameFlagsEnumDefinition(TypeJson.Read(argTypes[0]), representation, refs))
-            throw new InvalidOperationException(
-                $"bir2cir: ClrFlagsOperation '{role}' argument must name the receiver's exact enum declaration");
-        var returnType = TypeJson.Read(call["ret"]);
-        var validReturn = role == "contains"
-            ? returnType == new TypeNode.Fqn("kotlin.Boolean")
+        if (args.Length != (unary ? 0 : 1) || argumentTypes.Length != args.Length)
+            throw new InvalidOperationException($"bir2cir: ClrFlagsOperation '{role}' has an invalid argument vector");
+        if (!unary && !SameFlagsEnumDefinition(argumentTypes[0], representation, refs))
+            throw new InvalidOperationException($"bir2cir: ClrFlagsOperation '{role}' argument must name the receiver's exact enum declaration");
+        var returnType = call.Ret.OrDefault();
+        var validReturn = role == "contains" ? returnType == new TypeNode.Fqn("kotlin.Boolean")
             : SameFlagsEnumDefinition(returnType, representation, refs);
         if (!validReturn)
-            throw new InvalidOperationException(
-                $"bir2cir: ClrFlagsOperation '{role}' carries an invalid return type");
-        var receiver = call["recv"]?.DeepClone()
+            throw new InvalidOperationException($"bir2cir: ClrFlagsOperation '{role}' carries an invalid return type");
+        var receiver = call.Recv.OrDefault()
             ?? throw new InvalidOperationException("bir2cir: ClrFlagsOperation call carries no receiver");
-        var receiverRef = Bind(
-            "recv", "receiver", representation.EnumType, EnumCast(representation, receiver), out var receiverBinding);
-        var bindings = new JsonArray { receiverBinding };
-        JsonObject argumentRef = null;
-        if (!unary)
+        var argument = unary ? null : args[0]
+            ?? throw new InvalidOperationException($"bir2cir: ClrFlagsOperation '{role}' carries a null argument node");
+        return Plan(role, representation, Copy(receiver), Copy(argument));
+    }
+
+    static BirCallEvaluation Plan(string role, FlagsEnumRepresentation representation,
+        IBirExpression receiver, IBirExpression argument)
+    {
+        var receiverRef = Bind("recv", "receiver", representation.EnumType, EnumCast(representation, receiver), out var receiverBinding);
+        var bindings = new List<BirCallBinding> { receiverBinding };
+        BirBindingReference argumentRef = null;
+        if (role != "inv")
         {
-            var argument = args[0]?.DeepClone()
-                ?? throw new InvalidOperationException(
-                    $"bir2cir: ClrFlagsOperation '{role}' carries a null argument node");
-            argumentRef = Bind(
-                "arg", "argument", representation.EnumType, EnumCast(representation, argument), out var argumentBinding);
+            argumentRef = Bind("arg", "argument", representation.EnumType, EnumCast(representation, argument), out var argumentBinding);
             bindings.Add(argumentBinding);
         }
-
-        JsonNode result = role switch
-        {
+        IBirExpression result = role switch {
             "or" => EnumBits(representation, Binary("|", receiverRef, argumentRef)),
             "and" => EnumBits(representation, Binary("&", receiverRef, argumentRef)),
             "xor" => EnumBits(representation, Binary("^", receiverRef, argumentRef)),
-            "inv" => EnumBits(representation, new JsonObject
-            {
-                ["k"] = "unaryOp", ["op"] = "~", ["e"] = receiverRef.DeepClone(),
-            }),
-            "contains" => Binary("==",
-                EnumBits(representation, Binary("&", receiverRef, argumentRef)),
-                argumentRef.DeepClone()),
+            "inv" => EnumBits(representation, new BirUnaryOperation { Op = "~", E = Value(Copy(receiverRef)) }),
+            "contains" => Binary("==", EnumBits(representation, Binary("&", receiverRef, argumentRef)), Copy(argumentRef)),
             _ => throw new InvalidOperationException(),
         };
-        var resultType = role == "contains"
-            ? TypeJson.Fqn("kotlin.Boolean")
-            : TypeJson.Write(representation.EnumType);
-        call.Clear();
-        call["k"] = "callEval";
-        call["type"] = resultType;
-        call["bindings"] = bindings;
-        call["expr"] = result;
+        return new BirCallEvaluation {
+            Type = BirGraphValue.CopyType(role == "contains" ? new TypeNode.Fqn("kotlin.Boolean") : representation.EnumType),
+            Bindings = bindings.ToArray(), Expr = Value(result),
+        };
     }
 
-    static JsonObject Bind(string phase, string role, TypeNode type, JsonNode expression, out JsonObject binding)
+    static BirBindingReference Bind(string phase, string role, TypeNode type, IBirExpression expression, out BirCallBinding binding)
     {
         var id = $"cir$flags{_binding++}";
-        binding = new JsonObject
-        {
-            ["id"] = id, ["phase"] = phase, ["kind"] = "value", ["stable"] = false,
-            ["type"] = TypeJson.Write(type), ["role"] = $"[Flags] {role}", ["expr"] = expression,
+        binding = new BirCallBinding {
+            Id = id, Phase = phase, Kind = "value", Stable = false,
+            Type = BirGraphValue.CopyType(type), Role = $"[Flags] {role}", Expr = Value(expression),
         };
-        return new JsonObject { ["k"] = "bindRef", ["id"] = id, ["sty"] = TypeJson.Write(type) };
+        return new BirBindingReference { Id = id, Sty = BirGraphValue.CopyType(type) };
     }
 
-    static JsonObject Binary(string op, JsonNode lhs, JsonNode rhs) => new()
-    {
-        ["k"] = "binOp", ["op"] = op, ["lhs"] = lhs.DeepClone(), ["rhs"] = rhs.DeepClone(),
+    static OptionalField<IBirExpression> Value(IBirExpression expression) => OptionalField<IBirExpression>.Of(expression);
+    static IBirExpression Copy(IBirExpression expression) => expression == null ? null
+        : (IBirExpression)((BirGraphValue)expression).DeepClone();
+    static BirBinaryOperation Binary(string operation, IBirExpression left, IBirExpression right) => new() {
+        Op = operation, Lhs = Value(Copy(left)), Rhs = Value(Copy(right)),
+    };
+    static BirEnumBits EnumBits(FlagsEnumRepresentation representation, IBirExpression expression) => new() {
+        Type = BirGraphValue.CopyType(representation.EnumType), Underlying = BirGraphValue.CopyType(representation.Underlying),
+        E = Value(new BirConvert { To = BirGraphValue.CopyType(representation.Underlying), E = Value(expression) }),
     };
 
-    static JsonObject EnumBits(FlagsEnumRepresentation representation, JsonNode expression) => new()
-    {
-        ["k"] = "enumBits",
-        ["type"] = TypeJson.Write(representation.EnumType),
-        ["underlying"] = TypeJson.Write(representation.Underlying),
-        ["e"] = new JsonObject
-        {
-            ["k"] = "conv", ["to"] = TypeJson.Write(representation.Underlying), ["e"] = expression,
-        },
-    };
-
-    // A selected operation may be invoked through a Kotlin type parameter whose final upper bound is the enum.
-    // Such a value still occupies a CLR generic-parameter stack slot; explicitly cast it to the exact physical enum
-    // before integer operations so ilemit emits the required box + unbox.any. For an already-exact enum this is an
-    // identity cast and ilemit emits no instructions.
-    static JsonObject EnumCast(FlagsEnumRepresentation representation, JsonNode expression) => new()
-    {
-        ["k"] = "cast", ["type"] = TypeJson.Write(representation.EnumType), ["e"] = expression,
+    // A generic receiver still needs the exact enum conversion before integer
+    // operations. For an exact enum this is an identity conversion.
+    static BirCast EnumCast(FlagsEnumRepresentation representation, IBirExpression expression) => new() {
+        Type = BirGraphValue.CopyType(representation.EnumType), E = Value(expression),
     };
 
     static bool SameFlagsEnumDefinition(
@@ -151,22 +139,6 @@ static class ClrFlagsOperationLowering
             (actual.Args?.Length ?? 0) == (wanted.Args?.Length ?? 0) &&
             resolved.Underlying == expected.Underlying;
     }
-
-    static void AssertConsumed(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            if (obj.ContainsKey("clrFlagsOperation"))
-                throw new InvalidOperationException("bir2cir: ClrFlagsOperation carrier survived lowering");
-            foreach (var child in obj)
-                if (child.Value != null) AssertConsumed(child.Value);
-        }
-        else if (node is JsonArray array)
-            foreach (var child in array)
-                if (child != null) AssertConsumed(child);
-    }
-
-    static string Str(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
 }
 
 sealed record FlagsEnumRepresentation(TypeNode EnumType, TypeNode Underlying);

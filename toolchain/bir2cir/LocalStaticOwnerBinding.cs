@@ -52,7 +52,9 @@ static class LocalStaticOwnerBinding
                     : physicalName;
                 LocalStatics statics = null;
                 foreach (var method in methods.OfType<JsonObject>())
-                    if (Bool(method["static"]) && Str(method["name"]) is string mn)
+                    // Physical helpers (including hoisted local functions) do
+                    // not declare Kotlin static members on this semantic owner.
+                    if (Bool(method["static"]) && !Bool(method["generated"]) && Str(method["name"]) is string mn)
                     {
                         if (statics == null && !index.TryGetValue(name, out statics))
                             index[name] = statics = new LocalStatics { PhysicalOwner = physicalName };

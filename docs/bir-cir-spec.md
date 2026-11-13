@@ -1156,8 +1156,8 @@ prefix rule is what stops a kept value sliding behind a mapped-away one). Asking
 is what the single-classifier rule forbids. The result is a `valueBlock`, or the bare call when nothing materialises —
 which is every construction whose mapped-away argument is a literal, so the `HashSet(16, 0.75f)` idiom is unchanged.
 
-Because this producer runs ~240 passes after `CallEvalLowering.Apply`, the block it mints is NOT folded by
-`MergeNestedResult` and may nest inside another block's `result`. Consumers recurse, so nesting is tolerated rather
+Because this producer runs after `TypedCallEvalLowering.Apply`, the block it mints is not folded by that earlier
+source-plan normalization and may nest inside another block's `result`. Consumers recurse, so nesting is tolerated rather
 than normalized here. At final CIR admission, after suspend lowering and physical value coercions,
 `TypedPhysicalOperandNormalization` gives returns, loop transfers and protected-region entries
 inside ordered operands an empty physical evaluation stack. It materializes each hazardous operand as a whole,

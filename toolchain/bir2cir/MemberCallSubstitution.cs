@@ -557,7 +557,7 @@ static partial class MemberCallSubstitution
         var (stmts, repl) = CallEvalLowering.Materialise(
             plan, new List<JsonNode> { lowered }, "a mapped constructor", isValue: _isValue);
         var result = CallEvalLowering.Substitute(lowered, repl);
-        // CHOKEPOINT, the same one `CallEvalLowering.Apply` asserts after its own lowering: the plan vocabulary must
+        // CHOKEPOINT, as TypedCallEvalLowering checks after lowering source plans: the plan vocabulary must
         // not survive the pass that authored it. A kept argument's `bindRef` sits in an eager `newClr` slot, so it is
         // always resolved — but that is a property of how the slots are built above, and a later change to `keep` or
         // to the coercions the slots pass through could break it silently. This says so instead.
