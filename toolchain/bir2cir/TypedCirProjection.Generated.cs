@@ -653,7 +653,7 @@ sealed partial class TypedCirProjection
 
     internal CirForRange ProjectCirForRange(BirForRange value)
     {
-        if (value.Label.IsPresent)
+        if (value.Label.IsPresent || value.RangeType.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirForRange");
         return new CirForRange
         {
@@ -1545,7 +1545,7 @@ sealed partial class TypedCirProjection
 
     internal CirForEach ProjectCirForEach(BirForEach value)
     {
-        if (value.Label.IsPresent)
+        if (value.ErasedEnumeration.IsPresent || value.Label.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirForEach");
         return new CirForEach
         {

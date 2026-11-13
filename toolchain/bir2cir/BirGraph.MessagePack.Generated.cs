@@ -21004,11 +21004,12 @@ internal static class BirGraphMessagePack
         OptionalField<IBirStatement[]> field6 = default;
         OptionalField<int> field7 = default;
         OptionalField<string> field8 = default;
+        OptionalField<TypeNode> field9 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 9); if (IrMessagePack.ReadString(ref reader) != "forRange") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 10); if (IrMessagePack.ReadString(ref reader) != "forRange") throw new FormatException(); break;
                 case "var":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
@@ -21045,6 +21046,10 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
+                case "rangeType":
+                    Seen(ref seen, 1UL << 9);
+                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -21060,13 +21065,14 @@ internal static class BirGraphMessagePack
             Body = field6,
             LoopId = field7,
             Label = field8,
+            RangeType = field9,
         };
     }
 
     internal static void WriteBirForRange(ref MessagePackWriter writer, BirForRange value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Var.IsPresent ? 1 : 0) + (value.Range.IsPresent ? 1 : 0) + (value.AccessOwner.IsPresent ? 1 : 0) + (value.FirstM.IsPresent ? 1 : 0) + (value.LastM.IsPresent ? 1 : 0) + (value.StepM.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.LoopId.IsPresent ? 1 : 0) + (value.Label.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Var.IsPresent ? 1 : 0) + (value.Range.IsPresent ? 1 : 0) + (value.AccessOwner.IsPresent ? 1 : 0) + (value.FirstM.IsPresent ? 1 : 0) + (value.LastM.IsPresent ? 1 : 0) + (value.StepM.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.LoopId.IsPresent ? 1 : 0) + (value.Label.IsPresent ? 1 : 0) + (value.RangeType.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("forRange");
         if (value.Var.IsPresent)
@@ -21153,6 +21159,15 @@ internal static class BirGraphMessagePack
             else
             {
                 IrMessagePack.WriteString(ref writer, value.Label.Value);
+            }
+        }
+        if (value.RangeType.IsPresent)
+        {
+            writer.Write("rangeType");
+            if (value.RangeType.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.RangeType.Value, depth + 1);
             }
         }
     }
@@ -25213,11 +25228,12 @@ internal static class BirGraphMessagePack
         OptionalField<BirMemberReference> field8 = default;
         OptionalField<BirMemberReference> field9 = default;
         OptionalField<string> field10 = default;
+        OptionalField<bool> field11 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 11); if (IrMessagePack.ReadString(ref reader) != "forEachInline") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 12); if (IrMessagePack.ReadString(ref reader) != "forEachInline") throw new FormatException(); break;
                 case "elem":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -25262,6 +25278,10 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 10);
                     field10 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
+                case "erasedEnumeration":
+                    Seen(ref seen, 1UL << 11);
+                    field11 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -25279,13 +25299,14 @@ internal static class BirGraphMessagePack
             CurrentErasedRef = field8,
             MoveNextRef = field9,
             Label = field10,
+            ErasedEnumeration = field11,
         };
     }
 
     internal static void WriteBirForEach(ref MessagePackWriter writer, BirForEach value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Elem.IsPresent ? 1 : 0) + (value.Src.IsPresent ? 1 : 0) + (value.Var.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.LoopId.IsPresent ? 1 : 0) + (value.EnumerableGetRef.IsPresent ? 1 : 0) + (value.EnumerableGetErasedRef.IsPresent ? 1 : 0) + (value.CurrentRef.IsPresent ? 1 : 0) + (value.CurrentErasedRef.IsPresent ? 1 : 0) + (value.MoveNextRef.IsPresent ? 1 : 0) + (value.Label.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Elem.IsPresent ? 1 : 0) + (value.Src.IsPresent ? 1 : 0) + (value.Var.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.LoopId.IsPresent ? 1 : 0) + (value.EnumerableGetRef.IsPresent ? 1 : 0) + (value.EnumerableGetErasedRef.IsPresent ? 1 : 0) + (value.CurrentRef.IsPresent ? 1 : 0) + (value.CurrentErasedRef.IsPresent ? 1 : 0) + (value.MoveNextRef.IsPresent ? 1 : 0) + (value.Label.IsPresent ? 1 : 0) + (value.ErasedEnumeration.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("forEachInline");
         if (value.Elem.IsPresent)
@@ -25390,6 +25411,15 @@ internal static class BirGraphMessagePack
             else
             {
                 IrMessagePack.WriteString(ref writer, value.Label.Value);
+            }
+        }
+        if (value.ErasedEnumeration.IsPresent)
+        {
+            writer.Write("erasedEnumeration");
+            if (value.ErasedEnumeration.IsNull) writer.WriteNil();
+            else
+            {
+                writer.Write(value.ErasedEnumeration.Value);
             }
         }
     }
