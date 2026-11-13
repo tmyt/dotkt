@@ -46,6 +46,7 @@ static class ExecutableBirCodec
     {
         var text = new TypeNode.Fqn("kotlin.String");
         var frame = new TypeNode.Tv("method", 1);
+        var suspendShape = new TypeNode.Fn(true, new TypeNode.Nullable(frame), new TypeNode[] { frame });
         var sourceDefault = new BirValueBlock {
             Type = text,
             Stmts = new IBirStatement[] { new BirSourcePoint { Span = new BirSourceSpan { F = "producer.kt", L = 3 } } },
@@ -56,14 +57,20 @@ static class ExecutableBirCodec
             Recv = "none", Static = true, DeclarationId = "exact-declaration",
             TypeParams = new[] { new BirTypeParameter { Name = "O" }, new BirTypeParameter { Name = "T", Reified = true } },
             Params = new[] { new BirParameter { Name = "value", Type = frame },
-                new BirParameter { Name = "text", Type = text, Attrs = new[] { DefaultBirCarrier.Create(1, sourceDefault) } } },
+                new BirParameter { Name = "text", Type = text, Attrs = new[] { DefaultBirCarrier.Create(1, sourceDefault) } },
+                new BirParameter { Name = "action", Type = suspendShape, SuspendFnTypePre = suspendShape } },
             Ret = frame, Body = new IBirStatement[] { new BirReturn { Value = new BirLocal { Name = "value", Sty = frame } } },
             Lifted = new[] { new BirFunctionDeclaration { Name = "lifted", Static = true, Generated = true,
                 NullableRepresentationFrame = new NullableRepresentationFrame(2, new[] { 1 },
                     new[] { 3, 0, 2, 1, 4 }, new[] { 0 }, new[] { 1 }),
                 Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.Double"),
                 Body = new IBirStatement[] { new BirReturn { Value = new BirConstant {
-                    Type = new TypeNode.Fqn("kotlin.Double"), Value = new Float64Literal(unchecked((long)0xfff800000000002aUL)) } } } } },
+                    Type = new TypeNode.Fqn("kotlin.Double"), Value = new Float64Literal(unchecked((long)0xfff800000000002aUL)) } } } },
+                new BirFunctionDeclaration { Name = "readAction", Static = true, Generated = true,
+                    TypeParams = new[] { new BirTypeParameter { Name = "O" }, new BirTypeParameter { Name = "T" } },
+                    Params = new[] { new BirParameter { Name = "action", Type = suspendShape, SuspendFnTypePre = suspendShape } },
+                    Ret = suspendShape, RetSuspendFnTypePre = suspendShape,
+                    Body = new IBirStatement[] { new BirReturn { Value = new BirLocal { Name = "action", Sty = suspendShape } } } } },
         };
         foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1 })
         {
@@ -74,6 +81,10 @@ static class ExecutableBirCodec
             if (!restored.Lifted.Value[0].NullableRepresentationFrame.Value.PhysicalOrder
                 .SequenceEqual(new[] { 3, 0, 2, 1, 4 }))
                 throw new InvalidOperationException("Executable carrier lost its lifted method frame");
+            if (!suspendShape.Equals(restored.Params.Value[2].SuspendFnTypePre.Value)
+                || !suspendShape.Equals(restored.Lifted.Value[1].RetSuspendFnTypePre.Value)
+                || !suspendShape.Equals(restored.Lifted.Value[1].Params.Value[0].SuspendFnTypePre.Value))
+                throw new InvalidOperationException("Executable carrier lost a pre-erasure suspend signature");
             var first = restored.ToDom();
             var second = restored.ToDom();
             first["body"][0]["value"]["name"] = "changed";
