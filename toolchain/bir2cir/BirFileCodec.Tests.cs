@@ -45,7 +45,11 @@ static partial class BirFileCodec
             }).Append(new BirExpressionStatement { Expr = call }).ToArray(),
             Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("Opaque"), Args = new IBirAttributeValue[] { new BirOpaqueBytes { Bytes = opaque } } } },
         } } };
+        // This current phase declaration crosses the first presence-mask word.
+        input.Methods.Value[0].RetSuspendFnType = new TypeNode.Fn(true, frame, Array.Empty<TypeNode>());
         var decoded = Roundtrip(input);
+        if (!decoded.StructurallyEquals(BirGraphJson.ReadFile(Json(input))))
+            throw new InvalidOperationException("Wide declaration fields diverged between JSON and MessagePack");
         var decodedCall = (BirCallInline)((BirExpressionStatement)decoded.Methods.Value[0].Body.Value[^1]).Expr.Value;
         if (decodedCall.Args.Value[0] != null || decodedCall.RetType.Value != frame
             || decodedCall.DeclarationId.Value != "exact-id" || ReferenceEquals(decodedCall.Args.Value, call.Args.Value)
@@ -94,6 +98,22 @@ static partial class BirFileCodec
             catch (FormatException) { failed = true; }
             if (!failed) throw new InvalidOperationException("Malformed current BIR fields/kind were accepted");
         }
+        var duplicateWideJson = new Utf8JsonReader("{\"retSuspendFnType\":null,\"retSuspendFnType\":null}"u8);
+        duplicateWideJson.Read();
+        var rejectedWide = false;
+        try { BirGraphJson.ReadBirFunctionDeclaration(ref duplicateWideJson); }
+        catch (FormatException) { rejectedWide = true; }
+        if (!rejectedWide) throw new InvalidOperationException("Duplicate current wide JSON declaration field was accepted");
+        var wideBuffer = new ArrayBufferWriter<byte>();
+        var wideWriter = new MessagePackWriter(wideBuffer);
+        wideWriter.WriteMapHeader(2);
+        for (var index = 0; index < 2; index++) { wideWriter.Write("retSuspendFnType"); wideWriter.WriteNil(); }
+        wideWriter.Flush();
+        var duplicateWideBinary = new MessagePackReader(wideBuffer.WrittenMemory);
+        rejectedWide = false;
+        try { BirGraphMessagePack.ReadBirFunctionDeclaration(ref duplicateWideBinary); }
+        catch (FormatException) { rejectedWide = true; }
+        if (!rejectedWide) throw new InvalidOperationException("Duplicate current wide binary declaration field was accepted");
         Console.WriteLine("[BIR MessagePack] self-test OK (all kinds, numeric bits/UTF16, presence, exact frames/IDs, opaque bytes, independent executable mutation)");
     }
 }

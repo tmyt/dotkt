@@ -1,4 +1,6 @@
 using System.Text.Json.Nodes;
+using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 static class CompanionRepresentationLoweringTests
 {
@@ -7,19 +9,44 @@ static class CompanionRepresentationLoweringTests
 
     public static void SelfTest()
     {
-        var root = JsonNode.Parse("""
-        {"types":[
-          {"name":"Probe.Owner"},
-          {"name":"Probe.Owner.<companion:Named>",
-           "kotlinCompanion":{"owner":"Probe.Owner","name":"Named","visibility":"public"}},
-          {"name":"Probe.Generic","typeParams":[{"name":"T"}]},
-          {"name":"Probe.Generic.<companion:Named>",
-           "kotlinCompanion":{"owner":"Probe.Generic","name":"Named","visibility":"internal"}}]}
-        """)!;
-        var uses = Uses();
-        root["body"] = uses;
+        var owner = new BirClassDefinition { Kind = "class", Name = "Probe.Owner" };
+        var companion = new BirClassDefinition { Kind = "class", Name = Semantic,
+            KotlinCompanion = new BirKotlinCompanion { Owner = "Probe.Owner", Name = "Named", Visibility = "public" } };
+        var generic = new BirClassDefinition { Kind = "class", Name = "Probe.Generic",
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } } };
+        var genericCompanion = new BirClassDefinition { Kind = "class", Name = "Probe.Generic.<companion:Named>",
+            KotlinCompanion = new BirKotlinCompanion { Owner = "Probe.Generic", Name = "Named", Visibility = "internal" } };
+        var child = new BirClassDefinition { Kind = "class", Name = "Probe.Child", SemanticOwner = Semantic, Vis = "private" };
+        BirCompanionValue Companion() => new() { CompanionType = new TypeNode.Fqn(Semantic) };
+        var call = new BirCallInstance { OwnerType = new TypeNode.Fqn(Semantic), Recv = Companion(),
+            Method = "selected", DeclarationId = "selected-id", Sig = new TypeNode[] { new TypeNode.Fqn("Probe.Parameter") } };
+        var bound = new BirNewBoundDelegate { OwnerType = new TypeNode.Fqn(Semantic), CalleeOwner = new TypeNode.Fqn("Probe.Sentinel"), Recv = Companion() };
+        var inherited = new BirNewBoundDelegate { OwnerType = new TypeNode.Fqn("Probe.SelectedOwner"), CalleeOwner = new TypeNode.Fqn("Probe.SelectedOwner"), Recv = Companion() };
+        var ordinary = new BirNewBoundDelegate { OwnerType = new TypeNode.Fqn(Semantic), CalleeOwner = new TypeNode.Fqn(Semantic), Recv = new BirLocal { Name = "ordinary" } };
+        var field = new BirFieldDeclaration { Name = "slot", Type = new TypeNode.Nullable(new TypeNode.Fqn(Semantic)) };
+        var root = new BirFileDeclaration { FileClass = "Probe.File",
+            Types = new IBirTypeDeclaration[] { owner, companion, generic, genericCompanion, child },
+            Fields = new[] { field }, Methods = new[] { new BirFunctionDeclaration { Name = "use",
+                Body = new IBirStatement[] { new BirExpressionStatement { Expr = call },
+                    new BirExpressionStatement { Expr = bound }, new BirExpressionStatement { Expr = inherited },
+                    new BirExpressionStatement { Expr = ordinary } },
+            } } };
         var local = CompanionRepresentationLowering.Apply(new[] { root });
-        AssertUses(uses);
+        if (!ReferenceEquals(root.Types.Value[1], companion) || companion.Name.Value != Physical
+            || companion.NestedIn.Value != "Probe.Owner" || genericCompanion.NestedIn.IsPresent
+            || genericCompanion.Name.Value != "Probe.Generic$companion$Named"
+            || companion.Fields.Value[0].Name.Value != "$INSTANCE"
+            || owner.Fields.Value.Single().Name.Value != "Named"
+            || genericCompanion.CompanionCarrier.Value.PhysicalOwnerArity.Value != 1
+            || child.SemanticOwner.Value != Physical || child.Vis.Value != "internal"
+            || field.Type.Value != new TypeNode.Nullable(new TypeNode.Fqn(Physical))
+            || call.OwnerType.Value != new TypeNode.Fqn(Physical) || call.DeclarationId.Value != "selected-id"
+            || call.Sig.Value.Single() != new TypeNode.Fqn("Probe.Parameter")
+            || call.Recv.Value is not BirStaticFieldGet { Name.Value: "$INSTANCE", Sty.Value: TypeNode.Fqn { Name: Physical } }
+            || bound.CalleeOwner.Value != new TypeNode.Fqn(Physical)
+            || inherited.OwnerType.Value != new TypeNode.Fqn("Probe.SelectedOwner")
+            || ordinary.OwnerType.Value != new TypeNode.Fqn(Physical) || ordinary.CalleeOwner.Value != new TypeNode.Fqn(Physical))
+            throw new InvalidOperationException("Typed companion placement lost exact declaration/use/visibility facts");
 
         // Spliced payloads bind through the same local associations after initial declaration placement.
         var spliced = Uses();
@@ -112,22 +139,21 @@ static class CompanionRepresentationLoweringTests
     static void NestedPlacementOrder()
     {
         // The inner association appears first in source, but its enclosing generic companion must be placed first.
-        var root = JsonNode.Parse("""
-        {"types":[
-          {"name":"Outer.<companion:Named>.Child.<companion:Named>",
-           "kotlinCompanion":{"owner":"Outer.Named.Child","name":"Named","visibility":"public"}},
-          {"name":"Outer.<companion:Named>.Child","semanticOwner":"Outer.<companion:Named>"},
-          {"name":"Outer.<companion:Named>",
-           "kotlinCompanion":{"owner":"Outer","name":"Named","visibility":"public"}},
-          {"name":"Outer","typeParams":[{"name":"T"}]}],
-         "body":[{"k":"companionValue","companionType":{"t":"fqn","name":"Outer.<companion:Named>.Child.<companion:Named>"}}]}
-        """)!;
+        var inner = new BirClassDefinition { Kind = "class", Name = "Outer.<companion:Named>.Child.<companion:Named>",
+            KotlinCompanion = new BirKotlinCompanion { Owner = "Outer.Named.Child", Name = "Named", Visibility = "public" } };
+        var child = new BirClassDefinition { Kind = "class", Name = "Outer.<companion:Named>.Child", SemanticOwner = "Outer.<companion:Named>" };
+        var outerCompanion = new BirClassDefinition { Kind = "class", Name = "Outer.<companion:Named>",
+            KotlinCompanion = new BirKotlinCompanion { Owner = "Outer", Name = "Named", Visibility = "public" } };
+        var outer = new BirClassDefinition { Kind = "class", Name = "Outer", TypeParams = new[] { new BirTypeParameter { Name = "T" } } };
+        var value = new BirExpressionStatement { Expr = new BirCompanionValue { CompanionType = new TypeNode.Fqn(inner.Name.Value) } };
+        var root = new BirFileDeclaration { FileClass = "Nested", Types = new IBirTypeDeclaration[] { inner, child, outerCompanion, outer },
+            Methods = new[] { new BirFunctionDeclaration { Name = "use", Body = new IBirStatement[] { value } } } };
         var local = CompanionRepresentationLowering.Apply(new[] { root });
         if (!local.Associations.Select(a => a.SemanticName).SequenceEqual(new[] {
-                "Outer.<companion:Named>", "Outer.<companion:Named>.Child.<companion:Named>" }) ||
-            local.Associations[1].PhysicalOwner != "Outer$companion$Named+Child" ||
-            root["types"]![1]!["semanticOwner"]!.GetValue<string>() != "Outer$companion$Named" ||
-            !JsonNode.DeepEquals(root["body"]![0], Singleton("Outer.<companion:Named>.Child.$Named")))
+                "Outer.<companion:Named>", "Outer.<companion:Named>.Child.<companion:Named>" })
+            || local.Associations[1].PhysicalOwner != "Outer$companion$Named+Child"
+            || child.SemanticOwner.Value != "Outer$companion$Named"
+            || value.Expr.Value is not BirStaticFieldGet { OwnerType.Value: TypeNode.Fqn { Name: "Outer.<companion:Named>.Child.$Named" } })
             throw new InvalidOperationException("Nested companion binding lost association order or exact physical ownership");
     }
 }

@@ -84,11 +84,12 @@ static partial class RoundtripMetadata
     // Physical accessibility may be wider than Kotlin declaration visibility for the cross-module inline ABI.
     // Preserve the declaration-owned fact at that representation boundary, before replacing CIR's `vis`.
     public static void PreserveTypeVisibility(JsonObject type) =>
-        Append(type, JsonCarrierAttr(AKTypeVisibility, new JsonObject { ["visibility"] = type["vis"]!.DeepClone() }));
+        Append(type, Marker(AKTypeVisibility, StringArg(BirCarrier.JsonV1),
+            BytesArg(Convert.ToBase64String(VisibilityContent(type["vis"]!.GetValue<string>())))));
 
     public static void PreserveCallableVisibility(JsonObject declaration, string visibility) =>
-        Append(declaration, JsonCarrierAttr(CallableVisibilityLowering.Carrier,
-            new JsonObject { ["visibility"] = visibility }));
+        Append(declaration, Marker(CallableVisibilityLowering.Carrier, StringArg(BirCarrier.JsonV1),
+            BytesArg(Convert.ToBase64String(VisibilityContent(visibility)))));
 
     // Declaration metadata is opaque to every physical representation pass. Encode it at the input boundary,
     // before any traversal can confuse a Kotlin alias's classifier or parameter with an executable CLR slot.
@@ -985,24 +986,22 @@ static partial class RoundtripMetadata
     // original one-.cctor initialization order; this narrow edge names that physical owner/slot while dll2klib reads
     // the CLR Literal/[KotlinLateinit] facts from the field instead of duplicating them in another payload.
     internal static void StampPropertyStorage(JsonObject getter, string owner, string fieldName) =>
-        Append(getter, JsonCarrierAttr(AKPropertyStorage, new JsonObject {
-            ["owner"] = owner,
-            ["field"] = fieldName,
-        }));
+        Append(getter, Marker(AKPropertyStorage, StringArg(BirCarrier.JsonV1),
+            BytesArg(Convert.ToBase64String(PropertyStorageContent(owner, fieldName)))));
 
     // Lexically legal producer defaults can transport an initialization query into another assembly. Bind the
     // selected Kotlin getter to its private state accessor explicitly; the consumer never reconstructs storage.
     internal static void StampLateinitState(JsonObject getter, string owner, string method, bool isStatic) =>
-        Append(getter, JsonCarrierAttr(AKLateinitState, new JsonObject {
-            ["owner"] = owner, ["method"] = method, ["static"] = isStatic,
-        }));
+        Append(getter, Marker(AKLateinitState, StringArg(BirCarrier.JsonV1),
+            BytesArg(Convert.ToBase64String(LateinitStateContent(owner, method, isStatic)))));
 
     // A generic C# 14 extension implementation must carry the receiver block's CLR method parameters. Kotlin's
     // declaration does not: its associated classifier is bare and contributes no callable type parameters. This
     // trusted edge points from the standard Roslyn-shaped wrapper to the non-generic-container core that dll2klib and
     // Kotlin call sites use. Names and receiver identity continue to come exclusively from the standard graph.
     internal static void StampExtensionCore(JsonObject wrapper, string coreName) =>
-        Append(wrapper, JsonCarrierAttr(AKExtensionCore, new JsonObject { ["name"] = coreName }));
+        Append(wrapper, Marker(AKExtensionCore, StringArg(BirCarrier.JsonV1),
+            BytesArg(Convert.ToBase64String(ExtensionCoreContent(coreName)))));
 
     static JsonObject Marker(string attr, params JsonObject[] args)
     {

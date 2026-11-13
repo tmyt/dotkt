@@ -43,6 +43,7 @@ static class Bir2Cir
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();
                 MemberCallSubstitution.StaticCollectionPreferenceSelfTest();
+                MemberCallSubstitution.SourceDeclarationSnapshotsSelfTest();
                 FunctionSignatureIdentity.SelfTest();
                 FunctionValueRepresentation.SelfTestSourceFacts();
                 BirNodeType.SelfTest();
@@ -66,6 +67,8 @@ static class Bir2Cir
                 DefaultArgSplice.SourcePreparationSelfTest();
                 FaithfulHintRecognition.TypedSelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
+                LateinitInitializationLoweringTests.SelfTest();
+                CompanionExtensionBinding.SelfTest();
                 LexicalDeclarationIds.SelfTest();
                 ClrEventSubscriptionBinding.SelfTest();
                 ClrEventImplBinding.SelfTestSourceFacts();
@@ -281,6 +284,19 @@ sealed class Pipeline
         var representationMethodFrames = NullableRepresentationMaterialization.Apply(
             captured, sourceIsValue, refs, policy: genericRepresentations, declaredMethods: declaredMethodFrames);
         restoreDefaultFrames();
+        var localFactories = MemberCallSubstitution.CollectLocalFactories(captured);
+        // Keep the physical placement order explicit. Each pass owns its
+        // decisions; late consumers receive the resulting scalar associations.
+        GenericStaticOwnerBinding.Materialize(captured);
+        GenericStaticOwnerBinding.ApplyEventOwnersAll(captured, refs);
+        var companionRepresentations = CompanionRepresentationLowering.Apply(captured);
+        var companionExtensionBindings = CompanionExtensionBinding.Apply(captured, refs);
+        LateinitInitializationLowering.ApplyAll(captured, refs);
+        KotlinPropertyAccessors.AllocateDeclarationsAndProperties(captured);
+        var localPropertyDeclarations = MemberCallSubstitution.CollectLocalPropertyAccessors(captured);
+        genericRepresentations.PrepareDomLocations(captured);
+        var placement = new DeclarationPlacement(localFactories, localPropertyDeclarations,
+            companionRepresentations, companionExtensionBindings);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -298,7 +314,7 @@ sealed class Pipeline
 
         genericRepresentations.BindDomDeclarations(files.Select(file => file.Root).ToArray());
         return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand,
-            genericRepresentations, scalarSlots, valueSources, representationMethodFrames);
+            genericRepresentations, scalarSlots, valueSources, representationMethodFrames, placement);
     }
 
     // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
@@ -352,28 +368,10 @@ sealed class Pipeline
         var scalarSlots = module.ScalarSlots;
         var physicalParameterIndices = scalarSlots.Parameters;
         var representationMethodFrames = module.RepresentationMethodFrames;
-        // Preserve selected local factory facts before per-file transformations. In a
-        // stdlib self-build these declarations are local, not referenced MethodDefs.
-        var localFactories = MemberCallSubstitution.CollectLocalFactories(birRoots);
-        // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block
-        // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before
-        // any module-wide declaration index is captured.
-        GenericStaticOwnerBinding.Materialize(birRoots);
-        // Event handles materialize callbacks before the late static-call binding pass. Their selected event owner
-        // must already be the same physical carrier as the declaration and its accessor shells.
-        GenericStaticOwnerBinding.ApplyEventOwnersAll(birRoots, refs);
-        // Companion metadata must freeze its owner's physical path after static nested classifiers are placed.
-        var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
-        // A receiverless companion extension needs its associated Kotlin classifier in the physical member identity.
-        // Consume that explicit declaration/use fact before any name-keyed index or inline payload is captured.
-        var companionExtensionBindings = CompanionExtensionBinding.Apply(birRoots, refs);
-        LateinitInitializationLowering.ApplyAll(birRoots, refs);
-        // #397: accessor declarations arrive in Kotlin vocabulary (source property identity + get/set role).
-        // Materialize the dedicated CLR spelling once, after #389 has selected any companion-extension core/container
-        // representation and before a name-keyed declaration index is captured.  The explicit identity remains on
-        // each declaration for semantic consumers and is stripped only at the BIR->CIR boundary.
-        KotlinPropertyAccessors.AllocateDeclarationsAndProperties(birRoots);
-        var localPropertyDeclarations = MemberCallSubstitution.CollectLocalPropertyAccessors(birRoots);
+        var localFactories = module.Placement.Factories;
+        var companionRepresentations = module.Placement.Companions;
+        var companionExtensionBindings = module.Placement.Extensions;
+        var localPropertyDeclarations = module.Placement.Properties;
         var ownershipFacts = TypeOwnershipLowering.PrepareOwnershipFacts(birRoots);
         // #68 (PART 2): kotc emits the PLAIN Kotlin identity `kotlin.CharSequence` at every CharSequence use site (no CLR
         // synthetic name — kotc knows nothing of the synthetic). Recognizing `kotlin.CharSequence` as a synthesize-target is
@@ -1934,7 +1932,11 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
     ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex, NullableWitnessDemand NullableWitnesses,
     GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots,
     ValueRepresentationLowering.SourceIndex ValueSources,
-    IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames);
+    IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames,
+    DeclarationPlacement Placement);
+sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
+    IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties,
+    CompanionRepresentationLowering.LocalIndex Companions, CompanionExtensionBinding.LocalIndex Extensions);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions

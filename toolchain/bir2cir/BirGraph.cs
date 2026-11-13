@@ -151,7 +151,30 @@ internal readonly record struct BirSourceRegion(IBirStatement[] Statements, BirG
 
 internal interface IBirExpression : IBirAttributeValue;
 internal interface IBirStatement;
-internal interface IBirTypeDeclaration;
+internal interface IBirTypeDeclaration
+{
+    OptionalField<string> Name { get; set; }
+    OptionalField<string> Kind { get; set; }
+    OptionalField<bool> Generated { get; set; }
+    OptionalField<string> SemanticOwner { get; set; }
+    OptionalField<string> NestedIn { get; set; }
+    OptionalField<string> Vis { get; set; }
+    OptionalField<BirModifiers> Mods { get; set; }
+    OptionalField<BirTypeParameter[]> TypeParams { get; set; }
+    OptionalField<BirTypeParameter[]> CapturedTypeParams { get; set; }
+    OptionalField<TypeNode> Base { get; set; }
+    OptionalField<TypeNode[]> Interfaces { get; set; }
+    OptionalField<BirFieldDeclaration[]> Fields { get; set; }
+    OptionalField<BirConstructor[]> Ctors { get; set; }
+    OptionalField<BirFunctionDeclaration[]> Methods { get; set; }
+    OptionalField<BirPropertyDeclaration[]> Properties { get; set; }
+    OptionalField<BirClrEventBacking[]> ClrEvents { get; set; }
+    OptionalField<BirAttribute[]> Attrs { get; set; }
+    OptionalField<BirParameter[]> Params { get; set; }
+    OptionalField<TypeNode> Ret { get; set; }
+    OptionalField<BirStaticCarrier> StaticCarrier { get; set; }
+    OptionalField<BirCompanionCarrier> CompanionCarrier { get; set; }
+}
 internal interface IBirAttributeValue;
 // A saved source graph is metadata, not another live source declaration for
 // declaration-level capture or representation passes to reinterpret.
@@ -207,6 +230,12 @@ internal static partial class BirGraphJson
     }
 
     static void Seen(ref ulong seen, ulong field)
+    {
+        if ((seen & field) != 0) throw new FormatException();
+        seen |= field;
+    }
+
+    static void Seen(ref UInt128 seen, UInt128 field)
     {
         if ((seen & field) != 0) throw new FormatException();
         seen |= field;

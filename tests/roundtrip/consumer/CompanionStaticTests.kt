@@ -135,6 +135,10 @@ class CompanionStaticRoundtripTests {
         volatileBox.writePrivateVolatile(8)
         assertEquals(8, volatileBox.readPrivateVolatile())
         volatileBox.writePrivateVolatile(7)
+        assertEquals("native", Box.readNativeValue())
+        Box.writeNativeValue("updated")
+        assertEquals("updated", Box.readNativeValue())
+        Box.writeNativeValue("native")
         assertEquals(3, Box.count)
         Box.count = 0
 

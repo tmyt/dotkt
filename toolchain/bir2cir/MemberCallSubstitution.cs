@@ -70,41 +70,6 @@ static partial class MemberCallSubstitution
     static IReadOnlyDictionary<string, LocalFactory> _localFactories;
     static IReadOnlySet<string> _localDeclarationIds;
 
-    public static IReadOnlyDictionary<string, LocalFactory> CollectLocalFactories(
-        IEnumerable<JsonNode> roots)
-    {
-        var result = new Dictionary<string, LocalFactory>(StringComparer.Ordinal);
-        void Walk(JsonObject owner)
-        {
-            if (owner["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                {
-                    if (Str(method[DeclarationIdentityBinding.Key]) is not string id
-                        || method["attrs"] is not JsonArray attributes) continue;
-                    foreach (var attribute in attributes.OfType<JsonObject>())
-                    {
-                        var marker = TypeJson.OwnerName(attribute["attr"]);
-                        if (marker is not ("kotlin.clr.ClrCollectionFactory" or "kotlin.clr.ClrArrayFactory")) continue;
-                        var kind = Str(attribute["args"]?[0]?["value"]);
-                        var parameters = (JsonArray)method["params"];
-                        var varargs = parameters.Select((parameter, index) => (parameter, index))
-                            .Where(pair => pair.parameter?["mods"]?["vararg"]?.GetValue<bool>() == true)
-                            .Select(pair => pair.index).ToArray();
-                        var frame = Str(method[NullableRepresentationTypes.MethodFrameKey]) is string encoded
-                            ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded)) : null;
-                        var isArray = marker == "kotlin.clr.ClrArrayFactory";
-                        var elementHint = ArrayConstructionLowering.ArrayElementOf(TypeJson.Read(method["ret"]))
-                            is TypeNode.Fqn element ? element.Name : null;
-                        result.Add(id, new LocalFactory(isArray ? null : kind, isArray ? kind : null,
-                            elementHint, varargs, frame));
-                    }
-                }
-            if (owner["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>()) Walk(type);
-        }
-        foreach (var root in roots.OfType<JsonObject>()) Walk(root);
-        return result;
-    }
 
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner, ValueTypeOracle isValue,
@@ -131,29 +96,20 @@ static partial class MemberCallSubstitution
     public static IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>
         CollectLocalPropertyAccessors(IEnumerable<JsonNode> roots)
     {
-        var candidates = new Dictionary<LocalPropertyAccessorKey, List<LocalPropertyAccessor>>();
+        var collector = new LocalPropertyCollector();
         void Walk(JsonNode node)
         {
             if (node is JsonObject obj)
             {
-                if (Str(obj["name"]) is string owner && obj["kind"] != null && obj["methods"] is JsonArray methods)
+                if (LocalPropertyCollector.IsOwner(Str(obj["name"]), obj["kind"] != null) && obj["methods"] is JsonArray methods)
                     foreach (var method in methods.OfType<JsonObject>())
-                        if (!KotlinPropertyAccessors.IsPhysicalSlotBridge(method)
-                            && KotlinPropertyAccessors.TryIdentity(method, out var property, out var kind)
-                            && Str(method["name"]) is string physical
-                            && method["params"] is JsonArray parameters)
-                        {
-                            var parameterTypes = parameters.OfType<JsonObject>()
-                                .Select(parameter => TypeJson.Read(parameter["type"]))
-                                .ToArray();
-                            if (parameterTypes.Length != parameters.Count || parameterTypes.Any(type => type == null))
-                                continue;
-                            var key = new LocalPropertyAccessorKey(owner, property, kind,
-                                (method["typeParams"] as JsonArray)?.Count ?? 0, parameters.Count);
-                            if (!candidates.TryGetValue(key, out var accessors))
-                                candidates[key] = accessors = new List<LocalPropertyAccessor>();
-                            accessors.Add(new LocalPropertyAccessor(physical, parameterTypes));
-                        }
+                    {
+                        var parameters = method["params"] as JsonArray;
+                        collector.Add(Str(obj["name"]), KotlinPropertyAccessors.IsPhysicalSlotBridge(method),
+                            Str(method[KotlinPropertyAccessors.SourceNameKey]), Str(method[KotlinPropertyAccessors.KindKey]),
+                            Str(method["name"]), (method["typeParams"] as JsonArray)?.Count ?? 0, parameters?.Count ?? 0,
+                            () => parameters?.OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"])).ToArray());
+                    }
                 foreach (var child in obj.Select(pair => pair.Value).ToArray())
                     if (child != null) Walk(child);
             }
@@ -161,8 +117,7 @@ static partial class MemberCallSubstitution
                 foreach (var child in array.ToArray()) if (child != null) Walk(child);
         }
         foreach (var root in roots) Walk(root);
-        return candidates.ToDictionary(pair => pair.Key,
-            pair => (IReadOnlyList<LocalPropertyAccessor>)pair.Value);
+        return collector.Finish();
     }
 
     internal static bool TryResolveLocalPropertyAccessor(

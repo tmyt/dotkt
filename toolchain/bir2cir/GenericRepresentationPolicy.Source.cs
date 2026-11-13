@@ -5,6 +5,8 @@ using DotKt.Cir;
 
 sealed partial class GenericRepresentationPolicy
 {
+    readonly HashSet<BirGraphValue> _sourceNativeStorage = new(ReferenceEqualityComparer.Instance);
+    HashSet<(string Owner, string Name, bool Static, string Receiver)> _pendingNativePhysicalBindings;
     readonly record struct SourceOwner(string Name, bool HasKind, bool Generated,
         BirTypeParameter[] Parameters, BirAttribute[] Attributes, BirFieldDeclaration[] Fields);
 
@@ -54,6 +56,7 @@ sealed partial class GenericRepresentationPolicy
                 {
                     field._nativeLocation = true;
                     _nativeFieldNames.Add(key);
+                    _sourceNativeStorage.Add(field);
                 }
             }
         }
@@ -93,6 +96,7 @@ sealed partial class GenericRepresentationPolicy
                             default: throw new InvalidOperationException("Unaccounted native source storage declaration");
                         }
                         _nativeFieldNames.Add(key);
+                        _sourceNativeStorage.Add(declaration);
                     }
                     else if (_localOwners.Contains(owner.Name)
                         || _references?.HasReferencedFieldLocation(owner, name, isStatic) != true) continue;
@@ -122,11 +126,54 @@ sealed partial class GenericRepresentationPolicy
         _ => (null, null),
     };
 
+    // Placement changes a physical owner/name, not the source decision about
+    // which storage needs a native slot. Follow the selected owning records;
+    // neither carrier spelling nor a newly generated field can select an origin.
+    internal void PrepareDomLocations(IReadOnlyList<BirFileDeclaration> roots)
+    {
+        if (!_sourceAwaitingDom) throw new InvalidOperationException("Source generic policy already crossed its owning frontier");
+        if (_pendingNativePhysicalBindings != null) throw new InvalidOperationException("Source native locations are already prepared for their DOM continuation");
+        var matched = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
+        var physical = new HashSet<(string Owner, string Name, bool Static, string Receiver)>();
+        void Fields(string owner, IEnumerable<BirFieldDeclaration> fields)
+        {
+            foreach (var field in fields)
+            {
+                if (!_sourceNativeStorage.Contains(field)) continue;
+                if (owner == null || !field.Name.HasValue || !field._nativeLocation.OrDefault())
+                    throw new InvalidOperationException("Selected native storage lost its physical declaration");
+                physical.Add(FieldKey(owner, field.Name.Value, field.Static.OrDefault(), field.CompanionReceiver.OrDefault()));
+                matched.Add(field);
+            }
+        }
+        foreach (var root in roots)
+        {
+            Fields(root.FileClass.OrDefault(), root.Fields.OrEmpty());
+            foreach (var type in root.Types.OrEmpty()) Fields(type.Name.OrDefault(), type.Fields.OrEmpty());
+            foreach (var cell in root.RefTypes.OrEmpty())
+            {
+                if (!_sourceNativeStorage.Contains(cell)) continue;
+                if (!cell.Name.HasValue || !cell._nativeLocation.OrDefault())
+                    throw new InvalidOperationException("Selected native capture storage lost its physical declaration");
+                physical.Add(FieldKey(cell.Name.Value, "v", false, (TypeNode)null));
+                matched.Add(cell);
+            }
+        }
+        if (!matched.SetEquals(_sourceNativeStorage))
+            throw new InvalidOperationException("Placement discarded a selected native source declaration");
+        // Some uses still carry their selected source owner until late generic-static binding.
+        // Their native role survives placement independently of the physical declarations we must bind below.
+        _nativeFieldNames.UnionWith(physical);
+        _pendingNativePhysicalBindings = physical;
+    }
+
     // Re-associate only the exact declarations carried across the one-way
     // frontier. Selection, source eligibility, and native flags already exist.
     internal void BindDomDeclarations(IReadOnlyList<JsonNode> roots)
     {
         if (!_sourceAwaitingDom) throw new InvalidOperationException("Source generic policy is already bound to its DOM continuation");
+        var expected = _pendingNativePhysicalBindings
+            ?? throw new InvalidOperationException("Source native locations were not prepared for their DOM continuation");
         var matched = new HashSet<(string Owner, string Name, bool Static, string Receiver)>();
         void BindOwners(JsonObject declaration)
         {
@@ -155,7 +202,7 @@ sealed partial class GenericRepresentationPolicy
         }
         void BindNative((string Owner, string Name, bool Static, string Receiver) key, JsonObject declaration)
         {
-            if (!_nativeFieldNames.Contains(key)) return;
+            if (!expected.Contains(key)) return;
             if (declaration[NativeLocationKey]?.GetValue<bool>() != true)
                 throw new InvalidOperationException("Native storage selection was not carried across the owning frontier");
             _nativeFields.Add(declaration);
@@ -166,8 +213,10 @@ sealed partial class GenericRepresentationPolicy
             BindOwners(root);
             BindFields(root, Text(root["fileClass"]));
         }
-        if (!matched.SetEquals(_nativeFieldNames))
+        if (!matched.SetEquals(expected))
             throw new InvalidOperationException("A selected native source declaration is absent from its DOM continuation");
+        _sourceNativeStorage.Clear();
+        _pendingNativePhysicalBindings = null;
         _sourceAwaitingDom = false;
     }
 }

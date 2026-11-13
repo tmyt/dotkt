@@ -48,16 +48,17 @@ static class CallableVisibilityLowering
             ArgTypes = new TypeNode[] { text, new TypeNode.Array(new TypeNode.Fqn("System.Byte")) },
             Args = new IBirAttributeValue[] {
                 new BirConstant { Type = text, Value = new BirLiteral.TextLiteral(BirCarrier.JsonV1) },
-                new BirOpaqueBytes { Bytes = BirCarrier.EncodeBody(BirCarrier.JsonV1, source, (writer, value) => {
-                    writer.WriteStartObject(); writer.WriteString("visibility", value); writer.WriteEndObject();
-                }) },
+                new BirOpaqueBytes { Bytes = RoundtripMetadata.VisibilityContent(source) },
             },
         }).ToArray();
     }
 
     static OptionalField<string> Promote(OptionalField<string> visibility, OptionalField<BirAttribute[]> attributes) =>
-        visibility.OrDefault() == "internal" && attributes.OrEmpty().Any(attribute =>
-            attribute.Attr.OrDefault() is TypeNode.Fqn { Name: PublishedApi }) ? "public" : visibility;
+        ShouldPromote(visibility.OrDefault(), attributes.OrEmpty().Any(attribute =>
+            attribute.Attr.OrDefault() is TypeNode.Fqn { Name: PublishedApi })) ? "public" : visibility;
+
+    static bool ShouldPromote(string visibility, bool published) => visibility == "internal" && published;
+    static bool CopyAttribute(string name, string visibility) => name == PublishedApi || name == Carrier && visibility == null;
 
     static BirFileDeclaration[] MapRoots(IReadOnlyList<BirFileDeclaration> roots,
         Func<BirFunctionDeclaration, BirFunctionDeclaration> method,
@@ -78,9 +79,9 @@ static class CallableVisibilityLowering
 
     static void Promote(JsonObject declaration)
     {
-        if (declaration["vis"]?.GetValue<string>() == "internal" &&
+        if (ShouldPromote(declaration["vis"]?.GetValue<string>(),
             declaration["attrs"] is JsonArray attrs && attrs.OfType<JsonObject>().Any(attribute =>
-                TypeJson.OwnerName(attribute["attr"]) == PublishedApi))
+                TypeJson.OwnerName(attribute["attr"]) == PublishedApi)))
             declaration["vis"] = "public";
     }
 
@@ -92,13 +93,23 @@ static class CallableVisibilityLowering
             foreach (var attribute in attributes.OfType<JsonObject>())
             {
                 var name = TypeJson.OwnerName(attribute["attr"]);
-                if (name != PublishedApi && (name != Carrier || visibility != null)) continue;
+                if (!CopyAttribute(name, visibility)) continue;
                 if (target["attrs"] is not JsonArray) target["attrs"] = new JsonArray();
                 ((JsonArray)target["attrs"]).Add(attribute.DeepClone());
             }
         if (visibility != null && visibility != "public")
             RoundtripMetadata.PreserveCallableVisibility(target, visibility);
         Promote(target);
+    }
+
+    public static void Copy(BirFieldDeclaration source, BirFunctionDeclaration target, string visibility = null)
+    {
+        var copied = source.Attrs.OrEmpty().Where(attribute =>
+            CopyAttribute((attribute.Attr.OrDefault() as TypeNode.Fqn)?.Name, visibility))
+            .Select(attribute => (BirAttribute)attribute.DeepClone()).ToArray();
+        if (copied.Length != 0) target.Attrs = target.Attrs.OrEmpty().Concat(copied).ToArray();
+        if (visibility != null) target.Attrs = Preserve(visibility, target.Attrs);
+        target.Vis = Promote(target.Vis, target.Attrs);
     }
 
     internal static void SelfTest()
@@ -148,6 +159,21 @@ static class CallableVisibilityLowering
         if (!payload.SequenceEqual(Convert.FromBase64String(old["attrs"][0]["args"][1]["bytes"].GetValue<string>()))
             || helper.Attrs.Value.Length != 2 || result[0].Fields.Value[0].Attrs.Value.Length != 1)
             throw new InvalidOperationException("Typed visibility metadata lost original access or its exact payload");
+        var copiedField = new BirFieldDeclaration { Attrs = new[] {
+            published, result[0].Fields.Value[0].Attrs.Value[0], new BirAttribute { Attr = new TypeNode.Fqn("Unrelated") },
+        } };
+        var copiedTarget = new BirFunctionDeclaration { Vis = "internal" };
+        Copy(copiedField, copiedTarget);
+        var explicitTarget = new BirFunctionDeclaration { Vis = "private" };
+        Copy(copiedField, explicitTarget, "private");
+        var preserved = ((BirOpaqueBytes)explicitTarget.Attrs.Value[1].Args.Value[1]).Bytes.Value;
+        var emptyTarget = new BirFunctionDeclaration { Attrs = OptionalField<BirAttribute[]>.Null };
+        Copy(new BirFieldDeclaration(), emptyTarget, "public");
+        if (copiedTarget.Vis.Value != "public" || copiedTarget.Attrs.Value.Length != 2
+            || ReferenceEquals(copiedTarget.Attrs.Value[0], published)
+            || explicitTarget.Vis.Value != "private" || explicitTarget.Attrs.Value.Length != 2
+            || !preserved.SequenceEqual(RoundtripMetadata.VisibilityContent("private")) || !emptyTarget.Attrs.IsNull)
+            throw new InvalidOperationException("Representation-created accessor lost copied visibility, explicit access, or independent attributes");
         Console.WriteLine("[callable visibility] self-test OK (typed source access, promoted slots, fields/ctors, traversal independence)");
     }
 }

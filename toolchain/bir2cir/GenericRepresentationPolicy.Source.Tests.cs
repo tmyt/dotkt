@@ -57,6 +57,7 @@ sealed partial class GenericRepresentationPolicy
             || policy.ProjectArgumentHead(generatedApplication, true, null) != generatedApplication
             || policy.LocalDeclaration("SourceFrame") != null)
             throw new InvalidOperationException("Owning source policy mixed source eligibility with DOM declaration association");
+        policy.PrepareDomLocations(new[] { root });
         policy.BindDomDeclarations(new JsonNode[] { continuation });
         var boundOwner = continuation["types"][0].AsObject();
         var boundField = boundOwner["fields"][1].AsObject();
@@ -76,5 +77,62 @@ sealed partial class GenericRepresentationPolicy
             || !policy.OwnsValueSlots("LatePhysical") || policy.ProjectArgumentHead(lateApplication, true, null) != lateApplication)
             throw new InvalidOperationException("Late native storage discovery changed fixed source carrier eligibility");
         Console.WriteLine("[source generic policy] self-test OK (native selection parity, companion/ref-cell storage, one-way identity, fixed eligibility)");
+        NativePlacementSelfTest();
+    }
+
+    static void NativePlacementSelfTest()
+    {
+        var text = new TypeNode.Fqn("kotlin.String");
+        var valueType = new TypeNode.Fqn("Payload", new TypeNode[] { text });
+        var field = new BirFieldDeclaration { Name = "value", Static = true, Type = valueType,
+            Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("kotlin.clr.ClrField") } } };
+        var source = new BirClassDefinition { Name = "Source", Kind = "class", Fields = new[] { field },
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } } };
+        var payload = new BirClassDefinition { Name = "Payload", Kind = "class",
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Fields = new[] {
+                new BirFieldDeclaration { Name = "item", Type = new TypeNode.Tv("type", 0) },
+            } };
+        var use = new BirStaticFieldGet { OwnerType = new TypeNode.Fqn("Source"), Name = "value", Sty = valueType };
+        var read = new BirFunctionDeclaration { Name = "read", Static = true, Params = Array.Empty<BirParameter>(), Ret = valueType,
+            Body = new IBirStatement[] { new BirReturn { Value = use } } };
+        var root = new BirFileDeclaration { FileClass = "Placement", Types = new IBirTypeDeclaration[] { source, payload }, Methods = new[] { read } };
+        var policy = CreateSource(new[] { root }, new Dictionary<string, string>(), null);
+        var carrier = new BirClassDefinition { Name = "PhysicalStorage", Kind = "class", Generated = true,
+            Fields = new[] { field } };
+        field.Name = "physicalValue";
+        source.Fields = Array.Empty<BirFieldDeclaration>();
+        root.Types = new IBirTypeDeclaration[] { source, carrier, payload };
+        policy.PrepareDomLocations(new[] { root });
+        var continuation = root.ToDom();
+        policy.BindDomDeclarations(new JsonNode[] { continuation });
+        if (!policy.IsNativeField(continuation["types"][1]["fields"][0].AsObject())
+            || !policy.IsNativeFieldUse("staticField", new TypeNode.Fqn("PhysicalStorage"), "physicalValue", null)
+            || !policy.IsNativeFieldUse("staticField", new TypeNode.Fqn("Source"), "value", null)
+            || policy.ProjectArgumentHead(new TypeNode.Fqn("Source", new[] { text }), true, null)
+                is not TypeNode.Fqn { Args: [TypeNode.Star] }
+            || policy.ProjectArgumentHead(new TypeNode.Fqn("PhysicalStorage", new[] { text }), true, null)
+                is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.String" }] })
+            throw new InvalidOperationException("Native physical placement lost selected identity or recomputed source eligibility");
+        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        policy.RecordNativeFields(new JsonNode[] { continuation });
+        FBoundStarProjectionErasure.ApplyAll(new JsonNode[] { continuation }, refs, valueSlots: policy);
+        if (TypeJson.Read(continuation["methods"][0]["body"][0]["value"]["sty"]) is not TypeNode.Fqn { Name: "Payload", Args: [TypeNode.Fqn { Name: "kotlin.String" }] }
+            || !TypeNodeDataEquality.Equal(TypeJson.Read(continuation["types"][1]["fields"][0]["type"]), valueType))
+            throw new InvalidOperationException("Native source-owner use lost its closed field witness before late physical binding");
+
+        foreach (var removeDeclaration in new[] { false, true })
+        {
+            var required = new BirFieldDeclaration { Name = "required", Type = text, Attrs = field.Attrs };
+            var requiredRoot = new BirFileDeclaration { FileClass = "Required", Fields = new[] { required } };
+            var requiredPolicy = CreateSource(new[] { requiredRoot }, new Dictionary<string, string>(), null);
+            requiredPolicy.PrepareDomLocations(new[] { requiredRoot });
+            var missing = requiredRoot.ToDom();
+            if (removeDeclaration) missing["fields"].AsArray().Clear();
+            else missing["fields"][0].AsObject().Remove(NativeLocationKey);
+            var rejected = false;
+            try { requiredPolicy.BindDomDeclarations(new JsonNode[] { missing }); }
+            catch (InvalidOperationException) { rejected = true; }
+            if (!rejected) throw new InvalidOperationException("Native binding accepted an absent or unmarked selected physical declaration");
+        }
     }
 }

@@ -9,14 +9,14 @@ using DotKt.Bir;
 // only a source-named accessor field pointing at it. A non-generic owner keeps its nested carrier, which is already
 // one closed type. Neither shape has generic captures, so no companion carries type parameters at all.
 // No semantic companion node reaches CIR.
-static class CompanionRepresentationLowering
+static partial class CompanionRepresentationLowering
 {
     // Separates a hoisted carrier's flattened owner path from the companion's source name. See Apply below for why a
     // bare `$` is not enough.
     internal const string HoistedMarker = "$companion$";
 
     internal sealed record Association(
-        JsonObject Owner, JsonObject Companion, string OwnerName, string KotlinOwnerName, string SemanticName,
+        string OwnerName, string KotlinOwnerName, string SemanticName,
         string SourceName, string Visibility, string PhysicalName, string PhysicalOwner, int PhysicalOwnerArity)
     {
         // Hoisted exactly when the physical owner has generic slots: only then would a nested carrier acquire them,
@@ -27,91 +27,6 @@ static class CompanionRepresentationLowering
     {
         internal LocalIndex(IReadOnlyList<Association> associations) => Associations = associations;
         internal IReadOnlyList<Association> Associations { get; }
-    }
-
-    public static LocalIndex Apply(IEnumerable<JsonNode> roots)
-    {
-        var rootObjects = roots.OfType<JsonObject>().ToArray();
-        var types = rootObjects
-            .SelectMany(r => (r["types"] as JsonArray)?.OfType<JsonObject>() ?? [])
-            .ToList();
-        var byName = types.ToDictionary(t => Str(t["name"]), StringComparer.Ordinal);
-        var associations = new List<Association>();
-        var unplaced = types.Where(t => t["kotlinCompanion"] is JsonObject fact &&
-                Str(t["name"]) != Str(fact["owner"]))
-            .ToDictionary(t => Str(t["name"]), StringComparer.Ordinal);
-        var placing = new HashSet<string>(StringComparer.Ordinal);
-
-        JsonObject ResolveOwner(string name)
-        {
-            if (unplaced.TryGetValue(name, out var companion))
-                Place(name, companion);
-            return byName.GetValueOrDefault(name);
-        }
-
-        // A companion can itself belong to a class inside another companion. Place that enclosing
-        // carrier first so the inner association records its final CLR owner, even when hoisted.
-        void Place(string semanticName, JsonObject companion)
-        {
-            if (!placing.Add(semanticName))
-                throw new InvalidOperationException($"cyclic Kotlin companion ownership for '{semanticName}'");
-            var fact = (JsonObject)companion["kotlinCompanion"]!;
-            var ownerName = Required(fact, "owner");
-            var sourceName = Required(fact, "name");
-            var visibility = Required(fact, "visibility");
-            const string semanticSuffix = ".<companion:";
-            var suffixStart = semanticName.LastIndexOf(semanticSuffix, StringComparison.Ordinal);
-            if (suffixStart < 0)
-                throw new InvalidOperationException($"semantic companion '{semanticName}' has no declaration owner identity");
-            var declarationOwnerName = semanticName[..suffixStart];
-            if (!byName.TryGetValue(declarationOwnerName, out var owner))
-                throw new InvalidOperationException($"semantic companion '{ownerName}.{sourceName}' has no owner declaration");
-            // `$` cannot be written in a Kotlin identifier, including a backticked one. Both physical spellings are
-            // thus intentionally unspeakable from Kotlin; the source name is restored only from the explicit carrier
-            // metadata, never inferred from this physical spelling.
-            // A generic physical owner cannot host a non-generic nested TypeDef — CLR nesting redeclares every
-            // enclosing slot — so the carrier leaves the owner entirely and flattens the owner's nesting path into
-            // its own top-level name. That name shares a namespace with other compiler types derived from an owner,
-            // including the independently allocated star-projection existential. The reserved `$companion$` marker
-            // keeps compiler type families disjoint from a companion's ordinary source name: no Kotlin owner name
-            // can end in `$companion`, so no source can produce a colliding pair.
-            var physicalOwner = PhysicalMetadataName(owner, ResolveOwner);
-            // The owner's CLR arity counts the slots it captured from an enclosing generic type as well as its own:
-            // that is the arity a consumer reflects off the emitted TypeDef, and the arity the carrier metadata is
-            // resolved against.
-            var physicalOwnerArity = PhysicalTypeParamCount(owner);
-            var physicalName = physicalOwnerArity > 0
-                ? physicalOwner.Replace('+', '$') + HoistedMarker + sourceName
-                : declarationOwnerName + ".$" + sourceName;
-            if (!byName.TryAdd(physicalName, companion))
-                throw new InvalidOperationException(
-                    $"reserved physical companion type identity '{physicalName}' is already declared");
-            var association = new Association(owner, companion, declarationOwnerName, ownerName, semanticName,
-                sourceName, visibility, physicalName, physicalOwner, physicalOwnerArity);
-            owner.Remove("kotlinCompanion");
-            Materialize(association);
-            associations.Add(association);
-            unplaced.Remove(semanticName);
-            placing.Remove(semanticName);
-        }
-
-        foreach (var semanticName in unplaced.Keys.ToArray())
-            ResolveOwner(semanticName);
-        var movedOwners = associations.Select(a => a.SemanticName).ToHashSet(StringComparer.Ordinal);
-        foreach (var type in types)
-        {
-            if (Str(type["semanticOwner"]) is not string owner || !movedOwners.Contains(owner))
-                continue;
-            var visibility = Str(type["vis"]);
-            if (visibility is not ("private" or "protected")) continue;
-            // Kotlin allows the containing class to use these companion declarations. The
-            // new CLR parent puts them in the carrier's private or family scope instead.
-            RoundtripMetadata.PreserveTypeVisibility(type);
-            type["vis"] = visibility == "private" ? "internal" : "protectedInternal";
-        }
-        foreach (var root in rootObjects)
-            RewriteUses(root, associations);
-        return new LocalIndex(associations);
     }
 
     // Run after every inline/default splice and immediately before call-evaluation plans materialize their bindings.
@@ -332,97 +247,9 @@ static class CompanionRepresentationLowering
         Visit(root);
     }
 
-    static void Materialize(Association a)
-    {
-        a.Companion["name"] = a.PhysicalName;
-        // A generic owner cannot host a non-generic nested TypeDef, so the carrier of a generic owner is top-level and
-        // holds the one singleton every closed instantiation shares. A non-generic owner keeps CLR nesting, where that
-        // singleton is already unique and the lexical relation is free.
-        if (a.Hoisted) a.Companion.Remove("nestedIn");
-        else a.Companion["nestedIn"] = a.OwnerName;
-        a.Companion.Remove("kotlinCompanion");
-        // This compiler-reserved TypeDef is an implementation carrier, not the Kotlin companion declaration. Keep it
-        // public so lifted callable-reference/state-machine helpers can name it after leaving a protected lexical
-        // scope. A nested carrier's enclosing owner still caps effective CLR visibility, the source-name field below
-        // carries the companion's Kotlin visibility, and explicit companion metadata restores that visibility on
-        // re-import.
-        a.Companion["vis"] = "public";
-        a.Companion["generated"] = true;
-        var mods = a.Companion["mods"] as JsonObject ?? new JsonObject();
-        mods["object"] = true;
-        a.Companion["mods"] = mods;
-        var fields = a.Companion["fields"] as JsonArray ?? new JsonArray();
-        fields.Insert(0, new JsonObject {
-            ["name"] = "$INSTANCE",
-            ["type"] = PhysicalType(a),
-            ["static"] = true,
-            ["readOnly"] = true,
-            ["initOnly"] = true,
-            ["init"] = new JsonObject {
-                ["k"] = "new", ["type"] = PhysicalType(a),
-                ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
-            },
-        });
-        a.Companion["fields"] = fields;
-        a.Companion["companionCarrier"] = Carrier(a);
-
-        // The source companion name is the ordinary CLR value surface on the owner. A generic owner holds one such
-        // FIELD per closed instantiation — CLR static storage is per closed type and no representation can change
-        // that — but every one of them is initialized from the single carrier singleton, so the VALUE a CLR consumer
-        // reads off `Owner<A>` and `Owner<B>` is one and the same companion. The implementation type keeps its
-        // compiler-reserved `$` spelling so it cannot collide with a legal Kotlin declaration or a companion member
-        // such as `INSTANCE`.
-        // A basic CLR enum may own the nested carrier but cannot own the .cctor required to initialize a reference-valued
-        // static accessor. Preserve its enum representation and Kotlin round-trip; its C# source-name accessor is the
-        // one deliberate omission, rather than silently degrading the source enum to a class.
-        if (Str(a.Owner["kind"]) == "enum") return;
-        var ownerFields = a.Owner["fields"] as JsonArray ?? new JsonArray();
-        if (ownerFields.OfType<JsonObject>().Any(f => Str(f["name"]) == a.SourceName))
-            throw new InvalidOperationException(
-                $"companion value accessor '{a.OwnerName}.{a.SourceName}' collides with an existing field");
-        ownerFields.Add(new JsonObject {
-            ["name"] = a.SourceName,
-            ["type"] = PhysicalType(a),
-            ["static"] = true,
-            ["readOnly"] = true,
-            ["initOnly"] = true,
-            ["vis"] = a.Visibility,
-            ["init"] = SingletonLoad(PhysicalType(a)),
-        });
-        a.Owner["fields"] = ownerFields;
-    }
-
-    static int PhysicalTypeParamCount(JsonObject type) =>
-        ((type["capturedTypeParams"] as JsonArray)?.Count ?? 0) +
-        ((type["typeParams"] as JsonArray)?.Count ?? 0);
-
     static JsonObject PhysicalType(Association a) => Fqn(a.PhysicalName);
 
     static JsonObject PhysicalType(UseRepresentation representation) => Fqn(representation.Carrier);
-
-    static JsonObject Carrier(Association a) => new() {
-        ["kind"] = a.Hoisted ? "sidecar" : "nested",
-        ["owner"] = a.KotlinOwnerName,
-        ["name"] = a.SourceName,
-        ["visibility"] = a.Visibility,
-        ["physicalOwner"] = a.PhysicalOwner,
-        ["physicalOwnerArity"] = a.PhysicalOwnerArity,
-    };
-
-    static string PhysicalMetadataName(JsonObject type, Func<string, JsonObject> resolveOwner)
-    {
-        var name = Str(type["name"]) ?? throw new InvalidOperationException("companion owner has no physical name");
-        // Companion representation runs before the general ownership pass, so an ordinary Kotlin child still carries
-        // BIR `semanticOwner` here; an already-materialized physical helper may carry CIR `nestedIn`. Follow either
-        // fact to author the exact `+`-separated metadata owner recorded in [KotlinCompanion]. A file facade is not a
-        // type declaration in the owner index, but is nevertheless the final physical parent and a valid root.
-        var parentName = Str(type["nestedIn"]) ?? Str(type["semanticOwner"]);
-        if (parentName is null) return name;
-        var physicalParent = resolveOwner(parentName) is { } parent
-            ? PhysicalMetadataName(parent, resolveOwner)
-            : parentName;
-        return physicalParent + "+" + name[(name.LastIndexOf('.') + 1)..];
-    }
 
     static void RewriteUses(JsonNode node, IReadOnlyList<Association> associations)
     {
@@ -490,7 +317,5 @@ static class CompanionRepresentationLowering
         Replace(target, SingletonLoad(physicalType));
 
     static JsonObject Fqn(string name) => new() { ["t"] = "fqn", ["name"] = name };
-    static string Required(JsonObject o, string key) => Str(o[key])
-        ?? throw new InvalidOperationException($"malformed companion fact: '{key}' is required");
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 }
