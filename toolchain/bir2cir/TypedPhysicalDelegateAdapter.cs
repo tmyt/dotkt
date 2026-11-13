@@ -24,15 +24,8 @@ sealed class TypedPhysicalDelegateAdapter
     {
         var plan = ClrMemberResolution.UnitDelegateValuePlan(references, source, target, out var slot);
         if (plan == null) return null;
-        if (!ReferenceEquals(this.document, document))
-        {
-            this.document = document;
-            adapters.Clear();
-            scope = string.Concat((document.FileClass.OrDefault() ?? "File")
-                .Select(c => char.IsLetterOrDigit(c) ? c : '_'));
-        }
         var temporary = ClrMemberResolution.FreshUnitDelegateTemporary();
-        var adapter = AdapterClass(plan);
+        var adapter = AdapterClass(document, plan);
         var adapted = new BirNewClosure {
             ClosureType = new TypeNode.Fqn(adapter), Method = "invoke",
             Captures = new IBirExpression[] { new BirLocal { Name = temporary } }, FuncType = slot,
@@ -62,8 +55,17 @@ sealed class TypedPhysicalDelegateAdapter
         Type = new TypeNode.Fqn("System.Object"), Value = new BirLiteral.NullLiteral(),
     };
 
-    string AdapterClass(ClrMemberResolution.DelegateAdapterPlan plan)
+    // Construction and value-flow owners use separate instances, retaining their
+    // per-file caches while sharing this exact declaration builder and allocator.
+    internal string AdapterClass(BirFileDeclaration document, ClrMemberResolution.DelegateAdapterPlan plan)
     {
+        if (!ReferenceEquals(this.document, document))
+        {
+            this.document = document;
+            adapters.Clear();
+            scope = string.Concat((document.FileClass.OrDefault() ?? "File")
+                .Select(c => char.IsLetterOrDigit(c) ? c : '_'));
+        }
         var key = ClrMemberResolution.DelegateAdapterKey(plan);
         if (adapters.TryGetValue(key, out var existing)) return existing;
         var name = ClrMemberResolution.FreshDelegateAdapterName(scope);
@@ -82,13 +84,17 @@ sealed class TypedPhysicalDelegateAdapter
                 ClrMemberResolution.DelegateInvokeReference(references, plan.Frame)),
         };
         IBirStatement[] body;
-        if (plan.Parameters == null || IsVoid(plan.Frame.Ret))
+        if (plan.Parameters == null)
             body = new IBirStatement[] {
                 new BirExpressionStatement { Expr = call }, new BirReturn { Value = OptionalField<IBirExpression>.Of(unitValue()) },
             };
         else if (IsVoid(plan.Return))
             body = new IBirStatement[] {
                 new BirExpressionStatement { Expr = call }, new BirReturn(),
+            };
+        else if (IsVoid(plan.Frame.Ret))
+            body = new IBirStatement[] {
+                new BirExpressionStatement { Expr = call }, new BirReturn { Value = OptionalField<IBirExpression>.Of(unitValue()) },
             };
         else
             body = new IBirStatement[] { new BirReturn {
