@@ -23,7 +23,7 @@ static class TypedCharSequenceIdentity
                     NullableRepresentationViews.SetTypeFacts(node,
                         (NullableRepresentationViews.TypeFacts(node) ?? SourceTypeFacts.Empty).Merge(baseType, interfaces, null));
             }
-            if (node is BirCallInstance { OwnerType.Value: TypeNode.Fqn { Name: "kotlin.CharSequence" } } call)
+            if (node is BirCallInstance call && call.OwnerType.OrDefault() is TypeNode.Fqn { Name: "kotlin.CharSequence" })
                 call.DeclarationId = default;
             node.RewriteTypeFieldsInPlace(RewriteType);
             node.VisitChildren(Walk);

@@ -20,11 +20,15 @@ static class TypedCharSequenceIdentityTests
         var call = new BirCallInstance { OwnerType = source, Method = "get", DeclarationId = "source-get", Ret = source,
             Recv = new BirLocal { Name = "value", Sty = source }, Args = Array.Empty<IBirExpression>() };
         var other = new BirCallInstance { OwnerType = independent, Method = "read", DeclarationId = "other-read", Args = Array.Empty<IBirExpression>() };
+        var ownerless = new BirCallInstance { Method = "invoke", DeclarationId = "ownerless-invoke", Args = Array.Empty<IBirExpression>() };
+        var nullOwner = new BirCallInstance { OwnerType = OptionalField<TypeNode>.Null, Method = "invoke",
+            DeclarationId = "null-owner-invoke", Args = Array.Empty<IBirExpression>() };
         var nested = new TypeNode.Fn(false, new TypeNode.Array(source, 2, false), new TypeNode[] { new TypeNode.ByRef(source) },
             Recv: source, Ctx: new TypeNode[] { new TypeNode.Ptr(source) });
         var method = new BirFunctionDeclaration { Name = "use", Params = new[] { parameter }, Ret = nested,
             RetKotlinType = source, Body = new IBirStatement[] {
                 new BirExpressionStatement { Expr = call }, new BirExpressionStatement { Expr = other },
+                new BirExpressionStatement { Expr = ownerless }, new BirExpressionStatement { Expr = nullOwner },
             } };
         var methods = new[] { method }; owner.Methods = methods;
         var root = new BirFileDeclaration { FileClass = "CharSequenceIdentity", Types = new IBirTypeDeclaration[] { owner } };
@@ -32,6 +36,8 @@ static class TypedCharSequenceIdentityTests
         var rewritten = (TypeNode.Fn)method.Ret.Value;
         if (owner.Name.Value != "kotlin.CharSequence" || !ReferenceEquals(owner.Methods.Value, methods)
             || call.DeclarationId.IsPresent || other.DeclarationId.Value != "other-read"
+            || ownerless.OwnerType.IsPresent || !nullOwner.OwnerType.IsNull
+            || ownerless.DeclarationId.Value != "ownerless-invoke" || nullOwner.DeclarationId.Value != "null-owner-invoke"
             || !TypeNodeDataEquality.Equal(call.OwnerType.Value, physical)
             || !TypeNodeDataEquality.Equal(parameter.Type.Value, physical)
             || !TypeNodeDataEquality.Equal(parameter.KotlinType.Value, source)
