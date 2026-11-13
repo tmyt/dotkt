@@ -18,6 +18,12 @@ using DotKt.Bir;
 static class PhysicalValueCoercion
 {
     static bool NeedsConversion(TypeNode source, TypeNode target, Index index)
+        => NeedsConversion(source, target, index.IsValue, index.IsExistentialOwner,
+            index.IsNativeReference, index.HasDeclaredCarrier);
+
+    internal static bool NeedsConversion(TypeNode source, TypeNode target, ValueTypeOracle isValue,
+        Func<TypeNode.Fqn, bool> isExistentialOwner, Func<TypeNode.Fqn, bool> isNativeReference,
+        Func<TypeNode.Fqn, TypeNode.Fqn, bool> hasDeclaredCarrier)
     {
         source = SignatureValueTypes.Of(source);
         target = SignatureValueTypes.Of(target);
@@ -25,22 +31,22 @@ static class PhysicalValueCoercion
         return source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
         || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-            && !IsVoid(target) && NeedsBox(target, index.IsValue)
+            && !IsVoid(target) && NeedsBox(target, isValue)
         || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-            && IsReferenceSlot(target, index.IsValue)
+            && IsReferenceSlot(target, isValue)
             && target is not TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || source is TypeNode.Fqn carrier && target is TypeNode.Fqn native
-            && index.IsExistentialOwner(carrier)
-            && (index.IsNativeReference(native) || index.HasDeclaredCarrier(native, carrier))
+            && isExistentialOwner(carrier)
+            && (isNativeReference(native) || hasDeclaredCarrier(native, carrier))
         || CollectionViewFaces.IsViewSeam(source, target)
         || source is TypeNode.Fqn { Name: "System.Array" } && target is TypeNode.Array
         // A concrete value or generic stack slot is not a reference, even when its boxed value implements the
         // target interface. State the boxing edge before a conditional merge, store, argument or return.
         || !IsVoid(source) && !IsVoid(target)
-            && NeedsBox(source, index.IsValue) && IsReferenceSlot(target, index.IsValue);
+            && NeedsBox(source, isValue) && IsReferenceSlot(target, isValue);
     }
 
-    static void ValidateNativePointerConversion(TypeNode source, TypeNode target)
+    internal static void ValidateNativePointerConversion(TypeNode source, TypeNode target)
     {
         if (source == null || target == null || IsVoid(target)) return;
         if ((source is TypeNode.FnPtr || target is TypeNode.FnPtr)
@@ -49,7 +55,7 @@ static class PhysicalValueCoercion
                 + $" (source={TypeNode.ToJson(source)}, target={TypeNode.ToJson(target)})");
     }
 
-    static bool NeedsBox(TypeNode type, ValueTypeOracle isValue) => type switch
+    internal static bool NeedsBox(TypeNode type, ValueTypeOracle isValue) => type switch
     {
         TypeNode.Tv => true,
         TypeNode.Nullable nullable => NeedsBox(nullable.Of, isValue),
@@ -58,7 +64,7 @@ static class PhysicalValueCoercion
         _ => false,
     };
 
-    static bool IsReferenceSlot(TypeNode type, ValueTypeOracle isValue) => type switch
+    internal static bool IsReferenceSlot(TypeNode type, ValueTypeOracle isValue) => type switch
     {
         TypeNode.Array => true,
         TypeNode.Nullable nullable => IsReferenceSlot(nullable.Of, isValue),
@@ -1251,7 +1257,7 @@ static class PhysicalValueCoercion
                 };
     }
 
-    static int NumericRank(TypeNode type) => type is TypeNode.Fqn { Args: null } named ? named.Name switch
+    internal static int NumericRank(TypeNode type) => type is TypeNode.Fqn { Args: null } named ? named.Name switch
     {
         "System.Double" => 5,
         "System.Single" => 4,
@@ -1371,7 +1377,7 @@ static class PhysicalValueCoercion
     static TypeNode[] MethodArgs(JsonObject node)
         => ReadTypes(node["typeArgs"] as JsonArray) ?? Array.Empty<TypeNode>();
 
-    static TypeNode Close(TypeNode type, TypeNode[] ownerArgs, TypeNode[] methodArgs) => type switch
+    internal static TypeNode Close(TypeNode type, TypeNode[] ownerArgs, TypeNode[] methodArgs) => type switch
     {
         null => null,
         TypeNode.Tv { Scope: "type" } tv when ownerArgs != null && tv.I >= 0 && tv.I < ownerArgs.Length => ownerArgs[tv.I],

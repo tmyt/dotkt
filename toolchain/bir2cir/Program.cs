@@ -46,6 +46,9 @@ static class Bir2Cir
                 BirFileCodec.SelfTest();
                 ClrTypeVariance.SelfTest();
                 PhysicalValueCoercion.SelfTest();
+                TypedPhysicalValueCoercion.SelfTest();
+                TypedPhysicalOperandNormalization.SelfTest();
+                TypedPhysicalDelegateAdapter.SelfTest();
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();

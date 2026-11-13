@@ -5,6 +5,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // #395 — frontend-selected Kotlin callable identity -> one physical CLR MethodDef.
 //
@@ -474,6 +476,59 @@ static class DeclarationIdentityBinding
                     CollectMethods(type, ownerName, Bool(type["generated"]));
                 }
 
+        CheckFinalPhysicalNames(declarations, properties);
+    }
+
+    internal static void ValidateFinalPhysicalNames(IEnumerable<BirFileDeclaration> roots)
+    {
+        var rootList = roots.ToArray();
+        var declarations = new List<(string Owner, string Name, string Sig,
+            bool GeneratedOwner, bool GeneratedMethod)>();
+        var properties = new List<(string Owner, string Name, string Sig)>();
+        void Collect(string owner, bool generated, BirConstructor[] constructors,
+            BirFunctionDeclaration[] methods, BirPropertyDeclaration[] rows)
+        {
+            foreach (var constructor in constructors)
+                declarations.Add((owner, ".ctor", PhysicalSignature(0,
+                    constructor.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()), null), generated, false));
+            foreach (var method in methods)
+                if (method.Name.HasValue)
+                    declarations.Add((owner, method.Name.Value, PhysicalSignature(method.TypeParams.OrEmpty().Length,
+                        method.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()), method.Ret.OrDefault()),
+                        generated, method.Generated.OrDefault()));
+            foreach (var property in rows)
+                if (property.Name.HasValue)
+                {
+                    var indexes = property.GetSig.HasValue ? property.GetSig.Value
+                        : property.SetSig.HasValue ? property.SetSig.Value.Take(Math.Max(0, property.SetSig.Value.Length - 1))
+                        : throw new InvalidOperationException("bir2cir: final PropertyDef has no accessor signature");
+                    properties.Add((owner, property.Name.Value, PhysicalPropertySignature(property.Type.OrDefault(), indexes)));
+                }
+        }
+        foreach (var root in rootList)
+            Collect(root.FileClass.OrDefault() ?? "<file>", false, [], root.Methods.OrEmpty(), root.Properties.OrEmpty());
+        var definedOwners = rootList.Where(root => root.Methods.OrEmpty().Length != 0 || root.Fields.OrEmpty().Length != 0)
+            .Select(root => root.FileClass.OrDefault() ?? "<file>").ToHashSet(StringComparer.Ordinal);
+        foreach (var root in rootList)
+            foreach (var declaration in root.Types.OrEmpty())
+            {
+                var shape = declaration switch {
+                    BirClassDefinition type => (type.Name, type.Generated, type.Ctors, type.Methods, type.Properties),
+                    BirInterfaceDefinition type => (type.Name, type.Generated, type.Ctors, type.Methods, type.Properties),
+                    BirEnumDefinition type => (type.Name, type.Generated, type.Ctors, type.Methods, type.Properties),
+                    _ => throw new InvalidOperationException("Unaccounted final physical declaration " + declaration.GetType().Name),
+                };
+                var owner = shape.Name.OrDefault() ?? "<anonymous>";
+                if (definedOwners.Add(owner))
+                    Collect(owner, shape.Generated.OrDefault(), shape.Ctors.OrEmpty(), shape.Methods.OrEmpty(), shape.Properties.OrEmpty());
+            }
+        CheckFinalPhysicalNames(declarations, properties);
+    }
+
+    static void CheckFinalPhysicalNames(
+        List<(string Owner, string Name, string Sig, bool GeneratedOwner, bool GeneratedMethod)> declarations,
+        List<(string Owner, string Name, string Sig)> properties)
+    {
         var collisions = declarations
             .GroupBy(declaration => (declaration.Owner, declaration.Name, declaration.Sig))
             .Select(group => new
@@ -744,6 +799,43 @@ static class DeclarationIdentityBinding
             || TypeJson.Read(callSignature[2]) is not TypeNode.Fqn { Name: "System.Int32" })
             throw new InvalidOperationException(
                 "DeclarationIdentityBinding self-test clobbered caller-substituted signature slots");
+        SelfTestFinalPhysicalNames();
+    }
+
+    static void SelfTestFinalPhysicalNames()
+    {
+        var integer = new TypeNode.Fqn("System.Int32");
+        var method = new BirFunctionDeclaration { Name = "probe", Ret = integer,
+            Params = new[] { new BirParameter { Name = "value", Type = integer } } };
+        var property = new BirPropertyDeclaration { Name = "Item", Type = integer, GetSig = new TypeNode[] { integer } };
+        string Failure(Action action)
+        {
+            try { action(); return null; }
+            catch (InvalidOperationException error) { return error.Message; }
+        }
+        void Compare(BirFileDeclaration[] roots, string expected = null)
+        {
+            var dom = roots.Select(root => (JsonNode)root.ToDom()).ToArray();
+            var old = Failure(() => ValidateFinalPhysicalNames(dom));
+            var typed = Failure(() => ValidateFinalPhysicalNames(roots));
+            if (old != typed || (expected == null ? typed != null : typed?.Contains(expected) != true))
+                throw new InvalidOperationException("Owning physical declaration validation changed a final signature table");
+        }
+        Compare(new[] { new BirFileDeclaration { FileClass = "Facade", Methods = new[] { method },
+            Properties = new[] { property } } });
+        Compare(new[] { new BirFileDeclaration { FileClass = "Facade", Methods = new[] { method } },
+            new BirFileDeclaration { FileClass = "Facade", Methods = new[] { method } } }, "duplicate MethodDef");
+        Compare(new[] { new BirFileDeclaration { FileClass = "Facade", Properties = new[] { property } },
+            new BirFileDeclaration { FileClass = "Facade", Properties = new[] { property } } }, "duplicate PropertyDef");
+        Compare(new[] { new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Name = "Generated", Generated = true, Methods = new[] { method } },
+            new BirClassDefinition { Name = "Generated", Generated = true, Methods = new[] { method } },
+        } } });
+        var first = method with { Params = new[] { new BirParameter { Name = "value", Type = new TypeNode.Tv("method", 0) } },
+            TypeParams = new[] { new BirTypeParameter { Name = "T" }, new BirTypeParameter { Name = "S" } } };
+        var second = first with { Params = new[] { new BirParameter { Name = "value", Type = new TypeNode.Tv("method", 1) } } };
+        Compare(new[] { new BirFileDeclaration { FileClass = "Facade", Methods = new[] { first, second } } });
+        Console.WriteLine("[typed final declarations] self-test OK (facades, generated owners, exact generics, properties)");
     }
 
     static void RewriteUnsafeAccessorTarget(JsonObject method, string physicalName)
@@ -767,30 +859,31 @@ static class DeclarationIdentityBinding
     internal static string PhysicalSignature(JsonObject method)
     {
         var arity = (method["typeParams"] as JsonArray)?.Count ?? 0;
-        var parameters = method["params"] is JsonArray ps
-            ? string.Join(";", ps.OfType<JsonObject>().Select(p => PhysicalTypeSignature(
-                TypeJson.Read(p["type"])
-                ?? throw new InvalidOperationException("bir2cir: declaration identity has an untyped physical parameter"))))
-            : "";
-        var result = method["ret"] is JsonNode returnType
-            ? PhysicalTypeSignature(TypeJson.Read(returnType)) : "System.Void";
-        return arity + "|" + parameters + " -> " + result;
+        var parameters = method["params"] is JsonArray ps ? ps.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])) : [];
+        return PhysicalSignature(arity, parameters, TypeJson.Read(method["ret"]));
     }
+
+    static string PhysicalSignature(int arity, IEnumerable<TypeNode> parameters, TypeNode result) =>
+        arity + "|" + string.Join(";", parameters.Select(type => PhysicalTypeSignature(type
+            ?? throw new InvalidOperationException("bir2cir: declaration identity has an untyped physical parameter"))))
+        + " -> " + (result == null ? "System.Void" : PhysicalTypeSignature(result));
 
     static string PhysicalPropertySignature(JsonObject property)
     {
-        var propertyType = PhysicalPropertyTypeSignature(TypeJson.Read(property["type"])
-            ?? throw new InvalidOperationException("bir2cir: final PropertyDef has no physical type"));
         IEnumerable<JsonNode> indexParameters = property["getSig"] is JsonArray getSig
             ? getSig
             : property["setSig"] is JsonArray setSig
                 ? setSig.Take(Math.Max(0, setSig.Count - 1))
                 : throw new InvalidOperationException("bir2cir: final PropertyDef has no accessor signature");
-        return propertyType + "|" + string.Join(";", indexParameters.Select(parameter =>
-            PhysicalPropertyTypeSignature(TypeJson.Read(parameter)
+        return PhysicalPropertySignature(TypeJson.Read(property["type"]), indexParameters.Select(TypeJson.Read));
+    }
+
+    static string PhysicalPropertySignature(TypeNode type, IEnumerable<TypeNode> indexes) =>
+        PhysicalPropertyTypeSignature(type ?? throw new InvalidOperationException("bir2cir: final PropertyDef has no physical type"))
+        + "|" + string.Join(";", indexes.Select(parameter =>
+            PhysicalPropertyTypeSignature(parameter
                 ?? throw new InvalidOperationException(
                     "bir2cir: final PropertyDef has an untyped physical index parameter"))));
-    }
 
     // A declaration is allocated only after BirTypeLowering, so this key describes the actual CLI parameter types,
     // not their remaining JSON spellings. In particular, suspend-function values erase to the shorthand `object`

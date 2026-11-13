@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // Function value storage is uniform; declaration identity still distinguishes
 // the pre-carrier signature. This fact describes a CLR signature, never a value.
@@ -70,6 +71,18 @@ static class FunctionSignatureIdentity
         if (DeclarationType(nested) is not TypeNode.Mod {
                 Of: TypeNode.Array { Elem: TypeNode.Fqn { Args: [TypeNode.Fn { Clr: "System.Func" }] } } })
             throw new InvalidOperationException("Nested function signature allocation lost its declaration frame");
+        var parameter = new BirParameter { Name = "callback", Type = new TypeNode.Fqn("System.Object"),
+            FunctionSignatureType = open };
+        var call = new BirCallStatic { Method = "invoke", FunctionCallSignature = new TypeNode[] { open } };
+        var typed = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
+            Name = "probe", Params = new[] { parameter }, Body = new IBirStatement[] { new BirExpressionStatement { Expr = call } },
+        } } };
+        var dom = typed.ToDom();
+        Complete(dom);
+        Complete(typed);
+        if (!JsonNode.DeepEquals(dom, typed.ToDom()) || parameter.FunctionSignatureType.IsPresent
+            || call.FunctionCallSignature.IsPresent || parameter.Type.Value is not TypeNode.Mod)
+            throw new InvalidOperationException("Owning function signature completion lost its declaration discriminator");
         Console.WriteLine("[function signature identity] self-test OK (open Func, concrete Action, nested and idempotent)");
     }
 
@@ -93,6 +106,23 @@ static class FunctionSignatureIdentity
                     parameter["type"] = SignatureType(parameter);
                     parameter.Remove(Key);
                 }
+    }
+
+    internal static void Complete(BirGraphValue root)
+    {
+        root.Visit(value => {
+            switch (value)
+            {
+                case BirCallStatic call: call.FunctionCallSignature = default; break;
+                case BirCallInstance call: call.FunctionCallSignature = default; break;
+                case BirConstrainedCall call: call.FunctionCallSignature = default; break;
+                case BirParameter { FunctionSignatureType.HasValue: true } parameter:
+                    parameter.Type = new TypeNode.Mod(false,
+                        DeclarationType(parameter.FunctionSignatureType.Value), parameter.Type.Value);
+                    parameter.FunctionSignatureType = default;
+                    break;
+            }
+        });
     }
 
     static IEnumerable<JsonArray> DeclarationParameters(JsonNode node)

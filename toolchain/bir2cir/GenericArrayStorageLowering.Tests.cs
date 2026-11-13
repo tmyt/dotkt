@@ -78,6 +78,7 @@ static partial class GenericArrayStorageLowering
         var nextPhase = new FreshNames(file);
         Expect(nextPhase.Next("$arrayStorage$") == "$arrayStorage$1", "new phase retained removed names");
         EntryPointFreshNamesSelfTest(refs);
+        TypedGenericArrayStorageLowering.SelfTest(refs);
         Console.WriteLine("[array fresh names] self-test OK (file lifetime, later declarations, detached rewrites, reservations, evaluation order)");
     }
 
