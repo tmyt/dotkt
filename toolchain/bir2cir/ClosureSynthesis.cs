@@ -18,8 +18,9 @@ using DotKt.Bir;
 // (closureType + capture VALUE exprs + funcType + typeArgs) that CIR defines for closure construction and ilemit
 // consumes one-to-one.
 //
-// Runs after payload splicing and reified-witness capture, immediately before SharedSyntheticSynthesis. Critically it
-// runs before SuspendColdLowering, which builds its `closures` lookup from `types` to inline a
+// The owning entry in ClosureSynthesis.Source.cs runs after payload splicing and witness capture, before
+// SharedSyntheticSynthesis. The late DOM entry below accepts only newly materialized work items. Both run before
+// their consumers; SuspendColdLowering builds its `closures` lookup from `types` to inline a
 // `suspendCoroutineUninterceptedOrReturn { c -> … }` intrinsic's closure body; that class must exist by then.
 // Nested closures are handled bottom-up (a closure body's inner `newClosure` is synthesized before the outer wrapper).
 // Unconditional (ref + rt + app): kotc emits `synthClass` in every build, and RefBodySquash later applies the reference-
@@ -49,20 +50,18 @@ static partial class ClosureSynthesis
         Action<JsonObject> projectSamMethod = null)
     {
         if (root is not JsonObject file) return Array.Empty<JsonNode>();
-        return SynthesizeAndAppend(file, materializedRoots, refs, recoverEnclosingDeclaration: true,
-            projectSamMethod: projectSamMethod);
+        return SynthesizeAndAppend(file, materializedRoots, refs, projectSamMethod);
     }
 
     static IReadOnlyList<JsonNode> SynthesizeAndAppend(
         JsonObject file, IEnumerable<JsonNode> inputs, ReferenceMetadataIndex refs,
-        bool recoverEnclosingDeclaration = false, Action<JsonObject> projectSamMethod = null)
+        Action<JsonObject> projectSamMethod)
     {
         _refs = refs;
         var newTypes = new List<JsonNode>();
         foreach (var input in inputs)
             if (input != null)
-                Walk(input, newTypes,
-                    recoverEnclosingDeclaration ? EnclosingDeclaration(input, file) : input, projectSamMethod);
+                Walk(input, newTypes, EnclosingDeclaration(input, file), projectSamMethod);
 
         var appended = new List<JsonNode>();
         if (newTypes.Count > 0)

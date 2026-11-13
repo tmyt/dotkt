@@ -120,7 +120,9 @@ sealed partial class ValueRepresentationLowering
                 var guardType = bound is TypeNode.Nullable ? bound : new TypeNode.Nullable(bound);
                 if (guard is BirCast cast) cast.Type = guardType;
                 else ((BirInstanceOrNull)guard).Type = guardType;
-                var expression = new BirCast { Type = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), E = Value((IBirExpression)Walk(guard, lexical)) };
+                // The cloned guard is independent of the enclosing callable;
+                // its operand was already bound by the original post-order walk.
+                var expression = new BirCast { Type = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), E = Value((IBirExpression)Walk(guard, default)) };
                 if (node is BirCast outerCast) outerCast.E = expression;
                 else ((BirInstanceOrNull)node).E = expression;
                 return node;

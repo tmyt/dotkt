@@ -539,7 +539,7 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
-            // Heap ref-cell types only become declarations in the transition above. Preserve their pristine element
+            // Owning typed preparation materialized heap ref-cell declarations. Preserve their pristine element
             // slots in the nullable-generic use index before the declaration erasure below. Otherwise a late
             // inherited protected-property read may be correctly realigned to object[] while its store into a
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).

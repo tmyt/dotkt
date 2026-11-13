@@ -23,6 +23,36 @@ private fun boundaryAbsent(): CharSequence? = null
 
 class CharSequenceBoundaryTests {
     @TestAttribute
+    fun boundAnyReferencesKeepCustomCharSequenceVirtualDispatch() {
+        class MutableSequence(var text: String) : CharSequence {
+            var strings = 0
+            var hashes = 0
+            var equalities = 0
+            override val length: Int get() = text.length
+            override fun get(index: Int): Char = text[index]
+            override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
+                text.subSequence(startIndex, endIndex)
+            override fun toString(): String { strings++; return "custom:" + text }
+            override fun hashCode(): Int { hashes++; return 1000 + text.length }
+            override fun equals(other: Any?): Boolean { equalities++; return other == "key:" + text }
+        }
+        val sequence = MutableSequence("before")
+        var evaluations = 0
+        fun receiver(): CharSequence { evaluations++; return sequence }
+        val text = receiver()::toString
+        check(evaluations == 1)
+        val hash = receiver()::hashCode
+        check(evaluations == 2)
+        val equal = receiver()::equals
+        check(evaluations == 3)
+        sequence.text = "after"
+        check(text() == "custom:after" && text() == "custom:after")
+        check(hash() == 1005 && hash() == 1005)
+        check(equal("key:after") && !equal("key:before") && !equal(null))
+        check(evaluations == 3 && sequence.strings == 2 && sequence.hashes == 2 && sequence.equalities == 3)
+    }
+
+    @TestAttribute
     fun inlineReceiversAdaptStringsWithoutSnapshottingCustomSequences() {
         var evaluations = 0
         var predicates = 0
