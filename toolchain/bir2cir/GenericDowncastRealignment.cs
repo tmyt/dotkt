@@ -19,13 +19,6 @@ static class GenericDowncastRealignment
         public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
     }
 
-    public static Dictionary<string, Def> Collect(IEnumerable<JsonNode> roots)
-    {
-        var result = new Dictionary<string, Def>(StringComparer.Ordinal);
-        foreach (var root in roots) CollectFrom(root, result);
-        return result;
-    }
-
     public static Dictionary<string, Def> Collect(IEnumerable<BirFileDeclaration> roots)
     {
         var result = new Dictionary<string, Def>(StringComparer.Ordinal);
@@ -41,23 +34,6 @@ static class GenericDowncastRealignment
                             .Select(value => (TypeNode.Fqn)BirGraphValue.CopyType(value)).ToArray(),
                     };
         return result;
-    }
-
-    static void CollectFrom(JsonNode node, Dictionary<string, Def> result)
-    {
-        if (node is not JsonObject obj || obj["types"] is not JsonArray types) return;
-        foreach (var type in types.OfType<JsonObject>())
-        {
-            if (Str(type["name"]) is string name)
-                result[name] = new Def
-                {
-                    Arity = (type["typeParams"] as JsonArray)?.Count ?? 0,
-                    Base = TypeJson.Read(type["base"]) as TypeNode.Fqn,
-                    Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read).OfType<TypeNode.Fqn>().ToArray()
-                        ?? Array.Empty<TypeNode.Fqn>(),
-                };
-            CollectFrom(type, result);
-        }
     }
 
     public static void Apply(JsonNode root, IReadOnlyDictionary<string, Def> defs)

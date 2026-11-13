@@ -27,7 +27,7 @@ static partial class NullableTvErasureCallRealign
     internal static void ApplyNewSyntheticTypes(SyntheticTypesSnapshot snapshot, DeclIndex index)
     {
         index.SourceApplicationOrder?.Add(snapshot.InnerOrder);
-        foreach (var recipe in snapshot.Types) AdmitNewType(index, recipe.Name, () => recipe);
+        foreach (var recipe in snapshot.Types) AdmitNewType(index, recipe.Name, () => CloneRecipe(recipe));
     }
 
     static SyntheticTypeRecipe CaptureRecipe(IBirTypeDeclaration type)
@@ -53,34 +53,40 @@ static partial class NullableTvErasureCallRealign
             slots.ToArray());
     }
 
-    // Both current owning readers use this add-only transition. In particular,
-    // do not inspect/reselect the header of an already admitted owner. Clone the
-    // snapshot facts on admission so different continuing indexes cannot share
-    // mutable signature/slot vectors with one another or with the saved recipe.
-    static void AdmitNewType(DeclIndex index, string owner, Func<SyntheticTypeRecipe> read)
+    static SyntheticTypeRecipe CloneRecipe(SyntheticTypeRecipe recipe)
     {
-        if (index.ByOwner.ContainsKey(owner)) return;
-        var recipe = read();
-        var signatures = new Dictionary<string, DeclSig>(StringComparer.Ordinal);
-        var properties = new Dictionary<string, List<DeclSig>>(StringComparer.Ordinal);
-        foreach (var method in recipe.Methods)
-        {
+        var methods = recipe.Methods.Select(method => {
             var sig = method.Signature;
             var copy = new DeclSig {
                 Ret = BirGraphValue.CopyType(sig.Ret), Params = sig.Params.Select(BirGraphValue.CopyType).ToArray(),
                 NullableErasureOwnershipKnown = sig.NullableErasureOwnershipKnown,
                 ParamsRefused = sig.ParamsRefused?.ToArray(),
             };
-            AddMethodSnapshot(index, owner, method with { Signature = copy }, signatures, properties);
-        }
+            return method with { Signature = copy };
+        }).ToArray();
+        return new(recipe.Name, methods,
+            recipe.Constructors.Select(parameters => parameters.Select(BirGraphValue.CopyType).ToArray()).ToArray(),
+            recipe.Slots.Select(slot => new KeyValuePair<string, TypeNode>(slot.Key, BirGraphValue.CopyType(slot.Value))).ToArray());
+    }
+
+    // Both current owning readers use this add-only transition. The factory
+    // supplies independently owned facts: fresh captures need no second deep
+    // copy, and saved recipes clone only when a new owner is actually admitted.
+    static void AdmitNewType(DeclIndex index, string owner, Func<SyntheticTypeRecipe> read)
+    {
+        if (index.ByOwner.ContainsKey(owner)) return;
+        var recipe = read();
+        var signatures = new Dictionary<string, DeclSig>(StringComparer.Ordinal);
+        var properties = new Dictionary<string, List<DeclSig>>(StringComparer.Ordinal);
+        foreach (var method in recipe.Methods) AddMethodSnapshot(index, owner, method, signatures, properties);
         index.ByOwner[owner] = signatures;
         index.PropertiesByOwner[owner] = properties;
         var constructors = new Dictionary<int, TypeNode[]>();
         foreach (var parameters in recipe.Constructors)
-            AddConstructorSnapshot(constructors, parameters.Select(BirGraphValue.CopyType).ToArray());
+            AddConstructorSnapshot(constructors, parameters);
         index.Ctors[owner] = constructors;
         var slots = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-        foreach (var (name, type) in recipe.Slots) AddSlotSnapshot(slots, name, BirGraphValue.CopyType(type));
+        foreach (var (name, type) in recipe.Slots) AddSlotSnapshot(slots, name, type);
         index.Slots[owner] = slots;
     }
 }
