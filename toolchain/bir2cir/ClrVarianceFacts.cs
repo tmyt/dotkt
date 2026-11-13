@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Cir;
 
 // A variance query needs declaration signatures, not executable bodies or an owning IR graph.
 // Keep its snapshot separate from the mutable declarations whose physical flags will be changed.
@@ -8,6 +9,32 @@ static class ClrVarianceFacts
     internal readonly record struct Occurrence(TypeNode Type, int Context);
     internal sealed record Declaration(string Kind, int CapturedCount,
         IReadOnlyList<string> Parameters, IReadOnlyList<Occurrence> Occurrences);
+
+    internal static Declaration FromCir(CirTypeDeclaration definition)
+    {
+        var kind = definition.Kind.ToString().ToLowerInvariant();
+        var captured = definition.CapturedTypeParams.OrEmpty().Length;
+        var variances = definition.TypeParams.OrEmpty().Select(parameter => parameter.Variance.OrDefault()).ToArray();
+        if (definition.Kind is not (CirTypeKind.Interface or CirTypeKind.Delegate))
+            return new(kind, captured, variances, []);
+        var occurrences = new List<Occurrence>();
+        void Add(TypeNode type, int context) { if (type != null) occurrences.Add(new(type, context)); }
+        Add(definition.Base.OrDefault(), 1);
+        foreach (var type in definition.Interfaces.OrEmpty()) Add(type, 1);
+        void Signature(IEnumerable<CirParameter> parameters, TypeNode result, IEnumerable<CirTypeParameter> generic)
+        {
+            foreach (var parameter in parameters) Add(parameter.Type, -1);
+            Add(result, 1);
+            foreach (var parameter in generic)
+                foreach (var constraint in parameter.Constraints.OrEmpty()) Add(constraint, -1);
+        }
+        if (definition.Kind == CirTypeKind.Delegate)
+            Signature(definition.Params.OrEmpty(), definition.Ret.OrDefault(), definition.TypeParams.OrEmpty());
+        foreach (var method in definition.Methods.OrEmpty())
+            if (!method.Static || method.Virtual || method.Abstract.OrDefault())
+                Signature(method.Params, method.Ret, method.TypeParams.OrEmpty());
+        return new(kind, captured, variances, occurrences.ToArray());
+    }
 
     // Temporary neighbour of the remaining DOM owners. This projection reads only the signature
     // facts used below; it neither imports bodies nor serializes and reparses declarations.
@@ -49,10 +76,6 @@ static class ClrVarianceFacts
 
         return new(kind, capturedCount, variances, occurrences.ToArray());
     }
-
-    internal static IReadOnlyDictionary<string, Declaration> FromDom(
-        IReadOnlyDictionary<string, JsonObject> definitions) => definitions.ToDictionary(
-            pair => pair.Key, pair => FromDom(pair.Value), StringComparer.Ordinal);
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
 }

@@ -1,10 +1,23 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
 static partial class CirDeclarationProjection
 {
+    // Current source fixtures enter the real owning projection directly. These
+    // helpers are test-only, not a second implementation of physical projection.
+    internal static CirFileDeclaration ReadCirFileDeclaration(JsonNode source)
+    {
+        var graph = BirGraphDom.ReadBirFileDeclaration(source);
+        var emitted = graph.Types.OrEmpty().Select(TypedCirProjection.TypeName).ToHashSet(StringComparer.Ordinal);
+        return new TypedCirProjection(emitted).ProjectCirFileDeclaration(graph);
+    }
+
+    static CirNode ReadCirNode(JsonNode source) => new TypedCirProjection(new HashSet<string>())
+        .ProjectNode(BirGraphDom.ReadNode(source));
+
     internal static void SelfTest()
     {
         // Exercise the real producer -> metadata owner -> typed declaration boundary. No emitter is simulated.
@@ -21,7 +34,6 @@ static partial class CirDeclarationProjection
             throw new Exception("Collection metadata handoff control did not exercise its producer");
         RoundtripMetadata.Stamp(file);
         AddCarrierDefinition(file, "KotlinCollectionIdentityAttribute");
-        AttributeProjection.ApplyAll(new JsonNode[] { file });
         var declarations = ReadCirFileDeclaration(file);
         AttributeApplication[][] sites = [declarations.Methods[0].RetAttrs.Value,
             declarations.Methods[0].Params[0].Attrs.Value, declarations.Fields[0].Attrs.Value,
@@ -53,7 +65,6 @@ static partial class CirDeclarationProjection
         });
         RoundtripMetadata.StripRuntimeAttrs(runtime);
         AddCarrierDefinition(runtime, "KotlinDeclarationIdentityAttribute");
-        AttributeProjection.ApplyAll(new JsonNode[] { runtime });
         var runtimeDeclarations = ReadCirFileDeclaration(runtime);
         var physical = runtimeDeclarations.Types[0].Methods.Value[0];
         if (physical.Name != "M" || physical.TypeParams.Value.Length != 2 || !physical.Body.HasValue

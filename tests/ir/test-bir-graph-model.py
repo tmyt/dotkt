@@ -12,6 +12,12 @@ from bir_core_models import outputs as source_outputs
 from bir_messagepack import outputs as binary_outputs
 from bir_kotlin_messagepack import outputs as source_binary_outputs
 from bir_dom_frontier import outputs as dom_frontier_outputs
+from bir_cir_projection import outputs as cir_projection_outputs
+import importlib.util
+
+generator_spec = importlib.util.spec_from_file_location("ir_generator", ROOT / "scripts/generate-ir-model.py")
+generator = importlib.util.module_from_spec(generator_spec)
+generator_spec.loader.exec_module(generator)
 
 
 class PhaseCompositionTests(unittest.TestCase):
@@ -56,6 +62,20 @@ class PhaseCompositionTests(unittest.TestCase):
         self.definitions["cirFile"]["properties"]["unaccountedCurrentFact"] = {"type": "boolean"}
         with self.assertRaisesRegex(ValueError, "Unaccounted input-profile omission"):
             outputs(ROOT, self.definitions)
+
+    def test_final_projection_requires_explicit_consumption_of_lowering_facts(self):
+        self.definitions["birCallInstance"]["x-dotkt-model"]["loweringProperties"]["currentPhaseFact"] = {"type": "integer"}
+
+        def projection():
+            return "\n".join(cir_projection_outputs(ROOT, self.definitions, generator.model_type,
+                generator.non_null_field, generator.allows_null).values())
+
+        self.assertIn("value.CurrentPhaseFact.IsPresent", projection())
+        self.definitions["cirCallInstanceNode"]["x-dotkt-model"]["sourceConsumed"].append("currentPhaseFact")
+        self.assertNotIn("value.CurrentPhaseFact.IsPresent", projection())
+        self.definitions["cirFile"]["properties"]["currentPhysicalFact"] = {"type": "integer"}
+        self.definitions["birFileDeclaration"]["properties"]["currentPhysicalFact"] = {"type": "integer"}
+        self.assertIn("CurrentPhysicalFact = ProjectOptional(value.CurrentPhysicalFact", projection())
 
 
 if __name__ == "__main__":
