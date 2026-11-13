@@ -4852,8 +4852,6 @@ internal static class BirGraphDom
                 case "sig": break;
                 case "calleeParams": break;
                 case "clrOwnerResolved": break;
-                case "argTypes": break;
-                case "declarationId": break;
                 case "dotktDelegateSlot": break;
                 case "resolvedMemberParams": break;
                 case "resolvedMemberReturn": break;
@@ -4875,8 +4873,6 @@ internal static class BirGraphDom
             Sig = Field<TypeNode[]>(fields, "sig", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             CalleeParams = Field<TypeNode[]>(fields, "calleeParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ClrOwnerResolved = Field<bool>(fields, "clrOwnerResolved", value => value!.GetValue<bool>()),
-            ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
-            DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
             DotktDelegateSlot = Field<TypeNode>(fields, "dotktDelegateSlot", value => TypeNode.Read(value) ?? throw new FormatException()),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ResolvedMemberReturn = Field<TypeNode>(fields, "resolvedMemberReturn", value => TypeNode.Read(value) ?? throw new FormatException()),
@@ -4901,9 +4897,6 @@ internal static class BirGraphDom
                 case "type": break;
                 case "sig": break;
                 case "calleeParams": break;
-                case "virtual": break;
-                case "argTypes": break;
-                case "declarationId": break;
                 case "dotktDelegateSlot": break;
                 case "resolvedMemberParams": break;
                 case "resolvedMemberReturn": break;
@@ -4922,9 +4915,6 @@ internal static class BirGraphDom
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             Sig = Field<TypeNode[]>(fields, "sig", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             CalleeParams = Field<TypeNode[]>(fields, "calleeParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
-            Virtual = Field<bool>(fields, "virtual", value => value!.GetValue<bool>()),
-            ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
-            DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
             DotktDelegateSlot = Field<TypeNode>(fields, "dotktDelegateSlot", value => TypeNode.Read(value) ?? throw new FormatException()),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ResolvedMemberReturn = Field<TypeNode>(fields, "resolvedMemberReturn", value => TypeNode.Read(value) ?? throw new FormatException()),

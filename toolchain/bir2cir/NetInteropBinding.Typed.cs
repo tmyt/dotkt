@@ -23,7 +23,6 @@ static partial class NetInteropBinding
                     field.CompanionCall.OrDefault(), field.MemberVisibility.OrDefault(), default, default, references, write: true),
                 BirSetField field => LowerField(field, field.OwnerType, field.Name, field.Recv, field.Value,
                     false, field.MemberVisibility.OrDefault(), default, default, references, write: true),
-                BirNewBoundDelegate reference => LowerDelegate(reference, references),
                 BirEventGet handle => LowerEvent(handle, references),
                 BirNewSuspendLambda lambda => LowerSuspend(lambda, references),
                 _ => node,
@@ -38,7 +37,6 @@ static partial class NetInteropBinding
                 case BirStaticFieldGet value: value.CompanionCall = default; break;
                 case BirFieldSetExpression value: value.CompanionCall = default; break;
                 case BirStaticFieldSet value: value.CompanionCall = default; break;
-                case BirNewBoundDelegate value: value.CompanionCall = default; break;
                 case BirEventGet value: value.CompanionCall = default; break;
             }
             return result;
@@ -187,27 +185,6 @@ static partial class NetInteropBinding
             Recv = recv, Sty = ValueOnly(sty), Ret = ValueOnly(ret) };
         var lowered = new BirPropertySet { Type = plan.Owner, Name = plan.Name, Static = plan.Static, Recv = recv, Value = value };
         return field is IBirStatement ? new BirExpressionStatement { Expr = lowered } : lowered;
-    }
-
-    static BirGraphValue LowerDelegate(BirNewBoundDelegate reference, ReferenceMetadataIndex refs)
-    {
-        var signature = SelectSignatures(reference.ArgTypes.OrDefault(), null, reference.Sig.OrDefault()).Declaration;
-        var plan = SelectDelegate(refs, reference.OwnerType.OrDefault(), reference.Method.OrDefault(), reference.ArgTypes.HasValue,
-            reference.CompanionCall.OrDefault(), reference.TypeArgs.OrEmpty().Length, signature);
-        if (plan == null) return reference;
-        IBirExpression result = plan.Static ? new BirClrStaticDelegate {
-            ClrType = plan.Owner, Method = plan.Method, ArgTypes = signature ?? Array.Empty<TypeNode>(),
-            TypeArgs = ValueOnly(reference.TypeArgs), Virtual = reference.Virtual,
-            FuncType = reference.FuncType, DeclarationId = ValueOnly(reference.DeclarationId),
-        } : new BirBoundClrDelegate {
-            ClrType = plan.Owner, Method = plan.Method, ArgTypes = signature ?? Array.Empty<TypeNode>(),
-            TypeArgs = ValueOnly(reference.TypeArgs), Virtual = reference.Virtual, Recv = reference.Recv,
-            FuncType = reference.FuncType, DeclarationId = ValueOnly(reference.DeclarationId),
-        };
-        if (plan.PreserveReceiver && reference.Recv.HasValue)
-            result = TypedCallEvalLowering.PreserveUnreadValueBefore(reference.Recv.Value, result,
-                $"static companion callable reference '{plan.SourceOwner}.{plan.SourceMethod}'");
-        return (BirGraphValue)result;
     }
 
     static BirGraphValue LowerEvent(BirEventGet handle, ReferenceMetadataIndex refs)

@@ -317,7 +317,10 @@ static partial class CallEvalLowering
         // only because their producer defines them that way; require that producer to state the fact on the node
         // instead of reconstructing it here from ownerType. Other historically untyped values retain their existing
         // handling — this check is the field-specific ownership boundary exercised by the companion spill path.
-        RequireUnreadValueType(valueType, value is JsonObject valueObject && Str(valueObject["k"]) == "staticField", context);
+        if (valueType == null && value is JsonObject valueObject && Str(valueObject["k"]) == "staticField")
+            throw new InvalidOperationException(
+                $"bir2cir: cannot type the static-field value whose evaluation must be preserved before {context}; "
+                + "its producer must carry the field's exact node-local result type.");
         if (valueType is TypeNode type)
             binding["type"] = TypeJson.Write(type);
         var (stmts, repl) = Materialise(
@@ -330,14 +333,6 @@ static partial class CallEvalLowering
             ["stmts"] = stmts,
             ["result"] = result,
         };
-    }
-
-    internal static void RequireUnreadValueType(TypeNode type, bool staticField, string context)
-    {
-        if (type == null && staticField)
-            throw new InvalidOperationException(
-                $"bir2cir: cannot type the static-field value whose evaluation must be preserved before {context}; "
-                + "its producer must carry the field's exact node-local result type.");
     }
 
     /// Q5 of the four value questions (roster in bir-common/ValueStability.cs) — is this node an LVALUE FORMER, a

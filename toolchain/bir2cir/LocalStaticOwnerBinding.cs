@@ -17,7 +17,7 @@ using DotKt.Bir;
 // Moving the token (rather than copying it) keeps ONE owner axis on the node, so the later generic-owner closure has a
 // single key to rewrite and cannot leave the two spellings disagreeing.
 //
-// Runs per file, right after NetInteropBinding and before MemberCallSubstitution: the external binders have had first
+// Runs after native interop binding and before MemberCallSubstitution: the external binders have had first
 // refusal, and the ownerless recognizers that follow must not see a call whose declaring type is already resolved.
 static class LocalStaticOwnerBinding
 {

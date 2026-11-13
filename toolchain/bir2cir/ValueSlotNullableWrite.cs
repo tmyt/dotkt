@@ -16,7 +16,7 @@ using DotKt.Bir;
 // On reads, stamp that same reflected physical slot onto `ret`/`sty`; a projected `T!` can physically be Nullable<T>
 // when the CLR declaration is `T? where T : struct`, and a bare frontend stamp would otherwise corrupt the receiving
 // local before any consumer can unwrap it. Reference slots are untouched (a `String!` platform reference has real
-// null). Runs right AFTER NetInteropBinding
+// null). Runs after native interop binding
 // (so the `clrPropSet` nodes exist) and BEFORE
 // BirTypeLowering (owner args + the `nullableValue` elem are still pure-Kotlin `kotlin.*`, lowered downstream exactly
 // as PrimitiveOperatorLowering's `nullableValue` is). A BirScope-tracking walk ensures a

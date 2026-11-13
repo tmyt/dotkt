@@ -1564,7 +1564,7 @@ sealed partial class TypedCirProjection
 
     internal CirBoundClrDelegate ProjectCirBoundClrDelegate(BirBoundClrDelegate value)
     {
-        if (value.ArgTypes.IsPresent || value.DeclarationId.IsPresent || value.DotktDelegateSlot.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent)
+        if (value.DotktDelegateSlot.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirBoundClrDelegate");
         return new CirBoundClrDelegate
         {
@@ -1622,7 +1622,7 @@ sealed partial class TypedCirProjection
 
     internal CirClrStaticDelegate ProjectCirClrStaticDelegate(BirClrStaticDelegate value)
     {
-        if (value.ArgTypes.IsPresent || value.DeclarationId.IsPresent || value.DotktDelegateSlot.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.Virtual.IsPresent)
+        if (value.DotktDelegateSlot.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirClrStaticDelegate");
         return new CirClrStaticDelegate
         {
