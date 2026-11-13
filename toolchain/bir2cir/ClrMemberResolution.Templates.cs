@@ -183,17 +183,21 @@ static partial class ClrMemberResolution
         if (ReadOwnerNode(node["ownerType"] ?? node["type"]) is not TypeNode.Fqn owner
             || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
             return;
+        if (StaticFieldReference(owner, name) is { } reference) node["fieldRef"] = reference.Write();
+    }
+
+    static MemberRefNode StaticFieldReference(TypeNode.Fqn owner, string name)
+    {
         // A type this compilation emits keeps the local axis (#395) and must not be given an external identity,
         // even though the reference surface can answer for it: the stdlib runtime build compiles against a
         // PREVIOUS build of the assembly it is producing, so kotlin.text.HexFormat+$Companion resolved there and
         // was handed a reference to itself that the emitter's own universe then could not contain.
-        if (_localTypes.Contains(owner.Name)) return;
+        if (_localTypes.Contains(owner.Name)) return null;
         var open = ResolveOwnerType(owner);
-        if (open == null) return;
+        if (open == null) return null;
         var field = open.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         if (field != null && !(field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly)) field = null;
-        if (field == null) return;
-        node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
+        return field == null ? null : FieldRefOf(field, open, owner.Args ?? Array.Empty<TypeNode>());
     }
 
     /// <summary>

@@ -1,8 +1,19 @@
 using System.Reflection;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 static partial class ClrMemberResolution
 {
+    internal static BirStaticFieldGet UnitSingletonRead(ReferenceMetadataIndex references)
+    {
+        _refs = references ?? throw new ArgumentNullException(nameof(references));
+        var owner = new TypeNode.Fqn(UnitFqn);
+        var result = new BirStaticFieldGet { OwnerType = owner, Name = UnitInstance };
+        if (StaticFieldReference(owner, UnitInstance) is { } reference)
+            result.FieldRef = BirMemberReference.FromPhysical(reference);
+        return result;
+    }
+
     internal static void TypedDelegateValueSelfTest(Action<ReferenceMetadataIndex> test)
     {
         var prior = _refs;
