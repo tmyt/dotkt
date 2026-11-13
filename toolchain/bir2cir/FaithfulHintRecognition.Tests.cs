@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -39,34 +38,82 @@ static partial class FaithfulHintRecognition
                 Statement(new BirCallStatic { Method = "toByteArray", Args = new IBirExpression[] { Local("bytes") } }),
             },
         };
-        var expected = source.ToDom();
-        var actual = (BirFunctionDeclaration)source.DeepClone();
         BirCallStatic Bind(BirCallStatic call) => call with { DeclarationId = "helper:" + call.Method.Value };
-        FaithfulHints.WithHelperBinding(Bind, () => Apply(expected, localTopLevelFns: names));
-        FaithfulHints.WithHelperBinding(Bind, () => actual = (BirFunctionDeclaration)Apply(actual, names));
-        if (!JsonNode.DeepEquals(expected, actual.ToDom()))
-            throw new InvalidOperationException("Owning recognition changed lexical source types, rendering, or selected helper binding");
+        var originalVariable = source.Body.Value[0];
+        var concatInput = (BirConcat)((BirExpressionStatement)source.Body.Value[1]).Expr.Value;
+        var concatCollectionInput = ((BirCast)concatInput.Parts.Value[0]).E.Value;
+        var nullableInput = concatInput.Parts.Value[1];
+        var mapInput = ((BirObjectMethod)((BirExpressionStatement)source.Body.Value[2]).Expr.Value).Recv.Value;
+        var printInput = (BirCallStatic)((BirExpressionStatement)source.Body.Value[3]).Expr.Value;
+        var starInput = printInput.Args.Value[0];
+        var printCollectionInput = printInput.Args.Value[1];
+        var compareInput = (BirCallInstance)((BirExpressionStatement)source.Body.Value[4]).Expr.Value;
+        var bytesInput = ((BirCallStatic)((BirExpressionStatement)source.Body.Value[5]).Expr.Value).Args.Value[0];
+        BirFunctionDeclaration actual = null;
+        FaithfulHints.WithHelperBinding(Bind, () => actual = (BirFunctionDeclaration)Apply(source, names));
+        if (!ReferenceEquals(actual, source) || !ReferenceEquals(actual.Body.Value[0], originalVariable))
+            throw new InvalidOperationException("Owning recognition replaced a continuing declaration or local");
+        BirCallStatic Helper(IBirExpression value, string owner, string method, TypeNode[] signature, TypeNode[] arguments = null)
+        {
+            if (value is not BirCallStatic call || call.Owner.OrDefault() is not TypeNode.Fqn { Args: null } named
+                || named.Name != owner || call.Method.OrDefault() != method || call.DeclarationId.OrDefault() != "helper:" + method
+                || !call.Sig.HasValue || !call.Sig.Value.SequenceEqual(signature)
+                || (arguments == null ? call.TypeArgs.IsPresent : !call.TypeArgs.HasValue || !call.TypeArgs.Value.SequenceEqual(arguments)))
+                throw new InvalidOperationException("Owning recognition changed the selected helper declaration or signature: " + method);
+            return call;
+        }
         var concat = (BirConcat)((BirExpressionStatement)actual.Body.Value[1]).Expr.Value;
-        if (concat.Parts.Value[0] is not BirCallStatic { TypeArgs.Value: [TypeNode.Tv { Scope: "method", I: 0 }] }
-            || concat.Parts.Value[1] is not BirCallStatic { Method.Value: "toString" })
-            throw new InvalidOperationException("Owning rendering lost the caller frame or nullable stringifier");
+        var collectionHelper = Helper(concat.Parts.Value[0], "kotlin.collections.ClrCollectionDefaultsKt", "clrCollToString",
+            new TypeNode[] { new TypeNode.Fqn("kotlin.collections.Collection", new TypeNode[] { variable }) }, new TypeNode[] { variable });
+        var nullableHelper = Helper(concat.Parts.Value[1], "kotlin.LibraryKt", "toString", new TypeNode[] { anyN });
+        var mapHelper = Helper(((BirExpressionStatement)actual.Body.Value[2]).Expr.Value, "kotlin.collections.ClrMapDefaultsKt", "clrMapToString",
+            new TypeNode[] { any, anyN }, map.Args);
+        var print = (BirCallStatic)((BirExpressionStatement)actual.Body.Value[3]).Expr.Value;
+        var starHelper = Helper(print.Args.Value[0], "kotlin.collections.ClrNestedToStringKt", "clrElemToString", new TypeNode[] { anyN });
+        var printedCollection = Helper(print.Args.Value[1], "kotlin.collections.ClrCollectionDefaultsKt", "clrCollToString",
+            collectionHelper.Sig.Value, new TypeNode[] { variable });
+        var compareHelper = Helper(((BirExpressionStatement)actual.Body.Value[4]).Expr.Value, "kotlin.NumbersKt", "clrDoubleCompare",
+            new TypeNode[] { new TypeNode.Fqn("kotlin.Double"), new TypeNode.Fqn("kotlin.Double") });
+        if (!ReferenceEquals(collectionHelper.Args.Value.Single(), concatCollectionInput)
+            || !ReferenceEquals(nullableHelper.Args.Value.Single(), nullableInput)
+            || !ReferenceEquals(mapHelper.Args.Value[0], mapInput) || mapHelper.Args.Value.Length != 2
+            || mapHelper.Args.Value[1] is not BirCallStatic { Method.Value: "clrMapViewPreference" }
+            || !ReferenceEquals(print, printInput) || print.DeclarationId.IsPresent
+            || !ReferenceEquals(starHelper.Args.Value.Single(), starInput)
+            || !ReferenceEquals(printedCollection.Args.Value.Single(), printCollectionInput)
+            || !ReferenceEquals(compareHelper.Args.Value[0], compareInput.Recv.Value)
+            || !ReferenceEquals(compareHelper.Args.Value[1], compareInput.Args.Value[0])
+            || ((BirExpressionStatement)actual.Body.Value[5]).Expr.Value is not BirCast {
+                Type.Value: TypeNode.Array { Elem: TypeNode.Fqn { Name: "kotlin.Byte" } }, E.HasValue: true } bytesCast
+            || !ReferenceEquals(bytesCast.E.Value, bytesInput))
+            throw new InvalidOperationException("Owning recognition changed operand ownership, rendering or byte-array view");
         var operand = new BirCallStatic { Method = "sideEffect", Args = Array.Empty<IBirExpression>() };
         var mapRender = FaithfulHints.CollToString((IBirExpression)operand, FaithfulHints.CollKind.Map, map.Args);
         if (!ReferenceEquals(mapRender.Args.Value[0], operand) || mapRender.Args.Value.Length != 2
             || mapRender.Args.Value[1] is not BirCallStatic { Method.Value: "clrMapViewPreference" })
             throw new InvalidOperationException("Owning map rendering duplicated its operand or omitted the selected source view");
-        foreach (var owner in new[] {
-            map,
-            new TypeNode.Fqn("kotlin.collections.MutableMap", new TypeNode[] { new TypeNode.Projection("in", text), variable }),
-            new TypeNode.Fqn(map.Name, new TypeNode[] { new TypeNode.Array(new TypeNode.Star()), variable }),
-            new TypeNode.Fqn(map.Name, new TypeNode[] { new TypeNode.Star(), new TypeNode.Star() }),
+        foreach (var (owner, key, keyVariance, value, valueVariance) in new (TypeNode.Fqn, TypeNode, long, TypeNode, long)[] {
+            (map, text, 0, variable, 1),
+            (new TypeNode.Fqn("kotlin.collections.MutableMap", new TypeNode[] { new TypeNode.Projection("in", text), variable }), text, -1, variable, 0),
+            (new TypeNode.Fqn(map.Name, new TypeNode[] { new TypeNode.Array(new TypeNode.Star()), variable }), null, 0, variable, 1),
+            (new TypeNode.Fqn(map.Name, new TypeNode[] { new TypeNode.Star(), new TypeNode.Star() }), null, 0, null, 0),
         })
             foreach (var phase in new[] { MemberCallSubstitution.CollectionOperationPhase.Source, MemberCallSubstitution.CollectionOperationPhase.Physical })
             {
-                var dom = MemberCallSubstitution.StaticMapPreference(owner, null, phase);
-                var typed = (BirGraphValue)MemberCallSubstitution.StaticMapPreferenceValue(owner, null, phase);
-                if (!JsonNode.DeepEquals(dom, typed.ToDom()))
-                    throw new InvalidOperationException("Typed Map view preference disagrees with the shared source/physical plan");
+                var preference = MemberCallSubstitution.StaticMapPreferenceValue(owner, null, phase);
+                bool Token(IBirExpression token, TypeNode type) => type == null
+                    ? token is BirConstant { Value.Value: BirLiteral.NullLiteral }
+                    : token is BirClassReference reference && reference.Type.OrDefault() == type;
+                if (key == null && value == null)
+                {
+                    if (!Token(preference, null)) throw new InvalidOperationException("Unknown Map view preference acquired a generic token");
+                }
+                else if (preference is not BirCallStatic { Method.Value: "clrMapViewPreference", TypeArgs.Value.Length: 0, Args.Value.Length: 4 } selected
+                    || selected.Owner.OrDefault() is not TypeNode.Fqn { Name: "kotlin.collections.ClrNativeMapAccessKt" }
+                    || !Token(selected.Args.Value[0], key) || !Token(selected.Args.Value[2], value)
+                    || selected.Args.Value[1] is not BirConstant { Value.Value: BirLiteral.IntegerLiteral keyFlag } || keyFlag.Value != keyVariance
+                    || selected.Args.Value[3] is not BirConstant { Value.Value: BirLiteral.IntegerLiteral valueFlag } || valueFlag.Value != valueVariance)
+                    throw new InvalidOperationException("Typed Map view preference changed its source/physical tokens or variance");
             }
         var boxedNullable = new BirCast { Type = any, E = Local("later") };
         var resultRegion = new BirValueBlock {
@@ -91,6 +138,11 @@ static partial class FaithfulHintRecognition
         var payload = new BirInlinePayload { Body = new IBirStatement[] { Statement(Reinterpret()) } };
         if (!ReferenceEquals(Apply(payload, names), payload) || ((BirExpressionStatement)payload.Body.Value[0]).Expr.Value is not BirCallStatic)
             throw new InvalidOperationException("Source recognition entered an opaque executable carrier");
-        Console.WriteLine("[typed faithful recognition] self-test OK (lexical rendering parity, helper binding, Map views, byte-array guards, opaque payloads)");
+        var late = (BirCallStatic)Apply(new BirCallInstance {
+            OwnerType = new TypeNode.Fqn("kotlin.Float"), Method = "compareTo", Recv = Local("a"), Args = new IBirExpression[] { Local("b") },
+        }, names);
+        if (late.DeclarationId.IsPresent || late.Method.OrDefault() != "clrFloatCompare" || late.TypeArgs.IsPresent)
+            throw new InvalidOperationException("Late recognition eagerly bound a helper outside the source binding scope");
+        Console.WriteLine("[typed faithful recognition] self-test OK (lexical rendering, exact helper facts, Map views, byte-array guards, opaque payloads, late unbound helper)");
     }
 }

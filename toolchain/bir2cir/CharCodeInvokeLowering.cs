@@ -1,109 +1,61 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
-// CHAR.CODE + FUNCTION.INVOKE LOWERING (#73 Phase 2b-2): two single-node Kotlin<->CLR recognitions relocated out of
-// kotc (BirEmitter) so kotc emits ONLY the faithful Kotlin fact and bir2cir realizes the CLR node.
-//
-//  (1) `c.code` (Char -> Int code point). kotc emits the FAITHFUL top-level extension-property getter call by the
-//      property's BARE identity + a `"prop":"get"` accessor-KIND marker (#81; the same convention every top-level
-//      extension-property accessor now uses): `callStatic owner:null method:code prop:get sig:[kotlin.Char]
-//      args:[<char>]` (the stdlib `val Char.code: Int` in kotlin.CharCodeKt). This pass realizes the `{k:conv,
-//      to:kotlin.Int, e:<char>}` CIR operation — the char value AS an int (a genuine primitive IL
-//      op), distinct from `.toInt()`'s @ClrConv routing. Recognized by the bare name + the `get` marker + the Char
-//      receiver in `sig`; the owner (kotlin.CharCodeKt) + Int return are confirmed against the ref.dll when available.
-//
-//  (2) `f(x)` invoking a function-typed value. kotc emits the FAITHFUL `callInstance ownerType:kotlin.FunctionN[..]`
-//      (or `kotlin.reflect.KFunctionN[..]`) `method:invoke recv:<f> args:[..]` member call. This pass realizes the
-//      `{k:delegateInvoke, funcType, recv, args}` CIR node (a function value IS a delegate at the
-//      CLR level). `funcType` is derived from the declared FunctionN owner type args (params = all but the last,
-//      ret = the last), which are the authoritative BIR function signature at this boundary.
-//
-// Runs EARLY (before NetInteropBinding / MemberCallSubstitution / any type-erasing pass) and UNCONDITIONALLY (ref +
-// app), so type lowering and the suspend/closure consumers receive the canonical `conv`/`delegateInvoke` CIR forms.
-static class CharCodeInvokeLowering
+// Realize faithful Char.code and Function/KFunction.invoke operations before
+// native/member/type binding. Both choices consume authored operation facts;
+// reference lookup and overload selection belong to the later owning passes.
+static partial class CharCodeInvokeLowering
 {
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null) => Walk(root, refs);
-
-    // Bottom-up: lower a node's CHILDREN first, then the node itself.
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs)
+    public static BirFileDeclaration Apply(BirFileDeclaration root)
     {
-        switch (node)
-        {
-            case JsonObject o:
-                foreach (var key in o.Select(kv => kv.Key).ToList())
-                {
-                    if (o[key] is JsonNode child) Walk(child, refs);
-                    if (o[key] is JsonObject co && Lower(co, refs) is JsonNode r) o[key] = r;
-                }
-                break;
-            case JsonArray a:
-                for (var i = 0; i < a.Count; i++)
-                {
-                    if (a[i] is JsonNode child) Walk(child, refs);
-                    if (a[i] is JsonObject co && Lower(co, refs) is JsonNode r) a[i] = r;
-                }
-                break;
-        }
+        Walk(root);
+        return root;
     }
 
-    static JsonNode Lower(JsonObject o, ReferenceMetadataIndex refs)
+    static BirGraphValue Walk(BirGraphValue node)
     {
-        var k = (o["k"] as JsonValue)?.GetValue<string>();
-        if (k == "callStatic") return LowerCharCode(o, refs);
-        if (k == "callInstance") return LowerInvoke(o);
-        return null;
+        if (node == null || node is IBirExecutablePayload) return node;
+        node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
+        return node switch {
+            BirCallStatic call => LowerCharCode(call),
+            BirCallInstance call => LowerInvoke(call),
+            _ => node,
+        };
     }
 
-    // `callStatic owner:null method:code prop:get sig:[kotlin.Char] args:[<char>]`
-    // -> `{k:conv, to:kotlin.Int, e:<char>}`.
-    static JsonNode LowerCharCode(JsonObject o, ReferenceMetadataIndex refs)
+    static BirGraphValue LowerCharCode(BirCallStatic call)
     {
-        // Only a TOP-LEVEL call (`owner:null`, no `ownerType`); a member/.NET call carries `ownerType`.
-        if (o.ContainsKey("ownerType")) return null;
-        if (!o.ContainsKey("owner") || o["owner"] != null) return null;
-        // #81/#397: the getter arrives as the bare property identity `code` plus an explicit get role. Consume that
-        // semantic shape before the physical binding boundary; no MethodDef spelling participates in this intrinsic.
-        if ((o["method"] as JsonValue)?.GetValue<string>() != "code"
-            || (o["prop"] as JsonValue)?.GetValue<string>() != "get") return null;
-        if (o["args"] is not JsonArray args || args.Count != 1) return null;
-        // The extension receiver is `sig[0]` — must be kotlin.Char (the sole `.code` extension property is on Char).
-        if (o["sig"] is not JsonArray sig || sig.Count < 1
-            || TypeJson.Read(sig[0]) is not TypeNode.Fqn recvT
-            || ReferenceMetadataIndex.BareOwnerFqn(recvT.Name) != "kotlin.Char") return null;
-        // The frontend-resolved property call already carries its return type. Use that semantic fact directly; the
-        // referenced MethodDef spelling is a later physical concern and is not a lookup key here.
-        var convTo = TypeJson.Read(o["ret"]) is TypeNode.Fqn ret
-            && ReferenceMetadataIndex.BareOwnerFqn(ret.Name) == "kotlin.Int"
-            ? TypeJson.Write(ret) : TypeJson.Fqn("kotlin.Int");
-        return new JsonObject { ["k"] = "conv", ["to"] = convTo, ["e"] = args[0]?.DeepClone() };
+        // Presence is semantic here: owner:null is the top-level operation.
+        // Even an explicitly null ownerType field is a different input shape.
+        if (call.OwnerType.IsPresent || !call.Owner.IsNull
+            || call.Method.OrDefault() != "code" || call.Prop.OrDefault() != "get"
+            || call.Args.OrDefault() is not { Length: 1 } args
+            || call.Sig.OrDefault() is not { Length: > 0 } signature
+            || signature[0] is not TypeNode.Fqn receiver
+            || ReferenceMetadataIndex.BareOwnerFqn(receiver.Name) != "kotlin.Char") return call;
+        var target = call.Ret.OrDefault() is TypeNode.Fqn result
+            && ReferenceMetadataIndex.BareOwnerFqn(result.Name) == "kotlin.Int"
+                ? result : new TypeNode.Fqn("kotlin.Int");
+        return new BirConvert { To = target, E = OptionalField<IBirExpression>.Of(args[0]) };
     }
 
-    // `callInstance ownerType:kotlin.FunctionN[T1..Tn,R]/kotlin.reflect.KFunctionN[..] method:invoke recv:<f> args:[..]`
-    // -> `{k:delegateInvoke, funcType:{t:fn,suspend:false,ret:R,params:[T1..Tn]}, recv:<f>, args:[..]}`.
-    static JsonNode LowerInvoke(JsonObject o)
+    static BirGraphValue LowerInvoke(BirCallInstance call)
     {
-        if ((o["method"] as JsonValue)?.GetValue<string>() != "invoke") return null;
-        if (o["recv"] is not JsonNode recv) return null;
-        if (TypeJson.Read(o["ownerType"]) is not TypeNode.Fqn owner) return null;
+        if (call.Method.OrDefault() != "invoke" || !call.Recv.HasValue
+            || call.OwnerType.OrDefault() is not TypeNode.Fqn owner) return call;
         var bare = ReferenceMetadataIndex.BareOwnerFqn(owner.Name);
         if (!(bare.StartsWith("kotlin.Function", StringComparison.Ordinal)
-              || bare.StartsWith("kotlin.reflect.KFunction", StringComparison.Ordinal))) return null;
-        // FunctionN[T1..Tn, R] -> params = all but the last, ret = the last. A raw FunctionN with no args cannot be a
-        // real function value -> leave the call untouched.
-        if (owner.Args == null || owner.Args.Length < 1) return null;
-        var n = owner.Args.Length - 1;
-        var funcType = TypeNode.Write(new TypeNode.Fn(false, owner.Args[n], owner.Args.Take(n).ToArray()));
-        var outArgs = new JsonArray();
-        if (o["args"] is JsonArray a) foreach (var arg in a) outArgs.Add(arg?.DeepClone());
-        return new JsonObject
-        {
-            ["k"] = "delegateInvoke",
-            ["funcType"] = funcType,
-            ["recv"] = recv.DeepClone(),
-            ["args"] = outArgs,
+            || bare.StartsWith("kotlin.reflect.KFunction", StringComparison.Ordinal))
+            || owner.Args is not { Length: > 0 } arguments) return call;
+        // Use the selected owner's exact instantiated argument vector. No
+        // arity is reconstructed from the classifier spelling or call operands.
+        var arity = arguments.Length - 1;
+        return new BirDelegateInvoke {
+            FuncType = new TypeNode.Fn(false, arguments[arity], arguments.Take(arity).ToArray()),
+            Recv = call.Recv, Args = call.Args.OrEmpty(),
         };
     }
 }

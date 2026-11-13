@@ -65,6 +65,7 @@ static class Bir2Cir
                 SourceGraphRewrite.SelfTest();
                 ForInLowering.SelfTestTypedRangePrefix();
                 ArrayConstructionLowering.SelfTestSource();
+                CharCodeInvokeLowering.SelfTestSource();
                 RoundtripMetadata.SourceSuspendResultSelfTest();
                 InheritedMemberOwnerBinding.SourceProjectionSelfTest();
                 TypedExecutableFrames.SelfTest();
@@ -417,6 +418,13 @@ sealed class Pipeline
         // Enum values now state their array type. Derive array elements and
         // realize constructors before any type erasure or suspend spill owner.
         foreach (var source in captured) ArrayConstructionLowering.Apply(source, refs);
+        foreach (var source in captured)
+        {
+            // This late recognition deliberately runs outside helper binding:
+            // its calls retain the existing subsequent exact-resolution path.
+            FaithfulHintRecognition.Apply(source, inventory.LocalTopLevelFunctions);
+            CharCodeInvokeLowering.Apply(source);
+        }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -559,21 +567,6 @@ sealed class Pipeline
             // inherited protected-property read may be correctly realigned to object[] while its store into a
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
             NullableTvErasureCallRealign.CollectNewSyntheticTypes(bir.Root, nullableTvDeclRets);
-            // FAITHFUL-HINT RECOGNITION (#52 Phase 4b / #59): kotc emits the faithful op (`objMethod` toString/equals —
-            // BCL-restored to ToString/Equals by ObjectSlotRename above, `concat`, `callStatic println/print`, Double/Float
-            // `callInstance compareTo`) with NO type hint; bir2cir
-            // recovers the collection/Map/Double/Float/null operand types via StaticType (StaticTypeResolver.cs) and
-            // selects the stdlib helper required by the semantic operation (clrCollToString/clrMapToString/
-            // clrDoubleCompare/LibraryKt.toString…). (The EQEQ family is handled by
-            // PrimitiveOperatorLowering above.) Runs SECOND — right after the primitive-op restore, before the compareTo
-            // callInstance reaches MemberCallSubstitution's primitive-compareTo -> System.Double.CompareTo routing, and
-            // before any type-erasing pass — so the inner value nodes stay pure kotlin.* and lower normally downstream.
-            FaithfulHintRecognition.Apply(bir.Root, refs, localTopLevelFns);
-            // CHAR.CODE + FUNCTION.INVOKE (#73 Phase 2b-2): realize two faithful Kotlin operations — `c.code`
-            // (faithful `callStatic get_code(Char)`) -> `{k:conv, to:kotlin.Int}`, and `f(x)` (faithful `callInstance
-            // kotlin.FunctionN.invoke`) -> `{k:delegateInvoke}`. Runs EARLY (before NetInteropBinding / the suspend
-            // + closure passes that CONSUME delegateInvoke / any type-erasing pass) and unconditionally (ref + app).
-            CharCodeInvokeLowering.Apply(bir.Root, refs);
             // .NET-INTEROP CALL BINDING (A2 / #61): bind a reference-KLIB-projected .NET member call — which kotc now emits as
             // a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN identity — to its CLR call SHAPE
             // (clrStatic/clrInstance/clrPropGet/clrPropSet/clrGeneric*), resolved off the loaded .NET reference
