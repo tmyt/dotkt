@@ -66,6 +66,7 @@ static class Bir2Cir
                 ForInLowering.SelfTestTypedRangePrefix();
                 ArrayConstructionLowering.SelfTestSource();
                 CharCodeInvokeLowering.SelfTestSource();
+                NetInteropBinding.TypedSelfTest();
                 RoundtripMetadata.SourceSuspendResultSelfTest();
                 InheritedMemberOwnerBinding.SourceProjectionSelfTest();
                 TypedExecutableFrames.SelfTest();
@@ -425,6 +426,10 @@ sealed class Pipeline
             FaithfulHintRecognition.Apply(source, inventory.LocalTopLevelFunctions);
             CharCodeInvokeLowering.Apply(source);
         }
+        // Native binding consumes the same owning operations before the one
+        // remaining DOM frontier. Reference builds retain Kotlin declarations.
+        if (!referenceBuild)
+            foreach (var source in captured) NetInteropBinding.Apply(source, refs);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -567,17 +572,6 @@ sealed class Pipeline
             // inherited protected-property read may be correctly realigned to object[] while its store into a
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
             NullableTvErasureCallRealign.CollectNewSyntheticTypes(bir.Root, nullableTvDeclRets);
-            // .NET-INTEROP CALL BINDING (A2 / #61): bind a reference-KLIB-projected .NET member call — which kotc now emits as
-            // a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN identity — to its CLR call SHAPE
-            // (clrStatic/clrInstance/clrPropGet/clrPropSet/clrGeneric*), resolved off the loaded .NET reference
-            // assemblies (ReferenceMetadataIndex's long-lived MetadataLoadContext). THIS is where .NET binding belongs
-            // (the Kotlin<->CLR layer); kotc is .NET-agnostic. Runs EARLY — before ShapeSynthesis (so a generic .NET
-            // method's `shapeTypes` is derived) and before every type-erasing / substitution pass — reproducing the flow
-            // that existed when kotc emitted the `clr*` nodes directly. A no-op for a `kotlin.*`/local/unresolvable owner
-            // (the stdlib is bound by MemberCallSubstitution off the ref.dll). Dedicated event-read and managed-reference
-            // vocabulary remains for its own lowering rather than being interpreted as an ordinary native call.
-            // Non-ref only (the stdlib self-build injects no dll2klib .NET interop).
-            if (!_options.RefBuild) NetInteropBinding.Apply(bir.Root, refs);
             // PROPERTY-REFERENCE FUNCTION MATERIALIZATION (#242): kotc emits a genuine KProperty construction plus
             // its callable KProperty interface fact. Once every inline/default payload has been spliced and .NET calls
             // expose their declared parameter vectors, adapt any such value that fills a function-typed slot to a

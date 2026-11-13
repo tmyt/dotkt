@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -33,25 +32,19 @@ static partial class EnumValueLowering
         return refs.TryKotlinRichEnumInstanceFields(owner, out name, out ordinal);
     }
 
-    static JsonArray Values(BasicEnumMetadata metadata) => new(metadata.Entries.Select(entry => (JsonNode)new JsonObject
+    static BasicEnumMetadata ReferencedOrdinalMetadata(TypeNode enumType, ReferenceMetadataIndex refs)
     {
-        ["ordinal"] = entry.Ordinal,
-        ["underlying"] = metadata.Underlying,
-        ["physicalValue"] = entry.PhysicalValue,
-    }).ToArray());
-
-    internal static JsonObject ReferencedOrdinal(JsonNode receiver, JsonNode enumType, ReferenceMetadataIndex refs)
-    {
-        var owner = TypeJson.OwnerName(enumType);
-        if (owner == null || !(refs.TryKotlinBasicEnum(owner, out var metadata)
-                || refs.TryNativeEnumEntries(owner, out metadata)))
+        if (enumType is not TypeNode.Fqn owner || !(refs.TryKotlinBasicEnum(owner.Name, out var metadata)
+                || refs.TryNativeEnumEntries(owner.Name, out metadata)))
             throw new InvalidOperationException("Referenced enum ordinal has no selected declaration map");
-        return new JsonObject
-        {
-            ["k"] = "enumOrdinal", ["e"] = receiver.DeepClone(),
-            ["type"] = enumType.DeepClone(), ["values"] = Values(metadata),
-        };
+        return metadata;
     }
+
+    internal static BirEnumOrdinal ReferencedOrdinal(IBirExpression receiver, TypeNode enumType, ReferenceMetadataIndex refs)
+        => new() {
+            E = OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)receiver).DeepClone()),
+            Type = BirGraphValue.CopyType(enumType), Values = ValuesValue(ReferencedOrdinalMetadata(enumType, refs)),
+        };
 
     static int _parseTemp;
 }

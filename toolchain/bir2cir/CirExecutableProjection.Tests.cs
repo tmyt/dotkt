@@ -191,21 +191,23 @@ static partial class CirDeclarationProjection
         foreach (var result in new[] { "System.Text.StringBuilder", "System.Single" })
         {
             var generic = result == "System.Text.StringBuilder";
-            var expression = new JsonObject {
-                ["k"] = generic ? "callStatic" : "field",
-                ["ownerType"] = TypeJson.Fqn(generic ? "System.Activator" : "System.Numerics.Vector3"),
-                [generic ? "method" : "name"] = generic ? "CreateInstance" : "X",
-                ["ret"] = TypeJson.Fqn(result),
+            IBirExpression expression = generic ? new BirCallStatic {
+                OwnerType = new TypeNode.Fqn("System.Activator"), Method = "CreateInstance",
+                Ret = new TypeNode.Fqn(result), TypeArgs = new TypeNode[] { new TypeNode.Fqn(result) },
+                Args = Array.Empty<IBirExpression>(),
+            } : new BirFieldGet {
+                OwnerType = new TypeNode.Fqn("System.Numerics.Vector3"), Name = "X",
+                Ret = new TypeNode.Fqn(result), Recv = new BirLocal { Name = "vector" },
             };
-            if (generic)
-            {
-                expression["typeArgs"] = new JsonArray(TypeJson.Fqn(result));
-                expression["args"] = new JsonArray();
-            }
-            else expression["recv"] = Local("vector");
-            NetInteropBinding.Apply(expression, interopReferences);
-            if (expression["k"]!.GetValue<string>() != (generic ? "clrGenericStatic" : "clrPropGet")
-                || NodeType.Of(expression) != new TypeNode.Fqn(result))
+            var declaration = new BirFunctionDeclaration {
+                Name = "nativeResult", Body = new IBirStatement[] {
+                    new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of(expression) },
+                },
+            };
+            NetInteropBinding.Apply(new BirFileDeclaration { Methods = new[] { declaration } }, interopReferences);
+            var bound = (BirGraphNode)((BirExpressionStatement)declaration.Body.Value.Single()).Expr.Value;
+            if (bound.Tag != (generic ? "clrGenericStatic" : "clrPropGet")
+                || TypedCallEvalLowering.StaticTypeOf(bound) != new TypeNode.Fqn(result))
                 throw new InvalidOperationException("Interop reshaping lost the intermediate result fact before operand planning");
         }
         Console.WriteLine("[CIR executable boundary] self-test OK (scalar widths, source handoffs, exact calls, executable type lowering)");

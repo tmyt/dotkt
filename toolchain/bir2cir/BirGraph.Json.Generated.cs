@@ -6464,6 +6464,7 @@ internal static partial class BirGraphJson
         OptionalField<BirOverride[]> field7 = default;
         OptionalField<TypeNode> field8 = default;
         OptionalField<TypeNode> field9 = default;
+        OptionalField<TypeNode> field10 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -6471,7 +6472,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 10); if (ReadString(ref reader) != "clrEventGet") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 11); if (ReadString(ref reader) != "clrEventGet") throw new FormatException(); break;
                 case "companionCall":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
@@ -6512,6 +6513,10 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 9);
                     field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(ReadFrozenType(ref reader));
                     break;
+                case "ret":
+                    Seen(ref seen, 1UL << 10);
+                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
         }
@@ -6528,6 +6533,7 @@ internal static partial class BirGraphJson
             Overrides = field7,
             CompanionReceiver = field8,
             SuspendFnTypePre = field9,
+            Ret = field10,
         };
     }
 
@@ -11287,9 +11293,11 @@ internal static partial class BirGraphJson
         OptionalField<TypeNode[]> field11 = default;
         OptionalField<TypeNode[]> field12 = default;
         OptionalField<bool> field13 = default;
-        OptionalField<TypeNode> field14 = default;
-        OptionalField<TypeNode[]> field15 = default;
+        OptionalField<TypeNode[]> field14 = default;
+        OptionalField<string> field15 = default;
         OptionalField<TypeNode> field16 = default;
+        OptionalField<TypeNode[]> field17 = default;
+        OptionalField<TypeNode> field18 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -11297,7 +11305,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 17); if (ReadString(ref reader) != "newBoundClrDelegate") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 19); if (ReadString(ref reader) != "newBoundClrDelegate") throw new FormatException(); break;
                 case "funcType":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
@@ -11354,17 +11362,25 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 13);
                     field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "dotktDelegateSlot":
+                case "argTypes":
                     Seen(ref seen, 1UL << 14);
-                    field14 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    field14 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
                     break;
-                case "resolvedMemberParams":
+                case "declarationId":
                     Seen(ref seen, 1UL << 15);
-                    field15 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
+                    field15 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
-                case "resolvedMemberReturn":
+                case "dotktDelegateSlot":
                     Seen(ref seen, 1UL << 16);
                     field16 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 17);
+                    field17 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 18);
+                    field18 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -11386,9 +11402,11 @@ internal static partial class BirGraphJson
             Sig = field11,
             CalleeParams = field12,
             ClrOwnerResolved = field13,
-            DotktDelegateSlot = field14,
-            ResolvedMemberParams = field15,
-            ResolvedMemberReturn = field16,
+            ArgTypes = field14,
+            DeclarationId = field15,
+            DotktDelegateSlot = field16,
+            ResolvedMemberParams = field17,
+            ResolvedMemberReturn = field18,
         };
     }
 
@@ -11407,9 +11425,12 @@ internal static partial class BirGraphJson
         OptionalField<TypeNode> field8 = default;
         OptionalField<TypeNode[]> field9 = default;
         OptionalField<TypeNode[]> field10 = default;
-        OptionalField<TypeNode> field11 = default;
+        OptionalField<bool> field11 = default;
         OptionalField<TypeNode[]> field12 = default;
-        OptionalField<TypeNode> field13 = default;
+        OptionalField<string> field13 = default;
+        OptionalField<TypeNode> field14 = default;
+        OptionalField<TypeNode[]> field15 = default;
+        OptionalField<TypeNode> field16 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -11417,7 +11438,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 14); if (ReadString(ref reader) != "newClrStaticDelegate") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 17); if (ReadString(ref reader) != "newClrStaticDelegate") throw new FormatException(); break;
                 case "funcType":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
@@ -11462,17 +11483,29 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 10);
                     field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
                     break;
-                case "dotktDelegateSlot":
+                case "virtual":
                     Seen(ref seen, 1UL << 11);
-                    field11 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    field11 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "resolvedMemberParams":
+                case "argTypes":
                     Seen(ref seen, 1UL << 12);
                     field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
                     break;
-                case "resolvedMemberReturn":
+                case "declarationId":
                     Seen(ref seen, 1UL << 13);
-                    field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
+                    break;
+                case "dotktDelegateSlot":
+                    Seen(ref seen, 1UL << 14);
+                    field14 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 15);
+                    field15 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => TypeNode.ReadJson(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 16);
+                    field16 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -11491,9 +11524,12 @@ internal static partial class BirGraphJson
             Type = field8,
             Sig = field9,
             CalleeParams = field10,
-            DotktDelegateSlot = field11,
-            ResolvedMemberParams = field12,
-            ResolvedMemberReturn = field13,
+            Virtual = field11,
+            ArgTypes = field12,
+            DeclarationId = field13,
+            DotktDelegateSlot = field14,
+            ResolvedMemberParams = field15,
+            ResolvedMemberReturn = field16,
         };
     }
 

@@ -16,11 +16,6 @@ static class ForeignStarProjectionBinding
     const string RuntimeOwner = "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt";
     const string DeclarationSignatureKey = "_foreignDeclarationSignature";
 
-    internal static void PreserveDeclarationSignature(JsonObject target, JsonNode signature)
-    {
-        if (signature is JsonArray) target[DeclarationSignatureKey] = signature.ToJsonString();
-    }
-
     internal static void DropDeclarationSignatures(BirFileDeclaration root)
     {
         root.Visit(node => {
