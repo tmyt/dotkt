@@ -332,7 +332,6 @@ sealed class Pipeline
         // Select exact CLR integral widths and ordered physical constants once,
         // retaining separate explicit-remapping and all-enum parsing inventories.
         var explicitEnums = ClrEnumLowering.Apply(captured, out var parseEnums);
-        var enums = new EnumPreparation(richEnums, richEnumFields, basicEnums, explicitEnums, parseEnums);
         // Publish representation-selected inline bodies before per-file rewrites.
         // The local index retains source spans; only outgoing opaque DLL carriers
         // hide them. Later declaration/body walks do not descend into these bytes;
@@ -407,11 +406,13 @@ sealed class Pipeline
         {
             // Range realization can produce further primitive operations.
             PrimitiveOperatorLowering.Apply(source, refs);
+            // Resolve enum values before array element derivation. EnumEntries
+            // already denotes a cached list and must not become an array value.
             EnumIntrinsicLowering.Apply(source, richEnums, inventory.LocalTopLevelFunctions, appBuild, refs,
                 representationMethodFrames);
             enumRuntimeLookup |= EnumValueLowering.Apply(source, refs, richEnumFields, basicEnums, explicitEnums, parseEnums);
         }
-        enums = enums with { RuntimeLookup = enumRuntimeLookup };
+        var enums = new EnumPreparation(richEnums, basicEnums, enumRuntimeLookup);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -509,9 +510,8 @@ sealed class Pipeline
         // are matched by exact frontend declaration identity and owner, never by a library/name heuristic.
         var uncheckedGenericCastRets = module.Preparation.UncheckedReturns;
 
-        // The local RICH-enum type names (a `kind:"class"` decl carrying the faithful `enumRich:true` marker), across
-        // ALL input files: EnumIntrinsicLowering lowers `enumValues<RichEnum>()` to the synthesized static values()
-        // (not the System.Enum-reflection semantic node — a rich enum is a plain singleton class).
+        // Rich-enum declarations require their API metadata even in a runtime
+        // stdlib build; the typed prefix has already resolved their uses.
         var localRichEnums = module.Preparation.Enums.Rich;
 
         // The local BASIC (value-type, `kind:"enum"`) enum type names across ALL files — EnumMemberBinding rebinds a
@@ -559,7 +559,7 @@ sealed class Pipeline
             // identity — the sized ctor as `new kotlin.IntArray(size, init)`, the arrayGet/arraySet/forArray
             // intrinsics with NO `elem`. Derive the sized-array construction (newArrayInit/newArraySized) + stamp the
             // intrinsic element off the array operand's static type — including a basic/generic-param `enumValues`
-            // array (StaticType.Surface's `enumValues` case, #77) now that the pass above has already produced it.
+            // array after the typed enum prefix has resolved its source operation.
             // Runs EARLY (before FaithfulHintRecognition / SuspendColdLowering / BirTypeLowering) so every `elem`
             // consumer sees the stamped element.
             ArrayConstructionLowering.Apply(bir.Root, refs);
@@ -1788,10 +1788,7 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
     IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells);
-sealed record EnumPreparation(HashSet<string> Rich,
-    IReadOnlyDictionary<string, (string Name, string Ordinal)> RichFields, HashSet<string> Basic,
-    IReadOnlyDictionary<string, BasicEnumMetadata> Explicit,
-    IReadOnlyDictionary<string, BasicEnumMetadata> Parse, bool RuntimeLookup = false);
+sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);

@@ -19,7 +19,7 @@ using DotKt.Bir;
 // null). Runs right AFTER NetInteropBinding
 // (so the `clrPropSet` nodes exist) and BEFORE
 // BirTypeLowering (owner args + the `nullableValue` elem are still pure-Kotlin `kotlin.*`, lowered downstream exactly
-// as PrimitiveOperatorLowering's `nullableValue` is). BirScope-tracking walk (mirrors PrimitiveOperatorLowering) so a
+// as PrimitiveOperatorLowering's `nullableValue` is). A BirScope-tracking walk ensures a
 // `{local q}` source resolves its declared static type. Non-ref build only (clrPropSet is a NetInteropBinding product).
 static class ValueSlotNullableWrite
 {
