@@ -67,6 +67,7 @@ static class Bir2Cir
                 InheritedMemberOwnerBinding.SourceProjectionSelfTest();
                 TypedExecutableFrames.SelfTest();
                 ClosureSynthesis.TypedMaterializedSelfTest();
+                SharedSyntheticSynthesis.SelfTest();
                 DefaultArgSplice.SourcePreparationSelfTest();
                 FaithfulHintRecognition.TypedSelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
@@ -380,6 +381,15 @@ sealed class Pipeline
             valueRepresentations.BindOperations(source);
             ReifiedNullabilityWitnessLowering.Apply(source, nullableWitnessDemand, refs, valueRepresentations, RetireDeclaration);
         }
+        // Ingredients become actual declarations in this same owning graph.
+        // Preserve the source vectors and append synthesized types only after
+        // every file's witness preparation has completed.
+        var sharedCells = new List<SharedSyntheticSynthesis.CellStorage>();
+        foreach (var source in captured)
+        {
+            ClosureSynthesis.Apply(source, refs, scalarSlots.ProjectMethod);
+            SharedSyntheticSynthesis.Apply(source, refs, sharedCells);
+        }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -409,7 +419,7 @@ sealed class Pipeline
         retiredDom.Clear();
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames, placement,
-            new ModulePreparation(inventory, forwardedEvents, nullableDeclarations, uncheckedReturns, enums));
+            new ModulePreparation(inventory, forwardedEvents, nullableDeclarations, uncheckedReturns, enums, sharedCells));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -525,19 +535,11 @@ sealed class Pipeline
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
         var staged = new List<(JsonNode Root, string OutputName)>();
         var localEventDeclarations = new ClrEventImplBinding.LocalEvents(birFiles.Select(file => file.Root), refs.IsByRefLikeFqn);
-        var sharedCells = new List<SharedSyntheticSynthesis.CellStorage>();
+        var sharedCells = module.Preparation.SharedCells;
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
-            // SYNTHETIC CLR-REPRESENTATION TYPES (#52 kotc-purity): kotc emits only the FACTS — a capturing lambda's
-            // `newClosure` carries a transient `synthClass` ingredient bag; a CharSequence use references the generated
-            // bridge identity; a heap ref-cell rides the `refTypes` registry. Raw payloads were expanded on typed BIR;
-            // after typed witness capture, ClosureSynthesis and SharedSyntheticSynthesis materialize these `types`.
-            // They run before ForIn classification and the global SuspendColdLowering declaration index; closure
-            // synthesis runs first so SharedSyntheticSynthesis can scan the completed invoke bodies.
-            ClosureSynthesis.Apply(bir.Root, refs, scalarSlots.ProjectMethod);
-            SharedSyntheticSynthesis.Apply(bir.Root, refs, sharedCells);
-            // Heap ref-cell types only become declarations in the transition above. Preserve their pristine element
+            // Owning typed preparation materialized heap ref-cell declarations. Preserve their pristine element
             // slots in the nullable-generic use index before the declaration erasure below. Otherwise a late
             // inherited protected-property read may be correctly realigned to object[] while its store into a
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
@@ -1822,7 +1824,8 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
 sealed record ModulePreparation(TypedModuleInventory Inventory,
     IReadOnlyDictionary<(string Owner, string Event), TypeNode> ForwardedEvents,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
-    UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums);
+    UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
+    IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells);
 sealed record EnumPreparation(HashSet<string> Rich,
     IReadOnlyDictionary<string, (string Name, string Ordinal)> RichFields, HashSet<string> Basic,
     IReadOnlyDictionary<string, BasicEnumMetadata> Explicit,

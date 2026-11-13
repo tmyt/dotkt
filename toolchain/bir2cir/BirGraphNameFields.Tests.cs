@@ -44,6 +44,29 @@ static class BirGraphNameFieldsTests
         absent.VisitNameFields(_ => throw new InvalidOperationException("Absent name was visited"));
         var explicitNull = new BirLocal { Name = DotKt.Cir.OptionalField<string>.Null };
         explicitNull.VisitNameFields(_ => throw new InvalidOperationException("Null name was visited"));
+        var strings = new List<string>();
+        root.Visit(node => node.VisitStringFields(strings.Add));
+        if (!strings.Contains("ignoredPackage") || !strings.Contains("ignoredOwner")
+            || !strings.Contains("{\"var\":\"LiteralName\"}") || strings.Contains("LiteralName")
+            || strings.Contains("FrozenParameterType") || strings.Contains("OpaqueName"))
+            throw new InvalidOperationException("Structural string scan lost actual literals/classifiers or decoded opaque text");
+        var typeNodes = new List<TypeNode>();
+        BirGraphNameFields.VisitTypeNodes(signature, typeNodes.Add);
+        if (!typeNodes.Any(type => ReferenceEquals(type, nested)) || typeNodes.Count(type => type is TypeNode.Fqn) != 7
+            || typeNodes.OfType<TypeNode.Fqn>().Any(type => type.Name == "SourceClassifier"))
+            throw new InvalidOperationException("Structural type-node scan confused classifiers with actual type nodes");
+        var phaseCapture = new BirInlineCapture { Name = "capture", Type = signature,
+            SharedCellType = new TypeNode.Fqn("Cell"), SharedCellTypeParams = Array.Empty<BirTypeParameter>() };
+        var slots = new List<(string Field, TypeNode Type)>();
+        phaseCapture.VisitOwnTypeFields((field, type) => slots.Add((field, type)));
+        if (slots.Count != 2 || slots[0] != ("type", signature) || slots[1].Field != "sharedCellType")
+            throw new InvalidOperationException("Structural type-field scan lost an explicit field role");
+        phaseCapture.ClearSyntheticFrameFacts();
+        phaseCapture.ClearSyntheticFrameFacts();
+        if (phaseCapture.SharedCellType.IsPresent || phaseCapture.SharedCellTypeParams.IsPresent
+            || !ReferenceEquals(phaseCapture.Type.Value, signature) || phaseCapture.Name.Value != "capture"
+            || !root.StructurallyEquals(before))
+            throw new InvalidOperationException("Synthetic fact cleanup changed unrelated owning facts");
         Console.WriteLine("[structural name fields] self-test OK (graph names, structured types/classifiers, frozen/opaque exclusions and identity)");
     }
 }

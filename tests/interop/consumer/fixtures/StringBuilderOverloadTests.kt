@@ -9,6 +9,22 @@ private fun referencedCharSequenceAsAny(): Any = interopCharSequence(" abcd ").t
 
 class StringBuilderOverloadTests {
     @TestAttribute
+    fun boundAnyReferencesOnPureStringCaptureReceiverOnce() {
+        var evaluations = 0
+        fun receiver(): CharSequence { evaluations++; return "hello" }
+        val text = receiver()::toString
+        check(evaluations == 1)
+        val hash = receiver()::hashCode
+        check(evaluations == 2)
+        val equal = receiver()::equals
+        check(evaluations == 3)
+        check(text() == "hello" && text() == "hello")
+        check(hash() == "hello".hashCode() && hash() == "hello".hashCode())
+        check(equal("hello") && !equal("other") && !equal(null))
+        check(evaluations == 3)
+    }
+
+    @TestAttribute
     fun pureAppAppendRangePreservesKotlinContract() {
         val text = interopNullableCharSequence("abcd")
         val throughInterface: Appendable = StringBuilder()

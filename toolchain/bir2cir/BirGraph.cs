@@ -36,6 +36,11 @@ internal abstract record BirGraphValue
     // Own scalar name/var fields and structured type leaves only. The caller
     // controls graph descent; encoded source facts and carrier bytes stay opaque.
     public abstract void VisitNameFields(Action<string> visit);
+    // Direct structural leaves only; callers own graph descent. Field names
+    // distinguish explicit phase facts without reflecting over CLR properties.
+    public abstract void VisitOwnTypeFields(Action<string, TypeNode> visit);
+    public abstract void VisitStringFields(Action<string> visit);
+    public virtual void ClearSyntheticFrameFacts() { }
     // Source recognition extends declaration parameters and walks each schema
     // statement vector in its own preceding-declaration environment.
     public virtual void VisitSourceParameters(Action<string, TypeNode> visit) { }

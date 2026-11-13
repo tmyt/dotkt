@@ -35,8 +35,19 @@ static partial class ClosureSynthesis
     internal static MaterializedClosures ApplyMaterialized(BirFileDeclaration file,
         IEnumerable<MaterializedOccurrence> inputs, ReferenceMetadataIndex refs)
     {
-        var pending = new List<BirClassDefinition>();
         var provenance = new List<ClosureProvenance>();
+        var appended = SynthesizeTyped(file, inputs, refs, null, provenance, skipAttributes: true);
+        return new MaterializedClosures(appended, provenance);
+    }
+
+    // The main file pass shares the actual normalization and construction authority without paying for the
+    // independent ingredients snapshots used only by prepared-default restoration.
+    static IReadOnlyList<BirClassDefinition> SynthesizeTyped(BirFileDeclaration file,
+        IEnumerable<MaterializedOccurrence> inputs, ReferenceMetadataIndex refs,
+        Action<BirFunctionDeclaration, NullableRepresentationFrame> projectSamMethod,
+        ICollection<ClosureProvenance> provenance, bool skipAttributes)
+    {
+        var pending = new List<BirClassDefinition>();
         foreach (var input in inputs) Walk(input.Slot, input.Context);
         var have = file.Types.OrEmpty().Select(type => type switch {
             BirClassDefinition value => value.Name.OrDefault(),
@@ -45,10 +56,10 @@ static partial class ClosureSynthesis
         }).Where(name => name != null).ToHashSet(StringComparer.Ordinal);
         var appended = pending.Where(type => !type.Name.HasValue || have.Add(type.Name.Value)).ToArray();
         if (appended.Length != 0) file.Types = file.Types.OrEmpty().Concat(appended).ToArray();
-        return new MaterializedClosures(appended, provenance);
+        return appended;
 
         void Children(BirGraphValue node, CaptureContext context)
-            => node.VisitChildSlots(slot => { if (slot.Value is not BirAttribute) Walk(slot, context); });
+            => node.VisitChildSlots(slot => { if (!skipAttributes || slot.Value is not BirAttribute) Walk(slot, context); });
 
         void Record(string name, IEnumerable<(string Name, TypeNode Type)> fields, CaptureContext context)
             => RecordCaptureLegality(name, fields, FieldLegality.PosPrefix(context.Path, context.Line), context.Owner, refs);
@@ -77,7 +88,7 @@ static partial class ClosureSynthesis
             if (node is BirNewClosure { SynthClass.HasValue: true } closure)
             {
                 var source = closure.SynthClass.Value;
-                provenance.Add(new ClosureProvenance(source.Name.OrDefault(), closure, source.DeepClone()));
+                provenance?.Add(new ClosureProvenance(source.Name.OrDefault(), closure, source.DeepClone()));
                 if (closure.Captures.HasValue)
                     for (var index = 0; index < closure.Captures.Value.Length; index++)
                     {
@@ -95,11 +106,16 @@ static partial class ClosureSynthesis
             if (node is BirNewSam { SynthClass.HasValue: true } sam)
             {
                 var source = sam.SynthClass.Value;
-                provenance.Add(new ClosureProvenance(source.Name.OrDefault(), sam, source.DeepClone()));
+                provenance?.Add(new ClosureProvenance(source.Name.OrDefault(), sam, source.DeepClone()));
+                // Preserve the existing ordinary-SAM branch's body-only traversal. It does not use the
+                // generic child walk (or the closure branch's separate capture-expression traversal).
                 foreach (var method in source.Methods.OrEmpty()) WalkBody(method.Body, context);
                 Record(source.Name.OrDefault(), source.Fields.OrEmpty().Where(field => field.Type.HasValue)
                     .Select(field => (field.Name.OrDefault(), field.Type.Value)), context);
-                pending.Add((BirClassDefinition)TypedExecutableFrames.PrepareSynthetic(source, sam.TypeArgs.OrDefault()));
+                var declaration = (BirClassDefinition)TypedExecutableFrames.PrepareSynthetic(source, sam.TypeArgs.OrDefault());
+                var ownerFrame = declaration.KotlinSupertypesPre.OrDefault()?.NullableFrame;
+                foreach (var method in declaration.Methods.OrEmpty()) projectSamMethod?.Invoke(method, ownerFrame);
+                pending.Add(declaration);
                 sam.SynthClass = default;
                 return;
             }
@@ -120,7 +136,7 @@ static partial class ClosureSynthesis
     static BirNewClosure LowerClrDelegateSam(BirNewSam node, ReferenceMetadataIndex refs)
     {
         var source = node.SynthClass.Value;
-        if (refs == null || source.Interfaces.OrEmpty() is not [TypeNode.Fqn target] || !refs.IsClrDelegate(target)
+        if (ProjectedDelegateSamTarget(source.Interfaces.OrEmpty(), source.Methods.OrEmpty().Length, refs) is not { } target
             || source.Methods.OrEmpty() is not [var invoke] || !node.SamType.HasValue
             || invoke.Params.OrEmpty().Any(parameter => !parameter.Type.HasValue) || !invoke.Ret.HasValue) return null;
         var closure = new BirNewClosure {

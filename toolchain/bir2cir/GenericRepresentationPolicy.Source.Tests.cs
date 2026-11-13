@@ -23,7 +23,7 @@ sealed partial class GenericRepresentationPolicy
         var companionUse = new BirStaticFieldGet { OwnerType = new TypeNode.Fqn("SourcePolicy"), Name = "slot",
             CompanionReceiver = new TypeNode.Nullable(new TypeNode.Fqn("Second")) };
         var cellUse = new BirFieldGet { OwnerType = new TypeNode.Fqn("SourceCell"), Name = "v", Recv = new BirLocal { Name = "cell" } };
-        var cell = new BirRefTypeDeclaration { Name = "SourceCell", Elem = text };
+        var cell = new BirRefTypeDeclaration { Name = "SourceCell", Elem = text, TypeParams = Array.Empty<BirTypeParameter>() };
         var source = new BirClassDefinition { Name = "SourceFrame", Kind = "class",
             TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Fields = new[] { exported, addressed, ordinary } };
         var generated = new BirClassDefinition { Name = "GeneratedFrame", Kind = "class", Generated = true,
@@ -58,9 +58,18 @@ sealed partial class GenericRepresentationPolicy
             || policy.LocalDeclaration("SourceFrame") != null)
             throw new InvalidOperationException("Owning source policy mixed source eligibility with DOM declaration association");
         policy.PrepareDomLocations(new[] { root });
+        // The selected source cell becomes real storage before the same owning
+        // handoff; its native role must move to the actual generated field.
+        SharedSyntheticSynthesis.Apply(root, ReferenceMetadataIndex.Build(Array.Empty<string>()));
+        continuation = root.ToDom();
         policy.BindDomDeclarations(new JsonNode[] { continuation });
         var boundOwner = continuation["types"][0].AsObject();
         var boundField = boundOwner["fields"][1].AsObject();
+        var cellOwner = continuation["types"].AsArray().OfType<JsonObject>()
+            .Single(type => type["name"]?.GetValue<string>() == "SourceCell");
+        if (root.RefTypes.IsPresent || !policy.IsNativeField(cellOwner["fields"][0].AsObject())
+            || cellOwner["fields"][0][NativeLocationKey]?.GetValue<bool>() != true)
+            throw new InvalidOperationException("Selected native ref-cell storage lost its actual synthesized field at handoff");
         if (!ReferenceEquals(policy.LocalDeclaration("SourceFrame"), boundOwner) || !policy.IsNativeField(boundField))
             throw new InvalidOperationException("Source policy did not retain the actual continuing declaration identity");
         boundField.Remove(NativeLocationKey);
