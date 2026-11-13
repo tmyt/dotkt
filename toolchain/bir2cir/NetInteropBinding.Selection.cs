@@ -6,7 +6,6 @@ static partial class NetInteropBinding
     enum NativeCallKind { Restricted, Event, Generic, EnumName, EnumOrdinal, EnumCompare, PropertyGet, PropertySet, Operator, Method }
     sealed record CallSelection(TypeNode Owner, Type NativeType, string Method, bool Static, NativeCallKind Kind, bool ClearProperty = false);
     sealed record FieldSelection(TypeNode Owner, string Name, bool Static, bool Restricted);
-    sealed record DelegateSelection(TypeNode Owner, string Method, bool Static, bool PreserveReceiver, string SourceOwner, string SourceMethod);
     sealed record Signatures(TypeNode[] Declaration, TypeNode[] Declared, TypeNode[] Generic, TypeNode[] Operator);
 
     static Signatures SelectSignatures(TypeNode[] arguments, TypeNode[] shapes, TypeNode[] signature)
@@ -125,42 +124,6 @@ static partial class NetInteropBinding
         }
         var isStatic = companionStatic ?? (native.IsAbstract && native.IsSealed || MemberIsStaticPropertyOrField(native, name));
         return new(isStatic ? CloseStaticOwner(ownerType, native) : ownerType, name, isStatic, false);
-    }
-
-    static DelegateSelection SelectDelegate(ReferenceMetadataIndex refs, TypeNode ownerType, string method,
-        bool hasArgumentTypes, bool companionCall, int arity, IReadOnlyList<TypeNode> signature)
-    {
-        if (!hasArgumentTypes && !companionCall) return null;
-        var owner = UnwrapFqn(ownerType);
-        if (owner == null) return null;
-        var bare = ReferenceMetadataIndex.BareOwnerFqn(owner.Name);
-        var physicalOwner = ReferenceMetadataIndex.ReflectedOwnerFqn(owner.Name);
-        bool? companionStatic = companionCall && refs.TryCompanionIsStatic(bare, out var resolvedStatic) ? resolvedStatic : null;
-        var native = companionStatic != null ? refs.ResolveRefType(physicalOwner, owner.Args?.Length ?? 0)
-            : refs.ResolveNetType(physicalOwner, owner.Args?.Length ?? 0);
-        if (native == null && companionCall && refs.HasDotKtOwner(bare))
-        {
-            native = refs.ResolveRefType(physicalOwner, owner.Args?.Length ?? 0);
-            if (native != null && refs.TryKotlinRichEnumStaticApi(bare, method, signature.Count, out var api))
-            { companionStatic = true; method = api; }
-            else throw new InvalidOperationException($"DotKt companion callable-reference owner '{bare}' has no trusted companion carrier");
-        }
-        if (companionCall && companionStatic == null)
-            throw new InvalidOperationException($"DotKt companion callable-reference owner '{bare}' has no trusted companion carrier");
-        if (native == null)
-        {
-            if (companionCall) throw new InvalidOperationException($"companion callable-reference owner '{bare}' is absent from the selected references");
-            return null;
-        }
-        var carrier = refs.TryCompanionPhysicalOwner(bare, out var mapped) ? mapped : bare;
-        string intrinsic = null, semanticOwner = null;
-        var exact = companionCall && signature != null && signature.All(type => type != null)
-            && refs.TryExactMemberIntrinsic(ReferenceMetadataIndex.BareOwnerFqn(carrier), method, arity, signature, out intrinsic)
-            && refs.TryCompanionSemanticOwner(carrier, out semanticOwner) && refs.TryResolveClrOwner(semanticOwner, out _, out _);
-        var sourceMethod = method;
-        if (!exact && method == "invoke" && refs.IsClrDelegate(owner)) method = "Invoke";
-        return new(exact ? new TypeNode.Fqn(semanticOwner, owner.Args) : ownerType,
-            exact ? intrinsic : method, exact || companionStatic == true, exact, bare, sourceMethod);
     }
 
     static bool CompanionEventStatic(ReferenceMetadataIndex refs, TypeNode owner)

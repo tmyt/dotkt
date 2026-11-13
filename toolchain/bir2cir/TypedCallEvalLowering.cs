@@ -138,23 +138,6 @@ static class TypedCallEvalLowering
     internal static TypeNode StaticTypeOf(BirGraphValue value) => BirNodeType.Of(value as BirGraphNode,
         node => StaticTypeOf(node), name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var element) ? element : null);
 
-    internal static IBirExpression PreserveUnreadValueBefore(IBirExpression value, IBirExpression lowered, string context)
-    {
-        if (value == null) return lowered;
-        var graph = Graph(value);
-        var type = StaticTypeOf(graph);
-        CallEvalLowering.RequireUnreadValueType(type, value is BirStaticFieldGet, context);
-        var binding = new BirCallBinding {
-            Id = CallEvalLowering.FreshBindingId(), Expr = Field(Expr(graph.DeepClone())),
-            Stable = ValueStability.IsReReadable((graph as BirGraphNode)?.Tag,
-                value is BirEnumValue { Underlying.HasValue: true, PhysicalValue.HasValue: true }),
-            Type = type == null ? default : OptionalField<TypeNode>.Of(type),
-        };
-        var (statements, replacements) = Materialise(new[] { binding }, new[] { Graph(lowered) }, context);
-        var result = Expr(Substitute(Graph(lowered), replacements));
-        return statements.Length == 0 ? result : new BirValueBlock { Stmts = statements, Result = Field(result) };
-    }
-
     internal static bool IsLvalueFormer(IBirExpression value) => CallEvalLowering.IsLvalueFormer(Graph(value));
 
     static bool StaysWithoutPin(IBirExpression value)

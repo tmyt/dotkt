@@ -584,7 +584,7 @@ sealed class Pipeline
             // #11/#501 — VALUE-TYPE PLATFORM SLOT ACCESS COERCION: reconcile reflected bare/Nullable<V> property or
             // field slots with the Kotlin platform view on both writes and reads. Writes receive explicit wrap/unwrap;
             // reads carry the reflected physical result so the receiving local cannot reinterpret Nullable<V> as V.
-            // Runs right after NetInteropBinding and before BirTypeLowering. Non-ref only.
+            // Runs after source/native binding and before BirTypeLowering. Non-ref only.
             if (!_options.RefBuild) ValueSlotNullableWrite.Apply(bir.Root, refs, isValueFqn);
             // W1-S1 (#46/#44): the `clrGeneric*` overload-matcher is now the STRUCTURED `resolvedMemberParams` descriptor
             // NetInteropBinding carries (the callee's declared param TypeNodes) — BirTypeLowering lowers it and ilemit

@@ -8,6 +8,7 @@ static partial class NetInteropBinding
     {
         var refs = ReferenceMetadataIndex.Build(new[] {
             typeof(object).Assembly.Location, typeof(System.Numerics.Vector3).Assembly.Location,
+            typeof(Console).Assembly.Location, typeof(System.Collections.ObjectModel.KeyedCollection<,>).Assembly.Location,
         }.Distinct().ToArray());
         var text = new TypeNode.Fqn("System.String");
         var integer = new TypeNode.Fqn("kotlin.Int");
@@ -26,8 +27,6 @@ static partial class NetInteropBinding
         var operatorReceiver = Local("left");
         var operatorArgument = Local("right");
         var assigned = new BirConstant { Type = floating, Value = new BirLiteral.RealLiteral(1.0) };
-        var localReference = new BirNewBoundDelegate { OwnerType = builder, Method = "ToString", Sig = Array.Empty<TypeNode>(),
-            Recv = Local("ordinary"), FuncType = new TypeNode.Fn(false, text, Array.Empty<TypeNode>()) };
         var opaqueCall = new BirCallStatic { OwnerType = new TypeNode.Fqn("System.Math"), Method = "Abs",
             Sig = new TypeNode[] { integer }, Args = new IBirExpression[] { index } };
         var opaque = new BirInlinePayload { V = 1, Fqn = "NativeProbeKt.carrier", FileClass = "NativeProbeKt", Static = true,
@@ -36,6 +35,18 @@ static partial class NetInteropBinding
         var call = new BirCallStatic { OwnerType = new TypeNode.Fqn("System.Activator"), Method = "CreateInstance",
             TypeArgs = new TypeNode[] { builder }, ShapeTypes = Array.Empty<TypeNode>(),
             Args = Array.Empty<IBirExpression>(), Ret = builder, Sty = builder };
+        var eventHandle = new TypeNode.Fqn("kotlin.clr.ClrEvent", new TypeNode[] {
+            new TypeNode.Fqn("System.ConsoleCancelEventHandler"),
+        });
+        var eventStamp = new TypeNode.Oblivious(eventHandle);
+        var eventRead = new BirCallStatic { OwnerType = new TypeNode.Fqn("System.Console"),
+            Method = "CancelKeyPress", Prop = "get", Args = Array.Empty<IBirExpression>(), Sig = Array.Empty<TypeNode>(),
+            Ret = eventHandle, Sty = eventStamp };
+        var protectedOwner = new TypeNode.Fqn("System.Collections.ObjectModel.KeyedCollection", new TypeNode[] { text, text });
+        var protectedCall = new BirCallInstance { OwnerType = protectedOwner, Method = "GetKeyForItem",
+            MemberVisibility = "protected", DeclarationId = "selected-protected-member",
+            Recv = Local("keys"), Args = new IBirExpression[] { Local("item") },
+            Sig = new TypeNode[] { text }, Ret = text, Sty = text };
         var method = new BirFunctionDeclaration { Name = "nativeProbe", DeclarationId = "native-probe",
             Ret = new TypeNode.Fqn("kotlin.Unit"), Params = Array.Empty<BirParameter>(),
             Body = new IBirStatement[] {
@@ -45,15 +56,15 @@ static partial class NetInteropBinding
                     Recv = indexReceiver, Args = new IBirExpression[] { index }, Sig = new TypeNode[] { integer }, Ret = new TypeNode.Fqn("kotlin.Char") }),
                 Statement(new BirCallInstance { OwnerType = wrappedBuilder, Method = "Length", Prop = "get", Recv = memberReceiver,
                     Args = Array.Empty<IBirExpression>(), Sig = Array.Empty<TypeNode>(), Ret = integer, Sty = integer, Super = false }),
-                Statement(new BirNewBoundDelegate { OwnerType = builder, Method = "ToString", ArgTypes = Array.Empty<TypeNode>(),
-                    Recv = boundReceiver, FuncType = new TypeNode.Fn(false, text, Array.Empty<TypeNode>()),
-                    DeclarationId = "selected-native-member", Virtual = true }),
-                Statement(localReference),
+                Statement(new BirCallInstance { OwnerType = new TypeNode.Fqn("System.Func", new TypeNode[] { text }),
+                    Method = "invoke", Recv = boundReceiver, Args = Array.Empty<IBirExpression>(),
+                    Sig = Array.Empty<TypeNode>(), Ret = text, Sty = text }),
                 Statement(new BirCallInstance { OwnerType = new TypeNode.Fqn("System.DayOfWeek"), Method = "ordinal", Prop = "get",
                     Recv = Local("day"), Args = Array.Empty<IBirExpression>(), Sig = Array.Empty<TypeNode>(), Ret = integer }),
                 new BirSetField { OwnerType = vector, Name = "X", Recv = Local("destination"), Value = assigned },
                 Statement(new BirCallInstance { OwnerType = decimalType, Method = "plus", Recv = operatorReceiver,
                     Args = new IBirExpression[] { operatorArgument }, ArgTypes = new TypeNode[] { decimalType }, Ret = decimalType }),
+                Statement(eventRead), Statement(protectedCall),
             },
         };
         var file = new BirFileDeclaration { FileClass = "NativeProbeKt", Methods = new[] { method },
@@ -72,15 +83,20 @@ static partial class NetInteropBinding
             || At(3) is not BirPropertyGet { Name.Value: "Length", Super.Value: false } property
             || property.Type.OrDefault() != wrappedBuilder || !ReferenceEquals(property.Recv.Value, memberReceiver)
             || !property._foreignDeclarationSignature.HasValue || property._foreignDeclarationSignature.Value.Types.Count != 0
-            || At(4) is not BirBoundClrDelegate { DeclarationId.Value: "selected-native-member", Virtual.Value: true, ArgTypes.Value.Length: 0 } reference
-            || !ReferenceEquals(reference.Recv.Value, boundReceiver) || reference.TypeArgs.IsPresent
-            || !ReferenceEquals(At(5), localReference)
-            || At(6) is not BirEnumOrdinal { Values.Value.Length: 7 } ordinal || ordinal.Values.Value[0].Ordinal.Value != 0
-            || At(7) is not BirPropertySet { Name.Value: "X", Static.Value: false } store || !ReferenceEquals(store.Value.Value, assigned)
-            || At(8) is not BirNativeStatic { Method.Value: "op_Addition", ArgTypes.Value.Length: 2, Args.Value.Length: 2 } operation
+            || At(4) is not BirNativeInstance { Method.Value: "Invoke", ArgTypes.Value.Length: 0 } reference
+            || !ReferenceEquals(reference.Recv.Value, boundReceiver) || reference.Ret.Value != text || reference.Sty.Value != text
+            || At(5) is not BirEnumOrdinal { Values.Value.Length: 7 } ordinal || ordinal.Values.Value[0].Ordinal.Value != 0
+            || At(6) is not BirPropertySet { Name.Value: "X", Static.Value: false } store || !ReferenceEquals(store.Value.Value, assigned)
+            || At(7) is not BirNativeStatic { Method.Value: "op_Addition", ArgTypes.Value.Length: 2, Args.Value.Length: 2 } operation
             || !ReferenceEquals(operation.Args.Value[0], operatorReceiver) || !ReferenceEquals(operation.Args.Value[1], operatorArgument)
             || operation.ArgTypes.Value.Any(type => type != decimalType))
             throw new InvalidOperationException("Native binding lost a selected member, exact signature, result stamp or occurrence");
+        if (At(8) is not BirEventGet { Name.Value: "CancelKeyPress", Static.Value: true } eventValue
+            || eventValue.Ret.Value != eventHandle || eventValue.Sty.Value != eventStamp || eventValue.Recv.IsPresent
+            || !ReferenceEquals(At(9), protectedCall) || protectedCall.OwnerType.Value != protectedOwner
+            || protectedCall.Method.Value != "GetKeyForItem" || protectedCall.MemberVisibility.Value != "protected"
+            || protectedCall.DeclarationId.Value != "selected-protected-member" || protectedCall.Ret.Value != text)
+            throw new InvalidOperationException("Native event binding lost its result stamps or restricted binding changed source declaration facts");
         var inlineBytes = ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, opaque);
         var opaqueFile = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration { Name = "carrier", InlineBir = inlineBytes } } };
         Apply(opaqueFile, refs);
@@ -107,13 +123,6 @@ static partial class NetInteropBinding
             || CloseStaticOwner(new TypeNode.Fqn(genericOwner.Name, empty), typeof(List<>)) is not TypeNode.Fqn { Args.Length: 0 }
             || CloseStaticOwner(new TypeNode.Nullable(genericOwner), typeof(List<>)) is not TypeNode.Nullable { Of: TypeNode.Fqn { Args: null } })
             throw new InvalidOperationException("Static-owner closure inferred absent arguments through wrappers or an explicit empty vector");
-        var effect = new BirCallStatic { Method = "sourceEffect", Ret = integer, Args = Array.Empty<IBirExpression>() };
-        var lowered = new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(7) };
-        var preserved = TypedCallEvalLowering.PreserveUnreadValueBefore(effect, lowered, "native self-test");
-        if (preserved is not BirValueBlock { Stmts.Value: [BirVariable { Init.Value: BirCallStatic { Method.Value: "sourceEffect" } }],
-                Result.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 7 } } }
-            || TypedCallEvalLowering.PreserveUnreadValueBefore(Local("unused"), lowered, "native self-test") is not BirConstant)
-            throw new InvalidOperationException("Mapped-away native receiver was duplicated, discarded or reordered");
-        Console.WriteLine("[typed native binding] self-test OK (owning declarations, native calls/fields/indexers/delegates, enum ordinal, stamps, exact vectors, opaque payload, frozen signature, receiver evaluation)");
+        Console.WriteLine("[typed native binding] self-test OK (owning declarations, native calls/fields/indexers/delegate invocation/events, restricted slots, enum ordinal, stamps, exact vectors, opaque payload and frozen signature)");
     }
 }
