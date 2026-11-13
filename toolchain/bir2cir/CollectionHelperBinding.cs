@@ -394,7 +394,7 @@ static partial class CollectionHelperBinding
 
     // These DOM-consumer fixtures keep direct expression handles for assertions.
     // Author their statement wrappers only in the owning capture fixture, before
-    // the production pass or its callback mutates the original graph.
+    // helper preparation or collection binding mutates the original graph.
     static SourceCollectionInputs CaptureFixture(JsonObject root)
         => new(new[] { ReadFixture(root) }, null);
 
