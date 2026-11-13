@@ -60,6 +60,7 @@ static class Bir2Cir
                 ClrEventImplBinding.SelfTestSourceFacts();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
+                ObjectSlotRename.SelfTest();
                 DefaultBirCarrier.SelfTest();
                 ExecutableBirCodec.SelfTest();
                 MaterializedExecutable.SelfTest();
@@ -81,6 +82,7 @@ static class Bir2Cir
                 BirTypeLowering.SelfTestMethodImplMetadata();
                 SupertypeGraph.SelfTestDeclarationIdentity();
                 CollectionHelperBinding.SelfTest();
+                SourceCollectionInputs.SelfTest();
                 IntrinsicExtensionRepresentation.SelfTest();
                 ReferenceExistentialAbiBinding.SelfTest();
                 KotlinCollectionSlotSynthesis.SelfTest();
@@ -227,6 +229,18 @@ sealed class Pipeline
             captured, refs, sourceIsValue, carryForReference: referenceBuild);
         if (!referenceBuild)
             foreach (var source in captured) aliasConstructorDelegations.Apply(source);
+        // Snapshot collection-selection facts before helper producers change
+        // expressions, exactly as the remaining collection pass's callback did.
+        // Only declaration/scalar facts survive this owning-to-DOM frontier.
+        var collectionInputs = new SourceCollectionInputs(captured, refs);
+        for (var index = 0; index < captured.Length; index++)
+        {
+            captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)DataClassArrayMemberLowering.Apply(
+                captured[index], collectionInputs.Helpers.Bind);
+            captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)EnumEntriesLowering.Apply(
+                captured[index], refs, collectionInputs.Helpers.Bind);
+            captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)ObjectSlotRename.Apply(captured[index]);
+        }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -242,7 +256,7 @@ sealed class Pipeline
                 inputsWithSources[index].Suspend));
         }
 
-        return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex);
+        return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, collectionInputs);
     }
 
     // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
@@ -290,14 +304,11 @@ sealed class Pipeline
         var sourceTopLevelFns = birRoots.OfType<JsonObject>()
             .SelectMany(root => (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
             .Select(method => method["name"]?.GetValue<string>()).Where(name => name != null).ToHashSet(StringComparer.Ordinal);
-        CollectionHelperBinding.Apply(birRoots, refs, representationAliases, (bind, bindTyped) =>
+        CollectionHelperBinding.Apply(birRoots, refs, representationAliases, module.CollectionInputs, bindTyped =>
             FaithfulHints.WithHelperBinding(bindTyped, () =>
             {
                 foreach (var root in birRoots)
                 {
-                    DataClassArrayMemberLowering.Apply(root, bind);
-                    EnumEntriesLowering.Apply(root, refs, bind);
-                    ObjectSlotRename.Apply(root);
                     PrimitiveOperatorLowering.Apply(root, refs);
                     FaithfulHintRecognition.Apply(root, refs, sourceTopLevelFns);
                 }
@@ -1913,7 +1924,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
-    ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex);
+    ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex, SourceCollectionInputs CollectionInputs);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions

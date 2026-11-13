@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static class MemberCallSubstitution
 {
@@ -200,12 +202,10 @@ static class MemberCallSubstitution
                 // Their authored methods are still declarations and must protect the iterator slot as well.
                 if ((owner["name"] as JsonValue)?.GetValue<string>() is string name
                     && owner["methods"] is JsonArray ms
-                    && ms.OfType<JsonObject>().Any(m =>
-                        (m["name"] as JsonValue)?.GetValue<string>() == "iterator"
-                        && !KotlinPropertyAccessors.TryIdentity(m, out _, out _)
-                        && (m["static"] as JsonValue)?.GetValue<bool>() != true
-                        && ((m["typeParams"] as JsonArray)?.Count ?? 0) == 0
-                        && (m["params"] as JsonArray) is { Count: 0 }))
+                    && ms.OfType<JsonObject>().Any(m => IsDeclaredIterator(Str(m["name"]),
+                        Str(m[KotlinPropertyAccessors.SourceNameKey]), Str(m[KotlinPropertyAccessors.KindKey]),
+                        (m["static"] as JsonValue)?.GetValue<bool>() == true,
+                        (m["typeParams"] as JsonArray)?.Count ?? 0, (m["params"] as JsonArray)?.Count)))
                     set.Add(name);
                 foreach (var child in owner.Select(pair => pair.Value)) Walk(child);
             }
@@ -215,6 +215,32 @@ static class MemberCallSubstitution
         Walk(root);
         return set;
     }
+
+    internal static HashSet<string> CollectDeclaredIteratorTypes(BirFileDeclaration root)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        void Walk(BirGraphValue value)
+        {
+            if (value is IBirExecutablePayload) return;
+            var (name, methods) = value switch {
+                BirClassDefinition owner => (owner.Name.OrDefault(), owner.Methods.OrEmpty()),
+                BirInterfaceDefinition owner => (owner.Name.OrDefault(), owner.Methods.OrEmpty()),
+                BirEnumDefinition owner => (owner.Name.OrDefault(), owner.Methods.OrEmpty()),
+                _ => ((string)null, Array.Empty<BirFunctionDeclaration>()),
+            };
+            if (name != null && methods.Any(method => IsDeclaredIterator(method.Name.OrDefault(),
+                method.PropertyName.OrDefault(), method.PropertyAccessor.OrDefault(), method.Static.OrDefault(),
+                method.TypeParams.OrEmpty().Length, method.Params.HasValue ? method.Params.Value.Length : null)))
+                result.Add(name);
+            value.VisitChildren(Walk);
+        }
+        Walk(root);
+        return result;
+    }
+
+    static bool IsDeclaredIterator(string name, string property, string accessor, bool isStatic, int arity, int? parameters)
+        => name == "iterator" && !KotlinPropertyAccessors.HasIdentity(property, accessor)
+            && !isStatic && arity == 0 && parameters == 0;
 
     internal static bool HasDeclaredIterator(TypeNode.Fqn owner, IReadOnlySet<string> declaredTypes,
         IReadOnlyDictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex references,

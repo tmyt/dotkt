@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
+using DotKt.Bir.Lowering;
 
 // INHERITED kotlin.Any universal-method rebind for REFERENCE types (issue #96) — the reference-type sibling of
 // EnumMemberBinding (which closes the same gap for value-type enums).
@@ -87,10 +88,15 @@ static class AnySlotRebind
     // Unbound method-reference lifts carry the selected Any slot without a virtual flag.
     internal static bool IsVirtualToString(JsonObject call) =>
         call["k"]?.GetValue<string>() == "callInstance"
-        && call["method"]?.GetValue<string>() == "ToString"
-        && call["anySlot"]?.GetValue<bool>() == true
-        && call["virtual"]?.GetValue<bool>() != false
-        && call["super"]?.GetValue<bool>() != true;
+        && IsVirtualToString("callInstance", call["method"]?.GetValue<string>(),
+            call["anySlot"]?.GetValue<bool>() == true, call["virtual"]?.GetValue<bool>(), call["super"]?.GetValue<bool>() == true);
+
+    internal static bool IsVirtualToString(BirCallInstance call) =>
+        IsVirtualToString(call.Tag, call.Method.OrDefault(), call.AnySlot.OrDefault(),
+            call.Virtual.HasValue ? call.Virtual.Value : null, call.Super.OrDefault());
+
+    internal static bool IsVirtualToString(string kind, string method, bool anySlot, bool? virtualCall, bool superCall) =>
+        kind == "callInstance" && method == "ToString" && anySlot && virtualCall != false && !superCall;
 
     public static void Apply(JsonNode root, Dictionary<string, TypeInfo> types, ReferenceMetadataIndex refs) =>
         Walk(root, types, refs);

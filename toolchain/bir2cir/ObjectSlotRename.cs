@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // OBJECT-SLOT RENAME (#73 M5): restore the System.Object BCL slot spellings that kotc stopped emitting. kotc is now
 // .NET-agnostic about the three universal `kotlin.Any` methods — it emits the KOTLIN names (`toString`/`hashCode`/
@@ -18,7 +21,7 @@ using System.Text.Json.Nodes;
 // a different contract. Placing it first means every subsequent pass (FaithfulHintRecognition's collection-`ToString`
 // recognition, EnumMemberBinding, MemberStrip's bound-stub match, NetInteropBinding, DeclarationRename, ilemit) sees
 // that canonical physical spelling.
-static class ObjectSlotRename
+static partial class ObjectSlotRename
 {
     static readonly Dictionary<string, string> Slot = new(StringComparer.Ordinal)
     {
@@ -35,6 +38,57 @@ static class ObjectSlotRename
         // this same normalization, including for inline/default bodies.
         KotlinEqualityLowering.Apply(root, preserveSuperIntent: true);
     }
+
+    public static BirGraphValue Apply(BirGraphValue root)
+    {
+        Rename(root);
+        return KotlinEqualityLowering.Apply(root, preserveSuperIntent: true);
+    }
+
+    static void Rename(BirGraphValue node)
+    {
+        if (node is IBirExecutablePayload) return;
+        void Call(string kind, OptionalField<string> method, Action<OptionalField<string>> writeMethod,
+            Action clearIdentity, Action clearAnySlot, string owner = null, bool? virtualCall = null, bool superCall = false)
+        {
+            var renamed = RenameField(method);
+            writeMethod(renamed);
+            clearIdentity?.Invoke();
+            if (!RetainAnySlot(kind, renamed.OrDefault(),
+                AnySlotRebind.IsVirtualToString(kind, renamed.OrDefault(), true, virtualCall, superCall), owner))
+                clearAnySlot();
+        }
+        switch (node)
+        {
+            case BirCallInstance value when value.AnySlot.OrDefault():
+                Call(value.Tag, value.Method, next => value.Method = next,
+                    () => value.DeclarationId = default, () => value.AnySlot = default,
+                    (value.OwnerType.OrDefault() as TypeNode.Fqn)?.Name,
+                    value.Virtual.HasValue ? value.Virtual.Value : null, value.Super.OrDefault());
+                break;
+            case BirCallStatic value when value.AnySlot.OrDefault():
+                Call(value.Tag, value.Method, next => value.Method = next,
+                    () => value.DeclarationId = default, () => value.AnySlot = default);
+                break;
+            case BirNewBoundDelegate value when value.AnySlot.OrDefault():
+                Call(value.Tag, value.Method, next => value.Method = next,
+                    () => value.DeclarationId = default, () => value.AnySlot = default);
+                break;
+            case BirObjectMethod value:
+                if (value.AnySlot.OrDefault())
+                    Call(value.Tag, value.Method, next => value.Method = next, null, () => value.AnySlot = default);
+                else value.Method = RenameField(value.Method);
+                break;
+            case BirFunctionDeclaration value when value.ObjectOverride.OrDefault():
+                value.Name = RenameField(value.Name);
+                break;
+        }
+        node.VisitChildren(Rename);
+    }
+
+    static bool RetainAnySlot(string kind, string method, bool virtualToString, string owner) =>
+        method is "Equals" or "GetHashCode" || virtualToString
+        || kind == "callInstance" && AliasHelperHoist.UsesNativeArrayObjectSlot(owner, true);
 
     static void Walk(JsonNode node)
     {
@@ -53,10 +107,8 @@ static class ObjectSlotRename
                 // Equality and hashing keep their semantic facts until KotlinEqualityLowering consumes them.
                 // Virtual ToString calls retain the fact until enum/reference dispatch is bound; native
                 // array calls need it until member substitution. Reference-build bodies are squashed.
-                if (obj["method"]?.GetValue<string>() is not ("Equals" or "GetHashCode")
-                    && !AnySlotRebind.IsVirtualToString(obj)
-                    && ((obj["k"] as JsonValue)?.GetValue<string>() != "callInstance"
-                    || !AliasHelperHoist.UsesNativeArrayObjectSlot(TypeJson.OwnerName(obj["ownerType"]), true)))
+                if (!RetainAnySlot((obj["k"] as JsonValue)?.GetValue<string>(), obj["method"]?.GetValue<string>(),
+                    AnySlotRebind.IsVirtualToString(obj), TypeJson.OwnerName(obj["ownerType"])))
                     obj.Remove("anySlot");
             }
             // An `objMethod` node is UNAMBIGUOUSLY a System.Object virtual call — rename its `method` by bare name.
@@ -78,7 +130,11 @@ static class ObjectSlotRename
     // bir2cir-internal producer, or any other member) is left untouched — idempotent and safe.
     static void RenameField(JsonObject obj, string key)
     {
-        if ((obj[key] as JsonValue)?.GetValue<string>() is string cur && Slot.TryGetValue(cur, out var slot))
-            obj[key] = slot;
+        if ((obj[key] as JsonValue)?.GetValue<string>() is string cur)
+            obj[key] = RenameName(cur);
     }
+
+    static string RenameName(string name) => name != null && Slot.TryGetValue(name, out var slot) ? slot : name;
+    static OptionalField<string> RenameField(OptionalField<string> value) =>
+        value.HasValue ? RenameName(value.Value) : value;
 }

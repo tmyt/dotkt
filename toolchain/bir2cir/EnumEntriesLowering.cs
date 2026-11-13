@@ -1,6 +1,7 @@
-using System.Text.Json.Nodes;
 using System.Threading;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Author ordinary, declaration-bound stdlib calls before representation demand analysis.
 // Keep the cold enumValues operation semantic until inline specialization has selected its enum type.
@@ -9,74 +10,61 @@ static class EnumEntriesLowering
     const string Owner = "kotlin.enums.EnumEntriesCacheKt";
     static int counter;
 
-    public static void Apply(JsonNode node, ReferenceMetadataIndex refs, Action<JsonObject> bind)
+    public static BirGraphValue Apply(BirGraphValue node, ReferenceMetadataIndex refs,
+        Func<BirCallStatic, BirCallStatic> bind)
     {
-        if (node is JsonArray array)
-        {
-            foreach (var child in array) if (child != null) Apply(child, refs, bind);
-            return;
-        }
-        if (node is not JsonObject obj) return;
-        foreach (var child in obj.ToArray()) if (child.Value != null) Apply(child.Value, refs, bind);
-        if (obj["k"]?.GetValue<string>() != "callStatic" || obj["args"] is not JsonArray { Count: 0 }) return;
+        if (node is IBirExecutablePayload) return node;
+        node.VisitChildSlots(child => child.Replace(Apply(child.Value, refs, bind)));
+        if (node is not BirCallStatic call || !call.Args.HasValue || call.Args.Value.Length != 0) return node;
 
-        JsonNode enumType = null;
-        var method = obj["method"]?.GetValue<string>();
-        if (method == "entries" && obj["prop"]?.GetValue<string>() == "get"
-            && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn owner
-            && TypeJson.Read(obj["ret"]) is TypeNode.Fqn { Name: "kotlin.enums.EnumEntries", Args.Length: 1 } result
+        TypeNode enumType = null;
+        if (call.Method.OrDefault() == "entries" && call.Prop.OrDefault() == "get"
+            && call.OwnerType.OrDefault() is TypeNode.Fqn owner
+            && call.Ret.OrDefault() is TypeNode.Fqn { Name: "kotlin.enums.EnumEntries", Args.Length: 1 } result
             && result.Args[0] is TypeNode.Fqn entry && entry == owner)
-            enumType = TypeJson.Write(entry);
-        else if (method is "enumEntries" or "enumEntriesIntrinsic" && obj["owner"] == null
-            && !obj.ContainsKey("ownerType") && !obj.ContainsKey("prop")
-            && IsIntrinsic(obj, refs)
-            && obj["typeArgs"] is JsonArray { Count: 1 } typeArguments)
-            enumType = typeArguments[0]?.DeepClone();
-        if (enumType == null) return;
+            enumType = entry;
+        else if (call.Method.OrDefault() is "enumEntries" or "enumEntriesIntrinsic"
+            && call.Owner.OrDefault() == null && !call.OwnerType.IsPresent && !call.Prop.IsPresent
+            && IsIntrinsic(call, refs) && call.TypeArgs.HasValue && call.TypeArgs.Value.Length == 1)
+            enumType = call.TypeArgs.Value[0];
+        if (enumType == null) return node;
 
-        var entriesType = TypeJson.Write(new TypeNode.Fqn("kotlin.enums.EnumEntries", new[] { TypeJson.Read(enumType) }));
-        var token = new JsonObject { ["k"] = "classRef", ["type"] = enumType.DeepClone() };
-        var read = new JsonObject {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(Owner), ["method"] = "cachedEnumEntries",
-            ["sig"] = new JsonArray(TypeJson.Fqn("kotlin.Any")), ["args"] = new JsonArray(token.DeepClone()),
-            ["ret"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))),
-        };
-        bind(read);
-        var create = new JsonObject {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(Owner), ["method"] = "getOrCreateEnumEntries",
-            ["sig"] = new JsonArray(TypeJson.Fqn("kotlin.Any"), TypeJson.Write(new TypeNode.Array(new TypeNode.Tv("method", 0)))),
-            ["typeArgs"] = new JsonArray(enumType.DeepClone()), ["ret"] = entriesType.DeepClone(),
-            ["args"] = new JsonArray(token.DeepClone(), new JsonObject { ["k"] = "enumValues", ["type"] = enumType.DeepClone() }),
-        };
-        bind(create);
-        var name = "__enumEntries$" + Interlocked.Increment(ref counter);
-        var local = new JsonObject { ["k"] = "local", ["name"] = name };
-        var position = obj["pos"]?.DeepClone();
-        obj.Clear();
-        obj["k"] = "valueBlock";
-        obj["type"] = entriesType.DeepClone();
-        obj["stmts"] = new JsonArray(new JsonObject {
-            ["k"] = "var", ["name"] = name,
-            ["type"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))), ["init"] = read,
+        var entriesType = new TypeNode.Fqn("kotlin.enums.EnumEntries", new[] { enumType });
+        var any = new TypeNode.Fqn("kotlin.Any");
+        var anyN = new TypeNode.Nullable(any);
+        var read = bind(new BirCallStatic {
+            Owner = new TypeNode.Fqn(Owner), Method = "cachedEnumEntries",
+            Sig = new TypeNode[] { any }, Args = new IBirExpression[] { new BirClassReference { Type = enumType } }, Ret = anyN,
         });
-        obj["result"] = new JsonObject {
-            ["k"] = "cond",
-            ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = local.DeepClone(), ["rhs"] = new JsonObject {
-                ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Nothing"))), ["value"] = null,
-            } },
-            ["then"] = create,
-            ["else"] = new JsonObject { ["k"] = "cast", ["type"] = entriesType.DeepClone(), ["e"] = local.DeepClone() },
+        var create = bind(new BirCallStatic {
+            Owner = new TypeNode.Fqn(Owner), Method = "getOrCreateEnumEntries",
+            Sig = new TypeNode[] { any, new TypeNode.Array(new TypeNode.Tv("method", 0)) },
+            TypeArgs = new[] { enumType }, Ret = entriesType,
+            Args = new IBirExpression[] { new BirClassReference { Type = enumType }, new BirEnumValues { Type = enumType } },
+        });
+        var name = "__enumEntries$" + Interlocked.Increment(ref counter);
+        return new BirValueBlock {
+            Type = entriesType,
+            Stmts = new IBirStatement[] { new BirVariable { Name = name, Type = anyN, Init = read } },
+            Result = new BirConditional {
+                Cond = new BirObjectEquals {
+                    Lhs = new BirLocal { Name = name },
+                    Rhs = new BirConstant { Type = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Nothing")),
+                        Value = OptionalField<BirLiteral>.Null },
+                },
+                Then = create,
+                Else = new BirCast { Type = entriesType, E = new BirLocal { Name = name } },
+            },
         };
-        if (position != null) obj["pos"] = position;
     }
 
-    static bool IsIntrinsic(JsonObject call, ReferenceMetadataIndex refs)
+    static bool IsIntrinsic(BirCallStatic call, ReferenceMetadataIndex refs)
     {
         static bool IsEntriesOwner(string owner) => owner is "kotlin.enums.EnumEntriesKt" or "kotlin.enums.EnumEntriesClrKt";
         // Local stdlib calls retain their frontend owner. Referenced calls retain the selected declaration identity.
         // A same-named user function, local or imported, is not an enum intrinsic.
-        if (IsEntriesOwner(TypeJson.OwnerName(call["calleeOwner"]))) return true;
-        return refs.TryDeclarationIdentity(call[DeclarationIdentityBinding.Key]?.GetValue<string>(),
+        if (call.CalleeOwner.OrDefault() is TypeNode.Fqn callee && IsEntriesOwner(callee.Name)) return true;
+        return refs.TryDeclarationIdentity(call.DeclarationId.OrDefault(),
             out _, out var owner, out _, out _) && IsEntriesOwner(owner);
     }
 
@@ -84,27 +72,27 @@ static class EnumEntriesLowering
     {
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
         var parameter = new TypeNode.Tv("method", 0);
-        JsonObject Call(string owner) => new() {
-            ["k"] = "callStatic", ["owner"] = null, ["method"] = "enumEntries", ["sig"] = new JsonArray(),
-            ["typeArgs"] = new JsonArray(TypeJson.Write(parameter)), ["args"] = new JsonArray(),
-            ["calleeOwner"] = TypeJson.Fqn(owner),
+        BirCallStatic Call(string owner) => new() {
+            Owner = OptionalField<TypeNode>.Null, Method = "enumEntries", Sig = Array.Empty<TypeNode>(),
+            TypeArgs = new TypeNode[] { parameter }, Args = Array.Empty<IBirExpression>(),
+            CalleeOwner = new TypeNode.Fqn(owner),
         };
-        var bound = new List<JsonObject>();
-        var intrinsic = Call("kotlin.enums.EnumEntriesKt");
-        Apply(intrinsic, refs, bound.Add);
-        if (intrinsic["k"]?.GetValue<string>() != "valueBlock" || bound.Count != 2
-            || bound[0]["method"]?.GetValue<string>() != "cachedEnumEntries"
-            || bound[1]["method"]?.GetValue<string>() != "getOrCreateEnumEntries"
-            || TypeJson.Read(bound[1]["typeArgs"][0]) != parameter
-            || TypeJson.Read(bound[1]["args"][1]["type"]) != parameter
-            || intrinsic["result"]?["then"]?["args"]?[1]?["k"]?.GetValue<string>() != "enumValues")
+        var bound = new List<BirCallStatic>();
+        BirCallStatic Bind(BirCallStatic call) { bound.Add(call); return call; }
+        var intrinsic = Apply(Call("kotlin.enums.EnumEntriesKt"), refs, Bind);
+        if (intrinsic is not BirValueBlock block || bound.Count != 2
+            || bound[0].Method.OrDefault() != "cachedEnumEntries"
+            || bound[1].Method.OrDefault() != "getOrCreateEnumEntries"
+            || bound[1].TypeArgs.Value[0] != parameter
+            || bound[1].Args.Value[1] is not BirEnumValues values || values.Type.OrDefault() != parameter
+            || block.Result.OrDefault() is not BirConditional conditional
+            || conditional.Then.OrDefault() is not BirCallStatic then || then.Args.Value[1] is not BirEnumValues)
             throw new InvalidOperationException("Enum entries lost its lazy cache or source-generic helper binding");
         var shadow = Call("user.EnumEntriesKt");
-        Apply(shadow, refs, _ => throw new InvalidOperationException("A user enumEntries function became an intrinsic"));
-        if (shadow["k"]?.GetValue<string>() != "callStatic")
+        if (!ReferenceEquals(Apply(shadow, refs, _ => throw new InvalidOperationException("A user enumEntries function became an intrinsic")), shadow))
             throw new InvalidOperationException("A user enumEntries function was rewritten");
         var overload = Call("kotlin.enums.EnumEntriesKt");
-        ((JsonArray)overload["args"]).Add(new JsonObject { ["k"] = "local", ["name"] = "provider" });
+        overload.Args = new IBirExpression[] { new BirLocal { Name = "provider" } };
         Apply(overload, refs, _ => throw new InvalidOperationException("The enumEntries provider overload was rewritten"));
         Console.WriteLine("[enum entries] self-test OK (lazy cache, source frame, intrinsic identity, provider overload)");
     }
