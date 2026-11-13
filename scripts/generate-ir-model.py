@@ -678,6 +678,50 @@ def executable_models(definitions):
     return "\n".join(model)
 
 
+def type_data_equality(variants, values, definitions):
+    """Full structural facts, deliberately distinct from semantic type equality."""
+    def equal(field, left, right, depth=0):
+        field = non_null_field(field)
+        if field.get("type") == "array":
+            a, b = f"left{depth}", f"right{depth}"
+            return f"Items({left}, {right}, ({a}, {b}) => {equal(field['items'], a, b, depth + 1)})"
+        if "$ref" in field:
+            return f"Equal({left}, {right})"
+        return f"{left} == {right}"
+
+    def comparisons(definition, left="left", right="right"):
+        facts = []
+        for name, field in fields(definition, "csharp"):
+            display = field.get("x-dotkt-csharp-name", name[0].upper() + name[1:])
+            facts.append(equal(field, left + "." + display, right + "." + display))
+        # Projected wire fields such as array rank have additional physical
+        # model facts (SZArray versus rank-one MDArray) in their constructor.
+        mapped = {field.get("x-dotkt-csharp-name", name[0].upper() + name[1:])
+                  for name, field in fields(definition, "csharp")}
+        for parameter in definition["x-dotkt-model"].get("csharpParameters", []):
+            if isinstance(parameter, dict) and parameter["name"] not in mapped:
+                facts.append(f"{left}.{parameter['name']} == {right}.{parameter['name']}")
+        return " && ".join(facts) or "true"
+
+    lines = ["internal static class TypeNodeDataEquality", "{",
+             "    internal static bool Equal(TypeNode? left, TypeNode? right)",
+             "        => ReferenceEquals(left, right) || (left, right) switch", "        {"]
+    for definition in variants:
+        name = definition["x-dotkt-model"]["name"]
+        lines += [f"            (TypeNode.{name} a, TypeNode.{name} b) => {comparisons(definition, 'a', 'b')},"]
+    lines += ["            _ => false,", "        };", ""]
+    for definition in values:
+        name = definition["x-dotkt-model"]["name"]
+        lines += [f"    internal static bool Equal(TypeNode.{name}? left, TypeNode.{name}? right)",
+                  "        => ReferenceEquals(left, right) || left is not null && right is not null",
+                  f"            && {comparisons(definition)};", ""]
+    lines += ["    static bool Items<T>(T[]? left, T[]? right, Func<T, T, bool> equal)",
+              "        => ReferenceEquals(left, right) || left is not null && right is not null",
+              "            && left.Length == right.Length && left.Zip(right).All(pair => equal(pair.First, pair.Second));",
+              "}", ""]
+    return lines
+
+
 def outputs(schema):
     definitions = schema["$defs"]
     variants = [definitions[item["$ref"].removeprefix("#/$defs/")] for item in definitions["type"]["oneOf"]]
@@ -699,7 +743,7 @@ def outputs(schema):
         name = definition["x-dotkt-model"]["name"]
         keys = ", ".join(json.dumps(key) for key in definition["properties"])
         csharp.append(f'        ("{name}", [{keys}]),')
-    csharp += ["    ];", "}", ""]
+    csharp += ["    ];", "}", "", *type_data_equality(variants, values, definitions)]
     kotlin = ["// Generated from docs/bir-cir.schema.json by scripts/generate-ir-model.py.",
               "// Structural model; the boundary codec is generated in TypeNodeJson.kt.",
               "package kotc.bir", "", "sealed class TypeNode : BirValue {"]

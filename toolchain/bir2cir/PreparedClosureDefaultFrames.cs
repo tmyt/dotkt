@@ -1,79 +1,78 @@
-using System.Text.Json.Nodes;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
+using static ClosureSynthesis;
 
-// Expose independent synthetic declaration scopes to frame materialization without consuming
-// the closure facts needed by the later inline and nullable-witness passes.
+// Temporarily publish the independently framed declarations of prepared defaults.
+// Restore their current transformed fields, not a pre-materialization file copy.
 static class PreparedClosureDefaultFrames
 {
     internal const string ReturnArgumentKey = "_preparedDelegateReturnArgument";
-    internal sealed record StageResult(IReadOnlyList<JsonNode> Types, Action Restore);
+    internal sealed record StageResult(IReadOnlyList<BirClassDefinition> Types, Action Restore);
 
-    public static StageResult Stage(JsonObject file, IEnumerable<JsonNode> inputs, ReferenceMetadataIndex refs)
+    internal static StageResult Stage(BirFileDeclaration file, IEnumerable<MaterializedOccurrence> inputs, ReferenceMetadataIndex refs)
     {
         var roots = inputs.ToArray();
-        var sources = new Dictionary<JsonObject, JsonObject>();
-        void Find(JsonNode node)
-        {
-            if (node is JsonObject expression)
-            {
-                if (expression["k"]?.GetValue<string>() is "newClosure" or "newSam"
-                    && expression["synthClass"] is JsonObject source)
-                    sources.TryAdd(expression, (JsonObject)source.DeepClone());
-                foreach (var (key, child) in expression) if (key != "attrs") Find(child);
-            }
-            else if (node is JsonArray array) foreach (var child in array) Find(child);
-        }
-        foreach (var root in roots) Find(root);
-        var types = ClosureSynthesis.ApplyMaterialized(file, roots, refs);
-        var closureNames = sources.Keys.Where(expression => expression["k"]?.GetValue<string>() == "newClosure")
-            .Select(expression => TypeJson.OwnerName(expression["closureType"])).ToHashSet();
-        foreach (var declaration in types.OfType<JsonObject>())
-            if (closureNames.Contains(declaration["name"].GetValue<string>()))
-                ((JsonArray)declaration["methods"]).OfType<JsonObject>()
-                    .Single(method => method["name"]?.GetValue<string>() == "invoke")[ReturnArgumentKey] = true;
+        var materialized = ClosureSynthesis.ApplyMaterialized(file, roots, refs);
+        var types = materialized.AppendedTypes;
+        var closureNames = materialized.Provenance.Where(source => source.Construction is BirNewClosure)
+            .Select(source => source.Name).ToHashSet(StringComparer.Ordinal);
+        foreach (var type in types.Where(type => closureNames.Contains(type.Name.Value)))
+            type.Methods.Value.Single(method => method.Name.OrDefault() == "invoke")._preparedDelegateReturnArgument = true;
         return new StageResult(types, () => {
-            var declarations = types.OfType<JsonObject>().ToDictionary(type => type["name"].GetValue<string>());
-            var ingredients = new Dictionary<string, JsonObject>();
-            foreach (var (expression, source) in sources)
+            var declarations = types.ToDictionary(type => type.Name.Value, StringComparer.Ordinal);
+            var ingredients = new Dictionary<string, BirGraphValue>(StringComparer.Ordinal);
+            foreach (var source in materialized.Provenance)
+                if (!ingredients.TryAdd(source.Name, source.Ingredients)
+                    && !ingredients[source.Name].StructurallyEquals(source.Ingredients))
+                    throw new InvalidOperationException("Conflicting prepared closure declarations: " + source.Name);
+            void RestoreNode(BirGraphValue node)
             {
-                var name = TypeJson.OwnerName(expression["closureType"] ?? expression["samType"]);
-                if (!ingredients.TryAdd(name, source) && !JsonNode.DeepEquals(ingredients[name], source))
-                    throw new InvalidOperationException("Conflicting prepared closure declarations: " + name);
+                if (node == null || node is BirAttribute or IBirExecutablePayload) return;
+                if (node is BirNewClosure { SynthClass.HasValue: false, ClosureType.Value: TypeNode.Fqn name } closure
+                    && declarations.TryGetValue(name.Name, out var declaration))
+                {
+                    // Provenance is captured after CLR SAM normalization: a
+                    // converted SAM has closure ingredients, never a full class.
+                    var restored = (BirClosureDefinition)ingredients[name.Name].DeepClone();
+                    restored.Name = declaration.Name.HasValue ? declaration.Name : default;
+                    restored.Fields = declaration.Fields.HasValue ? OptionalField<BirCaptureDescriptor[]>.Of(declaration.Fields.Value
+                        .Select(field => ToCapture((BirFieldDeclaration)field.DeepClone())).ToArray()) : default;
+                    restored.TypeParams = Copy(declaration.TypeParams, parameter => (BirTypeParameter)parameter.DeepClone());
+                    restored.SemanticOwner = declaration.SemanticOwner.HasValue ? declaration.SemanticOwner : default;
+                    restored.OuterTypeParamCount = declaration.OuterTypeParamCount.HasValue ? declaration.OuterTypeParamCount : default;
+                    restored.OuterTypeParamOffset = declaration.OuterTypeParamOffset.HasValue ? declaration.OuterTypeParamOffset : default;
+                    restored.KotlinSupertypesPre = declaration.KotlinSupertypesPre.HasValue ? declaration.KotlinSupertypesPre : default;
+                    var invoke = declaration.Methods.Value.Single(method => method.Name.OrDefault() == "invoke");
+                    if (invoke.Params.HasValue) restored.Params = invoke.Params.Value.Select(parameter => ToLambdaParameter((BirParameter)parameter.DeepClone())).ToArray();
+                    if (invoke.Ret.HasValue) restored.Ret = BirGraphValue.CopyType(invoke.Ret.Value);
+                    if (invoke.Body.HasValue) restored.Body = invoke.Body.Value.Select(statement => (IBirStatement)((BirGraphValue)statement).DeepClone()).ToArray();
+                    if (invoke.NullableGenericRet.HasValue) restored.NullableGenericRet = BirGraphValue.CopyType(invoke.NullableGenericRet.Value);
+                    if (invoke.RetNullableFlags.HasValue) restored.RetNullableFlags = invoke.RetNullableFlags.Value.ToArray();
+                    restored._syntheticFrameBound = true;
+                    closure.SynthClass = restored;
+                }
+                else if (node is BirNewSam { SynthClass.HasValue: false, SamType.Value: TypeNode.Fqn samName } sam
+                    && declarations.TryGetValue(samName.Name, out var samDeclaration))
+                {
+                    var restored = (BirClassDefinition)samDeclaration.DeepClone();
+                    restored._syntheticFrameBound = true;
+                    sam.SynthClass = restored;
+                }
+                node.VisitChildren(RestoreNode);
             }
-            void RestoreNode(JsonNode node)
+            foreach (var root in roots) RestoreNode(root.Slot.Value);
+            if (types.Count != 0 && file.Types.HasValue)
             {
-                if (node is JsonArray array)
-                {
-                    foreach (var child in array.ToArray()) RestoreNode(child);
-                    return;
-                }
-                if (node is not JsonObject expression) return;
-                var name = TypeJson.OwnerName(expression["closureType"] ?? expression["samType"]);
-                if (expression["synthClass"] == null && name != null
-                    && declarations.TryGetValue(name, out var declaration))
-                {
-                    JsonObject restored;
-                    if (expression["k"]?.GetValue<string>() == "newClosure")
-                    {
-                        restored = (JsonObject)ingredients[name].DeepClone();
-                        foreach (var key in new[] { "name", "fields", "typeParams", "semanticOwner",
-                            "outerTypeParamCount", "outerTypeParamOffset", KotlinSupertypesRecord.PreKey })
-                        {
-                            if (declaration[key] != null) restored[key] = declaration[key].DeepClone();
-                            else restored.Remove(key);
-                        }
-                        var invoke = ((JsonArray)declaration["methods"]).OfType<JsonObject>()
-                            .Single(method => method["name"]?.GetValue<string>() == "invoke");
-                        foreach (var key in new[] { "params", "ret", "body", "nullableGenericRet", "retNullableFlags" })
-                            if (invoke[key] != null) restored[key] = invoke[key].DeepClone();
-                    }
-                    else restored = (JsonObject)declaration.DeepClone();
-                    ClosureSynthesis.MarkPreboundFrame(restored);
-                    expression["synthClass"] = restored;
-                }
-                foreach (var (key, child) in expression.ToArray()) if (key != "attrs") RestoreNode(child);
+                var removed = types.ToHashSet(ReferenceEqualityComparer.Instance);
+                file.Types = file.Types.Value.Where(type => type is not BirClassDefinition declaration || !removed.Contains(declaration)).ToArray();
             }
-            foreach (var root in roots) RestoreNode(root);
-            foreach (var type in types) ((JsonArray)file["types"]).Remove(type);
         });
     }
+
+    static OptionalField<T[]> Copy<T>(OptionalField<T[]> source, Func<T, T> clone) => source.HasValue
+        ? OptionalField<T[]>.Of(source.Value.Select(clone).ToArray()) : default;
 }

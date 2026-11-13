@@ -11,6 +11,31 @@ sealed class PhysicalMemberTable
     internal IReadOnlyDictionary<string, MemberRefNode> Members { get; }
     PhysicalMemberTable(Dictionary<string, MemberRefNode> members) => Members = members;
 
+    internal bool StructurallyEquals(PhysicalMemberTable other)
+    {
+        if (ReferenceEquals(this, other)) return true;
+        if (other == null || Members.Count != other.Members.Count) return false;
+        foreach (var (role, member) in Members)
+            if (!other.Members.TryGetValue(role, out var candidate) || !EqualMember(member, candidate)) return false;
+        return true;
+
+        static bool EqualMember(MemberRefNode left, MemberRefNode right)
+        {
+            if (ReferenceEquals(left, right)) return true;
+            if (left == null || right == null || left.Kind != right.Kind || left.Assembly != right.Assembly
+                || left.Name != right.Name || left.GenericArity != right.GenericArity
+                || left.CallingConvention != right.CallingConvention
+                || !TypeNodeDataEquality.Equal(left.DeclaringType, right.DeclaringType)
+                || !TypeNodeDataEquality.Equal(left.ReturnType, right.ReturnType)) return false;
+            if (left.ParameterTypes == null || right.ParameterTypes == null)
+                return left.ParameterTypes == null && right.ParameterTypes == null;
+            if (left.ParameterTypes.Length != right.ParameterTypes.Length) return false;
+            for (var index = 0; index < left.ParameterTypes.Length; index++)
+                if (!TypeNodeDataEquality.Equal(left.ParameterTypes[index], right.ParameterTypes[index])) return false;
+            return true;
+        }
+    }
+
     internal static PhysicalMemberTable Read(JsonNode source) => new(source.AsObject().ToDictionary(
         pair => pair.Key, pair => MemberRefNode.Read(pair.Value), StringComparer.Ordinal));
 

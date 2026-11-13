@@ -31,7 +31,24 @@ static partial class TypedExecutableFrames
         }
     }
 
-    static BirGraphValue Rebind(BirGraphValue source, TypeNode[] arguments)
+    internal static BirGraphValue PrepareSynthetic(BirGraphValue source, TypeNode[] arguments)
+    {
+        var (name, parameters, bound) = source switch {
+            BirClosureDefinition value => (value.Name.OrDefault(), value.TypeParams.OrEmpty(), value._syntheticFrameBound),
+            BirClassDefinition value => (value.Name.OrDefault(), value.TypeParams.OrEmpty(), value._syntheticFrameBound),
+            _ => throw new InvalidOperationException("Unaccounted synthetic frame owner: " + source.GetType().Name),
+        };
+        if (!bound.HasValue) return Rebind(source, arguments);
+        var clone = source.DeepClone();
+        if (clone is BirClosureDefinition closure) closure._syntheticFrameBound = default;
+        if (clone is BirClassDefinition type) type._syntheticFrameBound = default;
+        if (parameters.Length != 0 && arguments?.Length != parameters.Length)
+            throw new InvalidOperationException(
+                $"generic synthetic class `{name}` has {parameters.Length} type params but {arguments?.Length ?? 0} construction type args");
+        return clone;
+    }
+
+    internal static BirGraphValue Rebind(BirGraphValue source, TypeNode[] arguments)
     {
         var (name, arity) = source switch {
             BirClosureDefinition value => (value.Name.OrDefault(), value.TypeParams.OrEmpty().Length),

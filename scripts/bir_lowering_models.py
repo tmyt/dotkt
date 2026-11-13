@@ -325,14 +325,33 @@ def outputs(root, definitions):
             return f"{value}.Select({item} => {expr}).ToArray()"
         return f"{callback}({prefix}{value})"
 
-    def visit(field, value, depth=0):
+    def visit(field, value, depth=0, callback="visit", prefix=""):
         field = base(field)
         if field.get("type") == "array":
             item = f"item{depth}"
-            body = visit(field["items"], item, depth + 1)
+            body = visit(field["items"], item, depth + 1, callback, prefix)
             if is_nullable(field["items"]): body = f"if ({item} is not null) {{ {body} }}"
             return f"foreach (var {item} in {value}) {{ {body} }}"
-        return f"visit((BirGraphValue){value});"
+        return f"{callback}({prefix}(BirGraphValue){value});"
+
+    def equal(field, left, right, depth=0):
+        field = base(field)
+        if field.get("type") == "array":
+            a, b = f"left{depth}", f"right{depth}"
+            inner = equal(field["items"], a, b, depth + 1)
+            if is_nullable(field["items"]):
+                inner = f"{a} is null ? {b} is null : {b} is not null && ({inner})"
+            return f"EqualItems({left}, {right}, ({a}, {b}) => {inner})"
+        kind = cs(field)
+        if kind == "byte[]": return f"{left}.AsSpan().SequenceEqual({right})"
+        if kind == "TypeNode": return f"TypeNodeDataEquality.Equal({left}, {right})"
+        if kind in {"SourceTypeFacts", "SourceBoundsSnapshot", "SourceTypeVector"}:
+            return f"{left}.FrozenText == {right}.FrozenText"
+        if kind == "NullableRepresentationFrame": return f"EqualFrame({left}, {right})"
+        if kind == "PhysicalMemberTable": return f"{left}.StructurallyEquals({right})"
+        if kind == "SourceTypeAlias": return f"SourceMetadataDataEquality.Equal({left}, {right})"
+        if is_child(field): return f"((BirGraphValue){left}).StructurallyEquals((BirGraphValue){right})"
+        return f"EqualityComparer<{kind}>.Default.Equals({left}, {right})"
 
     def slot(field, value, target=None, optional=False):
         replacement = f"({cs(field)})replacement"
@@ -398,6 +417,14 @@ def outputs(root, definitions):
                          if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
         if binding_hints:
             model += ["    public override TypeNode? CallBindingTypeHint => " + " ?? ".join(binding_hints) + ";"]
+        if "declarationId" in shape["properties"]:
+            model += ["    public override OptionalField<string> DeclarationIdentityFact => DeclarationId;"]
+        if "typeArgs" in shape["properties"] and cs(shape["properties"]["typeArgs"]) == "TypeNode[]":
+            model += ["    public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }"]
+        for field, api in [("suspendFnTypePre", "SuspendFunctionTypeFact"), ("retSuspendFnTypePre", "SuspendFunctionReturnFact")]:
+            if field in shape["properties"]:
+                prop = member(field)
+                model += [f"    public override OptionalField<TypeNode> {api} {{ get => {prop}; set => {prop} = value; }}"]
         model += ["    public override void VisitChildren(Action<BirGraphValue> visit)", "    {"]
         for field, value in fields:
             if is_child(value):
@@ -495,7 +522,61 @@ def outputs(root, definitions):
             expression = (rewrite(value, prop + ".Value", callback="child", prefix=prefix) if is_child(value)
                           else rewrite_type(value, prop + ".Value", callback="type", prefix=prefix))
             model += [f"        {prop} = {prop}.HasValue ? OptionalField<{cs(value)}>.Of({expression}) : {prop},"]
-        model += ["    };", "    public override void WriteJson(Utf8JsonWriter writer)", "    {", "        writer.WriteStartObject();"]
+        model += ["    };", "    public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)", "    {"]
+        for field, value in fields:
+            if is_type_slot(value):
+                prop = member(field)
+                model += [f"        if ({prop}.HasValue) {prop} = OptionalField<{cs(value)}>.Of({rewrite_type(value, prop + '.Value')});"]
+        model += ["    }", "    public override void RewriteGenericFrameInPlace(",
+                  "        Func<BirGenericFrameRole, TypeNode, TypeNode> type,",
+                  "        Action<BirGenericFrameRole, BirGraphValue> child)", "    {"]
+        for field, value in fields:
+            type_slot = is_type_slot(value) or cs(value) == "TypeNode"
+            if not is_child(value) and not type_slot: continue
+            role = value.get("x-dotkt-frame-role", "FrozenSourceFact" if not is_type_slot(value) and type_slot else "Lexical")
+            prop, prefix = member(field), f"BirGenericFrameRole.{role}, "
+            if is_child(value):
+                body = visit(value, prop + ".Value", callback="child", prefix=prefix)
+            else:
+                body = f"{prop} = OptionalField<{cs(value)}>.Of({rewrite_type(value, prop + '.Value', callback='type', prefix=prefix)});"
+            model += [f"        if ({prop}.HasValue) {{ {body} }}"]
+        model += ["    }", "    public override void RewriteRepresentationInPlace(",
+                  "        Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,",
+                  "        Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)", "    {"]
+        representation_roles = {"Lexical", "ValueType", "TypeArguments", "Element", "Return", "ResultStamp", "DeclaredMemberType",
+                                "Declaration", "Constraint", "Foreign", "TypeParameterDeclarations", "Attributes", "InheritedImplementation"}
+        for field, value in fields:
+            if not is_child(value) and not is_type_slot(value): continue
+            role = value.get("x-dotkt-frame-role", "Lexical")
+            representation = value.get("x-dotkt-representation-role", "Lexical")
+            if representation not in representation_roles:
+                raise ValueError(f"Unknown representation role: {name}.{field}: {representation}")
+            prop = member(field)
+            prefix = f"BirGenericFrameRole.{role}, BirRepresentationRole.{representation}, "
+            if is_child(value):
+                body = visit(value, prop + ".Value", callback="child", prefix=prefix)
+            else:
+                body = f"{prop} = OptionalField<{cs(value)}>.Of({rewrite_type(value, prop + '.Value', callback='type', prefix=prefix)});"
+            model += [f"        if ({prop}.HasValue) {{ {body} }}"]
+        model += ["    }"]
+        parameter_vectors = [(field, value) for field, value in fields if "x-dotkt-representation-parameters" in value]
+        if parameter_vectors:
+            model += ["    public override void RewriteRepresentationParametersInPlace(",
+                      "        Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)", "    {"]
+            for field, value in parameter_vectors:
+                role = value["x-dotkt-representation-parameters"]
+                if role not in {"Owner", "Method", "SharedCell"} or cs(value) != "BirTypeParameter[]":
+                    raise ValueError(f"Invalid representation parameter vector: {name}.{field}: {role}")
+                prop = member(field)
+                model += [f"        if ({prop}.HasValue) {prop} = rewrite(BirRepresentationParameterRole.{role}, {prop}.Value);"]
+            model += ["    }"]
+        model += ["    public override bool StructurallyEquals(BirGraphValue other)",
+                  f"        => other is {name} value"]
+        for field, value in fields:
+            prop = member(field)
+            model += [f"            && EqualField({prop}, value.{prop}, (left, right) => {equal(value, 'left', 'right')})"]
+        model[-1] += ";"
+        model += ["    public override void WriteJson(Utf8JsonWriter writer)", "    {", "        writer.WriteStartObject();"]
         if node: model += [f'        writer.WriteString("k", {json.dumps(tag)});']
         for field, value in fields:
             prop = member(field)

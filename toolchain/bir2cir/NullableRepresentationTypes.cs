@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // The type operation used when materializing a declaration's explicit nullable frame. This does not choose
 // declaration identities or discover frame demand; both are inputs. Original Kotlin types remain immutable.
@@ -32,8 +33,10 @@ sealed class NullableRepresentationTypes
         // BIR's exact result-stamp contract (spec §2.7): a result equal to sty is already caller-relative,
         // even on a constructed member/property call. Owner presence does not establish result ownership.
         || key == "ret" && kind is "callStatic" or "callInstance"
-            && !(TypeJson.Read(expression["sty"]) is TypeNode stamp
-                && stamp.Equals(TypeJson.Read(expression["ret"])));
+            && IsDeclarationReturn(kind, TypeJson.Read(expression["ret"]), TypeJson.Read(expression["sty"]));
+
+    internal static bool IsDeclarationReturn(string kind, TypeNode result, TypeNode stamp) =>
+        kind is "callStatic" or "callInstance" && !(stamp != null && stamp.Equals(result));
 
     public NullableRepresentationTypes(NullableRepresentationFrame owner, NullableRepresentationFrame method,
         IReadOnlyDictionary<string, NullableRepresentationFrame> types, ValueTypeOracle isValue,
@@ -81,6 +84,7 @@ sealed class NullableRepresentationTypes
         _policy?.StorageConstraint(bound) is { } constraint ? Argument(constraint) : null;
     public bool IsStorageElement(string kind, string key) => _policy?.IsStorageElement(kind, key) == true;
     public bool IsNativeField(JsonObject node) => _policy?.IsNativeField(node) == true;
+    public bool IsNativeField(BirGraphValue node) => _policy?.IsNativeField(node) == true;
     public TypeNode ArgumentForRole(TypeNode type, NullableRepresentationFrame.Role role) => role switch {
         NullableRepresentationFrame.Role.Ordinary => Argument(type),
         NullableRepresentationFrame.Role.Nullable => NullableArgument(type),

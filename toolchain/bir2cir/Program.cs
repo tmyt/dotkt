@@ -50,6 +50,7 @@ static class Bir2Cir
                 SourceModuleIndex.SelfTest();
                 InheritedClassInterfaceBridge.SourceSelfTest();
                 BirFileCodec.SelfTest();
+                BirGraphMutationTests.SelfTest();
                 ClrTypeVariance.SelfTest();
                 PhysicalValueCoercion.SelfTest();
                 TypedPhysicalValueCoercion.SelfTest();
@@ -61,6 +62,8 @@ static class Bir2Cir
                 RoundtripMetadata.SourceSuspendResultSelfTest();
                 InheritedMemberOwnerBinding.SourceProjectionSelfTest();
                 TypedExecutableFrames.SelfTest();
+                ClosureSynthesis.TypedMaterializedSelfTest();
+                DefaultArgSplice.SourcePreparationSelfTest();
                 FaithfulHintRecognition.TypedSelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
@@ -162,7 +165,7 @@ sealed class Pipeline
         // with no "ref scan failed" signal. An empty Diagnostics stays silent (the happy path prints nothing).
         var diagnostics = refs.Diagnostics.ToList();
         foreach (var d in diagnostics) Console.Error.WriteLine($"bir2cir: WARNING ref-scan diagnostic: {d}");
-        var module = LoadBirFiles(_options.Inputs, _options.RefBuild, refs);
+        var module = LoadBirFiles(_options.Inputs, _options.RefBuild, _options.SubstituteStdlibBuild, refs);
         var birFiles = module.Files;
         var cirFiles = TransformFiles(module, refs);
         if (_options.ReflectionRestricted
@@ -189,7 +192,8 @@ sealed class Pipeline
             $"bir2cir: lowered {birFiles.Count} BIR file(s) -> {_options.OutDir} ({refs.Count} ref(s), build: {(_options.RefBuild ? "reference" : "substitute/app")}, suspend: {suspend.FunctionCount} fn)");
     }
 
-    static LoadedBirModule LoadBirFiles(IReadOnlyList<string> inputs, bool referenceBuild, ReferenceMetadataIndex refs)
+    static LoadedBirModule LoadBirFiles(IReadOnlyList<string> inputs, bool referenceBuild, bool substituteStdlibBuild,
+        ReferenceMetadataIndex refs)
     {
         var inputsWithSources = new List<(string Path, DotKt.Bir.Lowering.BirFileDeclaration Source, SuspendShapeAnalysis Suspend)>();
         foreach (var input in inputs)
@@ -263,6 +267,20 @@ sealed class Pipeline
         var scalarSlots = KotlinGenericScalarSlots.ApplyAll(captured, genericRepresentations, refs);
         KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(captured, refs, sourceIndex.CollisionAliases);
         var valueSources = ValueRepresentationLowering.CaptureSource(captured, sourceIndex.DeclarationIds);
+        // Preparation stages the actual default occurrences while their source
+        // frames still exist. Representation rewrites those owning occurrences
+        // in place; restoration keeps the transformed payload, not an old copy.
+        var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(captured, refs);
+        // Runtime bodies consume the paired reference declaration's ABI by its
+        // exact source identity, independently of their own body-only demand.
+        var declaredMethodFrames = substituteStdlibBuild
+            ? sourceIndex.DeclarationIds.Select(id => (Id: id, Frame: refs.NullableMethodFrame(id)))
+                .Where(pair => pair.Frame != null)
+                .ToDictionary(pair => pair.Id, pair => pair.Frame, StringComparer.Ordinal)
+            : null;
+        var representationMethodFrames = NullableRepresentationMaterialization.Apply(
+            captured, sourceIsValue, refs, policy: genericRepresentations, declaredMethods: declaredMethodFrames);
+        restoreDefaultFrames();
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -280,7 +298,7 @@ sealed class Pipeline
 
         genericRepresentations.BindDomDeclarations(files.Select(file => file.Root).ToArray());
         return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand,
-            genericRepresentations, scalarSlots, valueSources);
+            genericRepresentations, scalarSlots, valueSources, representationMethodFrames);
     }
 
     // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
@@ -333,18 +351,7 @@ sealed class Pipeline
         var genericRepresentations = module.GenericRepresentations;
         var scalarSlots = module.ScalarSlots;
         var physicalParameterIndices = scalarSlots.Parameters;
-        var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
-        // The runtime implementation consumes its paired reference declaration's
-        // ABI by exact source identity, independently of body-only demand. Ordinary
-        // app declarations do not inherit a same-named referenced library's frame.
-        var declaredMethodFrames = _options.SubstituteStdlibBuild
-            ? localDeclarationIds.Select(id => (Id: id, Frame: refs.NullableMethodFrame(id)))
-                .Where(pair => pair.Frame != null)
-                .ToDictionary(pair => pair.Id, pair => pair.Frame, StringComparer.Ordinal)
-            : null;
-        var representationMethodFrames = NullableRepresentationMaterialization.Apply(
-            birRoots, isValueFqn, refs, policy: genericRepresentations, declaredMethods: declaredMethodFrames);
-        restoreDefaultFrames();
+        var representationMethodFrames = module.RepresentationMethodFrames;
         // Preserve selected local factory facts before per-file transformations. In a
         // stdlib self-build these declarations are local, not referenced MethodDefs.
         var localFactories = MemberCallSubstitution.CollectLocalFactories(birRoots);
@@ -1926,7 +1933,8 @@ sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
     ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex, NullableWitnessDemand NullableWitnesses,
     GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots,
-    ValueRepresentationLowering.SourceIndex ValueSources);
+    ValueRepresentationLowering.SourceIndex ValueSources,
+    IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions

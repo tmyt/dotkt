@@ -55,3 +55,32 @@ internal static class TypeNodeWireContract
         ("SourceClassifier", ["packageName", "ownerPath", "name"]),
     ];
 }
+
+internal static class TypeNodeDataEquality
+{
+    internal static bool Equal(TypeNode? left, TypeNode? right)
+        => ReferenceEquals(left, right) || (left, right) switch
+        {
+            (TypeNode.Fqn a, TypeNode.Fqn b) => a.Name == b.Name && Items(a.Args, b.Args, (left0, right0) => Equal(left0, right0)) && Equal(a.Classifier, b.Classifier),
+            (TypeNode.Tv a, TypeNode.Tv b) => a.Scope == b.Scope && a.I == b.I,
+            (TypeNode.Star a, TypeNode.Star b) => true,
+            (TypeNode.Projection a, TypeNode.Projection b) => a.Variance == b.Variance && Equal(a.Of, b.Of),
+            (TypeNode.Fn a, TypeNode.Fn b) => a.Suspend == b.Suspend && Equal(a.Ret, b.Ret) && Items(a.Params, b.Params, (left0, right0) => Equal(left0, right0)) && Equal(a.Recv, b.Recv) && Items(a.Ctx, b.Ctx, (left0, right0) => Equal(left0, right0)) && a.Clr == b.Clr,
+            (TypeNode.Nullable a, TypeNode.Nullable b) => Equal(a.Of, b.Of),
+            (TypeNode.Oblivious a, TypeNode.Oblivious b) => Equal(a.Of, b.Of),
+            (TypeNode.Array a, TypeNode.Array b) => Equal(a.Elem, b.Elem) && a.Rank == b.Rank && a.SzArray == b.SzArray,
+            (TypeNode.ByRef a, TypeNode.ByRef b) => Equal(a.Of, b.Of),
+            (TypeNode.Ptr a, TypeNode.Ptr b) => Equal(a.Of, b.Of),
+            (TypeNode.FnPtr a, TypeNode.FnPtr b) => a.CallingConvention == b.CallingConvention && a.GenericArity == b.GenericArity && a.RequiredParams == b.RequiredParams && Equal(a.Ret, b.Ret) && Items(a.Params, b.Params, (left0, right0) => Equal(left0, right0)),
+            (TypeNode.Mod a, TypeNode.Mod b) => a.Req == b.Req && Equal(a.M, b.M) && Equal(a.Of, b.Of),
+            _ => false,
+        };
+
+    internal static bool Equal(TypeNode.SourceClassifier? left, TypeNode.SourceClassifier? right)
+        => ReferenceEquals(left, right) || left is not null && right is not null
+            && left.PackageName == right.PackageName && Items(left.OwnerPath, right.OwnerPath, (left0, right0) => left0 == right0) && left.Name == right.Name;
+
+    static bool Items<T>(T[]? left, T[]? right, Func<T, T, bool> equal)
+        => ReferenceEquals(left, right) || left is not null && right is not null
+            && left.Length == right.Length && left.Zip(right).All(pair => equal(pair.First, pair.Second));
+}

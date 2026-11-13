@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Kotlin owner-dependent bounds describe the source view, not the receiver's exact CLR construction.
 // Preserve the complete Kotlin constraint list in metadata and retain only representable physical rows.
@@ -644,18 +646,25 @@ static partial class OwnerConstrainedMethodLowering
         }
     }
 
-    internal static IEnumerable<TypeNode> IndependentBounds(TypeNode bound, JsonArray ownerParameters)
+    internal static IEnumerable<TypeNode> IndependentBounds(TypeNode bound, JsonArray ownerParameters) =>
+        IndependentBounds(bound, ownerParameters?.Count ?? 0, index =>
+            ownerParameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints
+                ? constraints.Select(TypeJson.Read) : Enumerable.Empty<TypeNode>());
+
+    internal static IEnumerable<TypeNode> IndependentBounds(TypeNode bound, IReadOnlyList<BirTypeParameter> ownerParameters) =>
+        IndependentBounds(bound, ownerParameters?.Count ?? 0, index => ownerParameters[index].Constraints.OrEmpty());
+
+    static IEnumerable<TypeNode> IndependentBounds(TypeNode bound, int arity, Func<int, IEnumerable<TypeNode>> constraints)
     {
         var visited = new HashSet<int>();
         IEnumerable<TypeNode> Visit(TypeNode current)
         {
             if (current is TypeNode.Tv { Scope: "type" } tv)
             {
-                if (!visited.Add(tv.I) || ownerParameters == null || tv.I < 0 || tv.I >= ownerParameters.Count)
+                if (!visited.Add(tv.I) || tv.I < 0 || tv.I >= arity)
                     yield break;
-                if (ownerParameters[tv.I] is JsonObject parameter && parameter["constraints"] is JsonArray constraints)
-                    foreach (var constraint in constraints)
-                        foreach (var result in Visit(TypeJson.Read(constraint))) yield return result;
+                foreach (var constraint in constraints(tv.I))
+                    foreach (var result in Visit(constraint)) yield return result;
             }
             else if (!FBoundStarProjectionErasure.ContainsOwnerTv(current)) yield return current;
         }

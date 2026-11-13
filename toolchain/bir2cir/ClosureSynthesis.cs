@@ -24,7 +24,7 @@ using DotKt.Bir;
 // Nested closures are handled bottom-up (a closure body's inner `newClosure` is synthesized before the outer wrapper).
 // Unconditional (ref + rt + app): kotc emits `synthClass` in every build, and RefBodySquash later applies the reference-
 // body contract to the synthesized invoke/ctor bodies.
-static class ClosureSynthesis
+static partial class ClosureSynthesis
 {
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
     static bool Bool(JsonNode n) => n is JsonValue value && value.TryGetValue<bool>(out var result) && result;
@@ -321,15 +321,23 @@ static class ClosureSynthesis
     {
         if (refs == null || synthClass["fields"] is not JsonArray fields) return;
         if (Str(synthClass["name"]) is not string typeName) return;
-        foreach (var f in fields.OfType<JsonObject>())
+        RecordCaptureLegality(typeName, fields.OfType<JsonObject>()
+                .Where(field => field["type"] != null)
+                .Select(field => (Str(field["name"]), TypeJson.Read(field["type"]))),
+            FieldLegality.PosPrefix(decl), Str((decl as JsonObject)?["name"]) ?? "<file>", refs);
+    }
+
+    // Both owning graph frontiers feed decoded facts into the one deferred registry.
+    internal static void RecordCaptureLegality(string typeName, IEnumerable<(string Name, TypeNode Type)> fields,
+        string position, string owner, ReferenceMetadataIndex refs)
+    {
+        if (refs == null || typeName == null) return;
+        foreach (var (name, type) in fields)
         {
-            if (f["type"] is not JsonNode tj) continue;
-            var t = TypeJson.Read(tj);
-            var why = FieldLegality.Classify(t, refs.IsByRefLikeFqn, out var offending);
+            var why = FieldLegality.Classify(type, refs.IsByRefLikeFqn, out var offending);
             if (why == FieldRejection.None) continue;
             _pendingCaptureRefusals[typeName] = FieldLegality.CaptureMessage(
-                FieldLegality.PosPrefix(decl), Str((decl as JsonObject)?["name"]) ?? "<file>",
-                typeName, Str(f["name"]), t, offending, why);
+                position, owner, typeName, name, type, offending, why);
             return;
         }
     }

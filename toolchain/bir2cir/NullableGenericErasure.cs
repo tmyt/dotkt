@@ -51,7 +51,7 @@ using DotKt.Bir;
 // USES of a slot are typed `Subst(Erase(declaredKotlinType(s)), typeArgs)` and NEVER `Erase(Subst(...))` — that is
 // NullableTvErasureCallRealign's job, on both the read and the write axis. This pass owns only the declaration axis.
 // Runs in every build so ref.dll, rt.dll, and the app's view of their signatures agree.
-static class NullableGenericErasure
+static partial class NullableGenericErasure
 {
     // Opaque pass-local hand-off consumed by RoundtripMetadata. Method type-parameter constraints belong to their
     // MethodDef, so they cannot ride the type-level KotlinSupertypes carrier used for class parameters.
