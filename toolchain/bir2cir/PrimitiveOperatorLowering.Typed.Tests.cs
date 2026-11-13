@@ -28,6 +28,28 @@ static partial class PrimitiveOperatorLowering
                 || !ReferenceEquals(call.Args.Value[0], distance))
                 throw new InvalidOperationException("Typed primitive shift changed masking, evaluation count, or source ownership");
         }
+        var integer = new TypeNode.Fqn("kotlin.Int");
+        var floating = new TypeNode.Fqn("kotlin.Double");
+        foreach (var call in new BirGraphValue[] {
+            new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.String"), Method = "plus",
+                Recv = new BirLocal { Name = "text" }, Args = new IBirExpression[] { Integer(1) } },
+            new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.Byte"), Method = "unaryMinus",
+                Recv = new BirLocal { Name = "byte" }, DynRet = integer },
+            new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.Byte"), Method = "inc",
+                Recv = new BirLocal { Name = "byte" }, DynRet = new TypeNode.Fqn("kotlin.Byte") },
+            Intrinsic("less", Local("nullable", new TypeNode.Nullable(integer)), Integer(1)),
+            Intrinsic("less", Local("boxed", new TypeNode.Fqn("kotlin.Any")), Integer(1)),
+            Intrinsic("EQEQ", Local("left", integer), Local("right", integer)),
+            Intrinsic("EQEQ", Local("left", floating), Local("right", floating)),
+            Intrinsic("EQEQ", Local("left", new TypeNode.Fqn("kotlin.Any")), Local("right", integer)),
+            Intrinsic("ieee754equals", Local("left", floating), Local("right", floating)),
+        })
+        {
+            var expected = Lower(call.ToDom(), BirScope.Empty);
+            var actual = (BirGraphValue)TypedOperator(call, locals);
+            if (actual == null || !System.Text.Json.Nodes.JsonNode.DeepEquals(expected, actual.ToDom()))
+                throw new InvalidOperationException("Typed primitive recognition changed a current DOM consumer's operation policy");
+        }
         foreach (var right in new TypeNode[] { new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1),
                      new TypeNode.Tv("type", 0), new TypeNode.Nullable(new TypeNode.Tv("method", 0)) })
         {

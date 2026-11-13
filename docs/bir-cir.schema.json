@@ -800,7 +800,7 @@
       "required": ["name", "type"], "additionalProperties": false
     },
     "birInlineLambda": {
-      "type": "object", "x-dotkt-model": { "name": "BirInlineLambda", "domain": "birCore", "role": "expression", "executionFrame": ["captures"] },
+      "type": "object", "x-dotkt-model": { "name": "BirInlineLambda", "domain": "birCore", "role": "expression", "executionFrame": ["captures"], "sourceRegions": [{ "statements": "body", "result": "result" }] },
       "properties": {
         "k": { "const": "inlineLambda" }, "params": { "type": "array", "items": { "$ref": "#/$defs/birLambdaParameter" } },
         "captures": { "type": "array", "items": { "$ref": "#/$defs/birInlineCapture" } },
@@ -997,7 +997,7 @@
       "required": ["k", "id", "funcType"], "additionalProperties": false
     },
     "birValueBlock": {
-      "type": "object", "x-dotkt-model": { "name": "BirValueBlock", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "sty": { "$ref": "#/$defs/type" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirValueBlock", "domain": "birCore", "role": "expression", "sourceRegions": [{ "statements": "stmts", "result": "result" }], "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "sty": { "$ref": "#/$defs/type" } } },
       "properties": {
         "k": { "const": "valueBlock" }, "joinNullBranch": { "const": true },
         "type": { "$ref": "#/$defs/type" },

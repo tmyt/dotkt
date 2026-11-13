@@ -19,14 +19,16 @@ static partial class SourceGraphRewrite
             if (node == null || node is IBirExecutablePayload) return node;
             var childScope = scope;
             node.VisitSourceParameters((name, type) => childScope = childScope.SetItem(name, type));
-            node.VisitSourceChildren(slot => slot.Replace(Walk(slot.Value, childScope)), statements => {
+            node.VisitSourceChildren(slot => slot.Replace(Walk(slot.Value, childScope)), region => {
                 var current = childScope;
+                var statements = region.Statements;
                 for (var index = 0; index < statements.Length; index++)
                 {
                     statements[index] = (IBirStatement)Walk((BirGraphValue)statements[index], current);
                     if (statements[index] is BirVariable { Name.HasValue: true, Type.HasValue: true } variable)
                         current = current.SetItem(variable.Name.Value, variable.Type.Value);
                 }
+                if (region.Result is { } result) result.Replace(Walk(result.Value, current));
             });
             return rewrite(node, scope);
         }
