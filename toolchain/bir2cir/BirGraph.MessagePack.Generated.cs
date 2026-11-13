@@ -2564,11 +2564,13 @@ internal static class BirGraphMessagePack
         OptionalField<BirMemberReference> field40 = default;
         OptionalField<TypeNode> field41 = default;
         OptionalField<bool> field42 = default;
+        OptionalField<TypeNode[]> field43 = default;
+        OptionalField<TypeNode> field44 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 43); if (IrMessagePack.ReadString(ref reader) != "callStatic") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 45); if (IrMessagePack.ReadString(ref reader) != "callStatic") throw new FormatException(); break;
                 case "companionCall":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
@@ -2741,6 +2743,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 42);
                     field42 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 43);
+                    field43 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 44);
+                    field44 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -2790,13 +2800,15 @@ internal static class BirGraphMessagePack
             MemberRef = field40,
             DynRet = field41,
             Virtual = field42,
+            ResolvedMemberParams = field43,
+            ResolvedMemberReturn = field44,
         };
     }
 
     internal static void WriteBirCallStatic(ref MessagePackWriter writer, BirCallStatic value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.CompanionCall.IsPresent ? 1 : 0) + (value.Owner.IsPresent ? 1 : 0) + (value.OwnerType.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.Prop.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.ShapeTypes.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.SuspendCall.IsPresent ? 1 : 0) + (value.ClrAwaitBridge.IsPresent ? 1 : 0) + (value.AwaitResult.IsPresent ? 1 : 0) + (value.CalleeOwner.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DefaultDeclarationId.IsPresent ? 1 : 0) + (value.DefaultOwnerType.IsPresent ? 1 : 0) + (value.DotktFrontendDeclarationConsumed.IsPresent ? 1 : 0) + (value.ClrFlagsOperation.IsPresent ? 1 : 0) + (value.AnySlot.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberMethodTypeParams.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.MemberReturnType.IsPresent ? 1 : 0) + (value.RetSuspendFnTypePre.IsPresent ? 1 : 0) + (value.DotktKotlinSigId.IsPresent ? 1 : 0) + (value.NullableWitnessCount.IsPresent ? 1 : 0) + (value.DotktDeclarationIdentityBound.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.FunctionCallSignature.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value._capturedGenericTarget.IsPresent ? 1 : 0) + (value.CalleeRet.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.DynRet.IsPresent ? 1 : 0) + (value.Virtual.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.CompanionCall.IsPresent ? 1 : 0) + (value.Owner.IsPresent ? 1 : 0) + (value.OwnerType.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.Prop.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.ShapeTypes.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.SuspendCall.IsPresent ? 1 : 0) + (value.ClrAwaitBridge.IsPresent ? 1 : 0) + (value.AwaitResult.IsPresent ? 1 : 0) + (value.CalleeOwner.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DefaultDeclarationId.IsPresent ? 1 : 0) + (value.DefaultOwnerType.IsPresent ? 1 : 0) + (value.DotktFrontendDeclarationConsumed.IsPresent ? 1 : 0) + (value.ClrFlagsOperation.IsPresent ? 1 : 0) + (value.AnySlot.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberMethodTypeParams.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.MemberReturnType.IsPresent ? 1 : 0) + (value.RetSuspendFnTypePre.IsPresent ? 1 : 0) + (value.DotktKotlinSigId.IsPresent ? 1 : 0) + (value.NullableWitnessCount.IsPresent ? 1 : 0) + (value.DotktDeclarationIdentityBound.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.FunctionCallSignature.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value._capturedGenericTarget.IsPresent ? 1 : 0) + (value.CalleeRet.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.DynRet.IsPresent ? 1 : 0) + (value.Virtual.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("callStatic");
         if (value.CompanionCall.IsPresent)
@@ -3241,6 +3253,29 @@ internal static class BirGraphMessagePack
                 writer.Write(value.Virtual.Value);
             }
         }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
+            }
+        }
     }
 
     internal static BirCallInstance ReadBirCallInstance(ref MessagePackReader reader)
@@ -3295,11 +3330,13 @@ internal static class BirGraphMessagePack
         OptionalField<bool> field45 = default;
         OptionalField<bool> field46 = default;
         OptionalField<bool> field47 = default;
+        OptionalField<TypeNode[]> field48 = default;
+        OptionalField<TypeNode> field49 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 48); if (IrMessagePack.ReadString(ref reader) != "callInstance") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 50); if (IrMessagePack.ReadString(ref reader) != "callInstance") throw new FormatException(); break;
                 case "companionCall":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
@@ -3492,6 +3529,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 47);
                     field47 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 48);
+                    field48 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 49);
+                    field49 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -3546,13 +3591,15 @@ internal static class BirGraphMessagePack
             ClrOwnerResolved = field45,
             Static = field46,
             _physicalDeclarationSignature = field47,
+            ResolvedMemberParams = field48,
+            ResolvedMemberReturn = field49,
         };
     }
 
     internal static void WriteBirCallInstance(ref MessagePackWriter writer, BirCallInstance value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.CompanionCall.IsPresent ? 1 : 0) + (value.OwnerType.IsPresent ? 1 : 0) + (value.Virtual.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.Prop.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.ShapeTypes.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.DynRet.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.SuspendCall.IsPresent ? 1 : 0) + (value.ClrAwaitBridge.IsPresent ? 1 : 0) + (value.AwaitResult.IsPresent ? 1 : 0) + (value.Overrides.IsPresent ? 1 : 0) + (value.AnySlot.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DefaultDeclarationId.IsPresent ? 1 : 0) + (value.DefaultOwnerType.IsPresent ? 1 : 0) + (value.DotktFrontendDeclarationConsumed.IsPresent ? 1 : 0) + (value.ClrFlagsOperation.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberMethodTypeParams.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.MemberReturnType.IsPresent ? 1 : 0) + (value.RetSuspendFnTypePre.IsPresent ? 1 : 0) + (value.NullableWitnessCount.IsPresent ? 1 : 0) + (value.DotktDeclarationIdentityBound.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.FunctionCallSignature.IsPresent ? 1 : 0) + (value._erasedConstraintDispatch.IsPresent ? 1 : 0) + (value._exactExistentialBridgeOwnerCall.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value._capturedGenericTarget.IsPresent ? 1 : 0) + (value.CalleeRet.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value._physicalDeclarationSignature.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.CompanionCall.IsPresent ? 1 : 0) + (value.OwnerType.IsPresent ? 1 : 0) + (value.Virtual.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.Prop.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.ShapeTypes.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.DynRet.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.SuspendCall.IsPresent ? 1 : 0) + (value.ClrAwaitBridge.IsPresent ? 1 : 0) + (value.AwaitResult.IsPresent ? 1 : 0) + (value.Overrides.IsPresent ? 1 : 0) + (value.AnySlot.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DefaultDeclarationId.IsPresent ? 1 : 0) + (value.DefaultOwnerType.IsPresent ? 1 : 0) + (value.DotktFrontendDeclarationConsumed.IsPresent ? 1 : 0) + (value.ClrFlagsOperation.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberMethodTypeParams.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.MemberReturnType.IsPresent ? 1 : 0) + (value.RetSuspendFnTypePre.IsPresent ? 1 : 0) + (value.NullableWitnessCount.IsPresent ? 1 : 0) + (value.DotktDeclarationIdentityBound.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.FunctionCallSignature.IsPresent ? 1 : 0) + (value._erasedConstraintDispatch.IsPresent ? 1 : 0) + (value._exactExistentialBridgeOwnerCall.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value._capturedGenericTarget.IsPresent ? 1 : 0) + (value.CalleeRet.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value._physicalDeclarationSignature.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("callInstance");
         if (value.CompanionCall.IsPresent)
@@ -4047,6 +4094,29 @@ internal static class BirGraphMessagePack
                 writer.Write(value._physicalDeclarationSignature.Value);
             }
         }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
+            }
+        }
     }
 
     internal static BirCallLocal ReadBirCallLocal(ref MessagePackReader reader)
@@ -4239,11 +4309,13 @@ internal static class BirGraphMessagePack
         OptionalField<TypeNode> field22 = default;
         OptionalField<TypeNode[]> field23 = default;
         OptionalField<TypeNode[]> field24 = default;
+        OptionalField<TypeNode[]> field25 = default;
+        OptionalField<TypeNode> field26 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 25); if (IrMessagePack.ReadString(ref reader) != "field") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 27); if (IrMessagePack.ReadString(ref reader) != "field") throw new FormatException(); break;
                 case "companionCall":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
@@ -4344,6 +4416,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 24);
                     field24 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 25);
+                    field25 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 26);
+                    field26 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -4375,13 +4455,15 @@ internal static class BirGraphMessagePack
             Type = field22,
             Sig = field23,
             CalleeParams = field24,
+            ResolvedMemberParams = field25,
+            ResolvedMemberReturn = field26,
         };
     }
 
     internal static void WriteBirFieldGet(ref MessagePackWriter writer, BirFieldGet value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.CompanionCall.IsPresent ? 1 : 0) + (value.OwnerType.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Outer.IsPresent ? 1 : 0) + (value.DataClassCopyDefault.IsPresent ? 1 : 0) + (value.GeneratedEqualsFieldRead.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberType.IsPresent ? 1 : 0) + (value.RetSuspendFnTypePre.IsPresent ? 1 : 0) + (value._nativeLocation.IsPresent ? 1 : 0) + (value._nativeFieldAddress.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.CompanionCall.IsPresent ? 1 : 0) + (value.OwnerType.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Outer.IsPresent ? 1 : 0) + (value.DataClassCopyDefault.IsPresent ? 1 : 0) + (value.GeneratedEqualsFieldRead.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberType.IsPresent ? 1 : 0) + (value.RetSuspendFnTypePre.IsPresent ? 1 : 0) + (value._nativeLocation.IsPresent ? 1 : 0) + (value._nativeFieldAddress.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("field");
         if (value.CompanionCall.IsPresent)
@@ -4622,6 +4704,29 @@ internal static class BirGraphMessagePack
                 {
                     CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
                 }
+            }
+        }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
             }
         }
     }
@@ -4891,11 +4996,13 @@ internal static class BirGraphMessagePack
         OptionalField<TypeNode[]> field17 = default;
         OptionalField<TypeNode[]> field18 = default;
         OptionalField<TypeNode> field19 = default;
+        OptionalField<TypeNode[]> field20 = default;
+        OptionalField<TypeNode> field21 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 20); if (IrMessagePack.ReadString(ref reader) != "setFieldExpr") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 22); if (IrMessagePack.ReadString(ref reader) != "setFieldExpr") throw new FormatException(); break;
                 case "companionCall":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
@@ -4976,6 +5083,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 19);
                     field19 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 20);
+                    field20 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 21);
+                    field21 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -5002,13 +5117,15 @@ internal static class BirGraphMessagePack
             Sig = field17,
             CalleeParams = field18,
             Ret = field19,
+            ResolvedMemberParams = field20,
+            ResolvedMemberReturn = field21,
         };
     }
 
     internal static void WriteBirFieldSetExpression(ref MessagePackWriter writer, BirFieldSetExpression value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.CompanionCall.IsPresent ? 1 : 0) + (value.OwnerType.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Value.IsPresent ? 1 : 0) + (value.Outer.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberType.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.CompanionCall.IsPresent ? 1 : 0) + (value.OwnerType.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Value.IsPresent ? 1 : 0) + (value.Outer.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberType.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("setFieldExpr");
         if (value.CompanionCall.IsPresent)
@@ -5204,6 +5321,29 @@ internal static class BirGraphMessagePack
             else
             {
                 CirMessagePack.WriteType(ref writer, value.Ret.Value, depth + 1);
+            }
+        }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
             }
         }
     }
@@ -13486,11 +13626,13 @@ internal static class BirGraphMessagePack
         OptionalField<BirMemberReference> field10 = default;
         OptionalField<TypeNode> field11 = default;
         OptionalField<TypeNode[]> field12 = default;
+        OptionalField<TypeNode[]> field13 = default;
+        OptionalField<TypeNode> field14 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 13); if (IrMessagePack.ReadString(ref reader) != "newDelegate") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 15); if (IrMessagePack.ReadString(ref reader) != "newDelegate") throw new FormatException(); break;
                 case "method":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
@@ -13543,6 +13685,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 12);
                     field12 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 14);
+                    field14 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -13562,13 +13712,15 @@ internal static class BirGraphMessagePack
             MemberRef = field10,
             CalleeRet = field11,
             CalleeParams = field12,
+            ResolvedMemberParams = field13,
+            ResolvedMemberReturn = field14,
         };
     }
 
     internal static void WriteBirNewDelegate(ref MessagePackWriter writer, BirNewDelegate value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Method.IsPresent ? 1 : 0) + (value.FuncType.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.CalleeOwner.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DotktDeclarationIdentityBound.IsPresent ? 1 : 0) + (value.DotktDelegateSlot.IsPresent ? 1 : 0) + (value.DelegateCtorRef.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.CalleeRet.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Method.IsPresent ? 1 : 0) + (value.FuncType.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.CalleeOwner.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DotktDeclarationIdentityBound.IsPresent ? 1 : 0) + (value.DotktDelegateSlot.IsPresent ? 1 : 0) + (value.DelegateCtorRef.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.CalleeRet.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("newDelegate");
         if (value.Method.IsPresent)
@@ -13701,6 +13853,29 @@ internal static class BirGraphMessagePack
                 {
                     CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
                 }
+            }
+        }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
             }
         }
     }
@@ -15319,11 +15494,13 @@ internal static class BirGraphMessagePack
         OptionalField<TypeNode[]> field22 = default;
         OptionalField<bool> field23 = default;
         OptionalField<BirMemberReference> field24 = default;
+        OptionalField<TypeNode[]> field25 = default;
+        OptionalField<TypeNode> field26 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 25); if (IrMessagePack.ReadString(ref reader) != "newBoundDelegate") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 27); if (IrMessagePack.ReadString(ref reader) != "newBoundDelegate") throw new FormatException(); break;
                 case "ownerType":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -15424,6 +15601,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 24);
                     field24 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 25);
+                    field25 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 26);
+                    field26 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -15455,13 +15640,15 @@ internal static class BirGraphMessagePack
             CalleeParams = field22,
             ClrOwnerResolved = field23,
             InvokeRef = field24,
+            ResolvedMemberParams = field25,
+            ResolvedMemberReturn = field26,
         };
     }
 
     internal static void WriteBirNewBoundDelegate(ref MessagePackWriter writer, BirNewBoundDelegate value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.OwnerType.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.Virtual.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.FuncType.IsPresent ? 1 : 0) + (value.AnySlot.IsPresent ? 1 : 0) + (value.CalleeOwner.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberMethodTypeParams.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.MemberReturnType.IsPresent ? 1 : 0) + (value.DotktDeclarationIdentityBound.IsPresent ? 1 : 0) + (value.DotktDelegateSlot.IsPresent ? 1 : 0) + (value.DelegateCtorRef.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.CalleeRet.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.InvokeRef.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.OwnerType.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.Virtual.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.FuncType.IsPresent ? 1 : 0) + (value.AnySlot.IsPresent ? 1 : 0) + (value.CalleeOwner.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberMethodTypeParams.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.MemberReturnType.IsPresent ? 1 : 0) + (value.DotktDeclarationIdentityBound.IsPresent ? 1 : 0) + (value.DotktDelegateSlot.IsPresent ? 1 : 0) + (value.DelegateCtorRef.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.CalleeRet.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.InvokeRef.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("newBoundDelegate");
         if (value.OwnerType.IsPresent)
@@ -15722,6 +15909,29 @@ internal static class BirGraphMessagePack
             else
             {
                 WriteBirMemberReference(ref writer, value.InvokeRef.Value, depth + 1);
+            }
+        }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
             }
         }
     }
@@ -17341,11 +17551,13 @@ internal static class BirGraphMessagePack
         OptionalField<int> field12 = default;
         OptionalField<int> field13 = default;
         OptionalField<BirMemberReference> field14 = default;
+        OptionalField<TypeNode[]> field15 = default;
+        OptionalField<TypeNode> field16 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 15); if (IrMessagePack.ReadString(ref reader) != "new") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 17); if (IrMessagePack.ReadString(ref reader) != "new") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -17406,6 +17618,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 14);
                     field14 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 15);
+                    field15 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 16);
+                    field16 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -17427,13 +17647,15 @@ internal static class BirGraphMessagePack
             NullableWitnessCount = field12,
             LocalCtorIndex = field13,
             MemberRef = field14,
+            ResolvedMemberParams = field15,
+            ResolvedMemberReturn = field16,
         };
     }
 
     internal static void WriteBirNew(ref MessagePackWriter writer, BirNew value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.ConstructorDeclarationId.IsPresent ? 1 : 0) + (value.CompanionCaptureOwner.IsPresent ? 1 : 0) + (value.PropertyFunction.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberMethodTypeParams.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.MemberReturnType.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value.NullableWitnessCount.IsPresent ? 1 : 0) + (value.LocalCtorIndex.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.ConstructorDeclarationId.IsPresent ? 1 : 0) + (value.CompanionCaptureOwner.IsPresent ? 1 : 0) + (value.PropertyFunction.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberMethodTypeParams.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.MemberReturnType.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value.NullableWitnessCount.IsPresent ? 1 : 0) + (value.LocalCtorIndex.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("new");
         if (value.Type.IsPresent)
@@ -17594,6 +17816,29 @@ internal static class BirGraphMessagePack
             else
             {
                 WriteBirMemberReference(ref writer, value.MemberRef.Value, depth + 1);
+            }
+        }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
             }
         }
     }
@@ -17805,11 +18050,13 @@ internal static class BirGraphMessagePack
         OptionalField<TypeNode[]> field16 = default;
         OptionalField<TypeNode[]> field17 = default;
         OptionalField<bool> field18 = default;
+        OptionalField<TypeNode[]> field19 = default;
+        OptionalField<TypeNode> field20 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 19); if (IrMessagePack.ReadString(ref reader) != "setField") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 21); if (IrMessagePack.ReadString(ref reader) != "setField") throw new FormatException(); break;
                 case "ownerType":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -17886,6 +18133,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 18);
                     field18 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 19);
+                    field19 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 20);
+                    field20 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -17911,13 +18166,15 @@ internal static class BirGraphMessagePack
             Sig = field16,
             CalleeParams = field17,
             _callEvalTemporary = field18,
+            ResolvedMemberParams = field19,
+            ResolvedMemberReturn = field20,
         };
     }
 
     internal static void WriteBirSetField(ref MessagePackWriter writer, BirSetField value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.OwnerType.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Value.IsPresent ? 1 : 0) + (value.Outer.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberType.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value._callEvalTemporary.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.OwnerType.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Value.IsPresent ? 1 : 0) + (value.Outer.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberType.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value._callEvalTemporary.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("setField");
         if (value.OwnerType.IsPresent)
@@ -18104,6 +18361,29 @@ internal static class BirGraphMessagePack
             else
             {
                 writer.Write(value._callEvalTemporary.Value);
+            }
+        }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
             }
         }
     }
@@ -19916,11 +20196,13 @@ internal static class BirGraphMessagePack
         OptionalField<BirMemberReference> field2 = default;
         OptionalField<TypeNode[]> field3 = default;
         OptionalField<TypeNode[]> field4 = default;
+        OptionalField<TypeNode[]> field5 = default;
+        OptionalField<TypeNode> field6 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 5); if (IrMessagePack.ReadString(ref reader) != "newClr") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 7); if (IrMessagePack.ReadString(ref reader) != "newClr") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -19941,6 +20223,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 4);
                     field4 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 5);
+                    field5 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 6);
+                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -19952,13 +20242,15 @@ internal static class BirGraphMessagePack
             MemberRef = field2,
             ArgTypes = field3,
             MemberSignature = field4,
+            ResolvedMemberParams = field5,
+            ResolvedMemberReturn = field6,
         };
     }
 
     internal static void WriteBirNewClr(ref MessagePackWriter writer, BirNewClr value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("newClr");
         if (value.Type.IsPresent)
@@ -20019,6 +20311,29 @@ internal static class BirGraphMessagePack
                 {
                     CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
                 }
+            }
+        }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
             }
         }
     }
@@ -21259,11 +21574,13 @@ internal static class BirGraphMessagePack
         OptionalField<string> field14 = default;
         OptionalField<string> field15 = default;
         OptionalField<bool> field16 = default;
+        OptionalField<TypeNode[]> field17 = default;
+        OptionalField<TypeNode> field18 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 17); if (IrMessagePack.ReadString(ref reader) != "clrEventAdd") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 19); if (IrMessagePack.ReadString(ref reader) != "clrEventAdd") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -21332,6 +21649,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 16);
                     field16 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 17);
+                    field17 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 18);
+                    field18 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -21355,13 +21680,15 @@ internal static class BirGraphMessagePack
             DeclarationId = field14,
             MemberVisibility = field15,
             ClrOwnerResolved = field16,
+            ResolvedMemberParams = field17,
+            ResolvedMemberReturn = field18,
         };
     }
 
     internal static void WriteBirEventAdd(ref MessagePackWriter writer, BirEventAdd value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Handler.IsPresent ? 1 : 0) + (value.HandlerExact.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.Event.IsPresent ? 1 : 0) + (value.DelegateType.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Handler.IsPresent ? 1 : 0) + (value.HandlerExact.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.Event.IsPresent ? 1 : 0) + (value.DelegateType.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("clrEventAdd");
         if (value.Type.IsPresent)
@@ -21527,6 +21854,29 @@ internal static class BirGraphMessagePack
                 writer.Write(value.ClrOwnerResolved.Value);
             }
         }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
+            }
+        }
     }
 
     internal static BirEventRemove ReadBirEventRemove(ref MessagePackReader reader)
@@ -21550,11 +21900,13 @@ internal static class BirGraphMessagePack
         OptionalField<string> field14 = default;
         OptionalField<string> field15 = default;
         OptionalField<bool> field16 = default;
+        OptionalField<TypeNode[]> field17 = default;
+        OptionalField<TypeNode> field18 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 17); if (IrMessagePack.ReadString(ref reader) != "clrEventRemove") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 19); if (IrMessagePack.ReadString(ref reader) != "clrEventRemove") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -21623,6 +21975,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 16);
                     field16 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 17);
+                    field17 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 18);
+                    field18 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -21646,13 +22006,15 @@ internal static class BirGraphMessagePack
             DeclarationId = field14,
             MemberVisibility = field15,
             ClrOwnerResolved = field16,
+            ResolvedMemberParams = field17,
+            ResolvedMemberReturn = field18,
         };
     }
 
     internal static void WriteBirEventRemove(ref MessagePackWriter writer, BirEventRemove value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Handler.IsPresent ? 1 : 0) + (value.HandlerExact.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.Event.IsPresent ? 1 : 0) + (value.DelegateType.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Handler.IsPresent ? 1 : 0) + (value.HandlerExact.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.Event.IsPresent ? 1 : 0) + (value.DelegateType.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("clrEventRemove");
         if (value.Type.IsPresent)
@@ -21816,6 +22178,29 @@ internal static class BirGraphMessagePack
             else
             {
                 writer.Write(value.ClrOwnerResolved.Value);
+            }
+        }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
             }
         }
     }
@@ -22655,11 +23040,13 @@ internal static class BirGraphMessagePack
         OptionalField<string> field21 = default;
         OptionalField<string> field22 = default;
         OptionalField<SourceTypeVector> field23 = default;
+        OptionalField<TypeNode[]> field24 = default;
+        OptionalField<TypeNode> field25 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 24); if (IrMessagePack.ReadString(ref reader) != "clrPropGet") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 26); if (IrMessagePack.ReadString(ref reader) != "clrPropGet") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -22756,6 +23143,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 23);
                     field23 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 24);
+                    field24 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 25);
+                    field25 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -22786,13 +23181,15 @@ internal static class BirGraphMessagePack
             PropertyAccessor = field21,
             DeclarationId = field22,
             _foreignDeclarationSignature = field23,
+            ResolvedMemberParams = field24,
+            ResolvedMemberReturn = field25,
         };
     }
 
     internal static void WriteBirPropertyGet(ref MessagePackWriter writer, BirPropertyGet value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value._erasedConstraintDispatch.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value._foreignDeclarationSignature.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value._erasedConstraintDispatch.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value._foreignDeclarationSignature.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("clrPropGet");
         if (value.Type.IsPresent)
@@ -23026,6 +23423,29 @@ internal static class BirGraphMessagePack
                 IrMessagePack.WriteString(ref writer, value._foreignDeclarationSignature.Value.FrozenText);
             }
         }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
+            }
+        }
     }
 
     internal static BirPropertySet ReadBirPropertySet(ref MessagePackReader reader)
@@ -23056,11 +23476,13 @@ internal static class BirGraphMessagePack
         OptionalField<string> field21 = default;
         OptionalField<string> field22 = default;
         OptionalField<SourceTypeVector> field23 = default;
+        OptionalField<TypeNode[]> field24 = default;
+        OptionalField<TypeNode> field25 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 24); if (IrMessagePack.ReadString(ref reader) != "clrPropSet") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 26); if (IrMessagePack.ReadString(ref reader) != "clrPropSet") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -23157,6 +23579,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 23);
                     field23 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 24);
+                    field24 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 25);
+                    field25 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -23187,13 +23617,15 @@ internal static class BirGraphMessagePack
             PropertyAccessor = field21,
             DeclarationId = field22,
             _foreignDeclarationSignature = field23,
+            ResolvedMemberParams = field24,
+            ResolvedMemberReturn = field25,
         };
     }
 
     internal static void WriteBirPropertySet(ref MessagePackWriter writer, BirPropertySet value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Value.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value._erasedConstraintDispatch.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value._foreignDeclarationSignature.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Accessor.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Value.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value._erasedConstraintDispatch.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value._foreignDeclarationSignature.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("clrPropSet");
         if (value.Type.IsPresent)
@@ -23425,6 +23857,29 @@ internal static class BirGraphMessagePack
             else
             {
                 IrMessagePack.WriteString(ref writer, value._foreignDeclarationSignature.Value.FrozenText);
+            }
+        }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
             }
         }
     }
@@ -23806,11 +24261,13 @@ internal static class BirGraphMessagePack
         OptionalField<TypeNode[]> field12 = default;
         OptionalField<bool> field13 = default;
         OptionalField<TypeNode> field14 = default;
+        OptionalField<TypeNode[]> field15 = default;
+        OptionalField<TypeNode> field16 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 15); if (IrMessagePack.ReadString(ref reader) != "newBoundClrDelegate") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 17); if (IrMessagePack.ReadString(ref reader) != "newBoundClrDelegate") throw new FormatException(); break;
                 case "funcType":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -23871,6 +24328,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 14);
                     field14 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 15);
+                    field15 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 16);
+                    field16 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -23892,13 +24357,15 @@ internal static class BirGraphMessagePack
             CalleeParams = field12,
             ClrOwnerResolved = field13,
             DotktDelegateSlot = field14,
+            ResolvedMemberParams = field15,
+            ResolvedMemberReturn = field16,
         };
     }
 
     internal static void WriteBirBoundClrDelegate(ref MessagePackWriter writer, BirBoundClrDelegate value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.FuncType.IsPresent ? 1 : 0) + (value.ClrType.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Virtual.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.DelegateCtorRef.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.DotktDelegateSlot.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.FuncType.IsPresent ? 1 : 0) + (value.ClrType.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Virtual.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.DelegateCtorRef.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.ClrOwnerResolved.IsPresent ? 1 : 0) + (value.DotktDelegateSlot.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("newBoundClrDelegate");
         if (value.FuncType.IsPresent)
@@ -24051,6 +24518,29 @@ internal static class BirGraphMessagePack
                 CirMessagePack.WriteType(ref writer, value.DotktDelegateSlot.Value, depth + 1);
             }
         }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
+            }
+        }
     }
 
     internal static BirClrStaticDelegate ReadBirClrStaticDelegate(ref MessagePackReader reader)
@@ -24069,11 +24559,13 @@ internal static class BirGraphMessagePack
         OptionalField<TypeNode[]> field9 = default;
         OptionalField<TypeNode[]> field10 = default;
         OptionalField<TypeNode> field11 = default;
+        OptionalField<TypeNode[]> field12 = default;
+        OptionalField<TypeNode> field13 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 12); if (IrMessagePack.ReadString(ref reader) != "newClrStaticDelegate") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 14); if (IrMessagePack.ReadString(ref reader) != "newClrStaticDelegate") throw new FormatException(); break;
                 case "funcType":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -24122,6 +24614,14 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 11);
                     field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
+                case "resolvedMemberParams":
+                    Seen(ref seen, 1UL << 12);
+                    field12 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -24140,13 +24640,15 @@ internal static class BirGraphMessagePack
             Sig = field9,
             CalleeParams = field10,
             DotktDelegateSlot = field11,
+            ResolvedMemberParams = field12,
+            ResolvedMemberReturn = field13,
         };
     }
 
     internal static void WriteBirClrStaticDelegate(ref MessagePackWriter writer, BirClrStaticDelegate value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.FuncType.IsPresent ? 1 : 0) + (value.ClrType.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.DelegateCtorRef.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.DotktDelegateSlot.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.FuncType.IsPresent ? 1 : 0) + (value.ClrType.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.DelegateCtorRef.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.LocalAccessor.IsPresent ? 1 : 0) + (value.AccessorOwner.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.CalleeParams.IsPresent ? 1 : 0) + (value.DotktDelegateSlot.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("newClrStaticDelegate");
         if (value.FuncType.IsPresent)
@@ -24270,6 +24772,29 @@ internal static class BirGraphMessagePack
             else
             {
                 CirMessagePack.WriteType(ref writer, value.DotktDelegateSlot.Value, depth + 1);
+            }
+        }
+        if (value.ResolvedMemberParams.IsPresent)
+        {
+            writer.Write("resolvedMemberParams");
+            if (value.ResolvedMemberParams.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ResolvedMemberParams.Value.Length);
+                foreach (var item0 in value.ResolvedMemberParams.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ResolvedMemberReturn.IsPresent)
+        {
+            writer.Write("resolvedMemberReturn");
+            if (value.ResolvedMemberReturn.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ResolvedMemberReturn.Value, depth + 1);
             }
         }
     }

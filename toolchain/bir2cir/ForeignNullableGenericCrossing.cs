@@ -4,8 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // THE ONE SHAPE CARRIER-ARGUMENT ERASURE CANNOT MEET (#86).
 //
@@ -40,9 +41,9 @@ using DotKt.Bir;
 //
 // Runs on the LOWERED tree, where `resolvedMemberParams`/`ret` are the final CLR signature: earlier the same node may still be
 // mid-resolution and a Kotlin-vocabulary `Nullable(Tv)` would be read as a foreign declaration it is not.
-static class ForeignNullableGenericCrossing
+static partial class ForeignNullableGenericCrossing
 {
-    public static void Check(JsonNode root, string file) => Walk(root, file);
+    public static void Check(BirGraphValue root, string file) => Walk(root, file);
 
     // THE SAME CROSSING AT THE IMPLEMENTING POSITION. A call is not the only way to meet an uninhabitable slot: a
     // Kotlin class can DERIVE from a .NET type that declares one — `class C : ITake` for a C# `interface ITake {
@@ -75,46 +76,38 @@ static class ForeignNullableGenericCrossing
     // reader. Either way `nullableGeneric`/`nullableGenericRet` must not reach CIR, so this drops them, exactly
     // as the call-side sweep below drops `resolvedMemberReturn`. That is also why bir2cir writes no CIR file until this has
     // run: a file serialized inside the lowering loop would freeze the record of every file but the last.
-    public static void CheckImplementedSlots(IReadOnlyList<(JsonNode Root, string File)> roots,
+    public static void CheckImplementedSlots(IReadOnlyList<(BirFileDeclaration Root, string File)> roots,
         ReferenceMetadataIndex refs)
     {
-        var defs = SupertypeGraph.Collect(roots.Select(r => r.Root));
+        var defs = SupertypeGraph.CollectSource(roots.Select(r => r.Root));
+        var selected = new Dictionary<string, BirGraphValue>(StringComparer.Ordinal);
+        foreach (var (root, _) in roots)
+            foreach (var declaration in root.Types.OrEmpty())
+            {
+                var type = ReadType(declaration);
+                if (type.Name != null) selected[type.Name] = type.Declaration;
+            }
         foreach (var (root, file) in roots)
-            if (root is JsonObject o && o["types"] is JsonArray types)
-                foreach (var t in types.OfType<JsonObject>())
-                    CheckTypeSlots(t, defs, refs, file);
+            foreach (var declaration in root.Types.OrEmpty())
+            {
+                var type = ReadType(declaration);
+                if (type.Name != null && ReferenceEquals(selected.GetValueOrDefault(type.Name), type.Declaration))
+                    CheckTypeSlots(type, defs, refs, file);
+            }
         foreach (var (root, _) in roots) DropSlotRecords(root);
     }
 
-    static void DropSlotRecords(JsonNode node)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                obj.Remove("nullableGeneric");
-                obj.Remove("nullableGenericRet");
-                foreach (var kv in obj) if (kv.Value != null) DropSlotRecords(kv.Value);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) if (it != null) DropSlotRecords(it);
-                break;
-        }
-    }
-
-    static void CheckTypeSlots(JsonObject to, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
+    static void CheckTypeSlots(TypeView type, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
         ReferenceMetadataIndex refs, string file)
     {
-        if (to["types"] is JsonArray nested)
-            foreach (var n in nested.OfType<JsonObject>()) CheckTypeSlots(n, defs, refs, file);
-
-        if (Str(to["name"]) is not string typeName || !defs.TryGetValue(typeName, out var cls) || cls.Node != to)
+        if (!defs.TryGetValue(type.Name, out var cls))
             return;
 
         // WHO IS OBLIGED TO FILL AN ABSTRACT SLOT. Only a type that must be instantiable: a Kotlin `interface KI :
         // ITake` and an `abstract class KA : BTake()` inherit the obligation without discharging it, and refusing
         // them refuses a program that has a perfectly good lowering — they emit no body at all. Their concrete
         // subclasses are asked instead, and reach the same slot through this walk.
-        var mustFillAbstract = Str(to["kind"]) != "interface" && !Bool(to["abstract"]);
+        var mustFillAbstract = type.Kind != "interface" && !type.Abstract;
 
         // THE SLOTS THIS TYPE INHERITS, grouped by CLR identity — name, method generic ARITY (ECMA-335 I.8.6.1.6
         // makes it part of the signature, so `M<T>(int)` and `M(int)` are two slots) and the declared parameter
@@ -156,8 +149,8 @@ static class ForeignNullableGenericCrossing
             // it — and "overrides it" is decided by the signature the override would physically state, not by the
             // member's name and parameter count, which cannot tell `Take(List<int?>)` from an unrelated
             // `Take(string)` sibling the author actually wrote.
-            if (!((mustFillAbstract && !slot.Implemented) || Declares(to, slot, refs))) continue;
-            throw RefuseSlot(file, Str(to["name"]) ?? "<type>", slot.Owner, slot.Name, crossing.Value.Where,
+            if (!((mustFillAbstract && !slot.Implemented) || Declares(type.Methods, slot, refs))) continue;
+            throw RefuseSlot(file, type.Name ?? "<type>", slot.Owner, slot.Name, crossing.Value.Where,
                 crossing.Value.Type);
         }
     }
@@ -308,51 +301,50 @@ static class ForeignNullableGenericCrossing
     // Deciding it by "some other slot already states that signature" instead let ANY body of that shape off, which
     // is the silent miscompile the refusal exists to prevent: the CLR binds the emitted body to the `object` slot
     // and a call through `Take(List<int?>)` runs the BASE implementation.
-    static bool Declares(JsonObject to, Slot slot, ReferenceMetadataIndex refs)
+    static bool Declares(IReadOnlyList<BirFunctionDeclaration> methods, Slot slot, ReferenceMetadataIndex refs)
     {
-        if (to["methods"] is not JsonArray methods) return false;
         // The reflected slot reader uses document type spelling while current-format declarations may already carry
         // an exact metadata TypeDef name. Compare both through the reference index's authoritative physical identity;
         // stripping arity here would merge legal nested/same-flattened-arity collisions, which is the defect #505
         // removes.
         var want = slot.Params.Select(p => PhysicalNorm(NullableGenericErasure.ErasedLoweredSlot(p), refs)).ToArray();
         var moved = slot.Params.Select(NullableGenericErasure.ErasureWouldMove).ToArray();
-        foreach (var m in methods.OfType<JsonObject>())
+        foreach (var method in methods)
         {
-            if (Bool(m["static"]) || Bool(m["abstract"])) continue;
-            if (m["body"] is not JsonArray body || body.Count == 0) continue;
+            if (method.Static.OrDefault() || method.Abstract.OrDefault()) continue;
+            if (!method.Body.HasValue || method.Body.Value.Length == 0) continue;
             // Property/accessor allocation may replace the source name with an internal collision-free name before
             // this check. Its exact MethodImpl target is then the authoritative declaration relation; compare that
             // full reference rather than trying to reverse the allocated name back into Kotlin vocabulary.
-            if (ExplicitlyOverrides(m["clrOverrideRef"] as JsonObject, slot, refs)) return true;
-            if (Str(m["name"]) != slot.Name) continue;
-            if (((m["typeParams"] as JsonArray)?.Count ?? 0) != slot.Arity) continue;
-            if (m["params"] is not JsonArray ps || ps.Count != want.Length) continue;
+            if (ExplicitlyOverrides(method.ClrOverrideRef.OrDefault(), slot, refs)) return true;
+            if (method.Name.OrDefault() != slot.Name) continue;
+            if (method.TypeParams.OrEmpty().Length != slot.Arity) continue;
+            if (!method.Params.HasValue || method.Params.Value.Length != want.Length) continue;
             var ok = true;
-            for (var i = 0; i < ps.Count && ok; i++)
+            for (var i = 0; i < method.Params.Value.Length && ok; i++)
             {
-                var po = ps[i] as JsonObject;
-                ok = TypeJson.Read(po?["type"]) is TypeNode t && PhysicalNorm(t, refs) == want[i]
-                     && (!moved[i] || StatesSlot(po, slot.Params[i], refs));
+                var parameter = method.Params.Value[i];
+                ok = parameter.Type.OrDefault() is TypeNode type && PhysicalNorm(type, refs) == want[i]
+                     && (!moved[i] || StatesSlot(parameter, slot.Params[i], refs));
             }
             if (ok) return true;
         }
         return false;
     }
 
-    static bool ExplicitlyOverrides(JsonObject reference, Slot slot, ReferenceMetadataIndex refs)
+    static bool ExplicitlyOverrides(BirMemberReference reference, Slot slot, ReferenceMetadataIndex refs)
     {
-        if (reference == null || Str(reference["name"]) != slot.Name
-            || reference["genericArity"]?.GetValue<int>() != slot.Arity
-            || TypeJson.Read(reference["declaringType"]) is not TypeNode.Fqn owner
+        if (reference == null || reference.Name.OrDefault() != slot.Name
+            || !reference.GenericArity.HasValue || reference.GenericArity.Value != slot.Arity
+            || reference.DeclaringType.OrDefault() is not TypeNode.Fqn owner
             || refs.ExactReflectedOwner(owner.Name, owner.Args?.Length ?? 0) != slot.PhysicalOwner
-            || reference["parameterTypes"] is not JsonArray parameters || parameters.Count != slot.Params.Length)
+            || !reference.ParameterTypes.HasValue || reference.ParameterTypes.Value.Length != slot.Params.Length)
             return false;
-        for (var i = 0; i < parameters.Count; i++)
-            if (TypeJson.Read(parameters[i]) is not TypeNode parameter
+        for (var i = 0; i < reference.ParameterTypes.Value.Length; i++)
+            if (reference.ParameterTypes.Value[i] is not TypeNode parameter
                 || PhysicalNorm(AsDocumentNullable(parameter), refs) != PhysicalNorm(slot.Params[i], refs))
                 return false;
-        var referencedReturn = AsDocumentNullable(TypeJson.Read(reference["returnType"]));
+        var referencedReturn = AsDocumentNullable(reference.ReturnType.OrDefault());
         return slot.Ret == null ? referencedReturn is TypeNode.Fqn { Name: "void" or "System.Void" }
             : referencedReturn != null
               && PhysicalNorm(referencedReturn, refs) == PhysicalNorm(slot.Ret, refs);
@@ -363,7 +355,7 @@ static class ForeignNullableGenericCrossing
     // `[KotlinNullableGeneric]` attribute once RoundtripMetadata has minted it. Both are read because this check
     // runs after the minting in a ref/app build, while the runtime build mints nothing and reaches here with the
     // stash still on the slot (`CheckImplementedSlots` is what consumes it).
-    static bool StatesSlot(JsonObject decl, TypeNode slotType, ReferenceMetadataIndex refs)
+    static bool StatesSlot(BirParameter decl, TypeNode slotType, ReferenceMetadataIndex refs)
         => decl != null && PreErasureTypeOf(decl) is TypeNode pre
            && SameSlot(pre, slotType, argument: false, refs.Aliases);
 
@@ -371,18 +363,14 @@ static class ForeignNullableGenericCrossing
     // build has reached: the stash, or the attribute this compilation minted from it. The attribute is matched by
     // its exact FQN — the one RoundtripMetadata stamps — rather than by how the name ends, so no other assembly's
     // similarly-named attribute can answer for it.
-    static TypeNode PreErasureTypeOf(JsonObject decl)
+    static TypeNode PreErasureTypeOf(BirParameter declaration)
     {
-        if ((decl["nullableGeneric"] as JsonValue)?.TryGetValue<string>(out var stash) == true)
-            return TypeNode.Parse(stash);
-        if (decl["attrs"] is not JsonArray attrs) return null;
-        foreach (var a in attrs.OfType<JsonObject>())
-            if (TypeJson.Read(a["attr"]) is TypeNode.Fqn { Args: null } f
-                && f.Name == RoundtripMetadata.AKNullableGen
-                && a["args"] is JsonArray args && args.Count >= 2
-                && Str((args[0] as JsonObject)?["value"]) is string version
-                && Str((args[1] as JsonObject)?["bytes"]) is string payload)
-                return TypeJson.Read(BirCarrier.DecodeBody(version, Convert.FromBase64String(payload)));
+        if (declaration.NullableGeneric.HasValue) return declaration.NullableGeneric.Value;
+        foreach (var attribute in declaration.Attrs.OrEmpty())
+            if (attribute.Attr.OrDefault() is TypeNode.Fqn { Args: null, Name: RoundtripMetadata.AKNullableGen }
+                && attribute.Args.OrDefault() is { Length: >= 2 } args
+                && AttributeText(args[0]) is string codec && args[1] is BirOpaqueBytes { Bytes.HasValue: true } payload)
+                return BirCarrier.DecodeBody<TypeNode>(codec, payload.Bytes.Value, TypeNode.ReadJson);
         return null;
     }
 
@@ -509,25 +497,15 @@ static class ForeignNullableGenericCrossing
             + "this interface on the .NET side.");
 
 
-    static void Walk(JsonNode node, string file)
+    static void Walk(BirGraphValue node, string file)
     {
-        switch (node)
-        {
-            case JsonObject obj:
-                // THE STAMPED DECLARATION IS THE TRIGGER, not a list of node kinds. `resolvedMemberParams`/`resolvedMemberReturn` exist on
-                // exactly the nodes ClrMemberResolution resolved against a .NET member — including an accessor-backed
-                // external `field`, whose KIND is Kotlin's too — so keying on them is keyed on the fact itself and
-                // cannot drift from where the stamping happens. The reference is that stamp now; `resolvedMemberParams` was.
-                if (obj["memberRef"] != null || obj[ClrMemberResolution.ResolvedMemberReturnKey] != null) CheckCall(obj, file);
-                // `resolvedMemberReturn` is a pass-to-pass fact and must not reach CIR: the emitter consumes the reference and
-                // knows nothing of this one.
-                obj.Remove(ClrMemberResolution.ResolvedMemberReturnKey);
-                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, file);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) if (it != null) Walk(it, file);
-                break;
-        }
+        // Presence of the selected declaration, not the operation's kind,
+        // triggers the crossing check. Keep the producer's saved return until
+        // this read; the caller's result and memberRef are not replacements.
+        if (ForeignDeclarationFacts.Read(node) is { } declaration
+            && (declaration.MemberRef != null || declaration.DeclaredReturn != null)) CheckCall(declaration, file);
+        ForeignDeclarationFacts.ClearDeclaredReturn(node);
+        node.VisitChildren(child => Walk(child, file));
     }
 
 
@@ -565,24 +543,18 @@ static class ForeignNullableGenericCrossing
     static bool IsNullableName(string name) =>
         name is "System.Nullable" or "System.Nullable`1";
 
-    static void CheckCall(JsonObject call, string file)
+    static void CheckCall(ForeignDeclarationFacts declaration, string file)
     {
-        // A call names its member in `method`; a property/field access names it in `name`; a `newClr` names none.
-        var member = Str(call["method"]) ?? Str(call["name"]) ?? ".ctor";
-        // The owner key differs by node: a call and a property access name it in `type`, a bound method reference in
-        // `clrType`, an accessor-backed field in `ownerType`. The message must name the member the author wrote.
-        var owner = (TypeJson.Read(call["type"]) ?? TypeJson.Read(call["clrType"]) ?? TypeJson.Read(call["ownerType"]))
-            is TypeNode.Fqn f ? f.Name : "<unknown>";
         // The parameter vector comes off the resolved reference — the declaration's own, which is the whole point:
         // the node's argument types are the caller's Kotlin view and would hide the crossing.
-        if (call["memberRef"] is JsonObject reference && reference["parameterTypes"] is JsonArray sig)
-            CheckParameters(sig.Select(TypeJson.Read).ToArray(), file, owner, member);
+        if (declaration.MemberRef?.ParameterTypes.OrDefault() is { } parameters)
+            CheckParameters(parameters, file, declaration.Owner, declaration.Member);
         // The RETURN is read off the stamped FOREIGN declaration, never off the node's own `ret`: that one is the
         // caller's Kotlin view and has already been erased as a Kotlin slot, so it says `List<object>` for a member
         // declaring `List<int?>` and the crossing would be invisible.
-        if (TypeJson.Read(call[ClrMemberResolution.ResolvedMemberReturnKey]) is TypeNode ret
+        if (declaration.DeclaredReturn is TypeNode ret
             && NullableGenericErasure.ErasureWouldMove(ret))
-            throw Refuse(file, owner, member, "return", ret);
+            throw Refuse(file, declaration.Owner, declaration.Member, "return", ret);
     }
 
     // One declaration-parameter policy for the DOM member lane and owning
@@ -649,6 +621,4 @@ static class ForeignNullableGenericCrossing
         return result.ToString();
     }
 
-    static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
-    static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 }

@@ -1769,7 +1769,7 @@ static partial class ClrMemberResolution
     // ALWAYS stamped where a foreign declaration is established, INCLUDING for `void`. A missing stamp and a
     // genuinely void member were otherwise the same observation, so nothing could tell an omission from a fact —
     // and an omission is exactly what let a generic method's and a field's declared type go unchecked. With `void`
-    // written explicitly, `CheckForeignDeclStamped` below can assert the invariant mechanically.
+    // written explicitly, `CheckStamped` can assert the invariant mechanically.
     static void StampResolvedMemberReturn(JsonObject node, Type declaredReturn)
         => node[ResolvedMemberReturnKey] = TypeJson.Write(
             declaredReturn == null || declaredReturn == typeof(void)
@@ -1864,32 +1864,16 @@ static partial class ClrMemberResolution
         "clrPropGet", "clrPropSet",
     };
 
-    static void CheckForeignDeclStamped(JsonNode node, string file)
+    static void RequireForeignDeclarationStamp(string kind, bool parameterStamp, bool memberReference, bool returnStamp, string file)
     {
-        switch (node)
-        {
-            case JsonObject obj:
-            {
-                obj.Remove(DeclarationIdentityBoundKey);
-                var k = (obj["k"] as JsonValue)?.TryGetValue<string>(out var ks) == true ? ks : null;
-                // Event nodes have both a local and a referenced form.  Only the referenced form carries a memberRef;
-                // the local form names an emitted synthesized accessor and must not masquerade as a foreign declaration.
-                var resolvedEvent = k is "clrEventAdd" or "clrEventRemove" && obj["memberRef"] != null;
-                var resolved = obj["resolvedMemberParams"] != null || resolvedEvent
-                    || (k != null && Array.IndexOf(ResolvedOnlyKinds, k) >= 0);
-                if (resolved && obj[ResolvedMemberReturnKey] == null)
-                    throw new InvalidOperationException(
-                        $"bir2cir: {file}: a '{k ?? "?"}' node resolved against a .NET member carries no declared "
-                        + "return (resolvedMemberReturn). Every site that establishes a foreign declaration must stamp one — "
-                        + "the crossing refusal reads it, and an unstamped node silently leaves its family unchecked.");
-                foreach (var kv in obj) if (kv.Value != null) CheckForeignDeclStamped(kv.Value, file);
-                break;
-            }
-            case JsonArray arr:
-                foreach (var it in arr) if (it != null) CheckForeignDeclStamped(it, file);
-                break;
-        }
+        // An emitted local event is not a foreign declaration. Only its
+        // referenced form, carrying the exact memberRef, requires this stamp.
+        var resolvedEvent = kind is "clrEventAdd" or "clrEventRemove" && memberReference;
+        var resolved = parameterStamp || resolvedEvent || (kind != null && Array.IndexOf(ResolvedOnlyKinds, kind) >= 0);
+        if (resolved && !returnStamp)
+            throw new InvalidOperationException(
+                $"bir2cir: {file}: a '{kind ?? "?"}' node resolved against a .NET member carries no declared "
+                + "return (resolvedMemberReturn). Every site that establishes a foreign declaration must stamp one — "
+                + "the crossing refusal reads it, and an unstamped node silently leaves its family unchecked.");
     }
-
-    public static void CheckStamped(JsonNode root, string file) => CheckForeignDeclStamped(root, file);
 }

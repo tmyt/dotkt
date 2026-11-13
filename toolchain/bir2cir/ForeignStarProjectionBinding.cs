@@ -21,15 +21,19 @@ static class ForeignStarProjectionBinding
         if (signature is JsonArray) target[DeclarationSignatureKey] = signature.ToJsonString();
     }
 
-    internal static void DropDeclarationSignatures(JsonNode node)
+    internal static void DropDeclarationSignatures(BirFileDeclaration root)
     {
-        if (node is JsonObject obj)
-        {
-            obj.Remove(DeclarationSignatureKey);
-            foreach (var child in obj.ToList()) DropDeclarationSignatures(child.Value);
-        }
-        else if (node is JsonArray array)
-            foreach (var child in array) DropDeclarationSignatures(child);
+        root.Visit(node => {
+            switch (node)
+            {
+                case BirConstrainedCall value: value._foreignDeclarationSignature = default; break;
+                case BirGenericInstance value: value._foreignDeclarationSignature = default; break;
+                case BirNativeInstance value: value._foreignDeclarationSignature = default; break;
+                case BirNativeStatic value: value._foreignDeclarationSignature = default; break;
+                case BirPropertyGet value: value._foreignDeclarationSignature = default; break;
+                case BirPropertySet value: value._foreignDeclarationSignature = default; break;
+            }
+        });
     }
     static readonly TypeNode Any = new TypeNode.Fqn("kotlin.Any");
     static readonly TypeNode AnyN = new TypeNode.Nullable(Any);
@@ -1144,6 +1148,7 @@ static class ForeignStarProjectionBinding
 
     internal static void SelfTest()
     {
+        ClrMemberResolution.SelfTestForeignStamps();
         var slot = new TypeNode.Tv("type", 0);
         var callerArgs = new TypeNode[] { slot };
         if (DependsOnProjectedOwnerSlot(slot, callerArgs))

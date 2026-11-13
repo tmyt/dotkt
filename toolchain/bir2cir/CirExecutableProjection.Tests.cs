@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
 static partial class CirDeclarationProjection
@@ -172,8 +173,9 @@ static partial class CirDeclarationProjection
                 operation["memberVisibility"] = "public";
             }
             ClrMemberResolution.Apply(operation, interopReferences, new HashSet<string>());
-            ForeignNullableGenericCrossing.Check(operation, "event-boundary");
-            var projectedEvent = (ICirExpression)ReadCirNode(operation);
+            var typedOperation = (BirGraphValue)BirGraphDom.ReadBirExpression(operation);
+            ForeignNullableGenericCrossing.Check(typedOperation, "event-boundary");
+            var projectedEvent = (ICirExpression)new TypedCirProjection(new HashSet<string>()).ProjectNode(typedOperation);
             using var physicalEvent = JsonDocument.Parse(JsonSerializer.Serialize(projectedEvent, AttributeJson.Options));
             var value = physicalEvent.RootElement;
             if (value.GetProperty("accessor").GetString() != accessor
