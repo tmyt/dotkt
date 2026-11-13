@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Cir;
 
 // CLR variance is a property of the complete physical declaration, not just its method returns.
 // Source variance is preserved by RoundtripMetadata before this pass weakens the GenericParam flags.
@@ -7,40 +8,27 @@ using DotKt.Bir;
 // variant conversion that the emitted interface's inherited invariant faces prohibit.
 static class ClrTypeVariance
 {
-    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    internal static CirFileDeclaration[] ApplyAll(IReadOnlyList<CirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
-        var definitions = roots.OfType<JsonObject>().SelectMany(Types).ToArray();
-        var byName = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        foreach (var definition in definitions)
-            byName.TryAdd(Str(definition["name"]), definition);
-
-        // Compute before mutating: recursive local edges must see the same declarations regardless
-        // of source file or type order. Invalidity propagates over dependencies rather than
-        // enumerating every simple path through mutually recursive declarations.
-        var analysis = new Analysis(ClrVarianceFacts.FromDom(byName), refs);
-        var removals = new List<JsonObject>();
-        foreach (var definition in definitions)
+        var definitions = new Dictionary<string, ClrVarianceFacts.Declaration>(StringComparer.Ordinal);
+        foreach (var definition in roots.SelectMany(root => root.Types))
+            definitions.TryAdd(definition.Name, ClrVarianceFacts.FromCir(definition));
+        var analysis = new Analysis(definitions, refs);
+        CirTypeDeclaration Project(CirTypeDeclaration definition)
         {
-            if (definition["capturedTypeParams"] is JsonArray captured)
-                removals.AddRange(captured.OfType<JsonObject>());
-            if (definition["typeParams"] is not JsonArray parameters) continue;
-            var offset = (definition["capturedTypeParams"] as JsonArray)?.Count ?? 0;
-            for (var index = 0; index < parameters.Count; index++)
-                if (parameters[index] is JsonObject parameter && Str(parameter["variance"]) is "in" or "out"
-                    && analysis.Get(Str(definition["name"]), offset + parameters.Count, offset + index) == null)
-                    removals.Add(parameter);
+            var offset = definition.CapturedTypeParams.OrEmpty().Length;
+            var parameters = definition.TypeParams.OrEmpty();
+            return definition with {
+                CapturedTypeParams = definition.CapturedTypeParams.HasValue
+                    ? definition.CapturedTypeParams.Value.Select(parameter => parameter with { Variance = default }).ToArray()
+                    : definition.CapturedTypeParams,
+                TypeParams = definition.TypeParams.HasValue ? parameters.Select((parameter, index) =>
+                    parameter.Variance.OrDefault() is "in" or "out"
+                    && analysis.Get(definition.Name, offset + parameters.Length, offset + index) == null
+                        ? parameter with { Variance = default } : parameter).ToArray() : definition.TypeParams,
+            };
         }
-        foreach (var parameter in removals) parameter.Remove("variance");
-    }
-
-    static IEnumerable<JsonObject> Types(JsonObject container)
-    {
-        if (container["types"] is not JsonArray types) yield break;
-        foreach (var type in types.OfType<JsonObject>())
-        {
-            yield return type;
-            foreach (var nested in Types(type)) yield return nested;
-        }
+        return roots.Select(root => root with { Types = root.Types.Select(Project).ToArray() }).ToArray();
     }
 
     internal static string Get(string name, int arity, int index,
@@ -189,6 +177,38 @@ static class ClrTypeVariance
 
     internal static void SelfTest()
     {
+        CirFileDeclaration Fixture(JsonObject root)
+        {
+            // Supply complete physical declarations around these signature-only
+            // test facts. These are fixture defaults, not compiler inference.
+            root["fileClass"] = "VarianceFixture";
+            root["hasMain"] = false;
+            root["methods"] = new JsonArray();
+            root["fields"] = new JsonArray();
+            foreach (var owner in root["types"].AsArray().OfType<JsonObject>())
+                if (owner["methods"] is JsonArray methods)
+                    for (var index = 0; index < methods.Count; index++)
+                    {
+                        var method = methods[index].AsObject();
+                        method["name"] = "slot" + index;
+                        method["ret"] ??= TypeJson.Fqn("void");
+                        method["params"] ??= new JsonArray();
+                    }
+            var projected = CirDeclarationProjection.ReadCirFileDeclaration(root);
+            var sources = root["types"].AsArray().OfType<JsonObject>()
+                .ToDictionary(type => Str(type["name"]), StringComparer.Ordinal);
+            foreach (var type in projected.Types)
+            {
+                var before = ClrVarianceFacts.FromDom(sources[type.Name]);
+                var after = ClrVarianceFacts.FromCir(type);
+                if (before.Kind != after.Kind || before.CapturedCount != after.CapturedCount
+                    || !before.Parameters.SequenceEqual(after.Parameters)
+                    || !before.Occurrences.SequenceEqual(after.Occurrences))
+                    throw new InvalidOperationException($"Variance fact projections disagree for {type.Name}");
+            }
+            return projected;
+        }
+
         const string declarations = """
             {"types":[
               {"name":"Invariant","kind":"interface","typeParams":[{"name":"T"}]},
@@ -229,15 +249,15 @@ static class ClrTypeVariance
         {
             var root = JsonNode.Parse(declarations).AsObject();
             if (reverse) root["types"] = new JsonArray(((JsonArray)root["types"]).Reverse().Select(type => type.DeepClone()).ToArray());
-            ApplyAll(new[] { root }, null);
-            foreach (var type in ((JsonArray)root["types"]).OfType<JsonObject>())
+            var projected = ApplyAll(new[] { Fixture(root) }, null).Single();
+            foreach (var type in projected.Types)
             {
-                var name = Str(type["name"]);
+                var name = type.Name;
                 var expected = name is "SafeOutput" or "SafeInherited" or "RecursiveOutput" or "CapturedOutput" or "StaticInput" ? "out"
                     : name is "SafeConstraint" or "DelegateInput" ? "in" : null;
-                if (Str(type["typeParams"][0]["variance"]) != expected)
+                if (type.TypeParams.Value[0].Variance.OrDefault() != expected)
                     throw new InvalidOperationException($"CLR variance self-test failed for {name} (reverse={reverse})");
-                if (type["capturedTypeParams"] is JsonArray captured && captured.Any(parameter => parameter["variance"] != null))
+                if (type.CapturedTypeParams.OrEmpty().Any(parameter => parameter.Variance.IsPresent))
                     throw new InvalidOperationException("Captured CLR type parameters retained variance");
             }
         }
@@ -275,8 +295,8 @@ static class ClrTypeVariance
                     ["methods"] = methods,
                 });
             }
-            ApplyAll(new[] { new JsonObject { ["types"] = types } }, null);
-            if (types.Any(type => Str(type["typeParams"][0]["variance"]) != (broken ? null : "out")))
+            var projected = ApplyAll(new[] { Fixture(new JsonObject { ["types"] = types }) }, null).Single();
+            if (projected.Types.Any(type => type.TypeParams.Value[0].Variance.OrDefault() != (broken ? null : "out")))
                 throw new InvalidOperationException("CLR variance dense recursive graph self-test failed");
         }
         Console.WriteLine("[CLR variance] self-test OK (inherited invariance, transitive signatures, order, dense recursion, method constraints, captured/static/delegate slots, owning snapshots)");

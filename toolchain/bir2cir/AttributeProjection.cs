@@ -1,117 +1,18 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 using DotKt.Cir;
 using A = DotKt.Cir.AttributeArgument;
 
-// Final physical metadata projection. This adapter disappears when the owning declaration passes
-// construct typed CIR directly. It never walks executable children or saved source payloads.
+// Physical metadata literal policy, shared by typed attribute/default/field and
+// executable scalar projection. Declaration ownership lives in TypedCirProjection.
 static class AttributeProjection
 {
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, IEnumerable<string> typedDeclarations = null)
-    {
-        var emitted = roots.OfType<JsonObject>()
-            .SelectMany(file => file["types"] as JsonArray ?? new JsonArray())
-            .OfType<JsonObject>().Select(type => Str(type["name"])).Where(name => name != null)
-            .Concat(typedDeclarations ?? Enumerable.Empty<string>())
-            .ToHashSet(StringComparer.Ordinal);
-        foreach (var file in roots.OfType<JsonObject>())
-            Apply(file, emitted);
-    }
-
-    static void Apply(JsonObject file, IReadOnlySet<string> emitted)
-    {
-        Attributes(file, "assemblyAttrs", emitted);
-        Container(file, emitted);
-        if (file["types"] is JsonArray types)
-            foreach (var type in types.OfType<JsonObject>()) Container(type, emitted);
-    }
-
-    static void Container(JsonObject container, IReadOnlySet<string> emitted)
-    {
-        Attributes(container, "attrs", emitted);
-        if (Str(container["kind"]) == "delegate")
-        {
-            Attributes(container, "retAttrs", emitted);
-            Parameters(container, emitted);
-        }
-        if (Str(container["kind"]) == "enum" && container["entries"] is JsonArray entries)
-            foreach (var entry in entries.OfType<JsonObject>()) Attributes(entry, "attrs", emitted);
-        foreach (var key in new[] { "methods", "ctors" })
-            if (container[key] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                {
-                    Attributes(method, "attrs", emitted);
-                    Attributes(method, "retAttrs", emitted);
-                    Parameters(method, emitted);
-                }
-        foreach (var key in new[] { "fields", "properties" })
-            if (container[key] is JsonArray members)
-                foreach (var member in members.OfType<JsonObject>()) Attributes(member, "attrs", emitted);
-    }
-
-    static void Parameters(JsonObject signature, IReadOnlySet<string> emitted)
-    {
-        if (signature["params"] is not JsonArray parameters) return;
-        foreach (var parameter in parameters.OfType<JsonObject>())
-        {
-            Attributes(parameter, "attrs", emitted);
-            if (parameter.ContainsKey("default"))
-                parameter["default"] = JsonValue.Create<A>(Argument(parameter["default"]));
-        }
-    }
-
-    static void Attributes(JsonObject declaration, string key, IReadOnlySet<string> emitted)
-    {
-        if (declaration[key] is not JsonArray attributes) return;
-        for (int i = 0; i < attributes.Count; i++)
-        {
-            var source = (JsonObject)attributes[i];
-            // This is the existing physical annotation-admission rule, applied by its owning layer.
-            // Do not reconstruct a missing constructor signature from argument values.
-            if (source["attrExternal"]?.GetValue<bool>() != true
-                && !emitted.Contains(TypeJson.OwnerName(source["attr"])))
-            {
-                attributes.RemoveAt(i--);
-                continue;
-            }
-            var model = new AttributeApplication(
-                TypeJson.Read(source["attr"]),
-                ((JsonArray)source["argTypes"]).Select(TypeJson.Read).ToArray(),
-                ((JsonArray)source["args"]).Select(Argument).ToArray(),
-                source["attrExternal"]?.GetValue<bool>(), Str(source["attrAssembly"]),
-                source["memberRef"] is { } member ? MemberRefNode.Read(member) : null,
-                source["namedArgs"] is JsonArray named ? named.Select(item => new NamedAttributeArgument(
-                    Str(item["kind"]), Str(item["name"]), TypeJson.Read(item["type"]), Argument(item["value"]))).ToArray() : null);
-            // Only the enclosing output container is still DOM-backed. The value itself is the typed CIR
-            // record and its converter writes directly at the file boundary; no text/reparse bridge.
-            attributes[i] = JsonValue.Create(model);
-        }
-    }
-
-    static A Argument(JsonNode source)
-    {
-        if (source is not JsonObject value) throw new InvalidOperationException("Malformed annotation argument");
-        if (value["bytes"] is { } bytes) return new A.BytesValue(Convert.FromBase64String(Str(bytes)));
-        switch (Str(value["k"]))
-        {
-            case "classRef": return new A.TypeValue(TypeJson.Read(value["type"]));
-            case "newArray":
-                return new A.ArrayValue(((JsonArray)value["elems"]).Select(Argument).ToArray(),
-                    value["elem"] is { } elem ? TypeJson.Read(elem) : null);
-            case "enumValue":
-                return new A.EnumValue(Str(value["underlying"]), Str(value["physicalValue"]),
-                    value["ordinal"]?.GetValue<int>(), value["type"] is { } type ? TypeJson.Read(type) : null);
-        }
-        if (!value.ContainsKey("value")) return new A.UnencodableValue();
-        if (value["value"] is null) return new A.NullValue();
-        return Literal(value["value"], TypeJson.Read(value["type"]));
-    }
-
     public static A Literal(JsonNode literal, TypeNode type)
         => Literal(BirLiteral.Read(literal), type);
 
-    static A Literal(BirLiteral literal, TypeNode type)
+    internal static A Literal(BirLiteral literal, TypeNode type)
     {
         while (type is TypeNode.Mod modifier) type = modifier.Of;
         var hint = type as TypeNode.Fqn;
@@ -162,8 +63,6 @@ static class AttributeProjection
         BirLiteral.UnsignedIntegerLiteral integer => integer.Value,
         _ => throw new FormatException(),
     };
-
-    static string Str(JsonNode node) => node?.GetValue<string>();
 
     public static void SelfTest()
     {
@@ -227,25 +126,34 @@ static class AttributeProjection
             ["default"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 42 },
         };
         JsonObject Method() => new() {
+            ["name"] = "read", ["static"] = true, ["override"] = false, ["virtual"] = false,
+            ["ret"] = TypeJson.Fqn("void"), ["body"] = new JsonArray(),
             ["attrs"] = Attrs(), ["retAttrs"] = Attrs(), ["params"] = new JsonArray(Parameter()),
         };
         var source = new JsonObject {
-            ["fileClass"] = "Probe.File", ["attrs"] = Attrs(), ["assemblyAttrs"] = Attrs(),
-            ["methods"] = new JsonArray(Method()), ["ctors"] = new JsonArray(Method()),
-            ["fields"] = new JsonArray(new JsonObject { ["attrs"] = Attrs() }),
-            ["properties"] = new JsonArray(new JsonObject { ["attrs"] = Attrs() }),
+            ["fileClass"] = "Probe.File", ["hasMain"] = false, ["attrs"] = Attrs(), ["assemblyAttrs"] = Attrs(),
+            ["methods"] = new JsonArray(Method()),
+            ["fields"] = new JsonArray(new JsonObject { ["name"] = "field", ["type"] = TypeJson.Fqn("System.Int32"), ["attrs"] = Attrs() }),
+            ["properties"] = new JsonArray(new JsonObject { ["name"] = "property", ["type"] = TypeJson.Fqn("System.Int32"), ["attrs"] = Attrs() }),
             ["types"] = new JsonArray(
                 new JsonObject { ["name"] = "Probe.Enum", ["kind"] = "enum",
-                    ["entries"] = new JsonArray(new JsonObject { ["attrs"] = Attrs() }) },
+                    ["entries"] = new JsonArray(new JsonObject { ["name"] = "Entry", ["ordinal"] = 0, ["attrs"] = Attrs() }) },
                 new JsonObject { ["name"] = "Probe.Delegate", ["kind"] = "delegate",
-                    ["retAttrs"] = Attrs(), ["params"] = new JsonArray(Parameter()) }),
+                    ["ret"] = TypeJson.Fqn("void"), ["retAttrs"] = Attrs(), ["params"] = new JsonArray(Parameter()) },
+                new JsonObject { ["name"] = "Probe.Class", ["kind"] = "class", ["attrs"] = Attrs(),
+                    ["ctors"] = new JsonArray(new JsonObject { ["attrs"] = Attrs(),
+                        ["params"] = new JsonArray(Parameter()), ["body"] = new JsonArray() }) }),
         };
         var ignored = new JsonObject { ["attr"] = TypeJson.Fqn("Probe.NotEmitted"), ["args"] = new JsonArray() };
         ((JsonArray)source["attrs"]).Add(ignored);
         var declaring = new JsonObject { ["types"] = new JsonArray(
             new JsonObject { ["name"] = "Probe.Attribute", ["kind"] = "class" }) };
-        ApplyAll(new JsonNode[] { source, declaring });
-        using var doc = JsonDocument.Parse(source.ToJsonString(JsonOptions.Indented));
+        var graph = BirGraphDom.ReadBirFileDeclaration(source);
+        var declaringGraph = BirGraphDom.ReadBirFileDeclaration(declaring);
+        var emitted = graph.Types.OrEmpty().Concat(declaringGraph.Types.OrEmpty())
+            .Select(TypedCirProjection.TypeName).ToHashSet(StringComparer.Ordinal);
+        var projected = new TypedCirProjection(emitted).ProjectCirFileDeclaration(graph);
+        using var doc = JsonSerializer.SerializeToDocument(projected, AttributeJson.Options);
         int attributes = 0, defaults = 0;
         void Check(JsonElement value)
         {
