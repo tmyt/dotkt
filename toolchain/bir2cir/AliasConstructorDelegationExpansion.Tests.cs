@@ -75,10 +75,74 @@ sealed partial class AliasConstructorDelegationExpansion
             || ((BirVariable)((BirValueBlock)temporary.Init.Value).Stmts.Value[0]).Name.Value != nestedName)
             throw new InvalidOperationException("Alias argument temporary captured an incoming argument's local");
         SelfTestAliasDefinitionOwnership();
+        SelfTestStatementRegions();
         SelfTestNestedConstructions();
         SelfTestCarrier();
         TypedCallEvalLowering.SelfTest();
         Console.WriteLine("[alias constructor expansion] self-test OK (owning composition, lexical scopes, nested identity, executable codecs)");
+    }
+
+    static void SelfTestStatementRegions()
+    {
+        var slot = new TypeNode.Fqn("System.Int32");
+        BirLocal TypedRead(string name = "shared") => new() { Name = name, Sty = slot };
+        IBirStatement[] Statements() => new IBirStatement[] {
+            new BirVariable { Name = "shared", Type = slot, Init = TypedRead() },
+            new BirExpressionStatement { Expr = TypedRead() },
+            new BirSetLocal { Name = "shared", Value = TypedRead() },
+        };
+        var tryBody = Statements();
+        var finallyBody = Statements();
+        var catchRead = TypedRead();
+        var loopBody = Statements();
+        var loopCondition = TypedRead();
+        var firstBranch = Statements();
+        var secondBranch = Statements();
+        var firstCondition = TypedRead();
+        var secondCondition = TypedRead();
+        var cases = new (IBirStatement Owner, IBirStatement[][] Bodies, BirLocal[] Outside)[] {
+            (new BirTry { Body = tryBody, Finally = finallyBody, Catches = new[] {
+                new BirCatch { Var = "caught", Body = new IBirStatement[] { new BirExpressionStatement { Expr = catchRead } } },
+            } }, new[] { tryBody, finallyBody }, new[] { catchRead }),
+            (new BirWhile { Cond = loopCondition, Body = loopBody }, new[] { loopBody }, new[] { loopCondition }),
+            (new BirIf { Branches = new[] {
+                new BirBranch { Cond = firstCondition, Body = firstBranch },
+                new BirBranch { Cond = secondCondition, Body = secondBranch },
+            } }, new[] { firstBranch, secondBranch }, new[] { firstCondition, secondCondition }),
+        };
+        foreach (var test in cases)
+        {
+            var after = TypedRead();
+            var argument = TypedRead();
+            var adapter = Payload(Array.Empty<string>(), Array.Empty<TypeNode>(), new IBirStatement[] {
+                test.Owner, new BirExpressionStatement { Expr = after },
+            }, new IBirExpression[] { argument }, new TypeNode[] { slot });
+            FreshenLocals(adapter, Read("shared"));
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var body in test.Bodies)
+            {
+                var declaration = (BirVariable)body[0];
+                var read = (BirLocal)((BirExpressionStatement)body[1]).Expr.Value;
+                var write = (BirSetLocal)body[2];
+                if (declaration.Name.Value == "shared" || !names.Add(declaration.Name.Value)
+                    || read.Name.Value != declaration.Name.Value || write.Name.Value != declaration.Name.Value
+                    || ((BirLocal)write.Value.Value).Name.Value != declaration.Name.Value
+                    || ((BirLocal)declaration.Init.Value).Name.Value != "shared"
+                    || declaration.Type.Value != slot || read.Sty.Value != slot
+                    || ((BirLocal)write.Value.Value).Sty.Value != slot)
+                    throw new InvalidOperationException("Alias adapter statement region lost a declaration edge or exact slot type");
+            }
+            if (test.Outside.Append(after).Append(argument).Any(read => read.Name.Value != "shared" || read.Sty.Value != slot))
+                throw new InvalidOperationException("Alias adapter statement region leaked its lexical frame");
+        }
+
+        var substituted = (BirTry)ConstructorAdapterLocals.Substitute(new BirTry {
+            Body = Statements(), Finally = new IBirStatement[] { new BirExpressionStatement { Expr = TypedRead() } },
+        }, new Dictionary<string, IBirExpression> { ["shared"] = TypedRead("consumer") });
+        if (((BirLocal)((BirVariable)substituted.Body.Value[0]).Init.Value).Name.Value != "consumer"
+            || ((BirLocal)((BirExpressionStatement)substituted.Body.Value[1]).Expr.Value).Name.Value != "shared"
+            || ((BirLocal)((BirExpressionStatement)substituted.Finally.Value[0]).Expr.Value).Name.Value != "consumer")
+            throw new InvalidOperationException("Alias adapter substitution confused independent try/finally scopes");
     }
 
     static void SelfTestAliasDefinitionOwnership()
