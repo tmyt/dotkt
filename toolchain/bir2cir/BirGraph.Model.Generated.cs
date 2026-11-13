@@ -1805,6 +1805,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<BirMemberReference> MemberRef { get; set; }
     public OptionalField<TypeNode> DynRet { get; set; }
     public OptionalField<bool> Virtual { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault() ?? DynRet.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -1858,6 +1860,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone()) : MemberRef,
         DynRet = DynRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(DynRet.Value)) : DynRet,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -1879,6 +1883,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         DynRet = DynRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(DynRet.Value)) : DynRet,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -1909,6 +1915,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
         DynRet = DynRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DynRet.Value)) : DynRet,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -1957,6 +1965,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "dynRet", DynRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "virtual", Virtual, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -2006,6 +2016,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
         if (DynRet.IsPresent) result["dynRet"] = DynRet.IsNull ? null : TypeNode.Write(DynRet.Value);
         if (Virtual.IsPresent) result["virtual"] = Virtual.IsNull ? null : JsonValue.Create(Virtual.Value);
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -2061,6 +2073,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<bool> ClrOwnerResolved { get; set; }
     public OptionalField<bool> Static { get; set; }
     public OptionalField<bool> _physicalDeclarationSignature { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault() ?? DynRet.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -2120,6 +2134,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone()) : MemberRef,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -2139,6 +2155,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(rewrite(_capturedGenericResult.Value)) : _capturedGenericResult,
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -2169,6 +2187,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -2222,6 +2242,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         WriteOptional(writer, "clrOwnerResolved", ClrOwnerResolved, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "static", Static, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "_physicalDeclarationSignature", _physicalDeclarationSignature, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -2276,6 +2298,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (ClrOwnerResolved.IsPresent) result["clrOwnerResolved"] = ClrOwnerResolved.IsNull ? null : JsonValue.Create(ClrOwnerResolved.Value);
         if (Static.IsPresent) result["static"] = Static.IsNull ? null : JsonValue.Create(Static.Value);
         if (_physicalDeclarationSignature.IsPresent) result["_physicalDeclarationSignature"] = _physicalDeclarationSignature.IsNull ? null : JsonValue.Create(_physicalDeclarationSignature.Value);
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -2390,6 +2414,8 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<TypeNode[]> Sig { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -2424,6 +2450,8 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -2435,6 +2463,8 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -2452,6 +2482,8 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -2482,6 +2514,8 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "sig", Sig, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -2513,6 +2547,8 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Sig.IsPresent) result["sig"] = Sig.IsNull ? null : new JsonArray(Sig.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -2647,6 +2683,8 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
     public OptionalField<TypeNode[]> Sig { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
     public OptionalField<TypeNode> Ret { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? ResultTypeStamp => Ret.OrDefault();
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -2683,6 +2721,8 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -2693,6 +2733,8 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -2709,6 +2751,8 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -2734,6 +2778,8 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
         WriteOptional(writer, "sig", Sig, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -2760,6 +2806,8 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
         if (Sig.IsPresent) result["sig"] = Sig.IsNull ? null : new JsonArray(Sig.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -6484,6 +6532,8 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<BirMemberReference> MemberRef { get; set; }
     public OptionalField<TypeNode> CalleeRet { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (DelegateCtorRef.HasValue) { visit((BirGraphValue)DelegateCtorRef.Value); }
@@ -6511,6 +6561,8 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone()) : MemberRef,
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -6521,6 +6573,8 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(rewrite(DotktDelegateSlot.Value)) : DotktDelegateSlot,
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -6536,6 +6590,8 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -6554,6 +6610,8 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "calleeRet", CalleeRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -6573,6 +6631,8 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
         if (CalleeRet.IsPresent) result["calleeRet"] = CalleeRet.IsNull ? null : TypeNode.Write(CalleeRet.Value);
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -7546,6 +7606,8 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
     public OptionalField<bool> ClrOwnerResolved { get; set; }
     public OptionalField<BirMemberReference> InvokeRef { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
@@ -7593,6 +7655,8 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
         InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)InvokeRef.Value).DeepClone()) : InvokeRef,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -7607,6 +7671,8 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(CalleeRet.Value)) : CalleeRet,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -7630,6 +7696,8 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
         InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)InvokeRef.Value)) : InvokeRef,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -7660,6 +7728,8 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "clrOwnerResolved", ClrOwnerResolved, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "invokeRef", InvokeRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -7691,6 +7761,8 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (ClrOwnerResolved.IsPresent) result["clrOwnerResolved"] = ClrOwnerResolved.IsNull ? null : JsonValue.Create(ClrOwnerResolved.Value);
         if (InvokeRef.IsPresent) result["invokeRef"] = InvokeRef.IsNull ? null : ((BirGraphValue)InvokeRef.Value).ToDom();
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -8975,6 +9047,8 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
     public OptionalField<int> NullableWitnessCount { get; set; }
     public OptionalField<int> LocalCtorIndex { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -9012,6 +9086,8 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberReturnType.Value)) : MemberReturnType,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone()) : MemberRef,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -9019,6 +9095,8 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => rewrite(item0)).ToArray()) : ArgTypes,
         MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => rewrite(item0)).ToArray()) : MemberSignature,
         MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(rewrite(MemberReturnType.Value)) : MemberReturnType,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -9034,6 +9112,8 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberReturnType.Value)) : MemberReturnType,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -9054,6 +9134,8 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         WriteOptional(writer, "nullableWitnessCount", NullableWitnessCount, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "localCtorIndex", LocalCtorIndex, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -9075,6 +9157,8 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         if (NullableWitnessCount.IsPresent) result["nullableWitnessCount"] = NullableWitnessCount.IsNull ? null : JsonValue.Create(NullableWitnessCount.Value);
         if (LocalCtorIndex.IsPresent) result["localCtorIndex"] = LocalCtorIndex.IsNull ? null : JsonValue.Create(LocalCtorIndex.Value);
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -9284,6 +9368,8 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
     public OptionalField<TypeNode[]> Sig { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
     public OptionalField<bool> _callEvalTemporary { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -9318,6 +9404,8 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -9327,6 +9415,8 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -9342,6 +9432,8 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -9366,6 +9458,8 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
         WriteOptional(writer, "sig", Sig, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "_callEvalTemporary", _callEvalTemporary, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -9391,6 +9485,8 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
         if (Sig.IsPresent) result["sig"] = Sig.IsNull ? null : new JsonArray(Sig.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (_callEvalTemporary.IsPresent) result["_callEvalTemporary"] = _callEvalTemporary.IsNull ? null : JsonValue.Create(_callEvalTemporary.Value);
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -10592,6 +10688,8 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
     public OptionalField<BirMemberReference> MemberRef { get; set; }
     public OptionalField<TypeNode[]> ArgTypes { get; set; }
     public OptionalField<TypeNode[]> MemberSignature { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -10615,12 +10713,16 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone()) : MemberRef,
         ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
         MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : MemberSignature,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => rewrite(item0)).ToArray()) : ArgTypes,
         MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => rewrite(item0)).ToArray()) : MemberSignature,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -10631,6 +10733,8 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
         ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ArgTypes,
         MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : MemberSignature,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -10641,6 +10745,8 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "argTypes", ArgTypes, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -10652,6 +10758,8 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
         if (ArgTypes.IsPresent) result["argTypes"] = ArgTypes.IsNull ? null : new JsonArray(ArgTypes.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -11244,6 +11352,8 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<string> DeclarationId { get; set; }
     public OptionalField<string> MemberVisibility { get; set; }
     public OptionalField<bool> ClrOwnerResolved { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -11273,6 +11383,8 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(CopyType(DelegateType.Value)) : DelegateType,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -11281,6 +11393,8 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(rewrite(DelegateType.Value)) : DelegateType,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -11294,6 +11408,8 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DelegateType.Value)) : DelegateType,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -11316,6 +11432,8 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "memberVisibility", MemberVisibility, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "clrOwnerResolved", ClrOwnerResolved, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -11339,6 +11457,8 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
         if (MemberVisibility.IsPresent) result["memberVisibility"] = MemberVisibility.IsNull ? null : JsonValue.Create(MemberVisibility.Value);
         if (ClrOwnerResolved.IsPresent) result["clrOwnerResolved"] = ClrOwnerResolved.IsNull ? null : JsonValue.Create(ClrOwnerResolved.Value);
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -11363,6 +11483,8 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<string> DeclarationId { get; set; }
     public OptionalField<string> MemberVisibility { get; set; }
     public OptionalField<bool> ClrOwnerResolved { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -11392,6 +11514,8 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(CopyType(DelegateType.Value)) : DelegateType,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -11400,6 +11524,8 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(rewrite(DelegateType.Value)) : DelegateType,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -11413,6 +11539,8 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DelegateType.Value)) : DelegateType,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -11435,6 +11563,8 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "memberVisibility", MemberVisibility, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "clrOwnerResolved", ClrOwnerResolved, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -11458,6 +11588,8 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
         if (MemberVisibility.IsPresent) result["memberVisibility"] = MemberVisibility.IsNull ? null : JsonValue.Create(MemberVisibility.Value);
         if (ClrOwnerResolved.IsPresent) result["clrOwnerResolved"] = ClrOwnerResolved.IsNull ? null : JsonValue.Create(ClrOwnerResolved.Value);
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -11818,6 +11950,8 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<string> PropertyAccessor { get; set; }
     public OptionalField<string> DeclarationId { get; set; }
     public OptionalField<SourceTypeVector> _foreignDeclarationSignature { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -11850,6 +11984,8 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
         _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone()).ToArray()) : _capturedGenericArgument,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -11860,6 +11996,8 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(rewrite(_capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -11875,6 +12013,8 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
         _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -11904,6 +12044,8 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         WriteOptional(writer, "propertyAccessor", PropertyAccessor, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "_foreignDeclarationSignature", _foreignDeclarationSignature, (writer, value) => { SourceTypeVector.Write(writer, value); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -11934,6 +12076,8 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         if (PropertyAccessor.IsPresent) result["propertyAccessor"] = PropertyAccessor.IsNull ? null : JsonValue.Create(PropertyAccessor.Value);
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
         if (_foreignDeclarationSignature.IsPresent) result["_foreignDeclarationSignature"] = _foreignDeclarationSignature.IsNull ? null : SourceTypeVector.ToDom(_foreignDeclarationSignature.Value);
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -11965,6 +12109,8 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<string> PropertyAccessor { get; set; }
     public OptionalField<string> DeclarationId { get; set; }
     public OptionalField<SourceTypeVector> _foreignDeclarationSignature { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -12000,6 +12146,8 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
         _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone()).ToArray()) : _capturedGenericArgument,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -12009,6 +12157,8 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(rewrite(_capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -12024,6 +12174,8 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
         _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -12053,6 +12205,8 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         WriteOptional(writer, "propertyAccessor", PropertyAccessor, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "_foreignDeclarationSignature", _foreignDeclarationSignature, (writer, value) => { SourceTypeVector.Write(writer, value); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -12083,6 +12237,8 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         if (PropertyAccessor.IsPresent) result["propertyAccessor"] = PropertyAccessor.IsNull ? null : JsonValue.Create(PropertyAccessor.Value);
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
         if (_foreignDeclarationSignature.IsPresent) result["_foreignDeclarationSignature"] = _foreignDeclarationSignature.IsNull ? null : SourceTypeVector.ToDom(_foreignDeclarationSignature.Value);
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -12348,6 +12504,8 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
     public OptionalField<bool> ClrOwnerResolved { get; set; }
     public OptionalField<TypeNode> DotktDelegateSlot { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -12380,6 +12538,8 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(CopyType(DotktDelegateSlot.Value)) : DotktDelegateSlot,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -12391,6 +12551,8 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(rewrite(DotktDelegateSlot.Value)) : DotktDelegateSlot,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -12407,6 +12569,8 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DotktDelegateSlot.Value)) : DotktDelegateSlot,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -12427,6 +12591,8 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "clrOwnerResolved", ClrOwnerResolved, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "dotktDelegateSlot", DotktDelegateSlot, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -12448,6 +12614,8 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (ClrOwnerResolved.IsPresent) result["clrOwnerResolved"] = ClrOwnerResolved.IsNull ? null : JsonValue.Create(ClrOwnerResolved.Value);
         if (DotktDelegateSlot.IsPresent) result["dotktDelegateSlot"] = DotktDelegateSlot.IsNull ? null : TypeNode.Write(DotktDelegateSlot.Value);
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }
@@ -12467,6 +12635,8 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
     public OptionalField<TypeNode[]> Sig { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
     public OptionalField<TypeNode> DotktDelegateSlot { get; set; }
+    public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
+    public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -12495,6 +12665,8 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(CopyType(DotktDelegateSlot.Value)) : DotktDelegateSlot,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
@@ -12506,6 +12678,8 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(rewrite(DotktDelegateSlot.Value)) : DotktDelegateSlot,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -12521,6 +12695,8 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DotktDelegateSlot.Value)) : DotktDelegateSlot,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -12538,6 +12714,8 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         WriteOptional(writer, "sig", Sig, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "dotktDelegateSlot", DotktDelegateSlot, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -12556,6 +12734,8 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         if (Sig.IsPresent) result["sig"] = Sig.IsNull ? null : new JsonArray(Sig.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (DotktDelegateSlot.IsPresent) result["dotktDelegateSlot"] = DotktDelegateSlot.IsNull ? null : TypeNode.Write(DotktDelegateSlot.Value);
+        if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         return result;
     }
 }

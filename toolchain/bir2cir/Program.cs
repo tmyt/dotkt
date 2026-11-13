@@ -29,6 +29,7 @@ static class Bir2Cir
                 AttributeProjection.SelfTest();
                 PInvokeLowering.SelfTest();
                 TypedAttributeBinding.SelfTest();
+                ForeignNullableGenericCrossing.SelfTest();
                 DotKt.Cir.DeclarationSelfTest.Run();
                 DotKt.Cir.ExecutableSelfTest.Run();
                 DotKt.Cir.MessagePackSelfTest.Run();
@@ -1627,26 +1628,7 @@ sealed class Pipeline
             // can be authored as ordinary CIR. Runs after the last resolution pass, because the rule compares the
             // construction's FINAL function type with the slot's.
             ClrMemberResolution.MaterializeDelegateSlots(lowered, refs, emittedLocalTypes, localExistentialOwners);
-            ForeignStarProjectionBinding.DropDeclarationSignatures(lowered);
-            // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
-            // return. Two omissions of exactly that shape — a generic method and a public field — each removed a
-            // whole family from the crossing refusal below without any gate noticing.
-            ClrMemberResolution.CheckStamped(lowered, outputName);
-            // The other side of the erasure: a .NET member may DECLARE a `List<int?>`, which no Kotlin type inhabits
-            // once `X?` in a reified argument is `System.Object`. Unrelated invariant reified generics have no
-            // conversion between them and an adapter would change the argument's identity, so the crossing is
-            // refused rather than silently mis-typed. Checked HERE, immediately after resolution has established the
-            // member's declared physical signature: before it, most `clr*` nodes still carry caller-side `argTypes` and the .NET declaration
-            // this refusal is about has not been read yet.
-            ForeignNullableGenericCrossing.Check(lowered, outputName);
         }
-
-        // The IMPLEMENTING-POSITION half of the same refusal: a .NET supertype declaring a slot no Kotlin body can
-        // fill. It is asked of every lowered root together, because the supertype graph that reaches such a slot runs
-        // through this compilation's own declarations as freely as through referenced ones, and a per-file view stops
-        // at the first Kotlin interface declared next door. Nothing has been written yet, so a refusal here is as
-        // clean as one inside the loop.
-        ForeignNullableGenericCrossing.CheckImplementedSlots(loweredRoots, refs);
 
         var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
             root["assemblyAttrs"] is JsonArray { Count: > 0 });
@@ -1656,6 +1638,20 @@ sealed class Pipeline
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         loweredRoots.Clear();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Every file's interface-slot resolution above needs the complete module
+        // declaration graph. Consume only the final per-operation binding facts
+        // after that graph has entered its one owning typed continuation.
+        foreach (var (root, file) in physicalRoots)
+        {
+            ForeignStarProjectionBinding.DropDeclarationSignatures(root);
+            // A saved foreign return is the resolver's declaration fact, not a
+            // value to reconstruct from the caller-facing type or memberRef.
+            ClrMemberResolution.CheckStamped(root, file);
+            ForeignNullableGenericCrossing.Check(root, file);
+        }
+        // Implementing obligations are module-wide: an external slot may be
+        // reached through a Kotlin interface in another input file.
+        ForeignNullableGenericCrossing.CheckImplementedSlots(physicalRoots, refs);
         // Consume CLR attribute origin and select each external constructor from
         // its declaration, retaining the shared foreign-parameter validation.
         foreach (var (root, file) in physicalRoots) TypedAttributeBinding.Apply(root, refs, file);
