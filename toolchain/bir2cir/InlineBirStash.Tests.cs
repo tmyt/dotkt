@@ -24,6 +24,7 @@ static class InlineBirStashTests
         var first = Generated("first", Point(), Delegate("second"));
         first.SignatureOverrideDeclarations = new[] { "captured-slot" };
         var second = Generated("second", Delegate("first"));
+        var third = Generated("third", Point());
         var user = Generated("user", Point()); user.Generated = false;
         var defaultBody = new BirValueBlock { Stmts = new IBirStatement[] { Point() },
             Result = new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(1) } };
@@ -33,7 +34,7 @@ static class InlineBirStashTests
         var method = new BirFunctionDeclaration {
             Name = "pick", DeclarationId = "pick-int", Static = true, Mods = new BirModifiers { Inline = true },
             TypeParams = Array.Empty<BirTypeParameter>(), Params = new[] { parameter }, Ret = integer,
-            Body = new IBirStatement[] { Point(), Delegate("first"), Delegate("first"), Delegate("user"), Delegate("second", "foreign.Owner") },
+            Body = new IBirStatement[] { Point(), Delegate("first"), Delegate("first"), Delegate("user"), Delegate("third", "foreign.Owner") },
         };
         var overload = new BirFunctionDeclaration {
             Name = "pick", DeclarationId = "pick-string", Static = true, Mods = new BirModifiers { Inline = true },
@@ -49,7 +50,7 @@ static class InlineBirStashTests
             Params = Array.Empty<BirParameter>(), Ret = integer, Body = Array.Empty<IBirStatement>() };
         var carrier = new BirClassDefinition { Name = "Box$Static", Kind = "class", StaticCarrier = new BirStaticCarrier { Owner = "Box" },
             Methods = new[] { extension } };
-        var root = new BirFileDeclaration { FileClass = facade, Methods = new[] { method, overload, first, second, user },
+        var root = new BirFileDeclaration { FileClass = facade, Methods = new[] { method, overload, first, second, third, user },
             Types = new IBirTypeDeclaration[] { carrier, new BirClassDefinition { Name = "kotlin.Member", Kind = "class", Methods = new[] { dispatch } } } };
         var sourceMethods = root.Methods.Value;
         var sourceBody = method.Body.Value;
@@ -62,6 +63,7 @@ static class InlineBirStashTests
             || !ReferenceEquals(method.Params.Value[0], sourceParameter)
             || !parameter.GenericParameterSignatureBounds.HasValue || !first.SignatureOverrideDeclarations.HasValue
             || local.Lifted.Value.Length != 2 || local.Lifted.Value[0].Name.Value != "first" || local.Lifted.Value[1].Name.Value != "second"
+            || outgoing.Lifted.Value.Length != 2
             || local.Lifted.Value[0].SignatureOverrideDeclarations.IsPresent
             || local.Params.Value[0].NominalParameterSignatureIdentity.IsPresent
             || local.Params.Value[0].GenericParameterSignatureBounds.IsPresent

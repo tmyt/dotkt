@@ -1275,7 +1275,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// get()`). bir2cir's CharCodeInvokeLowering only rewrites an `ownerType:kotlin.Function.../KFunction...`
 	// call, so it never touches this one.
 	// A SAME-MODULE `inline fun` (body present in THIS run) taking ANY lambda arg is source-inlined (AXIS ①): emit the
-	// generic `callInline` node and bir2cir splices the raw-BIR body (resolved from `InlineBirStash.Index`) in-context.
+	// generic `callInline` node and bir2cir splices the raw-BIR body (resolved from `InlineBirStash.Current.Candidates`) in-context.
 	// The lambda ARGS split per-modifier at emit time (AXIS ②, in inlineSpliceCallSameModule): a normal/crossinline
 	// lambda -> a spliceable carrier, a noinline lambda -> a real delegate temp. No escape analysis. Gated via
 	// `callNeedsSplice` so the suspendCoroutine* intrinsic carve-out is respected here too. (A lambda-less inline call —

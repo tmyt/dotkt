@@ -12,8 +12,8 @@ using DotKt.Bir.Lowering;
 //      the GENERIC arm (#71/#75) — an inline fun taking a lambda, whose non-local `return` (or suspend) through the lambda
 //      strictly requires the body to live inline at the call site. kotc emits the bindings; we RESOLVE the callee's RAW BIR
 //      body by the overload key {owner|name|pc|ga}, disambiguating same-name overloads by a structural `paramSig` match
-//      (§4.2) — same-module candidates from InlineBirStash's index, cross-module from [KotlinInline] on the --ref'd assembly
-//      (ReferenceMetadataIndex.InlineCandidates / OwnerlessInlineCandidates) — and
+//      (§4.2) — same-module candidates from InlineBirStash.Current.Candidates, cross-module from [KotlinInline] on the --ref'd assembly
+//      (ReferenceMetadataIndex.InlineValueCandidates / OwnerlessInlineValueCandidates) — and
 //      SPLICE it at BIR level into a value-producing `valueBlock`. Because InlineSplice runs BEFORE all lowering
 //      (Program.cs, before ClosureSynthesis/MemberCallSubstitution/BirTypeLowering), the spliced RAW body re-lowers IN
 //      THIS app's context (@ClrIntrinsic binds against the app ref.dll, generics resolve with call-site type args,

@@ -324,7 +324,8 @@ sealed class Pipeline
         var enums = new EnumPreparation(richEnums, richEnumFields, basicEnums, explicitEnums, parseEnums);
         // Publish representation-selected inline bodies before per-file rewrites.
         // The local index retains source spans; only outgoing opaque DLL carriers
-        // hide them, and remain untouched by later declaration/body lowering.
+        // hide them. Later declaration/body walks do not descend into these bytes;
+        // the explicit opaque-carrier binder still owns classifier binding.
         InlineBirStash.Reset();
         foreach (var source in captured) InlineBirStash.Stash(source);
         var files = new List<BirFile>();

@@ -123,20 +123,6 @@ static partial class DeclarationSignatureIdentity
                 GenericParameterSignatureBounds = bounds.Length == 0 ? parameter.GenericParameterSignatureBounds : bounds };
         }).ToArray();
 
-    public static void RemoveCapturedFacts(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            obj.Remove(BoundsKey);
-            obj.Remove(NominalKey);
-            obj.Remove(OverrideEdgesKey);
-            obj.Remove(AllocatedKey);
-            foreach (var child in obj.Select(pair => pair.Value)) RemoveCapturedFacts(child);
-        }
-        else if (node is JsonArray array)
-            foreach (var child in array) RemoveCapturedFacts(child);
-    }
-
     internal static void RewriteParameterFacts(JsonObject parameter, Func<TypeNode, TypeNode> rewrite)
     {
         if (TypeJson.Read(parameter[NominalKey]) is TypeNode nominal)
@@ -608,9 +594,10 @@ static partial class DeclarationSignatureIdentity
         SelfTestTypedCapture();
         // Fixtures enter the same typed capture path as the driver; only the
         // downstream signature-allocation tests still consume the DOM frontier.
-        static JsonObject CaptureFixture(JsonNode source) => Capture(new[] {
+        static BirFileDeclaration CaptureSourceFixture(JsonNode source) => Capture(new[] {
             BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(source.ToJsonString(JsonOptions.Indented))),
-        })[0].ToDom();
+        })[0];
+        static JsonObject CaptureFixture(JsonNode source) => CaptureSourceFixture(source).ToDom();
         var source = JsonNode.Parse("""
         {"fileClass":"BoundSignatureProbe","types":[],"methods":[
           {"name":"keep","declarationId":"comparable","typeParams":[{"name":"C","constraints":[
@@ -686,9 +673,11 @@ static partial class DeclarationSignatureIdentity
           {"name":"keep","declarationId":"second","params":[{"name":"value","type":
             {"t":"fqn","name":"Probe.SecondAlias"}}],"ret":{"t":"fqn","name":"void"},"body":[]}]}
         """);
-        aliases = CaptureFixture(aliases);
-        var sourceCarrier = aliases.DeepClone();
-        RemoveCapturedFacts(sourceCarrier);
+        var capturedAliases = CaptureSourceFixture(aliases);
+        aliases = capturedAliases.ToDom();
+        var typedSourceCarrier = capturedAliases.DeepClone();
+        RemoveCapturedFacts(typedSourceCarrier);
+        var sourceCarrier = typedSourceCarrier.ToDom();
         if (sourceCarrier["methods"].AsArray().Any(method => method["params"][0][NominalKey] != null))
             throw new InvalidOperationException("Physical signature capture leaked into a source carrier");
         aliases["methods"][0]["params"][0]["type"] = TypeJson.Fqn("object");
