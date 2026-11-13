@@ -407,6 +407,9 @@ static partial class TypedPhysicalOperandNormalization
         IBirExpression Spill(IBirExpression expression, List<IBirStatement> prefix,
             IReadOnlyDictionary<string, TypeNode> scope)
         {
+            // Q4: only literals and `this` may stay behind while a later operand
+            // hoists. Even a plain local must be snapshotted: the hoisted operand
+            // may write it before the original operand slot is consumed.
             if (expression is BirConstant or BirThis) return expression;
             var node = (BirGraphValue)expression;
             var type = typeOf(node, scope) ?? throw new NotSupportedException(

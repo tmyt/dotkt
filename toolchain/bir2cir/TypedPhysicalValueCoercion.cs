@@ -56,19 +56,13 @@ static class TypedPhysicalValueCoercion
     }
 
     sealed record MethodShape(string Owner, string Name, int Arity, TypeNode[] Parameters, TypeNode Return);
-    readonly record struct TypeShape(string Name, string Kind, int Arity, TypeNode Base, TypeNode[] Interfaces,
+    readonly record struct TypeShape(string Name,
         BirFieldDeclaration[] Fields, BirConstructor[] Constructors, BirFunctionDeclaration[] Methods);
 
     static TypeShape Shape(IBirTypeDeclaration declaration) => declaration switch {
-        BirClassDefinition type => new(type.Name.OrDefault(), type.Kind.OrDefault(),
-            type.CapturedTypeParams.OrEmpty().Length + type.TypeParams.OrEmpty().Length,
-            type.Base.OrDefault(), type.Interfaces.OrEmpty(), type.Fields.OrEmpty(), type.Ctors.OrEmpty(), type.Methods.OrEmpty()),
-        BirInterfaceDefinition type => new(type.Name.OrDefault(), type.Kind.OrDefault(),
-            type.CapturedTypeParams.OrEmpty().Length + type.TypeParams.OrEmpty().Length,
-            type.Base.OrDefault(), type.Interfaces.OrEmpty(), type.Fields.OrEmpty(), type.Ctors.OrEmpty(), type.Methods.OrEmpty()),
-        BirEnumDefinition type => new(type.Name.OrDefault(), "enum",
-            type.CapturedTypeParams.OrEmpty().Length + type.TypeParams.OrEmpty().Length,
-            type.Base.OrDefault(), type.Interfaces.OrEmpty(), type.Fields.OrEmpty(), type.Ctors.OrEmpty(), type.Methods.OrEmpty()),
+        BirClassDefinition type => new(type.Name.OrDefault(), type.Fields.OrEmpty(), type.Ctors.OrEmpty(), type.Methods.OrEmpty()),
+        BirInterfaceDefinition type => new(type.Name.OrDefault(), type.Fields.OrEmpty(), type.Ctors.OrEmpty(), type.Methods.OrEmpty()),
+        BirEnumDefinition type => new(type.Name.OrDefault(), type.Fields.OrEmpty(), type.Ctors.OrEmpty(), type.Methods.OrEmpty()),
         _ => throw new InvalidOperationException("Unaccounted physical declaration " + declaration.GetType().Name),
     };
 
@@ -79,7 +73,7 @@ static class TypedPhysicalValueCoercion
         readonly Dictionary<string, TypeNode[]> closureConstructors = new(StringComparer.Ordinal);
         readonly HashSet<string> nonGenericClasses = new(StringComparer.Ordinal);
         readonly HashSet<(string Class, string Carrier)> declaredCarriers = new();
-        readonly Dictionary<string, SupertypeGraph.Def> types = new(StringComparer.Ordinal);
+        readonly Dictionary<string, SupertypeGraph.Def> types;
         internal readonly Func<IBirExpression> UnitValue;
         internal ValueTypeOracle IsValue = _ => false;
         internal Func<TypeNode.Fqn, bool> IsReferenceOwner = _ => false;
@@ -95,6 +89,7 @@ static class TypedPhysicalValueCoercion
         internal Index(IReadOnlyList<BirFileDeclaration> roots, Func<IBirExpression> unitValue)
         {
             UnitValue = unitValue;
+            types = SupertypeGraph.CollectSource(roots);
             foreach (var root in roots)
             {
                 AddMembers(root.FileClass.OrDefault(), root.Fields.OrEmpty(), root.Methods.OrEmpty());
@@ -102,14 +97,12 @@ static class TypedPhysicalValueCoercion
                 {
                     var type = Shape(declaration);
                     if (type.Name == null) continue;
-                    types[type.Name] = new SupertypeGraph.Def { Name = type.Name, Kind = type.Kind,
-                        Arity = type.Arity, Base = type.Base as TypeNode.Fqn,
-                        Interfaces = type.Interfaces.OfType<TypeNode.Fqn>().ToArray() };
+                    var hierarchy = types[type.Name];
                     if (type.Constructors.Length == 1 && type.Constructors[0].Params.HasValue)
                         closureConstructors[type.Name] = type.Constructors[0].Params.Value.Select(p => p.Type.OrDefault()).ToArray();
-                    if (type.Kind == "class" && type.Arity == 0) nonGenericClasses.Add(type.Name);
-                    if (type.Kind is "class" or "interface")
-                        foreach (var implemented in type.Interfaces.OfType<TypeNode.Fqn>().Where(t => t.Args == null))
+                    if (hierarchy.Kind == "class" && hierarchy.Arity == 0) nonGenericClasses.Add(type.Name);
+                    if (hierarchy.Kind is "class" or "interface")
+                        foreach (var implemented in hierarchy.Interfaces.Where(t => t.Args == null))
                             declaredCarriers.Add((type.Name, implemented.Name));
                     AddMembers(type.Name, type.Fields, type.Methods);
                 }
@@ -768,6 +761,7 @@ static class TypedPhysicalValueCoercion
         BirLateinitGet value => value.FieldRef.OrDefault(), BirClrStaticField value => value.FieldRef.OrDefault(),
         BirPropertyGet value => value.MemberRef.OrDefault(), BirPropertySet value => value.MemberRef.OrDefault(),
         BirEventAdd value => value.MemberRef.OrDefault(), BirEventRemove value => value.MemberRef.OrDefault(),
+        BirNewBoundDelegate value => value.MemberRef.OrDefault(), BirBoundClrDelegate value => value.MemberRef.OrDefault(),
         _ => null,
     };
     static IBirExpression[] Arguments(BirGraphValue node) => node switch {
@@ -839,7 +833,8 @@ static class TypedPhysicalValueCoercion
         BirSetField value => value.Recv.OrDefault(), BirFieldSetExpression value => value.Recv.OrDefault(),
         BirLateinitGet value => value.Recv.OrDefault(), BirPropertyGet value => value.Recv.OrDefault(),
         BirPropertySet value => value.Recv.OrDefault(), BirEventAdd value => value.Recv.OrDefault(),
-        BirEventRemove value => value.Recv.OrDefault(), _ => null,
+        BirEventRemove value => value.Recv.OrDefault(), BirNewBoundDelegate value => value.Recv.OrDefault(),
+        BirBoundClrDelegate value => value.Recv.OrDefault(), _ => null,
     };
     static void SetReceiver(BirGraphValue node, IBirExpression receiver)
     {
@@ -859,6 +854,8 @@ static class TypedPhysicalValueCoercion
             case BirPropertySet value: value.Recv = field; break;
             case BirEventAdd value: value.Recv = field; break;
             case BirEventRemove value: value.Recv = field; break;
+            case BirNewBoundDelegate value: value.Recv = field; break;
+            case BirBoundClrDelegate value: value.Recv = field; break;
             default: throw new InvalidOperationException("Unaccounted resolved receiver " + node.GetType().Name);
         }
     }
@@ -916,7 +913,29 @@ static class TypedPhysicalValueCoercion
             Args = new IBirExpression[] { new BirByRefOf { Inner = new BirLocal { Name = "slot" } } }, Ret = Void };
         var native = new BirFunctionDeclaration { Name = "native", Params = new[] { new BirParameter { Name = "slot", Type = Object } },
             Ret = Void, Body = new IBirStatement[] { new BirExpressionStatement { Expr = mutation } } };
-        var root = new BirFileDeclaration { FileClass = "PhysicalValues", Methods = new[] { view, read, native } };
+        var delegateReceivers = new List<(BirGraphValue Delegate, BirLocal Original, TypeNode Target)>();
+        var methods = new List<BirFunctionDeclaration> { view, read, native };
+        foreach (var nativeDelegate in new[] { false, true })
+        foreach (var (receiverType, declaringType) in new[] {
+            (Object, (TypeNode)new TypeNode.Fqn("Probe.Receiver")), (source, (TypeNode)target),
+        })
+        {
+            var receiver = new BirLocal { Name = "receiver" };
+            var member = new BirMemberReference { Kind = "method", Assembly = "Probe",
+                DeclaringType = declaringType, Name = "Target", GenericArity = 0,
+                CallingConvention = "instance", ParameterTypes = Array.Empty<TypeNode>(), ReturnType = Void };
+            var functionType = new TypeNode.Fn(false, Void, Array.Empty<TypeNode>());
+            IBirExpression bound = nativeDelegate
+                ? new BirBoundClrDelegate { Type = declaringType, ClrType = new TypeNode.Fqn("System.Action"),
+                    FuncType = functionType, Recv = receiver, MemberRef = member, Method = "Target" }
+                : new BirNewBoundDelegate { OwnerType = declaringType, FuncType = functionType,
+                    Recv = receiver, MemberRef = member, Method = "Target" };
+            methods.Add(new BirFunctionDeclaration { Name = "boundReceiver" + methods.Count,
+                Params = new[] { new BirParameter { Name = "receiver", Type = receiverType } }, Ret = Void,
+                Body = new IBirStatement[] { new BirExpressionStatement { Expr = Field(bound) } } });
+            delegateReceivers.Add((Graph(bound), receiver, declaringType));
+        }
+        var root = new BirFileDeclaration { FileClass = "PhysicalValues", Methods = methods.ToArray() };
         ApplyAll(new[] { root }, () => new BirConstant { Type = new TypeNode.Fqn("kotlin.Unit"), Value = new BirLiteral.NullLiteral() }, _ => false);
         if (branch.Type.OrDefault() != target || branch.Then.OrDefault() is not BirCast { Type.HasValue: true } first
             || first.Type.Value != target || !ReferenceEquals(first.E.OrDefault(), value)
@@ -938,6 +957,11 @@ static class TypedPhysicalValueCoercion
         var oracle = ResultTypeOracle(new[] { root });
         if (oracle(call, new Dictionary<string, TypeNode>()) != text)
             throw new InvalidOperationException("Owning physical result oracle did not close and copy the exact ref return");
-        Console.WriteLine("[typed physical values] self-test OK (conditional views, exact results, native storage, closed ref results)");
+        foreach (var (bound, receiver, declaringType) in delegateReceivers)
+            if (Receiver(bound) is not BirCast { Type.HasValue: true, E.HasValue: true } conversion
+                || conversion.Type.Value != declaringType || !ReferenceEquals(conversion.E.Value, receiver))
+                throw new InvalidOperationException("Owning bound delegate lost its exact declaring receiver conversion: "
+                    + bound.GetType().Name + " -> " + declaringType);
+        Console.WriteLine("[typed physical values] self-test OK (conditional views, exact results, native storage, closed ref results, bound receivers)");
     }
 }

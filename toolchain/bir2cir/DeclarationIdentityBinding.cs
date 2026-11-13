@@ -430,55 +430,6 @@ static class DeclarationIdentityBinding
     // the actual final emission unit as a whole so a generated bridge can neither duplicate another generated bridge
     // nor silently collide with an explicitly named user declaration. This is validation only: no late renaming is
     // allowed because every call/MethodImpl/property association has already been physically bound.
-    public static void ValidateFinalPhysicalNames(IEnumerable<JsonNode> roots)
-    {
-        var rootList = roots.OfType<JsonObject>().ToList();
-        var declarations = new List<(string Owner, string Name, string Sig,
-            bool GeneratedOwner, bool GeneratedMethod)>();
-        var properties = new List<(string Owner, string Name, string Sig)>();
-
-        void CollectMethods(JsonObject owner, string ownerName, bool generatedOwner)
-        {
-            if (owner["ctors"] is JsonArray constructors)
-                foreach (var constructor in constructors.OfType<JsonObject>())
-                    declarations.Add((ownerName, ".ctor", PhysicalSignature(constructor),
-                        generatedOwner, Bool(constructor["generated"])));
-            if (owner["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                    if (Str(method["name"]) is string name)
-                        declarations.Add((ownerName, name, PhysicalSignature(method),
-                            generatedOwner, Bool(method["generated"])));
-            if (owner["properties"] is JsonArray propertyRows)
-                foreach (var property in propertyRows.OfType<JsonObject>())
-                    if (Str(property["name"]) is string name)
-                        properties.Add((ownerName, name, PhysicalPropertySignature(property)));
-        }
-
-        foreach (var root in rootList)
-            // ilemit merges equal file facades and emits every method from every contributing CIR root. A root is
-            // therefore never a generated TypeDef occurrence eligible for the first-wins rule below.
-            CollectMethods(root, Str(root["fileClass"]) ?? "<file>", generatedOwner: false);
-
-        // Match ilemit's owner pass before validating methods. File facades are defined first. A later generated
-        // TypeDef is skipped whenever any prior owner already occupies its name; only methods on the emitted first
-        // occurrence belong to the final MethodDef table. An ordinary duplicate TypeDef is a separate malformed-CIR
-        // failure in ilemit, so it contributes no second MethodDef table here.
-        var definedOwners = new HashSet<string>(rootList
-            .Where(root => (root["methods"] as JsonArray)?.Count > 0
-                           || (root["fields"] as JsonArray)?.Count > 0)
-            .Select(root => Str(root["fileClass"]) ?? "<file>"), StringComparer.Ordinal);
-        foreach (var root in rootList)
-            if (root["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>())
-                {
-                    var ownerName = Str(type["name"]) ?? "<anonymous>";
-                    if (!definedOwners.Add(ownerName)) continue;
-                    CollectMethods(type, ownerName, Bool(type["generated"]));
-                }
-
-        CheckFinalPhysicalNames(declarations, properties);
-    }
-
     internal static void ValidateFinalPhysicalNames(IEnumerable<BirFileDeclaration> roots)
     {
         var rootList = roots.ToArray();
@@ -813,28 +764,26 @@ static class DeclarationIdentityBinding
             try { action(); return null; }
             catch (InvalidOperationException error) { return error.Message; }
         }
-        void Compare(BirFileDeclaration[] roots, string expected = null)
+        void Check(BirFileDeclaration[] roots, string expected = null)
         {
-            var dom = roots.Select(root => (JsonNode)root.ToDom()).ToArray();
-            var old = Failure(() => ValidateFinalPhysicalNames(dom));
             var typed = Failure(() => ValidateFinalPhysicalNames(roots));
-            if (old != typed || (expected == null ? typed != null : typed?.Contains(expected) != true))
+            if (expected == null ? typed != null : typed?.Contains(expected) != true)
                 throw new InvalidOperationException("Owning physical declaration validation changed a final signature table");
         }
-        Compare(new[] { new BirFileDeclaration { FileClass = "Facade", Methods = new[] { method },
+        Check(new[] { new BirFileDeclaration { FileClass = "Facade", Methods = new[] { method },
             Properties = new[] { property } } });
-        Compare(new[] { new BirFileDeclaration { FileClass = "Facade", Methods = new[] { method } },
+        Check(new[] { new BirFileDeclaration { FileClass = "Facade", Methods = new[] { method } },
             new BirFileDeclaration { FileClass = "Facade", Methods = new[] { method } } }, "duplicate MethodDef");
-        Compare(new[] { new BirFileDeclaration { FileClass = "Facade", Properties = new[] { property } },
+        Check(new[] { new BirFileDeclaration { FileClass = "Facade", Properties = new[] { property } },
             new BirFileDeclaration { FileClass = "Facade", Properties = new[] { property } } }, "duplicate PropertyDef");
-        Compare(new[] { new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+        Check(new[] { new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
             new BirClassDefinition { Name = "Generated", Generated = true, Methods = new[] { method } },
             new BirClassDefinition { Name = "Generated", Generated = true, Methods = new[] { method } },
         } } });
         var first = method with { Params = new[] { new BirParameter { Name = "value", Type = new TypeNode.Tv("method", 0) } },
             TypeParams = new[] { new BirTypeParameter { Name = "T" }, new BirTypeParameter { Name = "S" } } };
         var second = first with { Params = new[] { new BirParameter { Name = "value", Type = new TypeNode.Tv("method", 1) } } };
-        Compare(new[] { new BirFileDeclaration { FileClass = "Facade", Methods = new[] { first, second } } });
+        Check(new[] { new BirFileDeclaration { FileClass = "Facade", Methods = new[] { first, second } } });
         Console.WriteLine("[typed final declarations] self-test OK (facades, generated owners, exact generics, properties)");
     }
 
@@ -867,16 +816,6 @@ static class DeclarationIdentityBinding
         arity + "|" + string.Join(";", parameters.Select(type => PhysicalTypeSignature(type
             ?? throw new InvalidOperationException("bir2cir: declaration identity has an untyped physical parameter"))))
         + " -> " + (result == null ? "System.Void" : PhysicalTypeSignature(result));
-
-    static string PhysicalPropertySignature(JsonObject property)
-    {
-        IEnumerable<JsonNode> indexParameters = property["getSig"] is JsonArray getSig
-            ? getSig
-            : property["setSig"] is JsonArray setSig
-                ? setSig.Take(Math.Max(0, setSig.Count - 1))
-                : throw new InvalidOperationException("bir2cir: final PropertyDef has no accessor signature");
-        return PhysicalPropertySignature(TypeJson.Read(property["type"]), indexParameters.Select(TypeJson.Read));
-    }
 
     static string PhysicalPropertySignature(TypeNode type, IEnumerable<TypeNode> indexes) =>
         PhysicalPropertyTypeSignature(type ?? throw new InvalidOperationException("bir2cir: final PropertyDef has no physical type"))
