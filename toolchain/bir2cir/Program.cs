@@ -57,6 +57,7 @@ static class Bir2Cir
                 TypedPhysicalValueCoercion.SelfTest();
                 TypedPhysicalOperandNormalization.SelfTest();
                 TypedPhysicalDelegateAdapter.SelfTest();
+                ClrMemberResolution.SelfTestTypedDelegateSlots();
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
                 SourceGraphRewrite.SelfTest();
@@ -1556,17 +1557,13 @@ sealed class Pipeline
             ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(new[] { lowered });
             ClrMemberResolution.ResolveWellKnown(lowered, refs);
             ClrMemberResolution.ResolveInterfaceSlots(lowered, loweredRoots.Select(file => file.Root), refs);
-            // Every delegate slot in this file now names its selected member, so each literal lambda filling one
-            // can be pointed at the delegate it physically constructs — and the void-to-value adapter that needs
-            // can be authored as ordinary CIR. Runs after the last resolution pass, because the rule compares the
-            // construction's FINAL function type with the slot's.
-            ClrMemberResolution.MaterializeDelegateSlots(lowered, refs, emittedLocalTypes, localExistentialOwners);
         }
 
         var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
             root["assemblyAttrs"] is JsonArray { Count: > 0 });
         // Every remaining owner consumes typed occurrences. Enter once before
-        // physical value/storage edges; no pass below returns the graph to DOM.
+        // delegate construction and physical value/storage edges; no pass below
+        // returns the graph to DOM.
         var physicalRoots = loweredRoots.Select(file =>
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         loweredRoots.Clear();
@@ -1576,6 +1573,10 @@ sealed class Pipeline
         // after that graph has entered its one owning typed continuation.
         foreach (var (root, file) in physicalRoots)
         {
+            // All member and interface-slot resolution is complete module-wide.
+            // Materialize each construction's final delegate and any required
+            // adapter as owning typed declarations with exact member bindings.
+            ClrMemberResolution.MaterializeDelegateSlots(root, refs, emittedLocalTypes, localExistentialOwners);
             ForeignStarProjectionBinding.DropDeclarationSignatures(root);
             // A saved foreign return is the resolver's declaration fact, not a
             // value to reconstruct from the caller-facing type or memberRef.
