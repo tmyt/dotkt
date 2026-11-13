@@ -35,6 +35,14 @@ def generate(definitions, model_type, non_null_field, allows_null):
             return "AttributeArgument." + definitions[key]["x-dotkt-model"]["name"]
         return model_type({"$ref": "#/$defs/" + key}, definitions, "csharp")
 
+    def codec_shape(value):
+        # Generic-frame ownership guides lowering traversal, not wire codecs.
+        if isinstance(value, dict):
+            return {key: codec_shape(item) for key, item in value.items() if key != "x-dotkt-frame-role"}
+        if isinstance(value, list):
+            return [codec_shape(item) for item in value]
+        return value
+
     def register(shape):
         shape = non_null_field(shape)
         if "$ref" in shape:
@@ -43,7 +51,7 @@ def generate(definitions, model_type, non_null_field, allows_null):
             name = key
             target = definitions[key]
         else:
-            token = json.dumps(shape, sort_keys=True)
+            token = json.dumps(codec_shape(shape), sort_keys=True)
             name = "value" + str(len(registered))
             target = shape
             key = None

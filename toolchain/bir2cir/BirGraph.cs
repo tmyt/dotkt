@@ -37,6 +37,12 @@ internal abstract record BirGraphValue
     // Structured type slots only. Frozen source facts encoded as strings in the
     // maintained schema are opaque to this operation, as they were on the wire.
     public abstract BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite);
+    // The schema states which declaration owns each type-bearing occurrence.
+    // Consumers choose their traversal policy; the model does not perform an
+    // inline substitution or infer a frame from a field's physical spelling.
+    public abstract BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child);
     public abstract void WriteJson(Utf8JsonWriter writer);
     // Temporary frontier to the not-yet-migrated owning passes. It builds
     // nodes directly: no serialized child, parse, or generic extension-data bag.
@@ -67,6 +73,20 @@ internal abstract record BirGraphValue
 internal abstract record BirGraphNode : BirGraphValue
 {
     public abstract string Tag { get; }
+}
+
+internal enum BirGenericFrameRole
+{
+    Lexical,
+    ReferencedDeclaration,
+    ResolvedDeclaration,
+    OverrideDeclaration,
+    SharedCaptureDeclaration,
+    LocalDeclaration,
+    SyntheticDeclaration,
+    SyntheticApplication,
+    FrozenSourceFact,
+    StorageSourceType,
 }
 
 // A short-lived address into an owning typed graph, not a string-key property

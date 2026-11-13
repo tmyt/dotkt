@@ -706,68 +706,34 @@ static class InlineSplice
     {
         var owner = TypeJson.OwnerName(call["owner"]);
         var callee = TypeJson.OwnerName(call["callee"]);
-        var name = callee != null && callee.Contains('.') ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
-        if (Str(call[DeclarationIdentityBinding.Key]) is string id)
-        {
-            if (locals.Declaration(id) is JsonObject local) return ((JsonObject)local.DeepClone(), true, null);
-            var referenced = refs?.InlineByDeclarationIdentity(id);
-            return referenced != null ? (referenced, false, null)
-                : (null, false, $"no [KotlinInline] payload for frontend declaration identity '{id}'");
-        }
-        var pc = Int(call["pc"]);
-        var ga = Int(call["ga"]);
-        var paramSig = call["paramSig"] as JsonArray;
-        if (owner != null) return ResolveInlinePayload(owner, name, pc, ga, paramSig, locals, refs);
-        var (hit, sameModule, diagnostic) = ResolveOwnerless(name, pc, ga, paramSig, locals, refs);
-        return ((JsonObject)hit?.DeepClone(), sameModule, diagnostic);
+        var name = callee?.Contains('.') == true ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
+        var result = SelectPayload(Str(call[DeclarationIdentityBinding.Key]), owner, name, Int(call["pc"]), Int(call["ga"]), call["paramSig"] as JsonArray, locals, refs);
+        return ((JsonObject)result.Payload?.DeepClone(), result.SameModule, result.Diagnostic);
     }
+
+    static (JsonObject Payload, bool SameModule, string Diagnostic) SelectPayload(string identity, string owner, string name,
+        int pc, int ga, JsonArray signature, InlineBirIndex locals, ReferenceMetadataIndex refs)
+        => InlinePayloadSelection.Resolve<JsonObject>(identity, owner, name, pc, ga,
+            signature?.Select(TypeJson.Read).ToArray(), locals.Declaration,
+            refs == null ? null : refs.InlineByDeclarationIdentity,
+            (o, n, p, a) => locals.Index.GetValueOrDefault($"{o}|{n}|{p}|{a}"),
+            refs == null ? null : refs.InlineCandidates, locals.OwnerlessCandidates,
+            refs == null ? null : refs.OwnerlessInlineCandidates,
+            payload => (payload["params"] as JsonArray)?.Select(parameter => TypeJson.Read(parameter?["type"])).ToArray());
 
     static (JsonObject payload, bool sameModule, string diag) ResolveInlinePayload(string owner, string name, int pc, int ga,
-        JsonArray paramSig, InlineBirIndex locals, ReferenceMetadataIndex refs)
+        JsonArray signature, InlineBirIndex locals, ReferenceMetadataIndex refs)
     {
-        if (locals.Index.TryGetValue($"{owner}|{name}|{pc}|{ga}", out var smCands) && smCands.Count > 0)
-        {
-            var hit = InlineBirIndex.SelectByParamSig(smCands, paramSig, out int mc);
-            if (hit != null) return ((JsonObject)hit.DeepClone(), true, null);
-            return (null, false, $"no unique same-module inline overload for the call's param signature "
-                + $"({smCands.Count} candidate(s), {mc} matched) — structurally-ambiguous inline overloads (e.g. differ only in generic bounds like ifEmpty)");
-        }
-        var crossCands = refs?.InlineCandidates(owner, name, pc, ga);
-        if (crossCands != null && crossCands.Count > 0)
-        {
-            var hit = InlineBirIndex.SelectByParamSig(crossCands, paramSig, out int mc);
-            if (hit != null) return ((JsonObject)hit.DeepClone(), false, null);
-            return (null, false, $"no unique cross-module [KotlinInline] overload for the call's param signature "
-                + $"({crossCands.Count} candidate(s), {mc} matched) — structurally-ambiguous inline overloads (e.g. differ only in generic bounds like ifEmpty)");
-        }
-        return (null, false, "no [KotlinInline] payload found");
+        var result = SelectPayload(null, owner, name, pc, ga, signature, locals, refs);
+        return ((JsonObject)result.Payload?.DeepClone(), result.SameModule, result.Diagnostic);
     }
 
-    // §4.4(i) / §4.2 — resolve an OWNER-LESS kotlin.* inline call (a scope-fn/@InlineOnly fn kotc could not name): try the
-    // SAME-MODULE stash FIRST (stdlib self-build — the target is being compiled this run), then the ref.dll (app build).
-    // Returns the unique paramSig-matched payload (NOT cloned) + whether it is same-module, or (null, false, diag). The
-    // winner's own `owner` field names the host file class.
     static (JsonObject hit, bool sameModule, string diag) ResolveOwnerless(string name, int pc, int ga,
-        JsonArray paramSig, InlineBirIndex locals, ReferenceMetadataIndex refs)
+        JsonArray signature, InlineBirIndex locals, ReferenceMetadataIndex refs)
     {
-        var smCands = locals.OwnerlessCandidates(name, pc, ga);
-        if (smCands != null)
-        {
-            var hit = InlineBirIndex.SelectByParamSig(smCands, paramSig, out int mc);
-            if (hit != null) return (hit, true, null);
-            if (mc > 1) return (null, false, $"owner-less callInline: no unique same-module paramSig match among {smCands.Count} kotlin.* candidate(s) ({mc} matched) — structurally-ambiguous overloads (e.g. differ only in generic bounds like ifEmpty)");
-            // 0 same-module matches -> fall through to the ref.dll (a same-name kotlin.* fn may live cross-module).
-        }
-        var xCands = refs?.OwnerlessInlineCandidates(name, pc, ga);
-        if (xCands != null)
-        {
-            var hit = InlineBirIndex.SelectByParamSig(xCands, paramSig, out int mc);
-            if (hit != null) return (hit, false, null);
-            return (null, false, $"owner-less callInline: no unique paramSig match among {xCands.Count} kotlin.* candidate(s) ({mc} matched) — structurally-ambiguous overloads (e.g. differ only in generic bounds like ifEmpty)");
-        }
-        return (null, false, "owner-less callInline: no file class (same-module stash or ref.dll) hosts this inline fn");
+        var result = SelectPayload(null, null, name, pc, ga, signature, locals, refs);
+        return (result.Payload, result.SameModule, result.Diagnostic);
     }
-
     // §4.3 — rewrite a member-inline payload's own `{k:this}` to a bound dispatch-receiver temp. A `typeDef` is skipped
     // whole. A `newSuspendLambda`'s BODY is its own frame, but its positional `capValues` are construction expressions
     // evaluated in THIS payload frame, so rewrite only that channel and preserve the lambda body. A `newClosure`/`newSam`'s

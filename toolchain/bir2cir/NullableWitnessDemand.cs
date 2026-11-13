@@ -10,7 +10,7 @@ using DotKt.Bir;
 // positional type-argument correspondence on every lifted/materialized frame.
 // Before the fixed point, private source-graph snapshots materialize actually omitted defaults, including
 // callInline slots. Those operations belong to their omitting callers, not unconditionally to their declarations.
-sealed class NullableWitnessDemand
+sealed partial class NullableWitnessDemand
 {
     readonly IReadOnlyDictionary<string, int[]> _localDeclarations;
     readonly ReferenceMetadataIndex _refs;
@@ -153,6 +153,10 @@ sealed class NullableWitnessDemand
             || withMarkers.Any(entry => !entry.Value.SequenceEqual(withoutMarkers[entry.Key])))
             throw new InvalidOperationException(
                 "nullable-witness demand self-test failed: demand depends on Kotlin reified markers or call propagation");
+        var owning = Collect(new[] { DotKt.Bir.Lowering.BirGraphDom.ReadBirFileDeclaration(root) }, null).LocalDeclarations;
+        if (withMarkers.Any(entry => !entry.Value.SequenceEqual(owning[entry.Key])))
+            throw new InvalidOperationException("Owning nullable-witness analysis disagrees with source fixture demands");
+        TypedDefaultDemandSelfTest();
     }
 
     public GeneratedFrameDemands AnalyzeGeneratedFrames(JsonObject file)
@@ -416,6 +420,13 @@ sealed class NullableWitnessDemand
         JsonArray typeArguments,
         string context,
         bool dense)
+        => ResolveFramePositions(variables, typeArguments.Select(TypeJson.Read).ToArray(), context, dense);
+
+    static int[] ResolveFramePositions(
+        IEnumerable<TypeVariable> variables,
+        IReadOnlyList<TypeNode> typeArguments,
+        string context,
+        bool dense)
     {
         var positions = new HashSet<int>();
         foreach (var variable in variables)
@@ -430,7 +441,7 @@ sealed class NullableWitnessDemand
             }
 
             var matches = typeArguments.Select((argument, index) => (argument, index))
-                .Where(entry => TypeJson.Read(entry.argument) is TypeNode.Tv tv
+                .Where(entry => entry.argument is TypeNode.Tv tv
                     && tv.Scope == variable.Scope && tv.I == variable.Index)
                 .Select(entry => entry.index)
                 .ToArray();

@@ -27,6 +27,21 @@ class PhaseCompositionTests(unittest.TestCase):
     def test_current_profiles_are_closed(self):
         self.assertEqual(2, len(outputs(ROOT, self.definitions)))
 
+    def test_generic_frame_roles_follow_the_owning_field_contract(self):
+        model = next(content for path, content in outputs(ROOT, self.definitions).items()
+                     if path.name == "BirGraph.Model.Generated.cs")
+
+        def record(name):
+            return model.split("internal sealed record " + name + " :", 1)[1].split("internal sealed record ", 1)[0]
+
+        self.assertRegex(record("BirNew"), r"ArgTypes = .*BirGenericFrameRole.Lexical")
+        self.assertRegex(record("BirCallStatic"), r"ArgTypes = .*BirGenericFrameRole.ReferencedDeclaration")
+        self.assertRegex(record("BirLocalFunction"), r"Decl = .*BirGenericFrameRole.LocalDeclaration")
+        self.assertRegex(record("BirFieldDeclaration"), r"KotlinType = .*BirGenericFrameRole.StorageSourceType")
+        self.definitions["birCallStatic"]["properties"]["sig"]["x-dotkt-frame-role"] = "UnknownFrameRole"
+        with self.assertRaisesRegex(ValueError, "Unknown generic-frame role"):
+            outputs(ROOT, self.definitions)
+
     def test_lowering_value_facts_stay_out_of_the_source_profile(self):
         lowering = "\n".join(outputs(ROOT, self.definitions).values())
         source = "\n".join(source_outputs(ROOT, self.definitions).values())

@@ -33,7 +33,7 @@ using DotKt.Bir.Lowering;
 //
 // The plan's own vocabulary must not survive: the terminal assert refuses a leftover `callEval`/`bindRef`/
 // `delegationBindings`, and scripts/verify-schema.py enforces the same split structurally.
-static class CallEvalLowering
+static partial class CallEvalLowering
 {
     // A compiler value binding (including a spliced lambda parameter) is initialized once; unlike a user variable
     // it cannot subsequently acquire a wider value.

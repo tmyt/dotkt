@@ -12,6 +12,7 @@ using System.Reflection.PortableExecutable;
 using System.Collections.Immutable;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 using DotKt.Toolchain;
 
 internal delegate bool ValueTypeOracle(TypeNode.Fqn type);
@@ -636,14 +637,14 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
     readonly Dictionary<string, List<(string Owner, string RecvKey, TypeKey ParamKey)>> _topLevelStatics = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"
-    readonly Dictionary<DefaultKey, Dictionary<int, JsonNode>> _kotlinDefaults = new();
-    readonly Dictionary<string, Dictionary<int, JsonNode>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
+    readonly Dictionary<DefaultKey, Dictionary<int, IBirExpression>> _kotlinDefaults = new();
+    readonly Dictionary<string, Dictionary<int, IBirExpression>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     readonly HashSet<string> _conflictingDefaultDeclarationIds = new(StringComparer.Ordinal);
     // #146: OWNERLESS default-arg index "name|paramCount" -> defaults. DefaultArgSplice now runs at PHASE 1 (before
     // MemberCallSubstitution attributes the owner), so the omitted call is still `owner:null method:col2 sig:[…]`.
     // Built from _kotlinDefaults: a key with a SINGLE owner, or several owners whose defaults AGREE, maps to those
     // defaults; owners that DISAGREE mark it AMBIGUOUS (the splice loud-refuses rather than guess).
-    readonly Dictionary<string, Dictionary<int, JsonNode>> _kotlinDefaultsOwnerless = new(StringComparer.Ordinal);
+    readonly Dictionary<string, Dictionary<int, IBirExpression>> _kotlinDefaultsOwnerless = new(StringComparer.Ordinal);
     readonly HashSet<string> _kotlinDefaultsAmbiguous = new(StringComparer.Ordinal);
     // OWNERFUL keys two same-arity declarations carry with different defaults (see ReferenceAssemblyMetadata).
     readonly HashSet<DefaultKey> _kotlinDefaultsConflicted = new();
@@ -1087,6 +1088,10 @@ sealed partial class ReferenceMetadataIndex
     // and are refused. Running this at phase 1 does not imply throwing away an owner kotc has already projected.
     public Dictionary<int, JsonNode> KotlinDefaultsFor(string owner, string method, int paramCount,
         SignatureKey sigKey = null, SignatureKey relaxedSigKey = null)
+        => DefaultValuesDom(KotlinDefaultValuesFor(owner, method, paramCount, sigKey, relaxedSigKey));
+
+    public Dictionary<int, IBirExpression> KotlinDefaultValuesFor(string owner, string method, int paramCount,
+        SignatureKey sigKey = null, SignatureKey relaxedSigKey = null)
     {
         if (method == null) return null;
         if (owner != null)
@@ -1100,22 +1105,25 @@ sealed partial class ReferenceMetadataIndex
             {
                 var exactKey = new DefaultKey(owner, method, paramCount, sigKey);
                 if (_kotlinDefaults.TryGetValue(exactKey, out var bySig)
-                    && !_kotlinDefaultsConflicted.Contains(exactKey)) return bySig;
+                    && !_kotlinDefaultsConflicted.Contains(exactKey)) return CloneDefaultValues(bySig);
                 var relaxed = new DefaultKey(owner, method, paramCount, relaxedSigKey, Relaxed: true);
                 if (_kotlinDefaults.TryGetValue(relaxed, out var byRelaxed) && !_kotlinDefaultsConflicted.Contains(relaxed))
-                    return byRelaxed;
+                    return CloneDefaultValues(byRelaxed);
             }
             if (_kotlinDefaultsConflicted.Contains(key)) return null;
-            return _kotlinDefaults.TryGetValue(key, out var exact) ? exact : null;
+            return _kotlinDefaults.TryGetValue(key, out var exact) ? CloneDefaultValues(exact) : null;
         }
-        return _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var ownerless) ? ownerless : null;
+        return _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var ownerless) ? CloneDefaultValues(ownerless) : null;
     }
 
     public Dictionary<int, JsonNode> KotlinDefaultsForDeclarationIdentity(string id)
+        => DefaultValuesDom(KotlinDefaultValuesForDeclarationIdentity(id));
+
+    public Dictionary<int, IBirExpression> KotlinDefaultValuesForDeclarationIdentity(string id)
     {
         if (id != null && _conflictingDefaultDeclarationIds.Contains(id))
             throw new InvalidOperationException($"conflicting defaults for Kotlin declaration identity '{id}'");
-        return id != null ? _kotlinDefaultsByDeclarationId.GetValueOrDefault(id) : null;
+        return id != null ? CloneDefaultValues(_kotlinDefaultsByDeclarationId.GetValueOrDefault(id)) : null;
     }
 
     // Resolve the declaration exactly as the later scalar-member binding does, then read optional/default metadata
@@ -1126,6 +1134,16 @@ sealed partial class ReferenceMetadataIndex
     public bool TryKotlinDefaultsForSelectedMethod(
         TypeNode.Fqn owner, string method, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
         out Dictionary<int, JsonNode> defaults, out string[] parameterNames, string propertyKind = null)
+    {
+        var selected = TryKotlinDefaultValuesForSelectedMethod(owner, method, methodArity, isStatic, callSignature,
+            out var values, out parameterNames, propertyKind);
+        defaults = DefaultValuesDom(values);
+        return selected;
+    }
+
+    public bool TryKotlinDefaultValuesForSelectedMethod(
+        TypeNode.Fqn owner, string method, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
+        out Dictionary<int, IBirExpression> defaults, out string[] parameterNames, string propertyKind = null)
     {
         defaults = null;
         parameterNames = null;
@@ -1150,6 +1168,10 @@ sealed partial class ReferenceMetadataIndex
     // declarations must agree on their defaults; the BIR owner alone cannot distinguish disagreeing slots, so guessing
     // one would attach source semantics from an arbitrary reflection order.
     public Dictionary<int, JsonNode> KotlinDefaultsForImplementedInterface(
+        string owner, int ownerArity, string method, int paramCount, SignatureKey sigKey, SignatureKey relaxedSigKey)
+        => DefaultValuesDom(KotlinDefaultValuesForImplementedInterface(owner, ownerArity, method, paramCount, sigKey, relaxedSigKey));
+
+    public Dictionary<int, IBirExpression> KotlinDefaultValuesForImplementedInterface(
         string owner, int ownerArity, string method, int paramCount, SignatureKey sigKey, SignatureKey relaxedSigKey)
     {
         if (owner == null || method == null || sigKey == null) return null;
@@ -1190,7 +1212,7 @@ sealed partial class ReferenceMetadataIndex
         catch { return null; }
         if (interfaces.Length == 0) return null;
 
-        Dictionary<int, JsonNode> selected = null;
+        Dictionary<int, IBirExpression> selected = null;
         foreach (var candidate in interfaces)
         {
             var defaults = CallableDefaultsOf(candidate, _netMlc);
@@ -1220,10 +1242,21 @@ sealed partial class ReferenceMetadataIndex
             ? _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount)
             : _kotlinDefaultsConflicted.Contains(new DefaultKey(owner, method, paramCount)));
 
-    static bool SameDefaults(Dictionary<int, JsonNode> a, Dictionary<int, JsonNode> b)
+    static Dictionary<int, IBirExpression> CloneDefaultValues(IReadOnlyDictionary<int, IBirExpression> values)
+        => values?.ToDictionary(pair => pair.Key, pair => (IBirExpression)((BirGraphValue)pair.Value).DeepClone());
+
+    // The remaining DOM splice owner receives an independent metadata-boundary
+    // projection, never a second cached authority for the expression graph.
+    static Dictionary<int, JsonNode> DefaultValuesDom(IReadOnlyDictionary<int, IBirExpression> values)
+        => values?.ToDictionary(pair => pair.Key, pair => (JsonNode)((BirGraphValue)pair.Value).ToDom());
+
+    static bool SameDefaults(Dictionary<int, IBirExpression> a, Dictionary<int, IBirExpression> b)
     {
         if (a.Count != b.Count) return false;
-        foreach (var kv in a) if (!b.TryGetValue(kv.Key, out var v) || !JsonNode.DeepEquals(v, kv.Value)) return false;
+        foreach (var kv in a)
+            if (!b.TryGetValue(kv.Key, out var value) || !ReferenceEquals(value, kv.Value)
+                && !ExecutableBirCodec.EncodeExpression(ExecutableBirCodec.Codec, value).AsSpan().SequenceEqual(
+                    ExecutableBirCodec.EncodeExpression(ExecutableBirCodec.Codec, kv.Value))) return false;
         return true;
     }
 
@@ -3735,7 +3768,10 @@ sealed partial class ReferenceMetadataIndex
         TypeJson.Read(typeSlot) is { } type ? ParamKey(type) : null;
 
     public static SignatureKey SignatureKeyOf(JsonArray signature, bool relaxed = false) =>
-        new(signature.Select(type => ParamKey(TypeNode.Parse(type!.ToJsonString()), relaxed)));
+        SignatureKeyOf(signature.Select(TypeJson.Read).ToArray(), relaxed);
+
+    public static SignatureKey SignatureKeyOf(IReadOnlyList<TypeNode> signature, bool relaxed = false) =>
+        new(signature.Select(type => ParamKey(type, relaxed)));
 
     public static TypeKey ReceiverParamKey(JsonNode typeSlot)
         => ReceiverParamKey(TypeNode.Parse(typeSlot.ToJsonString()));
@@ -5649,7 +5685,7 @@ sealed partial class ReferenceMetadataIndex
                         // contributes its raw Kotlin-expression BIR; an ordinary ECMA-335 constant contributes a plain
                         // const expression. The reference KLIB carries only DECLARES_DEFAULT_VALUE for frontend
                         // resolution, never either payload.
-                        if (CallableDefaultsOf(method, mlc) is Dictionary<int, JsonNode> defaults)
+                        if (CallableDefaultsOf(method, mlc) is Dictionary<int, IBirExpression> defaults)
                         {
                             AddKotlinDefaults(metadata, indexedOwnerFqn, method.Name, method.GetParameters(), defaults);
                             if (exactPhysicalOwner != indexedOwnerFqn)
@@ -5865,7 +5901,7 @@ sealed partial class ReferenceMetadataIndex
                             metadata.KotlinConstructorOwnerFrames[DottedFqn(ownerFqn)] = constructorFrame;
                             metadata.KotlinConstructorOwnerFrames[exactPhysicalOwner] = constructorFrame;
                         }
-                        if (CallableDefaultsOf(ctor, mlc) is Dictionary<int, JsonNode> cdefaults)
+                        if (CallableDefaultsOf(ctor, mlc) is Dictionary<int, IBirExpression> cdefaults)
                         {
                             AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
                             if (exactPhysicalOwner != ownerFqn)
@@ -7407,16 +7443,16 @@ sealed partial class ReferenceMetadataIndex
 
     // Parameter metadata owns the argument position, codec and bytes. Decode once at this boundary; consumers clone
     // the raw source expression before splicing rather than serializing it between compiler passes.
-    static Dictionary<int, JsonNode> KotlinDefaultsOf(MethodBase method)
+    static Dictionary<int, IBirExpression> KotlinDefaultsOf(MethodBase method)
     {
-        Dictionary<int, JsonNode> map = null;
+        Dictionary<int, IBirExpression> map = null;
         foreach (var p in method.GetParameters())
         {
             var a = p.GetCustomAttributesData().FirstOrDefault(x => x.AttributeType.FullName == DefaultBirCarrier.AttributeName);
             if (a == null) continue;
-            var bir = ExecutableBirCodec.ReadExpressionDom((string)a.ConstructorArguments[1].Value,
+            var bir = ExecutableBirCodec.ReadExpression((string)a.ConstructorArguments[1].Value,
                 ReadByteArrayArg(a.ConstructorArguments[2]));
-            (map ??= new Dictionary<int, JsonNode>())[Convert.ToInt32(a.ConstructorArguments[0].Value)] = bir;
+            (map ??= new Dictionary<int, IBirExpression>())[Convert.ToInt32(a.ConstructorArguments[0].Value)] = bir;
         }
         return map;
     }
@@ -7424,19 +7460,19 @@ sealed partial class ReferenceMetadataIndex
     // The complete default-value map for an already selected declaration. KotlinDefault wins because it carries the
     // Kotlin expression (including reads of earlier parameters/receivers); otherwise use the ECMA-335 constant directly.
     // This is deliberately a reference-DLL scan. Neither dll2klib nor kotc materializes a default value.
-    static Dictionary<int, JsonNode> CallableDefaultsOf(MethodBase method, MetadataLoadContext mlc)
+    static Dictionary<int, IBirExpression> CallableDefaultsOf(MethodBase method, MetadataLoadContext mlc)
     {
         var map = KotlinDefaultsOf(method);
         foreach (var p in method.GetParameters())
         {
             if (map?.ContainsKey(p.Position) == true || !p.HasDefaultValue) continue;
-            if (ConstantDefaultBir(p, mlc) is not JsonNode bir) continue;
-            (map ??= new Dictionary<int, JsonNode>())[p.Position] = bir;
+            if (ConstantDefaultBir(p, mlc) is not { } bir) continue;
+            (map ??= new Dictionary<int, IBirExpression>())[p.Position] = bir;
         }
         return map;
     }
 
-    static JsonNode ConstantDefaultBir(ParameterInfo parameter, MetadataLoadContext mlc)
+    static IBirExpression ConstantDefaultBir(ParameterInfo parameter, MetadataLoadContext mlc)
     {
         object value;
         try { value = parameter.RawDefaultValue; }
@@ -7465,11 +7501,7 @@ sealed partial class ReferenceMetadataIndex
                 catch { return null; }
             }
             if (isValueType)
-                return new JsonObject
-                {
-                    ["k"] = "default",
-                    ["type"] = TypeJson.Write(declaredType),
-                };
+                return new BirDefaultValue { Type = declaredType };
         }
 
         // A non-null Constant row on Nullable<V> describes a V value, not a literal whose stack type is the
@@ -7488,27 +7520,25 @@ sealed partial class ReferenceMetadataIndex
             var elementType = DeclarationTypeNode(nullableElement);
             var elementValue = MetadataConstantNode(nullableElement, elementType, value, mlc);
             if (elementType == null || elementValue == null) return null;
-            return new JsonObject
+            return new BirNullableWrap
             {
-                ["k"] = "nullableWrap",
-                ["elem"] = TypeJson.Write(elementType),
-                ["e"] = elementValue,
+                Elem = elementType,
+                E = OptionalField<IBirExpression>.Of(elementValue),
             };
         }
 
         return MetadataConstantNode(type, declaredType, value, mlc);
     }
 
-    static JsonObject MetadataConstantNode(Type type, TypeNode declaredType, object value, MetadataLoadContext mlc)
+    static IBirExpression MetadataConstantNode(Type type, TypeNode declaredType, object value, MetadataLoadContext mlc)
     {
         if (type == null || declaredType == null) return null;
         // Null reaches this helper only for a reference-typed slot: value-type null/defaults are handled above.
         if (value == null)
-            return new JsonObject
+            return new BirConstant
             {
-                ["k"] = "const",
-                ["type"] = TypeJson.Write(declaredType),
-                ["value"] = null,
+                Type = declaredType,
+                Value = new BirLiteral.NullLiteral(),
             };
 
         bool isEnum;
@@ -7531,12 +7561,11 @@ sealed partial class ReferenceMetadataIndex
             // an entry (flags combinations commonly do not), so carry the exact physical value instead of recovering
             // an entry identity. EnumValueLowering uses this same CIR form for named external enum entries, and ilemit
             // emits it one-to-one while returning the declared enum stack type.
-            return new JsonObject
+            return new BirEnumValue
             {
-                ["k"] = "enumValue",
-                ["type"] = TypeJson.Write(declaredType),
-                ["underlying"] = underlying.FullName ?? underlying.Name,
-                ["physicalValue"] = physical,
+                Type = declaredType,
+                Underlying = underlying.FullName ?? underlying.Name,
+                PhysicalValue = physical,
             };
         }
 
@@ -7548,16 +7577,15 @@ sealed partial class ReferenceMetadataIndex
         if (type.FullName == "System.Decimal" && value is decimal decimalValue)
         {
             var bits = decimal.GetBits(decimalValue);
-            return new JsonObject
+            return new BirNew
             {
-                ["k"] = "new",
-                ["type"] = TypeJson.Write(declaredType),
-                ["argTypes"] = new JsonArray
+                Type = declaredType,
+                ArgTypes = new TypeNode[]
                 {
-                    TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.Int32"),
-                    TypeJson.Fqn("System.Boolean"), TypeJson.Fqn("System.Byte"),
+                    new TypeNode.Fqn("System.Int32"), new TypeNode.Fqn("System.Int32"), new TypeNode.Fqn("System.Int32"),
+                    new TypeNode.Fqn("System.Boolean"), new TypeNode.Fqn("System.Byte"),
                 },
-                ["args"] = new JsonArray
+                Args = new IBirExpression[]
                 {
                     MetadataConst("System.Int32", bits[0]),
                     MetadataConst("System.Int32", bits[1]),
@@ -7572,12 +7600,11 @@ sealed partial class ReferenceMetadataIndex
         // therefore an Unspecified kind), exactly the public DateTime(long ticks) construction below. A zero/default
         // DateTime took the generic null/value-type path above, which intentionally emits initobj instead.
         if (type.FullName == "System.DateTime" && value is DateTime dateTimeValue)
-            return new JsonObject
+            return new BirNew
             {
-                ["k"] = "new",
-                ["type"] = TypeJson.Write(declaredType),
-                ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int64") },
-                ["args"] = new JsonArray { MetadataConst("System.Int64", dateTimeValue.Ticks) },
+                Type = declaredType,
+                ArgTypes = new TypeNode[] { new TypeNode.Fqn("System.Int64") },
+                Args = new IBirExpression[] { MetadataConst("System.Int64", dateTimeValue.Ticks) },
             };
 
         // ilemit emits a const from its declared CIR type and must not reinterpret the JSON value. Validate the exact
@@ -7605,39 +7632,15 @@ sealed partial class ReferenceMetadataIndex
             var carrierDeclaredType = DeclarationTypeNode(carrierType);
             var carrierValue = MetadataConstantNode(carrierType, carrierDeclaredType, value, mlc);
             if (carrierDeclaredType == null || carrierValue == null) return null;
-            return new JsonObject
+            return new BirCast
             {
-                ["k"] = "cast",
-                ["type"] = TypeJson.Write(declaredType),
-                ["e"] = carrierValue,
+                Type = declaredType,
+                E = OptionalField<IBirExpression>.Of(carrierValue),
             };
         }
 
-        JsonNode jsonValue = value switch
-        {
-            null => null,
-            bool v => JsonValue.Create(v),
-            char v => JsonValue.Create((int)v),
-            string v => LiteralText.Encode(v),
-            sbyte v => JsonValue.Create((int)v),
-            byte v => JsonValue.Create((int)v),
-            short v => JsonValue.Create((int)v),
-            ushort v => JsonValue.Create((int)v),
-            int v => JsonValue.Create(v),
-            uint v => JsonValue.Create(unchecked((int)v)),
-            long v => JsonValue.Create(v),
-            ulong v => JsonValue.Create(unchecked((long)v)),
-            float v => new Float32Literal(BitConverter.SingleToInt32Bits(v)).ToDom(),
-            double v => new Float64Literal(BitConverter.DoubleToInt64Bits(v)).ToDom(),
-            _ => null,
-        };
-        if (value is not null && jsonValue is null) return null;
-        return new JsonObject
-        {
-            ["k"] = "const",
-            ["type"] = TypeJson.Write(declaredType),
-            ["value"] = jsonValue,
-        };
+        var literal = MetadataLiteral(value);
+        return literal == null ? null : new BirConstant { Type = declaredType, Value = literal };
     }
 
     static bool LiteralValueInhabits(Type type, object value) => type.FullName switch
@@ -7658,11 +7661,28 @@ sealed partial class ReferenceMetadataIndex
         _ => false,
     };
 
-    static JsonObject MetadataConst(string type, object value) => new()
+    static BirConstant MetadataConst(string type, object value) => new()
     {
-        ["k"] = "const",
-        ["type"] = TypeJson.Fqn(type),
-        ["value"] = JsonValue.Create(value),
+        Type = new TypeNode.Fqn(type),
+        Value = MetadataLiteral(value),
+    };
+
+    static BirLiteral MetadataLiteral(object value) => value switch {
+        null => new BirLiteral.NullLiteral(),
+        bool scalar => new BirLiteral.BooleanLiteral(scalar),
+        char scalar => new BirLiteral.IntegerLiteral(scalar),
+        string scalar => new BirLiteral.TextLiteral(scalar),
+        sbyte scalar => new BirLiteral.IntegerLiteral(scalar),
+        byte scalar => new BirLiteral.IntegerLiteral(scalar),
+        short scalar => new BirLiteral.IntegerLiteral(scalar),
+        ushort scalar => new BirLiteral.IntegerLiteral(scalar),
+        int scalar => new BirLiteral.IntegerLiteral(scalar),
+        uint scalar => new BirLiteral.IntegerLiteral(unchecked((int)scalar)),
+        long scalar => new BirLiteral.IntegerLiteral(scalar),
+        ulong scalar => new BirLiteral.IntegerLiteral(unchecked((long)scalar)),
+        float scalar => new Float32Literal(BitConverter.SingleToInt32Bits(scalar)),
+        double scalar => new Float64Literal(BitConverter.DoubleToInt64Bits(scalar)),
+        _ => null,
     };
 
     // MetadataLoadContext types are metadata-only and cannot be passed to Convert.ChangeType as a runtime Type.
@@ -7747,7 +7767,7 @@ sealed partial class ReferenceMetadataIndex
     /// declaration of the same name+arity whose defaults differ marks it CONFLICTED, so the fallback refuses instead of
     /// serving whichever declaration the metadata scan happened to reach last.
     static void AddKotlinDefaults(ReferenceDotKtMetadata metadata, string ownerFqn, string name, ParameterInfo[] ps,
-        Dictionary<int, JsonNode> defaults)
+        Dictionary<int, IBirExpression> defaults)
     {
         var arityKey = new DefaultKey(ownerFqn, name, ps.Length);
         var sig = SigKeyOf(ps);
@@ -7763,7 +7783,7 @@ sealed partial class ReferenceMetadataIndex
         }
         metadata.KotlinDefaults[arityKey] = defaults;
 
-        void Put(DefaultKey key, Dictionary<int, JsonNode> d)
+        void Put(DefaultKey key, Dictionary<int, IBirExpression> d)
         {
             // Two declarations landing on the SAME signature key can only be told apart by a finer key, so this one
             // refuses too rather than serving the last writer.
@@ -7886,6 +7906,9 @@ sealed partial class ReferenceMetadataIndex
 
     static void SelfTestRichEnumSelection()
     {
+        static BirConstant DefaultText(string text) => new() {
+            Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral(text),
+        };
         if (Same(new TypeNode[] { null }, new TypeNode[] { new TypeNode.Fqn("System.String") }))
             throw new InvalidOperationException("An absent nullable-generic carrier matched a concrete type");
         var first = new RichEnumMetadata(new Dictionary<string, string> { ["FIRST"] = "firstField" },
@@ -7902,9 +7925,9 @@ sealed partial class ReferenceMetadataIndex
         a.RichEnums["UniqueInternalRich"] = first;
         a.RichEnums["IdenticalRich"] = first;
         b.RichEnums["IdenticalRich"] = first;
-        a.KotlinDefaultsByDeclarationId["default-conflict"] = new() { [0] = "a" };
-        b.KotlinDefaultsByDeclarationId["default-conflict"] = new() { [0] = "b" };
-        a.KotlinDefaultsByDeclarationId["unique-default"] = new() { [0] = "retained" };
+        a.KotlinDefaultsByDeclarationId["default-conflict"] = new() { [0] = DefaultText("a") };
+        b.KotlinDefaultsByDeclarationId["default-conflict"] = new() { [0] = DefaultText("b") };
+        a.KotlinDefaultsByDeclarationId["unique-default"] = new() { [0] = DefaultText("retained") };
         a.InlinePayloadsByDeclarationId["inline-conflict"] = new BirInlinePayload { Body = Array.Empty<IBirStatement>() };
         b.InlinePayloadsByDeclarationId["inline-conflict"] = new BirInlinePayload { Body = new IBirStatement[] { new BirReturn() } };
         a.InlinePayloadsByDeclarationId["unique-inline"] = new BirInlinePayload { Body = Array.Empty<IBirStatement>() };
@@ -7924,9 +7947,16 @@ sealed partial class ReferenceMetadataIndex
         {
             // Building an index must not reject an unused collision or discard other metadata.
             var index = new ReferenceMetadataIndex(order, catalog);
-            if (index.KotlinDefaultsForDeclarationIdentity("unique-default")?[0]?.GetValue<string>() != "retained"
+            if (index.KotlinDefaultsForDeclarationIdentity("unique-default")?[0]?["value"]?.GetValue<string>() != "retained"
                 || index.InlineByDeclarationIdentity("unique-inline")?["body"]?.AsArray().Count != 0)
                 throw new InvalidOperationException("Unused collisions discarded unrelated inline/default metadata");
+            var typedDefaults = index.KotlinDefaultValuesForDeclarationIdentity("unique-default");
+            ((BirConstant)typedDefaults[0]).Value = new BirLiteral.TextLiteral("mutated");
+            typedDefaults.Clear();
+            var domDefaults = index.KotlinDefaultsForDeclarationIdentity("unique-default");
+            domDefaults[0]["value"] = "mutated";
+            if (index.KotlinDefaultsForDeclarationIdentity("unique-default")[0]["value"].GetValue<string>() != "retained")
+                throw new InvalidOperationException("Default metadata getters expose mutable cached authority");
             foreach (var owner in new[] { "UniqueInternalRich", "IdenticalRich" })
                 if (!index.TryKotlinRichEnumStaticApis(owner, out var values, out var parse)
                     || values != first.Values || parse != first.ValueOf
@@ -8739,8 +8769,8 @@ sealed class ReferenceDotKtMetadata
     // omitted argument. Keyed "ownerFqn|methodName|paramCount" -> (argPosition -> decoded BIR). The DefaultArgSplice
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
     // is coerced exactly like an explicit arg). Rides the ref.dll only (param attrs stripped in the rt build).
-    public readonly Dictionary<ReferenceMetadataIndex.DefaultKey, Dictionary<int, JsonNode>> KotlinDefaults = new();
-    public readonly Dictionary<string, Dictionary<int, JsonNode>> KotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
+    public readonly Dictionary<ReferenceMetadataIndex.DefaultKey, Dictionary<int, IBirExpression>> KotlinDefaults = new();
+    public readonly Dictionary<string, Dictionary<int, IBirExpression>> KotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     // Keys of [KotlinDefaults] that TWO declarations of the same owner+name+arity carry with DIFFERENT defaults — the key
     // cannot tell them apart, so the splice must refuse instead of filling whichever was enumerated last. Populated for
     // both METHODS and CONSTRUCTORS (same-arity overloads are common; #235).

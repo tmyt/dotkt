@@ -11,10 +11,11 @@ static class KotlinTypeWitness
     // kotc retains the checked reified operand fact through lifting/inlining; a method's
     // reified parameter annotation alone does not select this ABI.
     internal static bool NeedsWitness(JsonObject operation) =>
-        operation["k"]?.GetValue<string>() == "isInst"
-        || operation["k"]?.GetValue<string>() is "cast" or "isInstRef"
-            && operation["reifiedTypeOperand"] is JsonValue value
-            && value.TryGetValue<bool>(out var reified) && reified;
+        NeedsWitness(operation["k"]?.GetValue<string>(), operation["reifiedTypeOperand"] is JsonValue value
+            && value.TryGetValue<bool>(out var reified) && reified);
+
+    internal static bool NeedsWitness(string kind, bool reifiedTypeOperand) =>
+        kind == "isInst" || kind is "cast" or "isInstRef" && reifiedTypeOperand;
     internal static TypeNode.Tv Variable(TypeNode type) => type switch {
         TypeNode.Nullable n => Variable(n.Of),
         TypeNode.Oblivious o => Variable(o.Of),

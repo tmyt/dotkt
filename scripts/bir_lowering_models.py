@@ -289,14 +289,14 @@ def outputs(root, definitions):
         if field.get("type") == "array": return is_child(field["items"])
         return bool(refkey(field)) and refkey(field) not in {"type", "literalValue", "birSourceTypeAlias"}
 
-    def rewrite(field, value, depth=0):
+    def rewrite(field, value, depth=0, callback="rewrite", prefix=""):
         field = base(field)
         if field.get("type") == "array":
             item = f"item{depth}"
-            expr = rewrite(field["items"], item, depth + 1)
+            expr = rewrite(field["items"], item, depth + 1, callback, prefix)
             if is_nullable(field["items"]): expr = f"{item} is null ? null : {expr}"
             return f"{value}.Select({item} => {expr}).ToArray()"
-        return f"({cs(field)})rewrite((BirGraphValue){value})"
+        return f"({cs(field)}){callback}({prefix}(BirGraphValue){value})"
 
     def copy_graph(field, value, depth=0):
         field = base(field)
@@ -316,14 +316,14 @@ def outputs(root, definitions):
         if field.get("type") == "array": return is_type_slot(field["items"])
         return refkey(field) == "type"
 
-    def rewrite_type(field, value, depth=0):
+    def rewrite_type(field, value, depth=0, callback="rewrite", prefix=""):
         field = base(field)
         if field.get("type") == "array":
             item = f"item{depth}"
-            expr = rewrite_type(field["items"], item, depth + 1)
+            expr = rewrite_type(field["items"], item, depth + 1, callback, prefix)
             if is_nullable(field["items"]): expr = f"{item} is null ? null : {expr}"
             return f"{value}.Select({item} => {expr}).ToArray()"
-        return f"rewrite({value})"
+        return f"{callback}({prefix}{value})"
 
     def visit(field, value, depth=0):
         field = base(field)
@@ -475,6 +475,26 @@ def outputs(root, definitions):
             if is_type_slot(value):
                 prop = member(field)
                 model += [f"        {prop} = {prop}.HasValue ? OptionalField<{cs(value)}>.Of({rewrite_type(value, prop + '.Value')}) : {prop},"]
+        model += ["    };", "    public override BirGraphValue RewriteGenericFrame(",
+                  "        Func<BirGenericFrameRole, TypeNode, TypeNode> type,",
+                  "        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with", "    {"]
+        frame_roles = {"Lexical", "ReferencedDeclaration", "ResolvedDeclaration", "OverrideDeclaration",
+                       "SharedCaptureDeclaration", "LocalDeclaration", "SyntheticDeclaration",
+                       "SyntheticApplication", "FrozenSourceFact", "StorageSourceType"}
+        for field, value in fields:
+            # Frozen type facts are typed in memory, but their encoded field
+            # contract remains distinct from an executable lexical type slot.
+            type_slot = is_type_slot(value) or cs(value) == "TypeNode"
+            if not is_child(value) and not type_slot:
+                continue
+            role = value.get("x-dotkt-frame-role", "FrozenSourceFact" if not is_type_slot(value) and type_slot else "Lexical")
+            if role not in frame_roles:
+                raise ValueError(f"Unknown generic-frame role: {name}.{field}: {role}")
+            prop = member(field)
+            prefix = f"BirGenericFrameRole.{role}, "
+            expression = (rewrite(value, prop + ".Value", callback="child", prefix=prefix) if is_child(value)
+                          else rewrite_type(value, prop + ".Value", callback="type", prefix=prefix))
+            model += [f"        {prop} = {prop}.HasValue ? OptionalField<{cs(value)}>.Of({expression}) : {prop},"]
         model += ["    };", "    public override void WriteJson(Utf8JsonWriter writer)", "    {", "        writer.WriteStartObject();"]
         if node: model += [f'        writer.WriteString("k", {json.dumps(tag)});']
         for field, value in fields:
