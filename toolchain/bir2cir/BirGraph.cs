@@ -16,6 +16,11 @@ internal abstract record BirGraphValue
     public virtual TypeNode? CallBindingTypeHint => null;
     public abstract void VisitChildren(Action<BirGraphValue> visit);
     public abstract void VisitChildSlots(Action<BirGraphSlot> visit);
+    // Source recognition extends declaration parameters and walks each schema
+    // statement vector in its own preceding-declaration environment.
+    public virtual void VisitSourceParameters(Action<string, TypeNode> visit) { }
+    public virtual void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
+        => VisitChildSlots(child);
     // Construction operands execute in the caller; a nested declaration's body
     // does not. The maintained frame profile generates the latter overrides.
     public virtual void VisitCurrentFrameSlots(Action<BirGraphSlot> visit) => VisitChildSlots(visit);
@@ -71,6 +76,10 @@ internal readonly record struct BirGraphSlot(Func<BirGraphValue> Read, Action<Bi
 {
     public BirGraphValue Value => Read();
 }
+
+// A result belongs to the final environment of its own statement sequence,
+// not to another region or to the surrounding declaration's environment.
+internal readonly record struct BirSourceRegion(IBirStatement[] Statements, BirGraphSlot? Result = null);
 
 internal interface IBirExpression : IBirAttributeValue;
 internal interface IBirStatement;

@@ -8,6 +8,15 @@ using DotKt.Cir;
 // locals and the surface representation of arrays belong to this reader.
 static class BirGraphStaticType
 {
+    // Recognition asks for the value below a source cast, rather than its
+    // declared cast surface. Keep nullable-value extraction's exact element.
+    internal static TypeNode Value(IBirExpression node, IReadOnlyDictionary<string, TypeNode> locals)
+        => node switch {
+            BirCast { E.HasValue: true } cast => Value(cast.E.Value, locals),
+            BirNullableValue { E.HasValue: true } value => value.Elem.OrDefault() ?? Value(value.E.Value, locals),
+            _ => Surface(node, locals),
+        };
+
     internal static TypeNode Surface(IBirExpression node, IReadOnlyDictionary<string, TypeNode> locals)
         => Surface(node as BirGraphValue, locals);
 

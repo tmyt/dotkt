@@ -13,13 +13,14 @@ using DotKt.Bir;
 // kotc (recvExpr/argExpr — nullable-unwrap + boxed-Any cast). The primitive-op GATE and the IL-op selection are
 // the Kotlin<->CLR relation, so they live HERE now, keyed off the pure-Kotlin owner FQN.
 //
-// Runs UNCONDITIONALLY (reference AND app builds) after the range realizations and before every consumer that requires
-// physical primitive operations (ref body-squash, type lowering, suspend). A primitive operator is a bodyless builtin
+// Runs UNCONDITIONALLY (reference AND app builds) on owning source BIR at representation entry, then again on
+// remaining DOM nodes synthesized by range and other lowerings, before ref body-squash/type/suspend consumers.
+// A primitive operator is a bodyless builtin
 // member with NO ref.dll symbol — in the reference build a ctor
 // field-initializer / base-arg is NOT body-squashed, so a surviving `callInstance kotlin.Int.inv` would reach
 // ilemit as an unresolvable method call. Lowering it to the CIR `unaryOp`/`binOp` vocabulary here states the raw CIL
 // operation before the one-to-one emitter boundary.
-static class PrimitiveOperatorLowering
+static partial class PrimitiveOperatorLowering
 {
     // Kotlin value-type primitives whose operators have raw CIL bin/un representations. A non-primitive kotlin.*
     // owner (a VALUE CLASS like kotlin.time.Duration) keeps its operator as a
@@ -126,6 +127,7 @@ static class PrimitiveOperatorLowering
                 throw new InvalidOperationException($"Primitive shift must mask its single-evaluated distance: {owner}.{member}");
         }
         Console.WriteLine("[primitive shift distances] self-test OK (signed/unsigned, both widths, single evaluation)");
+        TypedSelfTest();
     }
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null)
@@ -185,7 +187,7 @@ static class PrimitiveOperatorLowering
 
         // String concatenation (`a + b`, receiver `kotlin.String`). kotc emits the faithful
         // `callInstance kotlin.String.plus(a, b)` with no CLR hint; realize it as a two-part CIR `concat`.
-        // FaithfulHintRecognition (runs next) recovers each part's static type via StaticType and applies the shared
+        // The following faithful-recognition stage recovers each part's static type and applies the shared
         // string-template routing (collection -> clrCollToString, nullable -> LibraryKt.toString).
         if (ownerFqn == "kotlin.String" && member == "plus" && args.Count == 1)
             return new JsonObject
@@ -202,14 +204,14 @@ static class PrimitiveOperatorLowering
             // sign-propagating arithmetic `>>`. Route it to `>>>` (ilemit `Shr_Un`). `shl` is bit-identical for
             // signed/unsigned, and the narrow unsigned types (UByte/UShort) have no shift operator, so only UInt/ULong
             // reach here.
-            if (member == "shr" && (ownerFqn == "kotlin.UInt" || ownerFqn == "kotlin.ULong")) aop = ">>>";
+            aop = ArithmeticSymbol(ownerFqn, member, aop);
             JsonNode right = args[0]?.DeepClone();
             // Kotlin masks shift distances; raw CIL shifts do not guarantee that on every target.
             if (aop is "<<" or ">>" or ">>>")
                 right = new JsonObject {
                     ["k"] = "binOp", ["op"] = "&", ["lhs"] = right,
                     ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"),
-                        ["value"] = ownerFqn is "kotlin.Long" or "kotlin.ULong" ? 63 : 31 },
+                        ["value"] = ShiftMask(ownerFqn) },
                 };
             var bin = new JsonObject { ["k"] = "binOp", ["op"] = aop, ["lhs"] = o["recv"]?.DeepClone(), ["rhs"] = right };
             return WrapDeclaredReturn(o, ownerFqn, bin);
@@ -376,8 +378,8 @@ static class PrimitiveOperatorLowering
     // IEEE `==` on the unwrapped values. Emitting `ceq` over `Nullable<T>` structs (the pre-#180 raw path) is unverifiable.
     static JsonNode NullableIeeeEquals(JsonNode a, bool aNullable, JsonNode b, bool bNullable, string elemFqn)
     {
-        var na = "__ne$" + Interlocked.Increment(ref _neCounter);
-        var nb = "__ne$" + Interlocked.Increment(ref _neCounter);
+        var na = FreshNullableEqualityTemporary();
+        var nb = FreshNullableEqualityTemporary();
         JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
         JsonObject Bool(bool v) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = v };
         JsonNode VarType(bool nullable) => nullable
@@ -417,6 +419,10 @@ static class PrimitiveOperatorLowering
 
     // Distinct temp-name counter for the #152/#180 hoisted operands (mirrors PreconditionLowering's `__rn$`).
     static int _neCounter;
+    static string FreshNullableEqualityTemporary() => "__ne$" + Interlocked.Increment(ref _neCounter);
+    static string ArithmeticSymbol(string owner, string member, string symbol) =>
+        member == "shr" && owner is "kotlin.UInt" or "kotlin.ULong" ? ">>>" : symbol;
+    static int ShiftMask(string owner) => owner is "kotlin.Long" or "kotlin.ULong" ? 63 : 31;
 
     // Null-safe TOTAL-ORDER equality over two value-nullable `Double?`/`Float?` operands (#152). Hoists each raw
     // `Nullable<T>` operand into a temp (so a side-effecting operand is evaluated ONCE, not per HasValue/Value read),
@@ -426,8 +432,8 @@ static class PrimitiveOperatorLowering
     static JsonNode NullableFloatEquals(JsonNode a, JsonNode b, string elemFqn)
     {
         var floatEq = elemFqn == "kotlin.Double" ? "clrDoubleEquals" : "clrFloatEquals";
-        var na = "__ne$" + Interlocked.Increment(ref _neCounter);
-        var nb = "__ne$" + Interlocked.Increment(ref _neCounter);
+        var na = FreshNullableEqualityTemporary();
+        var nb = FreshNullableEqualityTemporary();
         JsonObject NullableType() => new() { ["t"] = "nullable", ["of"] = TypeJson.Fqn(elemFqn) };
         JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
         JsonObject Var(string name, JsonNode init) => new() { ["k"] = "var", ["name"] = name, ["type"] = NullableType(), ["init"] = init.DeepClone() };

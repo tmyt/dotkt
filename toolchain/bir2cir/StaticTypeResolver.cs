@@ -27,8 +27,8 @@ using DotKt.Bir;
 
 // A local/param type environment for a method body: name -> declared TypeNode. Built by extending a parent scope with a
 // declaration's params + its body's `var` locals (a local shadows a same-name param). Mirrors MemberCallSubstitution's
-// SubstCtx.VarTypes, but usable by the EARLY passes (PrimitiveOperatorLowering / FaithfulHintRecognition) that run
-// before MemberCallSubstitution builds its own SubstCtx.
+// SubstCtx.VarTypes, but usable by the remaining DOM recognition consumers before MemberCallSubstitution builds
+// its own SubstCtx. Owning source recognition uses SourceGraphRewrite and the shared node-local type reader.
 sealed class BirScope
 {
     public readonly Dictionary<string, TypeNode> VarTypes;

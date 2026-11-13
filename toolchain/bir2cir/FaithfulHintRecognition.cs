@@ -118,12 +118,16 @@ static class FaithfulHints
     public static JsonNode StripAnyCast(JsonNode n)
     {
         if (n is JsonObject o && (o["k"] as JsonValue)?.GetValue<string>() == "cast"
-            && TypeJson.Read(o["type"]) is TypeNode.Fqn f
-            && (f.Name == "kotlin.Any" || f.Name == "System.Object" || f.Name == "object")
+            && IsAnyCastType(TypeJson.Read(o["type"]))
             && o["e"] is JsonNode inner)
             return inner;
         return n;
     }
+
+    public static IBirExpression StripAnyCast(IBirExpression value) => value is BirCast { E.HasValue: true } cast
+        && IsAnyCastType(cast.Type.OrDefault()) ? cast.E.Value : value;
+
+    static bool IsAnyCastType(TypeNode type) => type is TypeNode.Fqn { Name: "kotlin.Any" or "System.Object" or "object" };
 
     // The Kotlin `[a, b]` / `{a=1, b=2}` renderer: clrCollToString (1 type-arg) for List/Set/Collection, clrMapToString
     // (2 type-args) for Map. `op` is DeepCloned because the helper node takes ownership of its argument tree.

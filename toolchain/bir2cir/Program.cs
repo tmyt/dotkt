@@ -54,6 +54,7 @@ static class Bir2Cir
                 TypedPhysicalDelegateAdapter.SelfTest();
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
+                SourceGraphRewrite.SelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ClrEventSubscriptionBinding.SelfTest();
@@ -233,14 +234,17 @@ sealed class Pipeline
         // expressions, exactly as the remaining collection pass's callback did.
         // Only declaration/scalar facts survive this owning-to-DOM frontier.
         var collectionInputs = new SourceCollectionInputs(captured, refs);
-        for (var index = 0; index < captured.Length; index++)
-        {
-            captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)DataClassArrayMemberLowering.Apply(
-                captured[index], collectionInputs.Helpers.Bind);
-            captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)EnumEntriesLowering.Apply(
-                captured[index], refs, collectionInputs.Helpers.Bind);
-            captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)ObjectSlotRename.Apply(captured[index]);
-        }
+        FaithfulHints.WithHelperBinding(collectionInputs.Helpers.Bind, () => {
+            for (var index = 0; index < captured.Length; index++)
+            {
+                captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)DataClassArrayMemberLowering.Apply(
+                    captured[index], collectionInputs.Helpers.Bind);
+                captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)EnumEntriesLowering.Apply(
+                    captured[index], refs, collectionInputs.Helpers.Bind);
+                captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)ObjectSlotRename.Apply(captured[index]);
+                captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)PrimitiveOperatorLowering.Apply(captured[index], refs);
+            }
+        });
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -309,7 +313,6 @@ sealed class Pipeline
             {
                 foreach (var root in birRoots)
                 {
-                    PrimitiveOperatorLowering.Apply(root, refs);
                     FaithfulHintRecognition.Apply(root, refs, sourceTopLevelFns);
                 }
             }));
