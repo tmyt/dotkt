@@ -78,6 +78,8 @@ static class Bir2Cir
                 InlineBirStashTests.SelfTest();
                 InlineExpansion.SelfTestHygiene();
                 InlineExpansion.SelfTestPrerequisites();
+                PostInlineValueLoweringTests.SelfTest();
+                LocalFunctionLowering.SourceSelfTest();
                 ObjectSlotRename.SelfTest();
                 DefaultBirCarrier.SelfTest();
                 ExecutableBirCodec.SelfTest();
@@ -303,8 +305,7 @@ sealed class Pipeline
         KotlinPropertyAccessors.AllocateDeclarationsAndProperties(captured);
         var localPropertyDeclarations = MemberCallSubstitution.CollectLocalPropertyAccessors(captured);
         genericRepresentations.PrepareDomLocations(captured);
-        var placement = new DeclarationPlacement(localFactories, localPropertyDeclarations,
-            companionRepresentations, companionExtensionBindings);
+        var placement = new DeclarationPlacement(localFactories, localPropertyDeclarations);
         var ownership = TypeOwnershipLowering.PrepareOwnershipFacts(captured);
         TypedCharSequenceIdentity.ApplyAll(captured);
         var forwardedEvents = ClrEventSubscriptionBinding.CollectForwardedOwners(captured);
@@ -346,6 +347,20 @@ sealed class Pipeline
             InlineSplice.Apply(source, refs, appLocalFileClassMethods, inlineDispatchHierarchy,
                 companionExtensionBindings, requireCompleteDefaults: appBuild);
         }
+        ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || sourceIndex.ValueTypes.Contains(type.Name);
+        // Expansion is complete module-wide. Consume lexical declarations and
+        // companion uses before realizing their final ordered evaluation plans.
+        foreach (var source in captured)
+        {
+            ValueJoinNullWidening.Apply(source, isValueFqn);
+            TypeOwnershipLowering.PrepareSplicedOwnershipFacts(source, ownership);
+            LocalFunctionLowering.Apply(source, refs, scalarSlots.ProjectMethod);
+            CompanionRepresentationLowering.BindUses(source, companionRepresentations, refs, bindExternal: appBuild);
+            ClrFlagsOperationLowering.Apply(source, refs);
+            TypedCallEvalLowering.Apply(source, isValueFqn);
+            NothingValueTermination.Apply(source);
+        }
+        ownership.ReleaseSourceDeclarations();
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -363,12 +378,11 @@ sealed class Pipeline
 
         var continuingRoots = files.Select(file => file.Root).ToArray();
         genericRepresentations.BindDomDeclarations(continuingRoots);
-        ownership.BindDomDeclarations(continuingRoots);
         var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
             continuingRoots.Cast<JsonObject>().ToArray());
         return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand,
             genericRepresentations, scalarSlots, valueSources, representationMethodFrames, placement,
-            new ModulePreparation(ownership, inventory, forwardedEvents, nullableDeclarations, uncheckedReturns, enums));
+            new ModulePreparation(inventory, forwardedEvents, nullableDeclarations, uncheckedReturns, enums));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -395,10 +409,7 @@ sealed class Pipeline
         var physicalParameterIndices = scalarSlots.Parameters;
         var representationMethodFrames = module.RepresentationMethodFrames;
         var localFactories = module.Placement.Factories;
-        var companionRepresentations = module.Placement.Companions;
-        var companionExtensionBindings = module.Placement.Extensions;
         var localPropertyDeclarations = module.Placement.Properties;
-        var ownershipFacts = module.Preparation.Ownership;
         // A delegated CLR-event declaration and a subscription through that Kotlin wrapper may be in sibling source
         // files. Snapshot the module-wide relation before any declaration-normalizing pass can consume or rebuild the
         // kotc directive; ClrEventSubscriptionBinding later consumes this immutable physical-owner index per file.
@@ -502,51 +513,6 @@ sealed class Pipeline
             // after witness capture below, ClosureSynthesis and SharedSyntheticSynthesis materialize these `types`.
             // They run before ForIn classification and the global SuspendColdLowering declaration index; closure
             // synthesis runs first so SharedSyntheticSynthesis can scan the completed invoke bodies.
-            // VALUE-POSITION JOIN WIDENING (#86 §3): a `try`/`catch` or `if/when` join the frontend resolved to a
-            // NON-nullable type while one branch yields a literal `null` — kotc records exactly that fact on the
-            // declaration it mints for the join, and the physical consequence is decided HERE: a VALUE join widens to
-            // `Nullable<V>` (a null into a bare `int32` slot is a reference stored over a value), a reference join
-            // does not. Runs immediately after InlineSplice, so a spliced stdlib inline body's own joins — the shape
-            // that drops the `?` — are widened before anything downstream reads their type, and long before type
-            // lowering, while the join type is still `kotlin.*`.
-            ValueJoinNullWidening.Apply(bir.Root, isValueFqn);
-            // Cross-module omitted defaults are materialized by the shared inline/default traversal above.
-            // Both directions of nesting and carried helper bodies finish before join/ownership/evaluation lowering.
-            // Inline/default payloads are authored before their consumer lexical owner exists. The splice transfers
-            // that exact semanticOwner fact above; now normalize any newly materialized synthClass generic prefix
-            // before ClosureSynthesis turns it into a CLR class. The module-wide first pass normalized declarations;
-            // only this consumer root changed, so reuse its owner index instead of re-walking every file per splice.
-            TypeOwnershipLowering.PrepareSplicedOwnershipFacts(bir.Root, ownershipFacts);
-            // Kotlin local functions remain lexical BIR declarations through every raw-body splice above. Consume the
-            // explicit declaration-id relation now and select their CLR MethodDef owner before representation synthesis
-            // (closures/suspend lambdas may carry calls to those declarations). No FileClass/name heuristic is involved.
-            LocalFunctionLowering.Apply((JsonObject)bir.Root, refs, scalarSlots.ProjectMethod);
-            // Bind local and ProjectReference companion values after every raw-BIR splice and before an evaluation
-            // plan can materialize a representation-less flat receiver as a CLR local.
-            CompanionRepresentationLowering.BindUses(
-                bir.Root, companionRepresentations, refs,
-                bindExternal: _options.StdlibMode == BuildStdlibMode.App);
-            // CLR [Flags] ENUM OPERATIONS (#496): dll2klib publishes metadata-only typed Kotlin declarations and kotc
-            // carries the exact selected declaration's semantic role. Resolve the target enum and underlying width
-            // here, then author an ordered call-evaluation plan around explicit bit/comparison CIR vocabulary. This
-            // must run immediately before CallEvalLowering: contains reads its mask twice, so that existing single
-            // evaluation authority materializes receiver/argument values once in Kotlin order.
-            ClrFlagsOperationLowering.Apply(bir.Root, refs);
-            // CALL-EVALUATION PLAN LOWERING (§2.7). EVERY splice that can add a reader to one of a call's values has
-            // now run, so each plan's readers are final and its bindings lower to locals in Kotlin order: a
-            // single-reader binding back into its own slot, a shared one into a `var`, a constructor delegation's into
-            // `preStmts`. Unconditional (ref + rt + app): kotc emits a plan wherever a fill can duplicate a value, and
-            // a stdlib self-build has same-module fills of exactly that shape. From here down no pass sees plan
-            // vocabulary — the pass asserts that itself, and verify-schema enforces the same phase split.
-            CallEvalLowering.Apply(bir.Root, isValueFqn);
-            // NOTHING-VALUE TERMINATION (#197): a `kotlin.Nothing`-typed expression delivers no value, but its CLR
-            // erasure (`object`) still reaches whatever slot reads it — the other arm of an if/when merge, a `ret`, a
-            // typed local — so the verifier sees an `object` where a `string` belongs. Terminate such a position in
-            // place (`else boom()` -> `else throw boom()`) so nothing is merged at all. Runs HERE: every splice that
-            // can introduce a `Nothing` call has run, the plan vocabulary is gone, and the type is still spelled
-            // `kotlin.Nothing`. BEFORE the suspend transform, whose `__cond$` machinery already stores nothing for a
-            // `throwExpr` arm — so one rule covers the plain and the state-machine lowering alike.
-            NothingValueTermination.Apply(bir.Root);
             // Fold literal Kotlin names while their semantic accessors and fully-spliced receivers remain visible.
             // Other reads belong to the declaration-owned value adapter, including user implementations of KClass.
             if (!_options.RefBuild) KClassMemberBinding.Apply(bir.Root);
@@ -1841,7 +1807,7 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
     ValueRepresentationLowering.SourceIndex ValueSources,
     IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames,
     DeclarationPlacement Placement, ModulePreparation Preparation);
-sealed record ModulePreparation(TypeOwnershipLowering.PreparedFacts Ownership, TypedModuleInventory Inventory,
+sealed record ModulePreparation(TypedModuleInventory Inventory,
     IReadOnlyDictionary<(string Owner, string Event), TypeNode> ForwardedEvents,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums);
@@ -1850,8 +1816,7 @@ sealed record EnumPreparation(HashSet<string> Rich,
     IReadOnlyDictionary<string, BasicEnumMetadata> Explicit,
     IReadOnlyDictionary<string, BasicEnumMetadata> Parse);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
-    IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties,
-    CompanionRepresentationLowering.LocalIndex Companions, CompanionExtensionBinding.LocalIndex Extensions);
+    IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions

@@ -123,7 +123,8 @@ static partial class CompanionRepresentationLowering
                     _ => (null, null),
                 };
                 if (owner is TypeNode.Fqn selected && IsCompanionMemberOwner(selected.Name, association)
-                    && receiver is BirCompanionValue { CompanionType.Value: TypeNode.Fqn source }
+                    && receiver is BirCompanionValue receiverValue
+                    && receiverValue.CompanionType.OrDefault() is TypeNode.Fqn source
                     && source.Name == association.SemanticName)
                 {
                     var physical = new TypeNode.Fqn(association.PhysicalName);
@@ -154,23 +155,25 @@ static partial class CompanionRepresentationLowering
 
     // Structural recursion over TypeNode data; the only representation decision
     // is the explicit semantic-to-physical association allocated above.
-    static TypeNode RewriteCompanionType(TypeNode type, Association association) => type switch {
-        TypeNode.Fqn named when named.Name == association.SemanticName => new TypeNode.Fqn(association.PhysicalName),
-        TypeNode.Fqn named => named with { Args = named.Args?.Select(argument => RewriteCompanionType(argument, association)).ToArray() },
-        TypeNode.Nullable value => value with { Of = RewriteCompanionType(value.Of, association) },
-        TypeNode.Oblivious value => value with { Of = RewriteCompanionType(value.Of, association) },
-        TypeNode.Projection value => value with { Of = RewriteCompanionType(value.Of, association) },
-        TypeNode.Array value => value with { Elem = RewriteCompanionType(value.Elem, association) },
-        TypeNode.ByRef value => value with { Of = RewriteCompanionType(value.Of, association) },
-        TypeNode.Ptr value => value with { Of = RewriteCompanionType(value.Of, association) },
-        TypeNode.Mod value => value with { M = RewriteCompanionType(value.M, association), Of = RewriteCompanionType(value.Of, association) },
+    static TypeNode RewriteCompanionType(TypeNode type, Association association) => MapCompanionTypes(type,
+        named => named.Name == association.SemanticName ? new TypeNode.Fqn(association.PhysicalName) : named);
+
+    static TypeNode MapCompanionTypes(TypeNode type, Func<TypeNode.Fqn, TypeNode> rewrite) => type switch {
+        TypeNode.Fqn named => rewrite(named with { Args = named.Args?.Select(argument => MapCompanionTypes(argument, rewrite)).ToArray() }),
+        TypeNode.Nullable value => value with { Of = MapCompanionTypes(value.Of, rewrite) },
+        TypeNode.Oblivious value => value with { Of = MapCompanionTypes(value.Of, rewrite) },
+        TypeNode.Projection value => value with { Of = MapCompanionTypes(value.Of, rewrite) },
+        TypeNode.Array value => value with { Elem = MapCompanionTypes(value.Elem, rewrite) },
+        TypeNode.ByRef value => value with { Of = MapCompanionTypes(value.Of, rewrite) },
+        TypeNode.Ptr value => value with { Of = MapCompanionTypes(value.Of, rewrite) },
+        TypeNode.Mod value => value with { M = MapCompanionTypes(value.M, rewrite), Of = MapCompanionTypes(value.Of, rewrite) },
         TypeNode.Fn value => value with {
-            Ret = RewriteCompanionType(value.Ret, association), Params = value.Params.Select(parameter => RewriteCompanionType(parameter, association)).ToArray(),
-            Recv = value.Recv == null ? null : RewriteCompanionType(value.Recv, association),
-            Ctx = value.Ctx?.Select(context => RewriteCompanionType(context, association)).ToArray(),
+            Ret = MapCompanionTypes(value.Ret, rewrite), Params = value.Params.Select(parameter => MapCompanionTypes(parameter, rewrite)).ToArray(),
+            Recv = value.Recv == null ? null : MapCompanionTypes(value.Recv, rewrite),
+            Ctx = value.Ctx?.Select(context => MapCompanionTypes(context, rewrite)).ToArray(),
         },
-        TypeNode.FnPtr value => value with { Ret = RewriteCompanionType(value.Ret, association),
-            Params = value.Params.Select(parameter => RewriteCompanionType(parameter, association)).ToArray() },
+        TypeNode.FnPtr value => value with { Ret = MapCompanionTypes(value.Ret, rewrite),
+            Params = value.Params.Select(parameter => MapCompanionTypes(parameter, rewrite)).ToArray() },
         _ => type,
     };
 }

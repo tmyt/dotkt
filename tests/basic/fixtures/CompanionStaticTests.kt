@@ -62,6 +62,11 @@ class CompanionCounter(val n: Int) {
 // ---- companion block on a generic owner ------------------------------------------------------------------------
 
 class CompanionBox<T>(val v: T) {
+    fun wrapped(): String {
+        fun wrap(value: String): String = "[$value]"
+        return wrap(make())
+    }
+
     companion {
         fun make(): String = "box"
         fun <R> echoNullable(value: R?): R? = value
@@ -235,6 +240,8 @@ class CompanionStaticTests {
     @TestAttribute
     fun companionBlockOnAGenericOwnerIsOneLogicalMember() {
         assertEquals("box", CompanionBox.make())
+        assertEquals("[box]", CompanionBox(1).wrapped())
+        assertEquals("[box]", CompanionBox("value").wrapped())
         assertEquals("echo", CompanionBox.echoNullable("echo"))
         assertEquals(null, CompanionBox.echoNullable<String>(null))
         val echoNullable: (String?) -> String? = CompanionBox::echoNullable

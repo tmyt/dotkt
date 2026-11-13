@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -7,36 +6,19 @@ static partial class TypeOwnershipLowering
 {
     internal sealed class PreparedFacts
     {
-        readonly (int File, int Type, string Name)[] occurrences;
-        readonly int fileCount;
-        IReadOnlyDictionary<string, JsonObject> types;
-        internal IReadOnlyDictionary<string, JsonObject> Types => types
-            ?? throw new InvalidOperationException("Ownership facts have not crossed the declaration frontier");
+        IReadOnlyDictionary<string, IBirTypeDeclaration> sourceTypes;
+        internal IReadOnlyDictionary<string, IBirTypeDeclaration> SourceTypes => sourceTypes
+            ?? throw new InvalidOperationException("Ownership source declarations have been released");
 
-        internal PreparedFacts(IReadOnlyList<BirFileDeclaration> roots)
-        {
-            fileCount = roots.Count;
-            occurrences = roots.SelectMany((root, file) => root.Types.OrEmpty().Select((type, index) =>
-                (File: file, Type: index, Name: type.Name.OrDefault()))).Where(value => value.Name != null).ToArray();
-        }
+        internal PreparedFacts(IReadOnlyDictionary<string, IBirTypeDeclaration> types) => sourceTypes = types;
 
-        // No preparation is rerun here. This exact one-way correspondence binds
-        // the continuing declarations, whose current constraints/facts late
-        // splices must read after subsequent ordinary lowering changes them.
-        internal void BindDomDeclarations(IReadOnlyList<JsonNode> roots)
+        // The post-inline continuation reads the same actual declarations as
+        // initial preparation. Once every file has continued, no later owner
+        // needs these source references and the module frontier releases them.
+        internal void ReleaseSourceDeclarations()
         {
-            if (types != null) throw new InvalidOperationException("Ownership declarations are already bound");
-            if (roots.Count != fileCount) throw new InvalidOperationException("Ownership file correspondence changed");
-            var bound = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-            foreach (var occurrence in occurrences)
-            {
-                if (roots[occurrence.File]?["types"] is not JsonArray declarations
-                    || occurrence.Type >= declarations.Count || declarations[occurrence.Type] is not JsonObject declaration
-                    || Str(declaration["name"]) != occurrence.Name)
-                    throw new InvalidOperationException("Ownership declaration correspondence changed at the frontier");
-                bound[occurrence.Name] = declaration; // Preserve the source index's last occurrence policy.
-            }
-            types = bound;
+            if (sourceTypes == null) throw new InvalidOperationException("Ownership source declarations are already released");
+            sourceTypes = null;
         }
     }
 
@@ -45,14 +27,19 @@ static partial class TypeOwnershipLowering
     // lexical localFun declarations and are handled by LocalFunctionLowering.
     public static PreparedFacts PrepareOwnershipFacts(IReadOnlyList<BirFileDeclaration> roots)
     {
-        var prepared = new PreparedFacts(roots);
         var types = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
         foreach (var type in roots.SelectMany(root => root.Types.OrEmpty()))
             if (type.Name.OrDefault() is string name) types[name] = type;
+        var prepared = new PreparedFacts(types);
         NormalizeOwnerCapturePrefixes(roots, types);
         foreach (var root in roots) PrepareSyntheticOwnerCaptures(root, types);
         return prepared;
     }
+
+    // Only this file acquired new ingredients during inline expansion. Reuse
+    // the initial live owner map, not a module rescan or another prefix pass.
+    public static void PrepareSplicedOwnershipFacts(BirGraphValue root, PreparedFacts prepared) =>
+        PrepareSyntheticOwnerCaptures(root, prepared.SourceTypes);
 
     static void RewriteOwnership(BirGraphValue root, Func<TypeNode, TypeNode> rewrite, bool lexicalOnly, bool syntheticFrame = false)
     {

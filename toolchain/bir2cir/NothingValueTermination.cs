@@ -51,8 +51,42 @@ using DotKt.Cir;
 // executable bridge calls ApplyMaterialized on that exact bridge before publishing it. Correctness therefore does
 // not depend on a later whole-file repair sweep remembering every producer. Unconditional (ref + rt + app): a ref
 // build squashes its bodies later, so the pass is inert there, and the rt/app views of the same source must agree.
-static class NothingValueTermination
+static partial class NothingValueTermination
 {
+    public static void Apply(BirGraphValue root) => WalkTyped(root);
+
+    // Generated source regions distinguish statement sequences and their
+    // associated result from ordinary owning expression slots. A declaration's
+    // return fact is never itself a consumed expression.
+    static void WalkTyped(BirGraphValue node)
+    {
+        if (node == null || node is IBirExecutablePayload) return;
+        if (node is BirExpressionStatement statement)
+        {
+            if (statement.Expr.HasValue) WalkTyped((BirGraphValue)statement.Expr.Value);
+            return;
+        }
+        if (node is BirThrow thrown)
+        {
+            if (thrown.Value.HasValue) WalkTyped((BirGraphValue)thrown.Value.Value);
+            return;
+        }
+        if (node is BirThrowExpression throwExpression)
+        {
+            if (throwExpression.Value.HasValue) WalkTyped((BirGraphValue)throwExpression.Value.Value);
+            return;
+        }
+        void ValueSlot(BirGraphSlot slot)
+        {
+            WalkTyped(slot.Value);
+            if (slot.Value is IBirExpression value) slot.Replace((BirGraphValue)Consume(value));
+        }
+        node.VisitSourceChildren(ValueSlot, region => {
+            foreach (var item in region.Statements) WalkTyped((BirGraphValue)item);
+            if (region.Result is { } result) ValueSlot(result);
+        });
+    }
+
     public static void Apply(JsonNode root)
     {
         if (root is JsonObject o) WalkObject(o);

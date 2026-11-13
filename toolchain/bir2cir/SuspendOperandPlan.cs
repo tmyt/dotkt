@@ -538,7 +538,7 @@ static partial class SuspendColdLowering
     // --- the chokepoint --------------------------------------------------------------------------------
 
     /// P1: stage 0 re-walks its own output and refuses the two arrangements it exists to remove. Same discipline as
-    /// `CallEvalLowering.AssertLowered` — the pass proves its post-condition rather than leaving it to a fixture.
+    /// TypedCallEvalLowering's source-plan check — the pass proves its post-condition rather than leaving it to a fixture.
     ///
     ///   * a SUSPEND CALL with any suspension-bearing operand (the #272 label overwrite), and
     ///   * any descriptor-bearing node with a non-re-readable operand LEFT of a suspension-bearing one (#286 and
