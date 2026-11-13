@@ -50,7 +50,14 @@ sealed partial class NullableWitnessDemand
         _ => Array.Empty<BirFunctionDeclaration>(),
     };
 
-    sealed record TypedFrameDemands(IReadOnlyDictionary<string, int[]> Types, IReadOnlyDictionary<string, int[]> Targets);
+    internal sealed record TypedFrameDemands(IReadOnlyDictionary<string, int[]> Types, IReadOnlyDictionary<string, int[]> Targets);
+
+    internal TypedFrameDemands AnalyzeGeneratedFrames(BirFileDeclaration file) => TypedGeneratedFrames(file);
+
+    internal int[] MaterializedFrameIndices(BirGraphValue frame, TypeNode[] typeArguments,
+        TypedFrameDemands generated, bool dense = false) => ResolveFramePositions(
+            AnalyzeTyped(frame, new[] { generated }), typeArguments, "materialized frame",
+            dense || ClosureSynthesis.HasPreboundFrame(frame));
 
     TypedFrameDemands TypedGeneratedFrames(BirFileDeclaration file)
     {

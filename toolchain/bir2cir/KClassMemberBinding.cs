@@ -1,6 +1,7 @@
 using System.Collections.Generic;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // A `kotlin.reflect.KClass` member read (`T::class.simpleName` / `.qualifiedName`) -> the Kotlin name.
 // kotc emits the pure-Kotlin property read `callInstance(kotlin.reflect.KClass[..].get_simpleName, recv = <::class>)`.
@@ -35,8 +36,8 @@ using DotKt.Bir;
 //     also carries a throwing explicit `as`, so dropping it would drop the throw); §5g dynamic follow-up.
 //   • a BOUND `getType` on a `classRef` — the DOUBLE class literal `(Int::class)::class`, whose receiver is a KClass,
 //     not an Int. A classRef's type slot names the REFERENCED type, so reading it as the value's type would fold to
-//     the wrong name; see [CarriesItsOwnType]. Routed to the run-time read like any other KClass-typed receiver.
-// Non-ref only. Mutate operations in place so declaration/ownership indices keep their existing nodes.
+//     the wrong name. Routed to the run-time read like any other KClass-typed receiver.
+// Non-ref only. Replace owning expression slots while declaration/ownership indices keep their existing nodes.
 static class KClassMemberBinding
 {
     // Kotlin builtin types that are FINAL (no subtypes), so a bound `value::class` on one is statically resolvable
@@ -55,67 +56,35 @@ static class KClassMemberBinding
         "kotlin.UIntArray", "kotlin.ULongArray", "kotlin.UShortArray", "kotlin.UByteArray",
     };
 
-    public static JsonNode Apply(JsonNode root) => Walk(root);
-
-    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
-
-    static JsonNode Walk(JsonNode node)
+    public static void Apply(BirFileDeclaration root)
     {
-        if (node is JsonObject obj)
+        BirGraphValue Walk(BirGraphValue node)
         {
-            foreach (var child in obj.ToArray()) if (child.Value != null) Walk(child.Value);
-            if (Transform(obj) is JsonObject replacement)
-            {
-                obj.Clear();
-                foreach (var field in replacement) obj[field.Key] = field.Value?.DeepClone();
-            }
-            return obj;
+            if (node is IBirExecutablePayload) return node;
+            node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
+            if (node is not BirCallInstance call || call.OwnerType.OrDefault() is not TypeNode.Fqn { Name: "kotlin.reflect.KClass" }
+                || call.Prop.OrDefault() != "get" || call.Method.OrDefault() is not ("simpleName" or "qualifiedName")
+                || call.Recv.OrDefault() is not IBirExpression receiver || StaticKotlinFqn(receiver) is not string name)
+                return node;
+            return new BirConstant { Type = new TypeNode.Fqn("kotlin.String"),
+                Value = new BirLiteral.TextLiteral(call.Method.Value == "simpleName" ? SimpleOf(name) : name) };
         }
-        if (node is JsonArray arr)
-        {
-            foreach (var item in arr) if (item != null) Walk(item);
-            return arr;
-        }
-        return node;
-    }
-
-    static JsonNode Transform(JsonObject node)
-    {
-        if (Str(node["k"]) != "callInstance") return null;
-        // ownerType is `kotlin.reflect.KClass` (its type-arg, if any, is dropped by OwnerName — we key on the identity).
-        if (TypeJson.OwnerName(node["ownerType"]) != "kotlin.reflect.KClass") return null;
-        var member = Str(node["method"]);
-        if (Str(node["prop"]) != "get") return null;
-        bool simple = member == "simpleName";
-        if (!simple && member != "qualifiedName") return null;
-        if (node["recv"] is not JsonObject recv) return null;   // the ::class receiver (a System.Type value)
-
-        // Const-fold when the receiver's Kotlin type identity is statically known (see the file header).
-        if (StaticKotlinFqn(recv) is string fqn)
-        {
-            return new JsonObject
-            {
-                ["k"] = "const",
-                ["type"] = TypeJson.Fqn("kotlin.String"),
-                ["value"] = simple ? SimpleOf(fqn) : fqn,
-            };
-        }
-
-        return null;
+        Walk(root);
     }
 
     // The statically-known Kotlin FQN a `::class` receiver names, or null when the class is only known at run time.
-    static string StaticKotlinFqn(JsonObject recv) => Str(recv["k"]) switch
+    static string StaticKotlinFqn(IBirExpression recv) => recv switch
     {
         // Unbound class literal — the token IS the literal type; always resolvable (finality is irrelevant, it is a type,
         // not a reflected instance).
-        "classRef" => FqnOf(recv["type"]),
+        BirClassReference value => FqnOf(value.Type.OrDefault()),
         // Bound `value::class` — resolvable iff the value's static type is a known-final builtin (runtime class == static
         // type) AND folding the receiver away drops no evaluation. That last test is Q2 of the value questions
         // (bir-common/ValueStability.cs), asked here for the same reason CallEvalLowering asks it of a binding nothing
         // reads: this fold makes the receiver unread, so it may only be removed where evaluating it is unobservable.
-        "getType" when recv["e"] is JsonObject e && ValueStability.IsDroppable(e) && CarriesItsOwnType(e)
-            && FqnOf(e["sty"] ?? e["type"]) is string st && KnownFinal.Contains(st) => st,
+        BirRuntimeClass value when value.E.OrDefault() is BirGraphNode e && ValueStability.IsDroppable(e.Tag)
+            && e is not BirClassReference
+            && FqnOf(e.ResultTypeStamp ?? e.ExplicitSourceType) is string st && KnownFinal.Contains(st) => st,
         _ => null,
     };
 
@@ -125,12 +94,10 @@ static class KClassMemberBinding
     // (kotc emits `{"k":"classRef","type":<the referenced type>}`, BirEmitterExpressions `IrClassReference`) — the
     // value is a `System.Type`. Reading it as the value's type folds `(Int::class)::class.simpleName` to "Int",
     // which is the name of the class the token names, not of the token. The receiver there is a `KClass`.
-    static bool CarriesItsOwnType(JsonObject o) => Str(o["k"]) != "classRef";
-
     // The Kotlin FQN a type slot names — the bare Fqn, or a nullable-of-Fqn unwrapped to its core (an inline-spliced
     // `T::class` with a nullable T arg, or a `String?` receiver; the Kotlin answer is the non-null identity's name).
     // Null for any other token shape (tv/array/fn), which the caller routes to the run-time read instead of folding.
-    static string FqnOf(JsonNode typeNode) => TypeJson.Read(typeNode) switch
+    static string FqnOf(TypeNode typeNode) => typeNode switch
     {
         TypeNode.Fqn f => f.Name,
         TypeNode.Nullable { Of: TypeNode.Fqn f } => f.Name,
@@ -142,5 +109,26 @@ static class KClassMemberBinding
     {
         int dot = fqn.LastIndexOf('.');
         return dot >= 0 ? fqn.Substring(dot + 1) : fqn;
+    }
+
+    internal static void SelfTest()
+    {
+        BirCallInstance Name(IBirExpression receiver) => new() { OwnerType = new TypeNode.Fqn("kotlin.reflect.KClass"),
+            Method = "simpleName", Prop = "get", Recv = OptionalField<IBirExpression>.Of(receiver) };
+        var effect = Name(new BirRuntimeClass { E = new BirCallStatic { Method = "effect", Sty = new TypeNode.Fqn("kotlin.String") } });
+        var token = Name(new BirRuntimeClass { E = new BirClassReference { Type = new TypeNode.Fqn("kotlin.Int") } });
+        var statements = new[] {
+            new BirExpressionStatement { Expr = Name(new BirClassReference { Type = new TypeNode.Nullable(new TypeNode.Fqn("Probe.Outer.Inner")) }) },
+            new BirExpressionStatement { Expr = Name(new BirRuntimeClass { E = new BirLocal { Name = "n", Sty = new TypeNode.Fqn("kotlin.Int") } }) },
+            new BirExpressionStatement { Expr = effect }, new BirExpressionStatement { Expr = token },
+        };
+        var method = new BirFunctionDeclaration { Name = "use", Body = statements.Cast<IBirStatement>().ToArray() };
+        var root = new BirFileDeclaration { Methods = new[] { method } };
+        Apply(root);
+        if (!ReferenceEquals(root.Methods.Value[0], method)
+            || statements[0].Expr.Value is not BirConstant { Value.Value: BirLiteral.TextLiteral { Value: "Inner" } }
+            || statements[1].Expr.Value is not BirConstant { Value.Value: BirLiteral.TextLiteral { Value: "Int" } }
+            || !ReferenceEquals(statements[2].Expr.Value, effect) || !ReferenceEquals(statements[3].Expr.Value, token))
+            throw new InvalidOperationException("Typed KClass fold lost identity, Kotlin names, receiver evaluation or token type semantics");
     }
 }

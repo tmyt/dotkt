@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Facts erased by CLR type projection, transported in the declaration-owned generic frame.
 // Bit zero is nullability; the remaining value is the nominal collection classifier. These
@@ -50,6 +52,14 @@ static class KotlinTypeWitness
         ["k"] = "binOp", ["op"] = op, ["lhs"] = left, ["rhs"] = right,
     };
 
-    internal static JsonObject AllowsNull(JsonNode witness) =>
-        Binary("!=", Binary("&", witness.DeepClone(), Constant(1)), Constant(0));
+    internal static BirConstant ConstantValue(int flags) => new() {
+        Type = new TypeNode.Fqn("kotlin.Int"), Value = new BirLiteral.IntegerLiteral(flags),
+    };
+
+    internal static BirBinaryOperation BinaryValue(string op, IBirExpression left, IBirExpression right) => new() {
+        Op = op, Lhs = OptionalField<IBirExpression>.Of(left), Rhs = OptionalField<IBirExpression>.Of(right),
+    };
+
+    internal static IBirExpression AllowsNullValue(IBirExpression witness) =>
+        BinaryValue("!=", BinaryValue("&", (IBirExpression)((BirGraphValue)witness).DeepClone(), ConstantValue(1)), ConstantValue(0));
 }
