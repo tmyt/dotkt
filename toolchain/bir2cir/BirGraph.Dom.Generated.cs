@@ -19,6 +19,7 @@ internal static class BirGraphDom
                 case "association": break;
                 case "event": break;
                 case "inherited": break;
+                case "sourceAssociation": break;
                 default: throw new FormatException($"Unprojected {field.Key} on EventPropertySourceFacts at {source.GetPath()}");
             }
         return new EventPropertySourceFacts
@@ -28,6 +29,7 @@ internal static class BirGraphDom
             Association = Field<string>(fields, "association", value => value!.GetValue<string>()),
             Event = Field<string>(fields, "event", value => value!.GetValue<string>()),
             Inherited = Field<bool>(fields, "inherited", value => value!.GetValue<bool>()),
+            SourceAssociation = Field<string>(fields, "sourceAssociation", value => value!.GetValue<string>()),
         };
     }
 
@@ -60,6 +62,48 @@ internal static class BirGraphDom
         return new BirOpaqueBytes
         {
             Bytes = Field<byte[]>(fields, "bytes", value => Convert.FromBase64String(value!.GetValue<string>())),
+        };
+    }
+
+    internal static BirStaticCarrier ReadBirStaticCarrier(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "owner": break;
+                case "protectedNested": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirStaticCarrier at {source.GetPath()}");
+            }
+        return new BirStaticCarrier
+        {
+            Owner = Field<string>(fields, "owner", value => value!.GetValue<string>()),
+            ProtectedNested = Field<string[]>(fields, "protectedNested", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<string>()).ToArray()),
+        };
+    }
+
+    internal static BirCompanionCarrier ReadBirCompanionCarrier(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "kind": break;
+                case "owner": break;
+                case "name": break;
+                case "visibility": break;
+                case "physicalOwner": break;
+                case "physicalOwnerArity": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirCompanionCarrier at {source.GetPath()}");
+            }
+        return new BirCompanionCarrier
+        {
+            Kind = Field<string>(fields, "kind", value => value!.GetValue<string>()),
+            Owner = Field<string>(fields, "owner", value => value!.GetValue<string>()),
+            Name = Field<string>(fields, "name", value => value!.GetValue<string>()),
+            Visibility = Field<string>(fields, "visibility", value => value!.GetValue<string>()),
+            PhysicalOwner = Field<string>(fields, "physicalOwner", value => value!.GetValue<string>()),
+            PhysicalOwnerArity = Field<int>(fields, "physicalOwnerArity", value => value!.GetValue<int>()),
         };
     }
 
@@ -1110,6 +1154,7 @@ internal static class BirGraphDom
                 case "memberVisibility": break;
                 case "memberOwnerTypeParams": break;
                 case "memberType": break;
+                case "lateinitSourceName": break;
                 case "value": break;
                 case "exception": break;
                 case "fieldRef": break;
@@ -1127,6 +1172,7 @@ internal static class BirGraphDom
             MemberVisibility = Field<string>(fields, "memberVisibility", value => value!.GetValue<string>()),
             MemberOwnerTypeParams = Field<BirTypeParameter[]>(fields, "memberOwnerTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             MemberType = Field<TypeNode>(fields, "memberType", value => TypeNode.Read(value) ?? throw new FormatException()),
+            LateinitSourceName = Field<string>(fields, "lateinitSourceName", value => value!.GetValue<string>()),
             Value = Field<IBirExpression>(fields, "value", value => ReadBirExpression(value!)),
             Exception = Field<IBirExpression>(fields, "exception", value => ReadBirExpression(value!)),
             FieldRef = Field<BirMemberReference>(fields, "fieldRef", value => ReadBirMemberReference(value!)),
@@ -1525,6 +1571,8 @@ internal static class BirGraphDom
                 case "_physicalDeclarationSignature": break;
                 case "retKotlinType": break;
                 case "_preparedDelegateReturnArgument": break;
+                case "lateinit": break;
+                case "extensionCoreDeclarationId": break;
                 case "nullableGenericRet": break;
                 case "nullableGenericSuspendRet": break;
                 case "declarationSourceName": break;
@@ -1592,6 +1640,8 @@ internal static class BirGraphDom
             _physicalDeclarationSignature = Field<bool>(fields, "_physicalDeclarationSignature", value => value!.GetValue<bool>()),
             RetKotlinType = Field<TypeNode>(fields, "retKotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
             _preparedDelegateReturnArgument = Field<bool>(fields, "_preparedDelegateReturnArgument", value => value!.GetValue<bool>()),
+            Lateinit = Field<bool>(fields, "lateinit", value => value!.GetValue<bool>()),
+            ExtensionCoreDeclarationId = Field<string>(fields, "extensionCoreDeclarationId", value => value!.GetValue<string>()),
             NullableGenericRet = Field<TypeNode>(fields, "nullableGenericRet", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableGenericSuspendRet = Field<TypeNode>(fields, "nullableGenericSuspendRet", value => TypeNode.Parse(value!.GetValue<string>())),
             DeclarationSourceName = Field<string>(fields, "declarationSourceName", value => value!.GetValue<string>()),
@@ -1849,6 +1899,8 @@ internal static class BirGraphDom
                 case "attrs": break;
                 case "kotlinType": break;
                 case "kotlinSupertypesPre": break;
+                case "staticCarrier": break;
+                case "companionCarrier": break;
                 case "generated": break;
                 case "abstract": break;
                 case "final": break;
@@ -1883,6 +1935,8 @@ internal static class BirGraphDom
             Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
+            StaticCarrier = Field<BirStaticCarrier>(fields, "staticCarrier", value => ReadBirStaticCarrier(value!)),
+            CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),
             Generated = Field<bool>(fields, "generated", value => value!.GetValue<bool>()),
             Abstract = Field<bool>(fields, "abstract", value => value!.GetValue<bool>()),
             Final = Field<bool>(fields, "final", value => value!.GetValue<bool>()),
@@ -1956,6 +2010,8 @@ internal static class BirGraphDom
                 case "attrs": break;
                 case "pos": break;
                 case "kotlinSupertypesPre": break;
+                case "staticCarrier": break;
+                case "companionCarrier": break;
                 case "generated": break;
                 case "abstract": break;
                 case "final": break;
@@ -1990,6 +2046,8 @@ internal static class BirGraphDom
             Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             Pos = Field<BirDeclarationPosition>(fields, "pos", value => ReadBirDeclarationPosition(value!)),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
+            StaticCarrier = Field<BirStaticCarrier>(fields, "staticCarrier", value => ReadBirStaticCarrier(value!)),
+            CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),
             Generated = Field<bool>(fields, "generated", value => value!.GetValue<bool>()),
             Abstract = Field<bool>(fields, "abstract", value => value!.GetValue<bool>()),
             Final = Field<bool>(fields, "final", value => value!.GetValue<bool>()),
@@ -2050,6 +2108,8 @@ internal static class BirGraphDom
                 case "richEnum": break;
                 case "kotlinSupertypesPre": break;
                 case "_syntheticFrameBound": break;
+                case "staticCarrier": break;
+                case "companionCarrier": break;
                 case "final": break;
                 case "specialName": break;
                 case "beforeFieldInit": break;
@@ -2095,6 +2155,8 @@ internal static class BirGraphDom
             RichEnum = Field<BirRichEnumDeclaration>(fields, "richEnum", value => ReadBirRichEnumDeclaration(value!)),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
             _syntheticFrameBound = Field<bool>(fields, "_syntheticFrameBound", value => value!.GetValue<bool>()),
+            StaticCarrier = Field<BirStaticCarrier>(fields, "staticCarrier", value => ReadBirStaticCarrier(value!)),
+            CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),
             Final = Field<bool>(fields, "final", value => value!.GetValue<bool>()),
             SpecialName = Field<bool>(fields, "specialName", value => value!.GetValue<bool>()),
             BeforeFieldInit = Field<bool>(fields, "beforeFieldInit", value => value!.GetValue<bool>()),

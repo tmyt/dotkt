@@ -61,6 +61,14 @@ static class DefaultBirCarrier
         args[2]["bytes"] = Convert.ToBase64String(ExecutableBirCodec.EncodeExpressionDom(args[1]["value"].GetValue<string>(), payload));
     }
 
+    internal static void Rewrite(BirAttribute attribute, Func<IBirExpression, IBirExpression> rewrite)
+    {
+        var arguments = attribute.Args.Value;
+        var codec = ((BirLiteral.TextLiteral)((BirConstant)arguments[1]).Value.Value).Value;
+        var payload = rewrite(Decode(attribute));
+        ((BirOpaqueBytes)arguments[2]).Bytes = ExecutableBirCodec.EncodeExpression(codec, payload);
+    }
+
     internal static JsonNode OfParameter(JsonObject parameter) => parameter["attrs"] is JsonArray attrs
         ? attrs.OfType<JsonObject>().Where(IsCarrier).Select(Decode).SingleOrDefault() : null;
 

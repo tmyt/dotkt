@@ -45,32 +45,38 @@ static class InnerRepresentationFrameTests
 
     static void StaticNestedOwnership()
     {
-        var root = JsonNode.Parse("""
+        var root = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"types":[
-          {"name":"Owner","typeParams":[{"name":"T"}]},
-          {"name":"Owner.Nested","semanticOwner":"Owner","typeParams":[{"name":"U"}]},
-          {"name":"Owner.Inner","semanticOwner":"Owner","mods":{"inner":true},"typeParams":[{"name":"T"},{"name":"V"}],"outerTypeParamCount":1},
-          {"name":"Owner.Helper","semanticOwner":"Owner","generated":true,"typeParams":[{"name":"T"}]},
-          {"name":"Plain"},
-          {"name":"Plain.Nested","semanticOwner":"Plain"}]}
-        """)!;
+          {"kind":"class","name":"Owner","typeParams":[{"name":"T"}]},
+          {"kind":"class","name":"Owner.Nested","semanticOwner":"Owner","typeParams":[{"name":"U"}]},
+          {"kind":"class","name":"Owner.Inner","semanticOwner":"Owner","mods":{"inner":true},"typeParams":[{"name":"T"},{"name":"V"}],"outerTypeParamCount":1},
+          {"kind":"class","name":"Owner.Helper","semanticOwner":"Owner","generated":true,"typeParams":[{"name":"T"}]},
+          {"kind":"class","name":"Plain"},
+          {"kind":"class","name":"Plain.Nested","semanticOwner":"Plain"}]}
+        """));
+        var original = root.Types.Value;
         GenericStaticOwnerBinding.Materialize(new[] { root });
-        var types = (JsonArray)root["types"]!;
-        var carrier = types.OfType<JsonObject>().Single(type => type["staticCarrier"] != null);
-        if (types[1]!["nestedIn"]!.GetValue<string>() != carrier["name"]!.GetValue<string>()
-            || types[1]!["semanticOwner"]!.GetValue<string>() != "Owner"
-            || types[1]!["typeParams"]!.AsArray().Count != 1
-            || types[2]!["semanticOwner"]!.GetValue<string>() != "Owner"
-            || types[3]!["semanticOwner"]!.GetValue<string>() != "Owner"
-            || types[5]!["semanticOwner"]!.GetValue<string>() != "Plain"
+        var types = root.Types.Value;
+        var carrier = types.Single(type => type.StaticCarrier.HasValue);
+        if (!original.Select((type, index) => ReferenceEquals(type, types[index])).All(value => value)
+            || types[1].NestedIn.OrDefault() != carrier.Name.Value
+            || types[1].SemanticOwner.OrDefault() != "Owner"
+            || types[1].TypeParams.Value.Length != 1
+            || types[2].SemanticOwner.OrDefault() != "Owner"
+            || types[3].SemanticOwner.OrDefault() != "Owner"
+            || types[5].SemanticOwner.OrDefault() != "Plain"
             || TypeParameterFrame.Count(carrier) != 0)
             throw new InvalidOperationException("Static nesting changed Kotlin frames or captured implementation ownership");
         var constructedOwner = TypeJson.Write(new TypeNode.Fqn("Owner", new TypeNode[] { new TypeNode.Tv("type", 0) }));
+        var projected = root.ToDom();
         var helperCall = new JsonObject { ["k"] = "callStatic", ["owner"] = constructedOwner.DeepClone() };
-        root["body"] = new JsonArray(helperCall);
-        GenericStaticOwnerBinding.ApplyAll(new[] { root }, null);
+        projected["methods"] = new JsonArray(new JsonObject { ["name"] = "probe", ["body"] = new JsonArray(
+            new JsonObject { ["k"] = "exprStmt", ["expr"] = helperCall }) });
+        // One terminal projection exercises the still-live downstream physical binder.
+        GenericStaticOwnerBinding.ApplyAll(new[] { projected }, null);
         if (!JsonNode.DeepEquals(helperCall["owner"], constructedOwner))
             throw new InvalidOperationException("Static nesting retargeted a constructed generic method owner");
+        GenericStaticOwnerBinding.SelfTestPlacement();
     }
 
     static void SyntheticOwnerFrames()

@@ -58,7 +58,7 @@
       "properties": {
         "name": { "type": ["string", "null"] }, "kind": { "enum": ["get"] },
         "association": { "type": ["string", "null"] }, "event": { "type": ["string", "null"] },
-        "inherited": { "type": "boolean" }
+        "inherited": { "type": "boolean" }, "sourceAssociation": { "type": "string" }
       }, "required": ["name", "kind", "association"], "additionalProperties": false
     },
     "capturedGenericArgument": {
@@ -70,6 +70,18 @@
       "type": "object", "x-dotkt-model": { "name": "BirOpaqueBytes", "domain": "birLoweringValues", "attributeValue": true },
       "properties": { "bytes": { "type": "string", "x-dotkt-csharp-type": "byte[]" } },
       "required": ["bytes"], "additionalProperties": false
+    },
+    "birStaticCarrier": {
+      "type": "object", "x-dotkt-model": { "name": "BirStaticCarrier", "domain": "birLoweringValues" },
+      "properties": { "owner": { "type": "string" }, "protectedNested": { "type": "array", "items": { "type": "string" } } },
+      "required": ["owner"], "additionalProperties": false
+    },
+    "birCompanionCarrier": {
+      "type": "object", "x-dotkt-model": { "name": "BirCompanionCarrier", "domain": "birLoweringValues" },
+      "properties": {
+        "kind": { "type": "string" }, "owner": { "type": "string" }, "name": { "type": "string" },
+        "visibility": { "type": "string" }, "physicalOwner": { "type": "string" }, "physicalOwnerArity": { "type": "integer" }
+      }, "required": ["kind", "owner", "name", "visibility", "physicalOwner", "physicalOwnerArity"], "additionalProperties": false
     },
     "birAttributeLiteral": {
       "type": "object", "x-dotkt-model": { "name": "BirAttributeLiteral", "domain": "birLoweringValues", "attributeValue": true, "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true } } },
@@ -369,7 +381,7 @@
       "required": ["k", "ownerType", "name", "value"], "additionalProperties": false
     },
     "birLateinitGet": {
-      "type": "object", "x-dotkt-model": { "name": "BirLateinitGet", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirLateinitGet", "domain": "birCore", "role": "expression", "loweringProperties": { "lateinitSourceName": { "type": "string" } } },
       "properties": {
         "k": { "const": "lateinitGet" }, "ownerType": { "$ref": "#/$defs/type" }, "static": { "type": "boolean" }, "recv": { "$ref": "#/$defs/birExpressionNode" }, "name": { "type": "string" }, "companionReceiver": { "type": "string", "x-dotkt-kotlin-json-type": true }, "sty": { "x-dotkt-representation-role": "ResultStamp", "$ref": "#/$defs/type" },
         "memberVisibility": { "type": "string" }, "memberOwnerTypeParams": { "x-dotkt-representation-role": "TypeParameterDeclarations", "x-dotkt-representation-parameters": "Owner", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberType": { "x-dotkt-representation-role": "DeclaredMemberType", "x-dotkt-frame-role": "ReferencedDeclaration", "$ref": "#/$defs/type" }
@@ -491,6 +503,7 @@
         "_physicalDeclarationSignature": { "type": "boolean" },
         "retKotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },
         "_preparedDelegateReturnArgument": { "type": "boolean" },
+        "lateinit": { "type": "boolean" }, "extensionCoreDeclarationId": { "type": "string" },
         "nullableGenericRet": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },
         "nullableGenericSuspendRet": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "declarationSourceName": { "type": "string" },
@@ -570,7 +583,7 @@
       "required": ["name", "type", "kotlinAccessors", "propertyAssociation"], "additionalProperties": false
     },
     "birInterfaceDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirInterfaceDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringProperties": { "kotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirInterfaceDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringProperties": { "kotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "interface" }, "semanticOwner": { "type": "string" }, "vis": { "type": "string" },
         "mods": { "$ref": "#/$defs/birModifiers" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
@@ -591,7 +604,7 @@
       "properties": { "underlying": { "$ref": "#/$defs/type" } }, "required": ["underlying"], "additionalProperties": false
     },
     "birEnumDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirEnumDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["entries"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirEnumDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["entries"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "enum" }, "semanticOwner": { "type": "string" }, "vis": { "type": "string" },
         "clrEnum": { "$ref": "#/$defs/birClrEnumDeclaration" }, "entries": { "type": "array", "items": { "$ref": "#/$defs/birEnumEntryDeclaration" } },
@@ -600,7 +613,7 @@
       "required": ["name", "kind", "entries", "attrs"], "additionalProperties": false
     },
     "birClassDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringKinds": ["struct", "delegate"], "loweringSourceFields": ["clrEvents"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "_syntheticFrameBound": { "type": "boolean" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringKinds": ["struct", "delegate"], "loweringSourceFields": ["clrEvents"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "_syntheticFrameBound": { "type": "boolean" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "class" }, "generated": { "const": true }, "base": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
         "companionCaptureOwner": { "type": "string" },

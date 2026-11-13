@@ -20,10 +20,15 @@ static class FunctionSignatureIdentity
                     parameter[Key] = parameter["type"].DeepClone();
     }
 
-    internal static JsonNode SignatureType(JsonObject parameter) => parameter[Key] is JsonNode discriminator
-        ? TypeJson.Write(new TypeNode.Mod(false, DeclarationType(TypeJson.Read(discriminator)), TypeJson.Read(parameter["type"])))
-        : parameter["type"]?.DeepClone()
-            ?? throw new InvalidOperationException("A physical declaration parameter has no type");
+    internal static JsonNode SignatureType(JsonObject parameter) => TypeJson.Write(SignatureType(
+        TypeJson.Read(parameter["type"]), TypeJson.Read(parameter[Key])));
+
+    internal static TypeNode SignatureType(BirParameter parameter) => SignatureType(
+        parameter.Type.OrDefault(), parameter.FunctionSignatureType.OrDefault());
+
+    static TypeNode SignatureType(TypeNode type, TypeNode discriminator) => type == null
+        ? throw new InvalidOperationException("A physical declaration parameter has no type")
+        : discriminator != null ? new TypeNode.Mod(false, DeclarationType(discriminator), type) : BirGraphValue.CopyType(type);
 
     // A signature is allocated in its declaration's open frame, before owner/method substitution.
     // Closing a value-returning T at Unit must retain Func<T,T>, not choose Action<Unit> again.

@@ -70,21 +70,23 @@ def outputs(root, definitions):
         name = info["name"]
         node = info["domain"] == "birCore"
         fields = [(key, field) for key, field in shape["properties"].items() if key != "k" or not node]
-        if len(fields) + node > 64:
+        if len(fields) + node > 128:
             raise ValueError(f"Expand duplicate-field tracking before extending {name}")
+        wide = len(fields) + node > 64
+        seen_type, one = ("UInt128", "(UInt128)1") if wide else ("ulong", "1UL")
         tag = shape["properties"]["k"]["const"] if node else None
         if node: nodes.append((tag, name))
         lines += [f"    internal static {name} Read{name}(ref MessagePackReader reader)", "    {",
-                  "        var count = ReadMap(ref reader);", "        ulong seen = 0;"]
+                  "        var count = ReadMap(ref reader);", f"        {seen_type} seen = 0;"]
         lines += [f"        OptionalField<{cs(field)}> field{index} = default;" for index, (_, field) in enumerate(fields)]
         lines += ["        for (var index = 0; index < count; index++)", "        {",
                   "            switch (IrMessagePack.ReadString(ref reader))", "            {"]
         if node:
-            lines += [f'                case "k": Seen(ref seen, 1UL << {len(fields)}); if (IrMessagePack.ReadString(ref reader) != {json.dumps(tag)}) throw new FormatException(); break;']
+            lines += [f'                case "k": Seen(ref seen, {one} << {len(fields)}); if (IrMessagePack.ReadString(ref reader) != {json.dumps(tag)}) throw new FormatException(); break;']
         for index, (key, field) in enumerate(fields):
             value = f"OptionalField<{cs(field)}>.Of({read(field)})"
             if refkey(field) != "literalValue": value = f"reader.TryReadNil() ? OptionalField<{cs(field)}>.Null : {value}"
-            lines += [f"                case {json.dumps(key)}:", f"                    Seen(ref seen, 1UL << {index});",
+            lines += [f"                case {json.dumps(key)}:", f"                    Seen(ref seen, {one} << {index});",
                       f"                    field{index} = {value};", "                    break;"]
         lines += ["                default: throw new FormatException();", "            }", "        }", "        reader.Depth--;",
                   f"        return new {name}", "        {"]
@@ -137,6 +139,7 @@ def outputs(root, definitions):
               "    private static void Enter(ref MessagePackReader reader) { CheckDepth(reader.Depth); reader.Depth++; }",
               "    private static void CheckDepth(int depth) { if (depth >= BirJson.MaxDepth) throw new FormatException(); }",
               "    private static void Seen(ref ulong seen, ulong bit) { if ((seen & bit) != 0) throw new FormatException(); seen |= bit; }",
+              "    private static void Seen(ref UInt128 seen, UInt128 bit) { if ((seen & bit) != 0) throw new FormatException(); seen |= bit; }",
               "    private static string Discriminator(MessagePackReader reader, string key)", "    {", "        var count = ReadMap(ref reader);",
               "        for (var index = 0; index < count; index++)", "        {",
               "            if (IrMessagePack.ReadString(ref reader) == key) return IrMessagePack.ReadString(ref reader);", "            reader.Skip();",

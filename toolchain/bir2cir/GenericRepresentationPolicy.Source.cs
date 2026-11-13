@@ -5,6 +5,7 @@ using DotKt.Cir;
 
 sealed partial class GenericRepresentationPolicy
 {
+    readonly HashSet<BirGraphValue> _sourceNativeStorage = new(ReferenceEqualityComparer.Instance);
     readonly record struct SourceOwner(string Name, bool HasKind, bool Generated,
         BirTypeParameter[] Parameters, BirAttribute[] Attributes, BirFieldDeclaration[] Fields);
 
@@ -54,6 +55,7 @@ sealed partial class GenericRepresentationPolicy
                 {
                     field._nativeLocation = true;
                     _nativeFieldNames.Add(key);
+                    _sourceNativeStorage.Add(field);
                 }
             }
         }
@@ -93,6 +95,7 @@ sealed partial class GenericRepresentationPolicy
                             default: throw new InvalidOperationException("Unaccounted native source storage declaration");
                         }
                         _nativeFieldNames.Add(key);
+                        _sourceNativeStorage.Add(declaration);
                     }
                     else if (_localOwners.Contains(owner.Name)
                         || _references?.HasReferencedFieldLocation(owner, name, isStatic) != true) continue;
@@ -121,6 +124,44 @@ sealed partial class GenericRepresentationPolicy
         BirNativeInstance value => (value.Sig.OrDefault() ?? value.ArgTypes.OrDefault(), value.Args.OrDefault()),
         _ => (null, null),
     };
+
+    // Placement changes a physical owner/name, not the source decision about
+    // which storage needs a native slot. Follow the selected owning records;
+    // neither carrier spelling nor a newly generated field can select an origin.
+    internal void PrepareDomLocations(IReadOnlyList<BirFileDeclaration> roots)
+    {
+        if (!_sourceAwaitingDom) throw new InvalidOperationException("Source generic policy already crossed its owning frontier");
+        var matched = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
+        var physical = new HashSet<(string Owner, string Name, bool Static, string Receiver)>();
+        void Fields(string owner, IEnumerable<BirFieldDeclaration> fields)
+        {
+            foreach (var field in fields)
+            {
+                if (!_sourceNativeStorage.Contains(field)) continue;
+                if (owner == null || !field.Name.HasValue || !field._nativeLocation.OrDefault())
+                    throw new InvalidOperationException("Selected native storage lost its physical declaration");
+                physical.Add(FieldKey(owner, field.Name.Value, field.Static.OrDefault(), field.CompanionReceiver.OrDefault()));
+                matched.Add(field);
+            }
+        }
+        foreach (var root in roots)
+        {
+            Fields(root.FileClass.OrDefault(), root.Fields.OrEmpty());
+            foreach (var type in root.Types.OrEmpty()) Fields(type.Name.OrDefault(), type.Fields.OrEmpty());
+            foreach (var cell in root.RefTypes.OrEmpty())
+            {
+                if (!_sourceNativeStorage.Contains(cell)) continue;
+                if (!cell.Name.HasValue || !cell._nativeLocation.OrDefault())
+                    throw new InvalidOperationException("Selected native capture storage lost its physical declaration");
+                physical.Add(FieldKey(cell.Name.Value, "v", false, (TypeNode)null));
+                matched.Add(cell);
+            }
+        }
+        if (!matched.SetEquals(_sourceNativeStorage))
+            throw new InvalidOperationException("Placement discarded a selected native source declaration");
+        _nativeFieldNames.Clear();
+        _nativeFieldNames.UnionWith(physical);
+    }
 
     // Re-associate only the exact declarations carried across the one-way
     // frontier. Selection, source eligibility, and native flags already exist.
@@ -168,6 +209,7 @@ sealed partial class GenericRepresentationPolicy
         }
         if (!matched.SetEquals(_nativeFieldNames))
             throw new InvalidOperationException("A selected native source declaration is absent from its DOM continuation");
+        _sourceNativeStorage.Clear();
         _sourceAwaitingDom = false;
     }
 }

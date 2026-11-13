@@ -7,27 +7,8 @@ using DotKt.Bir;
 // Kotlin property accessor identity is an explicit BIR fact.  This is the sole forward projection from that
 // identity to the dedicated CLR accessor spelling. No caller may parse
 // the resulting method name to recover the property or accessor role.
-static class KotlinPropertyAccessors
+static partial class KotlinPropertyAccessors
 {
-    internal static void SelfTestAccessorSignatures()
-    {
-        var property = JsonNode.Parse("""
-            {"name":"value","type":{"t":"tv","scope":"type","i":0},
-             "propertyAssociation":"p","kotlinAccessors":["get","set"]}
-            """)!.AsObject();
-        var methods = JsonNode.Parse("""
-            [{"name":"read","propertyAssociation":"p","propertyAccessor":"get",
-              "params":[],"ret":{"t":"fqn","name":"object"}},
-             {"name":"write","propertyAssociation":"p","propertyAccessor":"set",
-              "params":[{"name":"value","type":{"t":"fqn","name":"object"}}],
-              "ret":{"t":"fqn","name":"void"}}]
-            """)!.AsArray().OfType<JsonObject>().ToArray();
-        AllocateProperty(property, methods, stripIdentity: false);
-        if (!JsonNode.DeepEquals(property["getRet"], methods[0]["ret"])
-            || !JsonNode.DeepEquals(property["setRet"], methods[1]["ret"])
-            || JsonNode.DeepEquals(property["getRet"], property["type"]))
-            throw new InvalidOperationException("Property accessor links lost their selected MethodDef return types");
-    }
 
     internal const string SourceNameKey = "propertyName";
     internal const string KindKey = "propertyAccessor";
@@ -134,6 +115,7 @@ static class KotlinPropertyAccessors
         declaration.Remove(AssociationKey);
     }
 
+    // Late closure/slot synthesis still authors declarations in the remaining DOM phase.
     public static void AllocateDeclarationsAndProperties(IEnumerable<JsonNode> roots)
     {
         foreach (var root in roots) Walk(root, allocateCalls: false, null, null);
@@ -450,104 +432,36 @@ static class KotlinPropertyAccessors
     static bool AllocateProperty(JsonObject property, IReadOnlyList<JsonObject> methods, bool stripIdentity)
     {
         if (property[PropertyRolesKey] is not JsonArray roles) return true;
-        var sourceName = Str(property["name"])
-            ?? throw new InvalidOperationException("Kotlin property record has no source name");
-        var association = Str(property[AssociationKey])
-            ?? throw new InvalidOperationException($"Kotlin property record '{sourceName}' has no accessor association");
-        var get = false;
-        var set = false;
-        var resolved = new List<(JsonObject Method, string Role)>();
-        foreach (var roleNode in roles)
+        var facts = methods.Select(method => new AccessorFacts(Str(method["name"]), Str(method[AssociationKey]),
+            Str(method[KindKey]), (method["typeParams"] as JsonArray)?.Count ?? 0,
+            Str(method[MetadataCarrierKey]?["sourceAssociation"]), Str(method[MetadataCarrierKey]?["event"]),
+            method[MetadataCarrierKey]?["inherited"]?.GetValue<bool>() == true)).ToArray();
+        var plan = PlanProperty(Str(property["name"]), Str(property[AssociationKey]), roles.Select(Str).ToArray(), facts);
+        var get = false; var set = false;
+        foreach (var item in plan.Accessors)
         {
-            var role = Str(roleNode);
-            if (role is not ("get" or "set"))
-                throw new InvalidOperationException($"invalid Kotlin property record accessor role '{role}'");
-            var matches = methods.Where(method =>
-                Str(method[AssociationKey]) == association &&
-                Str(method[KindKey]) == role).ToArray();
-            if (matches.Length != 1)
-                throw new InvalidOperationException(
-                    $"Kotlin property record '{sourceName}' association '{association}' resolves " +
-                    $"{matches.Length} '{role}' accessor declaration(s)");
-            resolved.Add((matches[0], role));
-        }
-        var representable = resolved.All(item =>
-            ((item.Method["typeParams"] as JsonArray)?.Count ?? 0) == 0);
-        // Preserve the opaque declaration association when MethodSemantics cannot carry it, or when a synthesized
-        // bridge explicitly points back to this source association. A referenced signature-changing MethodImpl body
-        // cannot be paired back to its source by comparing their deliberately different physical signatures.
-        var isBridgeSource = methods.Any(candidate =>
-            Str((candidate[MetadataCarrierKey] as JsonObject)?["sourceAssociation"]) == association);
-        foreach (var (method, role) in resolved)
-        {
-            var sourceAssociation = Str((method[MetadataCarrierKey] as JsonObject)?["sourceAssociation"]);
-            var nativeEvent = Str((method[MetadataCarrierKey] as JsonObject)?["event"]);
-            var inherited = (method[MetadataCarrierKey] as JsonObject)?["inherited"]?.GetValue<bool>() == true;
-            if (representable && sourceAssociation == null && nativeEvent == null && !inherited && !isBridgeSource) continue;
-            var carrier = new JsonObject
+            var method = methods[item.Index]; var fact = facts[item.Index];
+            if (item.StampCarrier)
             {
-                ["name"] = sourceName,
-                ["kind"] = role,
-                ["association"] = association,
-            };
-            // AssociateBridgeProperty installs this explicit source relation before the final allocation sweep.
-            // Rebuilding the bridge's physical Property descriptor must not collapse its four-field carrier back to
-            // an ordinary source accessor's three fields.
-            if (sourceAssociation != null) carrier["sourceAssociation"] = sourceAssociation;
-            if (nativeEvent != null) carrier["event"] = nativeEvent;
-            if (inherited) carrier["inherited"] = true;
-            method[MetadataCarrierKey] = carrier;
-        }
-
-        foreach (var (method, role) in resolved)
-        {
-            var physicalName = Str(method["name"])
-                ?? throw new InvalidOperationException("Kotlin property accessor has no allocated physical name");
-            var signature = new JsonArray(
-                ((method["params"] as JsonArray) ?? new JsonArray())
-                    .OfType<JsonObject>()
-                    .Select(FunctionSignatureIdentity.SignatureType)
-                    .ToArray());
-            var methodArity = (method["typeParams"] as JsonArray)?.Count ?? 0;
-            if (role == "get")
-            {
-                property["get"] = physicalName;
-                property["getSig"] = signature;
-                property["getRet"] = method["ret"]!.DeepClone();
-                property["getMethodArity"] = methodArity;
-                get = true;
+                var carrier = new JsonObject { ["name"] = plan.Name, ["kind"] = item.Role, ["association"] = plan.Association };
+                if (fact.SourceAssociation != null) carrier["sourceAssociation"] = fact.SourceAssociation;
+                if (fact.Event != null) carrier["event"] = fact.Event;
+                if (fact.Inherited) carrier["inherited"] = true;
+                method[MetadataCarrierKey] = carrier;
             }
-            else
-            {
-                property["set"] = physicalName;
-                property["setSig"] = signature;
-                property["setRet"] = method["ret"]!.DeepClone();
-                property["setMethodArity"] = methodArity;
-                set = true;
-            }
+            var signature = new JsonArray((method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Select(FunctionSignatureIdentity.SignatureType).ToArray());
+            var prefix = item.Role;
+            property[prefix] = fact.Name;
+            property[prefix + "Sig"] = signature;
+            property[prefix + "Ret"] = method["ret"]!.DeepClone();
+            property[prefix + "MethodArity"] = fact.Arity;
+            if (item.Role == "get") get = true; else set = true;
         }
-        if (!get && !set)
-            throw new InvalidOperationException($"Kotlin property record '{sourceName}' has no accessor roles");
-        if (!get)
-        {
-            property["get"] = null;
-            property.Remove("getSig");
-            property.Remove("getRet");
-            property.Remove("getMethodArity");
-        }
-        if (!set)
-        {
-            property["set"] = null;
-            property.Remove("setSig");
-            property.Remove("setRet");
-            property.Remove("setMethodArity");
-        }
-        if (stripIdentity)
-        {
-            property.Remove(PropertyRolesKey);
-            property.Remove(AssociationKey);
-        }
-        return representable;
+        if (!get) { property["get"] = null; property.Remove("getSig"); property.Remove("getRet"); property.Remove("getMethodArity"); }
+        if (!set) { property["set"] = null; property.Remove("setSig"); property.Remove("setRet"); property.Remove("setMethodArity"); }
+        if (stripIdentity) { property.Remove(PropertyRolesKey); property.Remove(AssociationKey); }
+        return plan.Representable;
     }
 
     // Associate a synthesized MethodImpl body with an exact physical Property shape. Both override-bridge passes use

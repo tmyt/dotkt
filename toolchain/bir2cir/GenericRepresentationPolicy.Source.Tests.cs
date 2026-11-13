@@ -76,5 +76,33 @@ sealed partial class GenericRepresentationPolicy
             || !policy.OwnsValueSlots("LatePhysical") || policy.ProjectArgumentHead(lateApplication, true, null) != lateApplication)
             throw new InvalidOperationException("Late native storage discovery changed fixed source carrier eligibility");
         Console.WriteLine("[source generic policy] self-test OK (native selection parity, companion/ref-cell storage, one-way identity, fixed eligibility)");
+        NativePlacementSelfTest();
+    }
+
+    static void NativePlacementSelfTest()
+    {
+        var text = new TypeNode.Fqn("kotlin.String");
+        var field = new BirFieldDeclaration { Name = "value", Static = true, Type = text,
+            Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("kotlin.clr.ClrField") } } };
+        var source = new BirClassDefinition { Name = "Source", Kind = "class", Fields = new[] { field },
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } } };
+        var root = new BirFileDeclaration { FileClass = "Placement", Types = new IBirTypeDeclaration[] { source } };
+        var policy = CreateSource(new[] { root }, new Dictionary<string, string>(), null);
+        var carrier = new BirClassDefinition { Name = "PhysicalStorage", Kind = "class", Generated = true,
+            Fields = new[] { field } };
+        field.Name = "physicalValue";
+        source.Fields = Array.Empty<BirFieldDeclaration>();
+        root.Types = new IBirTypeDeclaration[] { source, carrier };
+        policy.PrepareDomLocations(new[] { root });
+        var continuation = root.ToDom();
+        policy.BindDomDeclarations(new JsonNode[] { continuation });
+        if (!policy.IsNativeField(continuation["types"][1]["fields"][0].AsObject())
+            || !policy.IsNativeFieldUse("staticField", new TypeNode.Fqn("PhysicalStorage"), "physicalValue", null)
+            || policy.IsNativeFieldUse("staticField", new TypeNode.Fqn("Source"), "value", null)
+            || policy.ProjectArgumentHead(new TypeNode.Fqn("Source", new[] { text }), true, null)
+                is not TypeNode.Fqn { Args: [TypeNode.Star] }
+            || policy.ProjectArgumentHead(new TypeNode.Fqn("PhysicalStorage", new[] { text }), true, null)
+                is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.String" }] })
+            throw new InvalidOperationException("Native physical placement lost selected identity or recomputed source eligibility");
     }
 }

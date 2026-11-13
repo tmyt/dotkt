@@ -381,8 +381,10 @@ def outputs(root, definitions):
         info = shape["x-dotkt-model"]
         name = info["name"]
         fields = [(key, value) for key, value in shape["properties"].items() if key != "k" or info["domain"] != "birCore"]
-        if len(fields) + (info["domain"] == "birCore") > 64:
+        if len(fields) + (info["domain"] == "birCore") > 128:
             raise ValueError(f"Expand duplicate-field tracking before extending {name}")
+        wide = len(fields) + (info["domain"] == "birCore") > 64
+        seen_type, one = ("UInt128", "(UInt128)1") if wide else ("ulong", "1UL")
         node = info["domain"] == "birCore"
         roles = info.get("roles", [info["role"]] if "role" in info else [])
         bases = ["BirGraphNode" if node else "BirGraphValue"]
@@ -592,21 +594,21 @@ def outputs(root, definitions):
                 model += [f"        if ({prop}.IsPresent) result[{json.dumps(field)}] = {prop}.IsNull ? null : {dom(value, prop + '.Value')};"]
         model += ["        return result;", "    }", "}", ""]
         codec += [f"    internal static {name} Read{name}(ref Utf8JsonReader reader)", "    {",
-                  "        Require(reader, JsonTokenType.StartObject);", "        ulong seen = 0;"]
+                  "        Require(reader, JsonTokenType.StartObject);", f"        {seen_type} seen = 0;"]
         codec += [f"        OptionalField<{cs(value)}> field{index} = default;" for index, (_, value) in enumerate(fields)]
         codec += [
                   "        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)", "        {",
                   "            Require(reader, JsonTokenType.PropertyName);", "            var key = reader.GetString();",
                   "            if (!reader.Read()) throw new FormatException();", "            switch (key)", "            {"]
         if node:
-            codec += [f'                case "k": Seen(ref seen, 1UL << {len(fields)}); if (ReadString(ref reader) != {json.dumps(tag)}) throw new FormatException(); break;']
+            codec += [f'                case "k": Seen(ref seen, {one} << {len(fields)}); if (ReadString(ref reader) != {json.dumps(tag)}) throw new FormatException(); break;']
         for index, (field, value) in enumerate(fields):
             prop, typ = member(field), cs(value)
             expr = read(value)
             decoded = f"OptionalField<{typ}>.Of({expr})"
             if refkey(value) != "literalValue":
                 decoded = f"reader.TokenType == JsonTokenType.Null ? OptionalField<{typ}>.Null : {decoded}"
-            codec += [f"                case {json.dumps(field)}:", f"                    Seen(ref seen, 1UL << {index});",
+            codec += [f"                case {json.dumps(field)}:", f"                    Seen(ref seen, {one} << {index});",
                       f"                    field{index} = {decoded};", "                    break;"]
         codec += ["                default: throw new FormatException($\"Unknown lowering field {key}\");", "            }", "        }",
                   "        Require(reader, JsonTokenType.EndObject);", f"        return new {name}", "        {"]

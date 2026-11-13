@@ -1,151 +1,130 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
-// A lateinit slot must distinguish an uninitialized T from every initialized value, including default(T).
-// Ordinary declarations therefore use private object storage and typed Kotlin accessor signatures. Queries
-// address the selected declaration through a private helper so existential receivers never invoke a checked read.
+// A lateinit slot distinguishes uninitialized storage from every initialized value, including default(T).
+// Its logical accessors retain their Kotlin signatures; a private helper exposes only initialization state.
 static class LateinitInitializationLowering
 {
-    const string Identity = "lateinitDeclarationId";
-    sealed record Storage(string Owner, JsonObject Declaration, JsonObject Field, JsonNode ValueType)
+    sealed record Storage(string Owner, BirGraphValue Declaration, BirFieldDeclaration Field, TypeNode ValueType)
     {
         public string QueryMethod;
-        public bool Static => Field["static"]?.GetValue<bool>() == true;
+        public bool Static => Field.Static.OrDefault();
     }
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
+    public static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         var identities = new Dictionary<string, Storage>(StringComparer.Ordinal);
         var fields = new Dictionary<(string Owner, string Name, bool Static), Storage>();
-        foreach (var root in roots) Collect(root, identities, fields);
-        // A public default argument can carry a query only as opaque BIR. Its consumer still needs an authored
-        // physical target, even when this producer has no executable query node to request the helper lazily.
-        foreach (var storage in identities.Values) EnsureQueryMethod(storage);
-        foreach (var root in roots) Rewrite(root, identities, fields, refs);
-        foreach (var storage in identities.Values)
+        void Collect(BirGraphValue declaration, string owner, IEnumerable<BirFieldDeclaration> declaredFields)
         {
-            storage.Field.Remove(Identity);
-        }
-    }
-
-    static void Collect(JsonNode node, Dictionary<string, Storage> identities,
-        Dictionary<(string Owner, string Name, bool Static), Storage> fields)
-    {
-        if (node is not JsonObject declaration) return;
-        var owner = Str(declaration["name"]) ?? Str(declaration["fileClass"]);
-        if (owner != null && declaration["fields"] is JsonArray declaredFields)
-            foreach (var field in declaredFields.OfType<JsonObject>())
+            if (owner == null) return;
+            foreach (var field in declaredFields)
             {
-                if (Str(field[Identity]) is not string id) continue;
-                var storage = new Storage(owner, declaration, field, field["type"]!.DeepClone());
+                if (field.LateinitDeclarationId.OrDefault() is not string id) continue;
+                var storage = new Storage(owner, declaration, field, BirGraphValue.CopyType(field.Type.Value));
                 identities.Add(id, storage);
-                fields.Add((owner, Str(field["name"]), storage.Static), storage);
-                if (storage.Static && Str(declaration["staticCarrier"]?["owner"]) is string sourceOwner)
-                    fields.Add((sourceOwner, Str(field["name"]), true), storage);
-                field["type"] = TypeJson.Fqn("object");
-                field["vis"] = "private";
+                fields.Add((owner, field.Name.OrDefault(), storage.Static), storage);
+                if (storage.Static && declaration is IBirTypeDeclaration type && type.StaticCarrier.OrDefault()?.Owner.OrDefault() is string sourceOwner)
+                    fields.Add((sourceOwner, field.Name.OrDefault(), true), storage);
+                field.Type = new TypeNode.Fqn("object");
+                field.Vis = "private";
             }
-        if (declaration["types"] is JsonArray types)
-            foreach (var type in types) Collect(type, identities, fields);
-    }
-
-    static void Rewrite(JsonNode node, IReadOnlyDictionary<string, Storage> identities,
-        IReadOnlyDictionary<(string Owner, string Name, bool Static), Storage> fields, ReferenceMetadataIndex refs)
-    {
-        if (node is JsonObject obj)
-        {
-            foreach (var child in obj.ToArray()) if (child.Value != null) Rewrite(child.Value, identities, fields, refs);
-            if (obj["params"] is JsonArray && obj["body"] is JsonArray
-                && Str(obj["declarationId"]) is string declarationId && identities.TryGetValue(declarationId, out var declarationStorage))
-            {
-                obj["lateinit"] = true;
-                RoundtripMetadata.StampLateinitState(obj, declarationStorage.Owner,
-                    declarationStorage.QueryMethod, declarationStorage.Static);
-            }
-            var kind = Str(obj["k"]);
-            if (kind == "lateinitIsInitialized")
-            {
-                var id = Str(obj[Identity]);
-                var target = identities.TryGetValue(id, out var storage)
-                    ? new LateinitStateTarget(storage.Owner, storage.QueryMethod, storage.Static)
-                    : refs.LateinitStateForDeclaration(id);
-                var sourceOwner = TypeJson.Read(obj["ownerType"]) as TypeNode.Fqn;
-                var receiver = obj["recv"]?.DeepClone();
-                var style = obj["sty"]?.DeepClone();
-                obj.Clear();
-                if (style != null) obj["sty"] = style;
-                obj["k"] = target.Static ? "callStatic" : "callInstance";
-                obj["ownerType"] = TypeJson.Write(new TypeNode.Fqn(target.Owner,
-                    target.Static ? null : sourceOwner?.Args));
-                obj["method"] = target.Method;
-                obj["args"] = new JsonArray();
-                obj["sig"] = new JsonArray();
-                obj["ret"] = TypeJson.Fqn("kotlin.Boolean");
-                obj["memberVisibility"] = "private";
-                obj["memberSignature"] = new JsonArray();
-                obj["memberReturnType"] = TypeJson.Fqn("kotlin.Boolean");
-                if (!target.Static) { obj["recv"] = receiver; obj["virtual"] = false; }
-                return;
-            }
-            if (kind is not ("lateinitGet" or "setField" or "setFieldExpr" or "staticFieldSet")) return;
-            if (TypeJson.OwnerName(obj["ownerType"]) is not string owner || Str(obj["name"]) is not string name
-                || !fields.TryGetValue((owner, name, kind == "staticFieldSet"
-                    || obj["static"]?.GetValue<bool>() == true), out var slot)) return;
-            if (kind != "lateinitGet")
-            {
-                obj["value"] = new JsonObject {
-                    ["k"] = "cast", ["type"] = TypeJson.Fqn("object"), ["e"] = obj["value"]?.DeepClone(),
-                };
-                return;
-            }
-            var read = RawRead(slot, obj["ownerType"]!.DeepClone(), obj["recv"]?.DeepClone());
-            var checkedRead = new JsonObject {
-                ["k"] = "lateinitGet", ["name"] = name, ["value"] = read,
-                ["lateinitSourceName"] = Str(obj["lateinitSourceName"]) ?? name,
-            };
-            var logicalType = obj["sty"]?.DeepClone() ?? obj["ret"]?.DeepClone() ?? slot.ValueType.DeepClone();
-            obj.Clear();
-            obj["k"] = "cast";
-            obj["type"] = logicalType;
-            obj["e"] = checkedRead;
         }
-        else if (node is JsonArray array)
-            foreach (var child in array.ToArray()) if (child != null) Rewrite(child, identities, fields, refs);
+        foreach (var root in roots)
+        {
+            Collect(root, root.FileClass.OrDefault(), root.Fields.OrEmpty());
+            foreach (var type in root.Types.OrEmpty()) Collect((BirGraphValue)type, type.Name.OrDefault(), type.Fields.OrEmpty());
+        }
+        // Public defaults carry queries opaquely, so their authored target must exist even without a local query.
+        foreach (var storage in identities.Values) EnsureQueryMethod(storage);
+        BirGraphValue Rewrite(BirGraphValue node)
+        {
+            node.VisitChildSlots(slot => {
+                var current = slot.Value;
+                var replacement = Rewrite(current);
+                if (!ReferenceEquals(current, replacement)) slot.Replace(replacement);
+            });
+            if (node is BirFunctionDeclaration { Params.HasValue: true, Body.HasValue: true } method
+                && method.DeclarationId.OrDefault() is string declarationId && identities.TryGetValue(declarationId, out var declarationStorage))
+            {
+                method.Lateinit = true;
+                RoundtripMetadata.StampLateinitState(method, declarationStorage.Owner, declarationStorage.QueryMethod, declarationStorage.Static);
+            }
+            if (node is BirLateinitIsInitialized query)
+            {
+                var id = query.LateinitDeclarationId.OrDefault();
+                var target = identities.TryGetValue(id, out var local)
+                    ? new LateinitStateTarget(local.Owner, local.QueryMethod, local.Static) : refs.LateinitStateForDeclaration(id);
+                var owner = new TypeNode.Fqn(target.Owner, target.Static ? null : (query.OwnerType.OrDefault() as TypeNode.Fqn)?.Args);
+                var boolean = new TypeNode.Fqn("kotlin.Boolean");
+                return target.Static ? new BirCallStatic {
+                    OwnerType = owner, Method = target.Method, Args = Array.Empty<IBirExpression>(),
+                    Sig = Array.Empty<TypeNode>(), Ret = boolean, MemberVisibility = "private",
+                    MemberSignature = Array.Empty<TypeNode>(), MemberReturnType = boolean,
+                } : new BirCallInstance {
+                    OwnerType = owner, Method = target.Method, Args = Array.Empty<IBirExpression>(),
+                    Sig = Array.Empty<TypeNode>(), Ret = boolean, MemberVisibility = "private",
+                    MemberSignature = Array.Empty<TypeNode>(), MemberReturnType = boolean, Recv = query.Recv, Virtual = false,
+                };
+            }
+            var (ownerType, name, isStatic) = node switch {
+                BirLateinitGet read => (read.OwnerType.OrDefault(), read.Name.OrDefault(), read.Static.OrDefault()),
+                BirSetField write => (write.OwnerType.OrDefault(), write.Name.OrDefault(), false),
+                BirFieldSetExpression write => (write.OwnerType.OrDefault(), write.Name.OrDefault(), false),
+                BirStaticFieldSet write => (write.OwnerType.OrDefault(), write.Name.OrDefault(), true),
+                _ => ((TypeNode)null, null, false),
+            };
+            if (ownerType is not TypeNode.Fqn ownerName || name == null
+                || !fields.TryGetValue((ownerName.Name, name, isStatic), out var storage)) return node;
+            static OptionalField<IBirExpression> Box(OptionalField<IBirExpression> value) => OptionalField<IBirExpression>.Of(
+                new BirCast { Type = new TypeNode.Fqn("object"), E = value.HasValue ? value : OptionalField<IBirExpression>.Null });
+            switch (node)
+            {
+                case BirSetField write: write.Value = Box(write.Value); return node;
+                case BirFieldSetExpression write: write.Value = Box(write.Value); return node;
+                case BirStaticFieldSet write: write.Value = Box(write.Value); return node;
+                case BirLateinitGet read:
+                    return new BirCast {
+                        Type = BirGraphValue.CopyType(read.Sty.OrDefault() ?? storage.ValueType),
+                        E = new BirLateinitGet {
+                            Name = name, Value = OptionalField<IBirExpression>.Of(RawRead(storage, BirGraphValue.CopyType(ownerType), read.Recv)),
+                            LateinitSourceName = read.LateinitSourceName.OrDefault() ?? name,
+                        },
+                    };
+            }
+            return node;
+        }
+        foreach (var root in roots) Rewrite(root);
+        foreach (var storage in identities.Values) storage.Field.LateinitDeclarationId = default;
     }
 
-    static JsonObject RawRead(Storage slot, JsonNode owner, JsonNode receiver)
-    {
-        var read = new JsonObject {
-            ["k"] = slot.Static ? "staticField" : "field", ["ownerType"] = owner,
-            ["name"] = slot.Field["name"]!.DeepClone(),
-        };
-        if (!slot.Static) read["recv"] = receiver;
-        return read;
-    }
+    static IBirExpression RawRead(Storage storage, TypeNode owner, OptionalField<IBirExpression> receiver) => storage.Static
+        ? new BirStaticFieldGet { OwnerType = owner, Name = storage.Field.Name }
+        : new BirFieldGet { OwnerType = owner, Name = storage.Field.Name, Recv = receiver.HasValue ? receiver : OptionalField<IBirExpression>.Null };
 
-    static string EnsureQueryMethod(Storage slot)
+    static string EnsureQueryMethod(Storage storage)
     {
-        if (slot.QueryMethod != null) return slot.QueryMethod;
-        if (slot.Declaration["methods"] is not JsonArray methods) slot.Declaration["methods"] = methods = new JsonArray();
-        var names = methods.OfType<JsonObject>().Select(method => Str(method["name"])).ToHashSet(StringComparer.Ordinal);
+        if (storage.QueryMethod != null) return storage.QueryMethod;
+        var existing = storage.Declaration is BirFileDeclaration file ? file.Methods.OrEmpty() : ((IBirTypeDeclaration)storage.Declaration).Methods.OrEmpty();
+        var names = existing.Select(method => method.Name.OrDefault()).ToHashSet(StringComparer.Ordinal);
         var ordinal = 0;
-        while (!names.Add(slot.QueryMethod = "dotkt<lateinitInitialized>" + ordinal++)) { }
-        var arguments = (slot.Declaration["typeParams"] as JsonArray ?? new JsonArray())
-            .Select((_, index) => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
-        var read = RawRead(slot, TypeJson.Write(new TypeNode.Fqn(slot.Owner, arguments.Length == 0 ? null : arguments)),
-            new JsonObject { ["k"] = "this" });
-        methods.Add(new JsonObject {
-            ["name"] = slot.QueryMethod, ["static"] = slot.Static, ["vis"] = "private", ["generated"] = true,
-            ["override"] = false, ["virtual"] = false, ["abstract"] = false, ["objectOverride"] = false,
-            ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("kotlin.Boolean"),
-            ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = new JsonObject {
-                ["k"] = "binOp", ["op"] = "!=",
-                ["lhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Fqn("object"), ["e"] = read },
-                ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("object"), ["value"] = null },
-            }}),
-        });
-        return slot.QueryMethod;
+        while (!names.Add(storage.QueryMethod = "dotkt<lateinitInitialized>" + ordinal++)) { }
+        var parameters = storage.Declaration is IBirTypeDeclaration type ? type.TypeParams.OrEmpty() : Array.Empty<BirTypeParameter>();
+        var arguments = parameters.Select((_, index) => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
+        var read = RawRead(storage, new TypeNode.Fqn(storage.Owner, arguments.Length == 0 ? null : arguments), OptionalField<IBirExpression>.Of(new BirThis()));
+        var helper = new BirFunctionDeclaration {
+            Name = storage.QueryMethod, Static = storage.Static, Vis = "private", Generated = true,
+            Override = false, Virtual = false, Abstract = false, ObjectOverride = false,
+            Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.Boolean"),
+            Body = new IBirStatement[] { new BirReturn { Value = new BirBinaryOperation {
+                Op = "!=", Lhs = new BirCast { Type = new TypeNode.Fqn("object"), E = OptionalField<IBirExpression>.Of(read) },
+                Rhs = new BirConstant { Type = new TypeNode.Fqn("object"), Value = new BirLiteral.NullLiteral() },
+            } } },
+        };
+        var methods = existing.Append(helper).ToArray();
+        if (storage.Declaration is BirFileDeclaration root) root.Methods = methods;
+        else ((IBirTypeDeclaration)storage.Declaration).Methods = methods;
+        return storage.QueryMethod;
     }
-
-    static string Str(JsonNode node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 }
