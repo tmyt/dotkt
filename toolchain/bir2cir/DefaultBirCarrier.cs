@@ -38,6 +38,17 @@ static class DefaultBirCarrier
 
     internal static bool IsCarrier(JsonObject node) => TypeJson.OwnerName(node["attr"]) == AttributeName;
 
+    internal static IBirExpression Decode(BirAttribute attribute)
+    {
+        var arguments = attribute.Args.Value;
+        var codec = ((BirLiteral.TextLiteral)((BirConstant)arguments[1]).Value.Value).Value;
+        return ExecutableBirCodec.ReadExpression(codec, ((BirOpaqueBytes)arguments[2]).Bytes.Value);
+    }
+
+    internal static IBirExpression OfParameter(BirParameter parameter) => parameter.Attrs.OrEmpty()
+        .Where(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: AttributeName })
+        .Select(Decode).SingleOrDefault();
+
     internal static JsonNode Decode(JsonObject attribute) => ExecutableBirCodec.ReadExpressionDom(
         attribute["args"][1]["value"].GetValue<string>(),
         Convert.FromBase64String(attribute["args"][2]["bytes"].GetValue<string>()));
@@ -62,7 +73,12 @@ static class DefaultBirCarrier
         var source = new BirParameter { Name = "value", Type = new TypeNode.Fqn("kotlin.Int"),
             DefaultBir = new BirDefaultBody { Index = 2, Body = body } };
         var input = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration { Params = new[] { source } } } };
-        var frozen = FreezeSourceDefaults(input).Methods.Value[0].Params.Value[0].ToDom();
+        var frozenParameter = FreezeSourceDefaults(input).Methods.Value[0].Params.Value[0];
+        if (OfParameter(frozenParameter) is not BirValueBlock {
+                Result.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 42 } },
+                Stmts.Value: [BirSourcePoint { Span.Value.L.Value: 7 }] })
+            throw new InvalidOperationException("Typed default carrier decoding lost its expression or source facts");
+        var frozen = frozenParameter.ToDom();
         if (frozen["defaultBir"] != null || !JsonNode.DeepEquals(OfParameter(frozen), body.ToDom()) || !source.DefaultBir.HasValue)
             throw new InvalidOperationException("Default BIR source fact did not round-trip through the shared codec");
         var attribute = (JsonObject)frozen["attrs"][0];

@@ -201,7 +201,7 @@ sealed partial class TypedCirProjection
 
     internal CirTypeDeclaration ProjectCirTypeDeclaration(BirClassDefinition value)
     {
-        if (value.ClrEventForwarders.IsPresent || value.CompanionCaptureOwner.IsPresent || value.EnumRich.IsPresent || value.InheritedClassMethods.IsPresent || value.InheritedDefaultAccessors.IsPresent || value.InheritedDefaultMethods.IsPresent || value.KotlinCompanion.IsPresent || value.KotlinSupertypesPre.IsPresent || value.OuterTypeParamCount.IsPresent || value.OuterTypeParamOffset.IsPresent || value.RichEnum.IsPresent || value.SemanticOwner.IsPresent || value.StaticSemanticOwner.IsPresent)
+        if (value._syntheticFrameBound.IsPresent || value.ClrEventForwarders.IsPresent || value.CompanionCaptureOwner.IsPresent || value.EnumRich.IsPresent || value.InheritedClassMethods.IsPresent || value.InheritedDefaultAccessors.IsPresent || value.InheritedDefaultMethods.IsPresent || value.KotlinCompanion.IsPresent || value.KotlinSupertypesPre.IsPresent || value.OuterTypeParamCount.IsPresent || value.OuterTypeParamOffset.IsPresent || value.RichEnum.IsPresent || value.SemanticOwner.IsPresent || value.StaticSemanticOwner.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirClassDefinition");
         return new CirTypeDeclaration
         {

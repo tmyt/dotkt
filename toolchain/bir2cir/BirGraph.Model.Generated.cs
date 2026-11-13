@@ -29,6 +29,11 @@ internal sealed record EventPropertySourceFacts : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -71,6 +76,11 @@ internal sealed record CapturedGenericArgument : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -104,6 +114,11 @@ internal sealed record BirOpaqueBytes : BirGraphValue, IBirAttributeValue
         Bytes = Bytes.HasValue ? OptionalField<byte[]>.Of(Bytes.Value.ToArray()) : Bytes,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -142,6 +157,13 @@ internal sealed record BirAttributeLiteral : BirGraphValue, IBirAttributeValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -223,6 +245,19 @@ internal sealed record BirFileDeclaration : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Fields = Fields.HasValue ? OptionalField<BirFieldDeclaration[]>.Of(Fields.Value.Select(item0 => (BirFieldDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Fields,
+        Methods = Methods.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Methods.Value.Select(item0 => (BirFunctionDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Methods,
+        Properties = Properties.HasValue ? OptionalField<BirPropertyDeclaration[]>.Of(Properties.Value.Select(item0 => (BirPropertyDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Properties,
+        Types = Types.HasValue ? OptionalField<IBirTypeDeclaration[]>.Of(Types.Value.Select(item0 => (IBirTypeDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Types,
+        RefTypes = RefTypes.HasValue ? OptionalField<BirRefTypeDeclaration[]>.Of(RefTypes.Value.Select(item0 => (BirRefTypeDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : RefTypes,
+        AssemblyAttrs = AssemblyAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(AssemblyAttrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : AssemblyAttrs,
+        Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Attrs,
+        Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value)) : Pos,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -288,6 +323,13 @@ internal sealed record BirBinaryOperation : BirGraphNode, IBirExpression, IBirAt
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Lhs = Lhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Lhs.Value)) : Lhs,
+        Rhs = Rhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Rhs.Value)) : Rhs,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -344,6 +386,15 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -410,6 +461,15 @@ internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttribu
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        NullWitness = NullWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)NullWitness.Value)) : NullWitness,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -464,6 +524,14 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -517,6 +585,14 @@ internal sealed record BirSafeValueCast : BirGraphNode, IBirExpression, IBirAttr
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
+        CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)CtorRef.Value)) : CtorRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -560,6 +636,12 @@ internal sealed record BirConcat : BirGraphNode, IBirExpression, IBirAttributeVa
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Parts = Parts.HasValue ? OptionalField<IBirExpression[]>.Of(Parts.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Parts,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -598,6 +680,12 @@ internal sealed record BirRuntimeClass : BirGraphNode, IBirExpression, IBirAttri
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -646,6 +734,14 @@ internal sealed record BirNullableWrap : BirGraphNode, IBirExpression, IBirAttri
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
+        CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)CtorRef.Value)) : CtorRef,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -699,6 +795,14 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Array.Value)) : Array,
+        Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Index.Value)) : Index,
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -756,6 +860,15 @@ internal sealed record BirArraySet : BirGraphNode, IBirExpression, IBirAttribute
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Array.Value)) : Array,
+        Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Index.Value)) : Index,
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -801,6 +914,12 @@ internal sealed record BirArrayLength : BirGraphNode, IBirExpression, IBirAttrib
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Array.Value)) : Array,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -842,6 +961,13 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        Elems = Elems.HasValue ? OptionalField<IBirExpression[]>.Of(Elems.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Elems,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -886,6 +1012,13 @@ internal sealed record BirNewArraySized : BirGraphNode, IBirExpression, IBirAttr
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        Size = Size.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Size.Value)) : Size,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -944,6 +1077,16 @@ internal sealed record BirNewArrayInit : BirGraphNode, IBirExpression, IBirAttri
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(rewrite(FuncType.Value)) : FuncType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        Size = Size.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Size.Value)) : Size,
+        Init = Init.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Init.Value)) : Init,
+        InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)InvokeRef.Value)) : InvokeRef,
+        FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FuncType.Value)) : FuncType,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -990,6 +1133,12 @@ internal sealed record BirSpreadPart : BirGraphValue
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -1053,6 +1202,17 @@ internal sealed record BirSpreadConcat : BirGraphNode, IBirExpression, IBirAttri
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        Parts = Parts.HasValue ? OptionalField<BirSpreadPart[]>.Of(Parts.Value.Select(item0 => (BirSpreadPart)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Parts,
+        CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)CtorRef.Value)) : CtorRef,
+        AddRef = AddRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)AddRef.Value)) : AddRef,
+        AddRangeRef = AddRangeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)AddRangeRef.Value)) : AddRangeRef,
+        ToArrayRef = ToArrayRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)ToArrayRef.Value)) : ToArrayRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -1103,6 +1263,13 @@ internal sealed record BirDefaultValue : BirGraphNode, IBirExpression, IBirAttri
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -1149,6 +1316,14 @@ internal sealed record BirEnumName : BirGraphNode, IBirExpression, IBirAttribute
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -1204,6 +1379,15 @@ internal sealed record BirEnumOrdinal : BirGraphNode, IBirExpression, IBirAttrib
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        Values = Values.HasValue ? OptionalField<BirPhysicalEnumValue[]>.Of(Values.Value.Select(item0 => (BirPhysicalEnumValue)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Values,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -1254,6 +1438,14 @@ internal sealed record BirEnumParse : BirGraphNode, IBirExpression, IBirAttribut
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Arg = Arg.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Arg.Value)) : Arg,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -1310,6 +1502,14 @@ internal sealed record BirObjectMethod : BirGraphNode, IBirExpression, IBirAttri
     {
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Arg = Arg.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Arg.Value)) : Arg,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -1365,6 +1565,14 @@ internal sealed record BirCallBinding : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Expr.Value)) : Expr,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -1429,6 +1637,15 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Bindings = Bindings.HasValue ? OptionalField<BirCallBinding[]>.Of(Bindings.Value.Select(item0 => (BirCallBinding)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Bindings,
+        Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Expr.Value)) : Expr,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -1471,6 +1688,11 @@ internal sealed record BirDefaultArgument : BirGraphNode, IBirExpression, IBirAt
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -1508,6 +1730,12 @@ internal sealed record BirOverride : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(rewrite(Owner.Value)) : Owner,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Owner.Value)) : Owner,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -1651,6 +1879,36 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         DynRet = DynRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(DynRet.Value)) : DynRet,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Owner.Value)) : Owner,
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        ShapeTypes = ShapeTypes.HasValue ? OptionalField<TypeNode[]>.Of(ShapeTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ShapeTypes,
+        ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ArgTypes,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        AwaitResult = AwaitResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AwaitResult.Value)) : AwaitResult,
+        CalleeOwner = CalleeOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CalleeOwner.Value)) : CalleeOwner,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        DefaultOwnerType = DefaultOwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DefaultOwnerType.Value)) : DefaultOwnerType,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
+        MemberMethodTypeParams = MemberMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberMethodTypeParams,
+        MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : MemberSignature,
+        MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberReturnType.Value)) : MemberReturnType,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        FunctionCallSignature = FunctionCallSignature.HasValue ? OptionalField<TypeNode[]>.Of(FunctionCallSignature.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : FunctionCallSignature,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
+        _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
+        CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CalleeRet.Value)) : CalleeRet,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        DynRet = DynRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DynRet.Value)) : DynRet,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -1882,6 +2140,36 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        ShapeTypes = ShapeTypes.HasValue ? OptionalField<TypeNode[]>.Of(ShapeTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ShapeTypes,
+        ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ArgTypes,
+        DynRet = DynRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DynRet.Value)) : DynRet,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        AwaitResult = AwaitResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AwaitResult.Value)) : AwaitResult,
+        Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)child(BirGenericFrameRole.OverrideDeclaration, (BirGraphValue)item0)).ToArray()) : Overrides,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        DefaultOwnerType = DefaultOwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DefaultOwnerType.Value)) : DefaultOwnerType,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
+        MemberMethodTypeParams = MemberMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberMethodTypeParams,
+        MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : MemberSignature,
+        MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberReturnType.Value)) : MemberReturnType,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        FunctionCallSignature = FunctionCallSignature.HasValue ? OptionalField<TypeNode[]>.Of(FunctionCallSignature.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : FunctionCallSignature,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
+        _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
+        CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CalleeRet.Value)) : CalleeRet,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -2033,6 +2321,17 @@ internal sealed record BirCallLocal : BirGraphNode, IBirExpression, IBirAttribut
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -2134,6 +2433,23 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
+        MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberType.Value)) : MemberType,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -2245,6 +2561,19 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
         MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(rewrite(MemberType.Value)) : MemberType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
+        MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberType.Value)) : MemberType,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)FieldRef.Value)) : FieldRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -2353,6 +2682,22 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+        MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
+        MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberType.Value)) : MemberType,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -2452,6 +2797,17 @@ internal sealed record BirStaticFieldSet : BirGraphNode, IBirExpression, IBirAtt
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
         MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(rewrite(MemberType.Value)) : MemberType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
+        MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberType.Value)) : MemberType,
+        FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)FieldRef.Value)) : FieldRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -2546,6 +2902,20 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
         MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(rewrite(MemberType.Value)) : MemberType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
+        MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberType.Value)) : MemberType,
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+        Exception = Exception.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Exception.Value)) : Exception,
+        FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)FieldRef.Value)) : FieldRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -2613,6 +2983,13 @@ internal sealed record BirLateinitIsInitialized : BirGraphNode, IBirExpression, 
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -2674,6 +3051,11 @@ internal sealed record BirModifiers : BirGraphValue
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -2763,6 +3145,12 @@ internal sealed record BirDefaultBody : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Body = Body.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Body.Value)) : Body,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -2818,6 +3206,15 @@ internal sealed record BirConstructorAdapterPayload : BirGraphValue, IBirExecuta
     {
         Signature = Signature.HasValue ? OptionalField<TypeNode[]>.Of(Signature.Value.Select(item0 => rewrite(item0)).ToArray()) : Signature,
         TerminalSignature = TerminalSignature.HasValue ? OptionalField<TypeNode[]>.Of(TerminalSignature.Value.Select(item0 => rewrite(item0)).ToArray()) : TerminalSignature,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Signature = Signature.HasValue ? OptionalField<TypeNode[]>.Of(Signature.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : Signature,
+        Statements = Statements.HasValue ? OptionalField<IBirStatement[]>.Of(Statements.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Statements,
+        Arguments = Arguments.HasValue ? OptionalField<IBirExpression[]>.Of(Arguments.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Arguments,
+        TerminalSignature = TerminalSignature.HasValue ? OptionalField<TypeNode[]>.Of(TerminalSignature.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TerminalSignature,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -2902,6 +3299,17 @@ internal sealed record BirInlinePayload : BirGraphValue, IBirExecutablePayload
     {
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+        Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Params,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        Lifted = Lifted.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Lifted.Value.Select(item0 => (BirFunctionDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Lifted,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -2969,6 +3377,14 @@ internal sealed record BirAttributeNamedArgument : BirGraphValue
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Value = Value.HasValue ? OptionalField<IBirAttributeValue>.Of((IBirAttributeValue)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -3031,6 +3447,16 @@ internal sealed record BirAttribute : BirGraphValue
     {
         Attr = Attr.HasValue ? OptionalField<TypeNode>.Of(rewrite(Attr.Value)) : Attr,
         ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => rewrite(item0)).ToArray()) : ArgTypes,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Attr = Attr.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Attr.Value)) : Attr,
+        ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ArgTypes,
+        Args = Args.HasValue ? OptionalField<IBirAttributeValue[]>.Of(Args.Value.Select(item0 => (IBirAttributeValue)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        NamedArgs = NamedArgs.HasValue ? OptionalField<BirAttributeNamedArgument[]>.Of(NamedArgs.Value.Select(item0 => (BirAttributeNamedArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : NamedArgs,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -3126,6 +3552,24 @@ internal sealed record BirParameter : BirGraphValue
         GenericParameterSignatureBounds = GenericParameterSignatureBounds.HasValue ? OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => rewrite(item0)).ToArray()) : GenericParameterSignatureBounds,
         SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(rewrite(SuspendFnType.Value)) : SuspendFnType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)child(BirGenericFrameRole.Lexical, (BirGraphValue)Mods.Value)) : Mods,
+        Default = Default.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Default.Value)) : Default,
+        DefaultBir = DefaultBir.HasValue ? OptionalField<BirDefaultBody>.Of((BirDefaultBody)child(BirGenericFrameRole.Lexical, (BirGraphValue)DefaultBir.Value)) : DefaultBir,
+        SharedCellType = SharedCellType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SharedCellType.Value)) : SharedCellType,
+        Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Attrs,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        FunctionSignatureType = FunctionSignatureType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FunctionSignatureType.Value)) : FunctionSignatureType,
+        KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, KotlinType.Value)) : KotlinType,
+        NullableGeneric = NullableGeneric.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, NullableGeneric.Value)) : NullableGeneric,
+        NominalParameterSignatureIdentity = NominalParameterSignatureIdentity.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, NominalParameterSignatureIdentity.Value)) : NominalParameterSignatureIdentity,
+        GenericParameterSignatureBounds = GenericParameterSignatureBounds.HasValue ? OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : GenericParameterSignatureBounds,
+        SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SuspendFnType.Value)) : SuspendFnType,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -3200,6 +3644,13 @@ internal sealed record BirDefaultCarrier : BirGraphNode, IBirExpression, IBirAtt
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Expr.Value)) : Expr,
+        Lifted = Lifted.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Lifted.Value.Select(item0 => (BirFunctionDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Lifted,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -3241,6 +3692,12 @@ internal sealed record BirLocalFunction : BirGraphNode, IBirStatement
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Decl = Decl.HasValue ? OptionalField<BirFunctionDeclaration>.Of((BirFunctionDeclaration)child(BirGenericFrameRole.LocalDeclaration, (BirGraphValue)Decl.Value)) : Decl,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -3292,6 +3749,14 @@ internal sealed record BirInheritedImplementation : BirGraphValue
         Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(rewrite(Owner.Value)) : Owner,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Owner.Value)) : Owner,
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -3336,6 +3801,11 @@ internal sealed record BirDeclarationPosition : BirGraphValue
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -3530,6 +4000,34 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         SuspendRet = SuspendRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(SuspendRet.Value)) : SuspendRet,
         _syntheticTypeArgs = _syntheticTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(_syntheticTypeArgs.Value.Select(item0 => rewrite(item0)).ToArray()) : _syntheticTypeArgs,
         RetSuspendFnType = RetSuspendFnType.HasValue ? OptionalField<TypeNode>.Of(rewrite(RetSuspendFnType.Value)) : RetSuspendFnType,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Params,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+        Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)child(BirGenericFrameRole.Lexical, (BirGraphValue)Mods.Value)) : Mods,
+        SuspendRet = SuspendRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SuspendRet.Value)) : SuspendRet,
+        Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)child(BirGenericFrameRole.OverrideDeclaration, (BirGraphValue)item0)).ToArray()) : Overrides,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Attrs,
+        Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value)) : Pos,
+        InheritedImplementation = InheritedImplementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)child(BirGenericFrameRole.Lexical, (BirGraphValue)InheritedImplementation.Value)) : InheritedImplementation,
+        _syntheticTypeArgs = _syntheticTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(_syntheticTypeArgs.Value.Select(item0 => type(BirGenericFrameRole.SyntheticApplication, item0)).ToArray()) : _syntheticTypeArgs,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        RetKotlinType = RetKotlinType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, RetKotlinType.Value)) : RetKotlinType,
+        NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, NullableGenericRet.Value)) : NullableGenericRet,
+        NullableGenericSuspendRet = NullableGenericSuspendRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, NullableGenericSuspendRet.Value)) : NullableGenericSuspendRet,
+        KotlinPropertyAccessorCarrier = KotlinPropertyAccessorCarrier.HasValue ? OptionalField<EventPropertySourceFacts>.Of((EventPropertySourceFacts)child(BirGenericFrameRole.Lexical, (BirGraphValue)KotlinPropertyAccessorCarrier.Value)) : KotlinPropertyAccessorCarrier,
+        RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : RetAttrs,
+        ClrOverrideRef = ClrOverrideRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)ClrOverrideRef.Value)) : ClrOverrideRef,
+        ClrInterfaceImpls = ClrInterfaceImpls.HasValue ? OptionalField<BirMethodImpl[]>.Of(ClrInterfaceImpls.Value.Select(item0 => (BirMethodImpl)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : ClrInterfaceImpls,
+        ClrBaseImpls = ClrBaseImpls.HasValue ? OptionalField<BirMethodImpl[]>.Of(ClrBaseImpls.Value.Select(item0 => (BirMethodImpl)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : ClrBaseImpls,
+        Pinvoke = Pinvoke.HasValue ? OptionalField<BirPInvoke>.Of((BirPInvoke)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pinvoke.Value)) : Pinvoke,
+        RetSuspendFnType = RetSuspendFnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, RetSuspendFnType.Value)) : RetSuspendFnType,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -3756,6 +4254,21 @@ internal sealed record BirConstructor : BirGraphValue
     {
         DelegationSig = DelegationSig.HasValue ? OptionalField<TypeNode[]>.Of(DelegationSig.Value.Select(item0 => rewrite(item0)).ToArray()) : DelegationSig,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Params,
+        BaseArgs = BaseArgs.HasValue ? OptionalField<IBirExpression[]>.Of(BaseArgs.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : BaseArgs,
+        DelegationSig = DelegationSig.HasValue ? OptionalField<TypeNode[]>.Of(DelegationSig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : DelegationSig,
+        ThisArgs = ThisArgs.HasValue ? OptionalField<IBirExpression[]>.Of(ThisArgs.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : ThisArgs,
+        DelegationBindings = DelegationBindings.HasValue ? OptionalField<BirCallBinding[]>.Of(DelegationBindings.Value.Select(item0 => (BirCallBinding)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : DelegationBindings,
+        Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Attrs,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        BaseCtorRef = BaseCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)BaseCtorRef.Value)) : BaseCtorRef,
+        PreStmts = PreStmts.HasValue ? OptionalField<IBirStatement[]>.Of(PreStmts.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : PreStmts,
+        Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value)) : Pos,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -3869,6 +4382,20 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(rewrite(SuspendFnType.Value)) : SuspendFnType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Init = Init.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Init.Value)) : Init,
+        Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Attrs,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, KotlinType.Value)) : KotlinType,
+        NullableGeneric = NullableGeneric.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, NullableGeneric.Value)) : NullableGeneric,
+        SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SuspendFnType.Value)) : SuspendFnType,
+        Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value)) : Pos,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -3970,6 +4497,13 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -4065,6 +4599,25 @@ internal sealed record BirPropertyDeclaration : BirGraphValue
         SetRet = SetRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(SetRet.Value)) : SetRet,
         SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(rewrite(SuspendFnType.Value)) : SuspendFnType,
         Recv = Recv.HasValue ? OptionalField<TypeNode>.Of(rewrite(Recv.Value)) : Recv,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)child(BirGenericFrameRole.OverrideDeclaration, (BirGraphValue)item0)).ToArray()) : Overrides,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, KotlinType.Value)) : KotlinType,
+        NullableGeneric = NullableGeneric.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, NullableGeneric.Value)) : NullableGeneric,
+        GetSig = GetSig.HasValue ? OptionalField<TypeNode[]>.Of(GetSig.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : GetSig,
+        GetRet = GetRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, GetRet.Value)) : GetRet,
+        SetSig = SetSig.HasValue ? OptionalField<TypeNode[]>.Of(SetSig.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : SetSig,
+        SetRet = SetRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SetRet.Value)) : SetRet,
+        Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Attrs,
+        SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SuspendFnType.Value)) : SuspendFnType,
+        Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)child(BirGenericFrameRole.Lexical, (BirGraphValue)Mods.Value)) : Mods,
+        Recv = Recv.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Recv.Value)) : Recv,
+        Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value)) : Pos,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -4243,6 +4796,30 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(rewrite(Underlying.Value)) : Underlying,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)child(BirGenericFrameRole.Lexical, (BirGraphValue)Mods.Value)) : Mods,
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+        Base = Base.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Base.Value)) : Base,
+        Interfaces = Interfaces.HasValue ? OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : Interfaces,
+        Fields = Fields.HasValue ? OptionalField<BirFieldDeclaration[]>.Of(Fields.Value.Select(item0 => (BirFieldDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Fields,
+        Ctors = Ctors.HasValue ? OptionalField<BirConstructor[]>.Of(Ctors.Value.Select(item0 => (BirConstructor)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Ctors,
+        Methods = Methods.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Methods.Value.Select(item0 => (BirFunctionDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Methods,
+        Properties = Properties.HasValue ? OptionalField<BirPropertyDeclaration[]>.Of(Properties.Value.Select(item0 => (BirPropertyDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Properties,
+        Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Attrs,
+        KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, KotlinType.Value)) : KotlinType,
+        CapturedTypeParams = CapturedTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(CapturedTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : CapturedTypeParams,
+        Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value)) : Pos,
+        InterfaceSlotRefs = InterfaceSlotRefs.HasValue ? OptionalField<BirInterfaceSlotSet[]>.Of(InterfaceSlotRefs.Value.Select(item0 => (BirInterfaceSlotSet)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : InterfaceSlotRefs,
+        ClrEvents = ClrEvents.HasValue ? OptionalField<BirClrEventBacking[]>.Of(ClrEvents.Value.Select(item0 => (BirClrEventBacking)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : ClrEvents,
+        Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Underlying.Value)) : Underlying,
+        Entries = Entries.HasValue ? OptionalField<BirEnumEntryDeclaration[]>.Of(Entries.Value.Select(item0 => (BirEnumEntryDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Entries,
+        Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Params,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : RetAttrs,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -4342,6 +4919,12 @@ internal sealed record BirEnumEntryDeclaration : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Attrs,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -4385,6 +4968,12 @@ internal sealed record BirClrEnumDeclaration : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(rewrite(Underlying.Value)) : Underlying,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Underlying.Value)) : Underlying,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -4520,6 +5109,30 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(rewrite(Underlying.Value)) : Underlying,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        ClrEnum = ClrEnum.HasValue ? OptionalField<BirClrEnumDeclaration>.Of((BirClrEnumDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)ClrEnum.Value)) : ClrEnum,
+        Entries = Entries.HasValue ? OptionalField<BirEnumEntryDeclaration[]>.Of(Entries.Value.Select(item0 => (BirEnumEntryDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Entries,
+        Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Attrs,
+        Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value)) : Pos,
+        Base = Base.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Base.Value)) : Base,
+        Interfaces = Interfaces.HasValue ? OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : Interfaces,
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+        CapturedTypeParams = CapturedTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(CapturedTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : CapturedTypeParams,
+        Fields = Fields.HasValue ? OptionalField<BirFieldDeclaration[]>.Of(Fields.Value.Select(item0 => (BirFieldDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Fields,
+        Ctors = Ctors.HasValue ? OptionalField<BirConstructor[]>.Of(Ctors.Value.Select(item0 => (BirConstructor)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Ctors,
+        Methods = Methods.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Methods.Value.Select(item0 => (BirFunctionDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Methods,
+        Properties = Properties.HasValue ? OptionalField<BirPropertyDeclaration[]>.Of(Properties.Value.Select(item0 => (BirPropertyDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Properties,
+        Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)child(BirGenericFrameRole.Lexical, (BirGraphValue)Mods.Value)) : Mods,
+        InterfaceSlotRefs = InterfaceSlotRefs.HasValue ? OptionalField<BirInterfaceSlotSet[]>.Of(InterfaceSlotRefs.Value.Select(item0 => (BirInterfaceSlotSet)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : InterfaceSlotRefs,
+        ClrEvents = ClrEvents.HasValue ? OptionalField<BirClrEventBacking[]>.Of(ClrEvents.Value.Select(item0 => (BirClrEventBacking)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : ClrEvents,
+        Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Underlying.Value)) : Underlying,
+        Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Params,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : RetAttrs,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -4623,6 +5236,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
     public OptionalField<bool> EnumRich { get; set; }
     public OptionalField<BirRichEnumDeclaration> RichEnum { get; set; }
     public OptionalField<SourceTypeFacts> KotlinSupertypesPre { get; set; }
+    public OptionalField<bool> _syntheticFrameBound { get; set; }
     public OptionalField<bool> Final { get; set; }
     public OptionalField<bool> SpecialName { get; set; }
     public OptionalField<bool> BeforeFieldInit { get; set; }
@@ -4742,6 +5356,35 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(rewrite(Underlying.Value)) : Underlying,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Base = Base.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Base.Value)) : Base,
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+        Interfaces = Interfaces.HasValue ? OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : Interfaces,
+        Fields = Fields.HasValue ? OptionalField<BirFieldDeclaration[]>.Of(Fields.Value.Select(item0 => (BirFieldDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Fields,
+        Ctors = Ctors.HasValue ? OptionalField<BirConstructor[]>.Of(Ctors.Value.Select(item0 => (BirConstructor)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Ctors,
+        Methods = Methods.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Methods.Value.Select(item0 => (BirFunctionDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Methods,
+        Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)child(BirGenericFrameRole.Lexical, (BirGraphValue)Mods.Value)) : Mods,
+        Properties = Properties.HasValue ? OptionalField<BirPropertyDeclaration[]>.Of(Properties.Value.Select(item0 => (BirPropertyDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Properties,
+        Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Attrs,
+        Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value)) : Pos,
+        KotlinCompanion = KotlinCompanion.HasValue ? OptionalField<BirKotlinCompanion>.Of((BirKotlinCompanion)child(BirGenericFrameRole.Lexical, (BirGraphValue)KotlinCompanion.Value)) : KotlinCompanion,
+        InheritedDefaultAccessors = InheritedDefaultAccessors.HasValue ? OptionalField<BirInheritedDefaultAccessor[]>.Of(InheritedDefaultAccessors.Value.Select(item0 => (BirInheritedDefaultAccessor)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : InheritedDefaultAccessors,
+        InheritedDefaultMethods = InheritedDefaultMethods.HasValue ? OptionalField<BirInheritedDefaultMethod[]>.Of(InheritedDefaultMethods.Value.Select(item0 => (BirInheritedDefaultMethod)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : InheritedDefaultMethods,
+        InheritedClassMethods = InheritedClassMethods.HasValue ? OptionalField<BirInheritedClassMethod[]>.Of(InheritedClassMethods.Value.Select(item0 => (BirInheritedClassMethod)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : InheritedClassMethods,
+        ClrEvents = ClrEvents.HasValue ? OptionalField<BirClrEventBacking[]>.Of(ClrEvents.Value.Select(item0 => (BirClrEventBacking)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : ClrEvents,
+        ClrEventForwarders = ClrEventForwarders.HasValue ? OptionalField<BirClrEventForwarder[]>.Of(ClrEventForwarders.Value.Select(item0 => (BirClrEventForwarder)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : ClrEventForwarders,
+        RichEnum = RichEnum.HasValue ? OptionalField<BirRichEnumDeclaration>.Of((BirRichEnumDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)RichEnum.Value)) : RichEnum,
+        CapturedTypeParams = CapturedTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(CapturedTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : CapturedTypeParams,
+        InterfaceSlotRefs = InterfaceSlotRefs.HasValue ? OptionalField<BirInterfaceSlotSet[]>.Of(InterfaceSlotRefs.Value.Select(item0 => (BirInterfaceSlotSet)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : InterfaceSlotRefs,
+        Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Underlying.Value)) : Underlying,
+        Entries = Entries.HasValue ? OptionalField<BirEnumEntryDeclaration[]>.Of(Entries.Value.Select(item0 => (BirEnumEntryDeclaration)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Entries,
+        Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Params,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : RetAttrs,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -4774,6 +5417,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         WriteOptional(writer, "enumRich", EnumRich, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "richEnum", RichEnum, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "kotlinSupertypesPre", KotlinSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
+        WriteOptional(writer, "_syntheticFrameBound", _syntheticFrameBound, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "final", Final, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "specialName", SpecialName, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "beforeFieldInit", BeforeFieldInit, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -4819,6 +5463,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         if (EnumRich.IsPresent) result["enumRich"] = EnumRich.IsNull ? null : JsonValue.Create(EnumRich.Value);
         if (RichEnum.IsPresent) result["richEnum"] = RichEnum.IsNull ? null : ((BirGraphValue)RichEnum.Value).ToDom();
         if (KotlinSupertypesPre.IsPresent) result["kotlinSupertypesPre"] = KotlinSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(KotlinSupertypesPre.Value);
+        if (_syntheticFrameBound.IsPresent) result["_syntheticFrameBound"] = _syntheticFrameBound.IsNull ? null : JsonValue.Create(_syntheticFrameBound.Value);
         if (Final.IsPresent) result["final"] = Final.IsNull ? null : JsonValue.Create(Final.Value);
         if (SpecialName.IsPresent) result["specialName"] = SpecialName.IsNull ? null : JsonValue.Create(SpecialName.Value);
         if (BeforeFieldInit.IsPresent) result["beforeFieldInit"] = BeforeFieldInit.IsNull ? null : JsonValue.Create(BeforeFieldInit.Value);
@@ -4852,6 +5497,11 @@ internal sealed record BirKotlinCompanion : BirGraphValue
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -4889,6 +5539,11 @@ internal sealed record BirRichEnumEntry : BirGraphValue
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -4932,6 +5587,12 @@ internal sealed record BirRichEnumDeclaration : BirGraphValue
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Entries = Entries.HasValue ? OptionalField<BirRichEnumEntry[]>.Of(Entries.Value.Select(item0 => (BirRichEnumEntry)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Entries,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -4993,6 +5654,16 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
     {
         Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => rewrite(item0)).ToArray()) : Params,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : Params,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)child(BirGenericFrameRole.OverrideDeclaration, (BirGraphValue)item0)).ToArray()) : Overrides,
+        Implementation = Implementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)child(BirGenericFrameRole.Lexical, (BirGraphValue)Implementation.Value)) : Implementation,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -5059,6 +5730,16 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
     {
         Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => rewrite(item0)).ToArray()) : Params,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : Params,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)child(BirGenericFrameRole.OverrideDeclaration, (BirGraphValue)item0)).ToArray()) : Overrides,
+        Implementation = Implementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)child(BirGenericFrameRole.Lexical, (BirGraphValue)Implementation.Value)) : Implementation,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -5145,6 +5826,18 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
     {
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Params,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+        Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)child(BirGenericFrameRole.Lexical, (BirGraphValue)Mods.Value)) : Mods,
+        Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)child(BirGenericFrameRole.OverrideDeclaration, (BirGraphValue)item0)).ToArray()) : Overrides,
+        InheritedImplementation = InheritedImplementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)child(BirGenericFrameRole.Lexical, (BirGraphValue)InheritedImplementation.Value)) : InheritedImplementation,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -5215,6 +5908,14 @@ internal sealed record BirClrEventBacking : BirGraphValue
         ClassOverrideOwner = ClassOverrideOwner.HasValue ? OptionalField<TypeNode>.Of(rewrite(ClassOverrideOwner.Value)) : ClassOverrideOwner,
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(rewrite(DelegateType.Value)) : DelegateType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        HandlerType = HandlerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, HandlerType.Value)) : HandlerType,
+        ClassOverrideOwner = ClassOverrideOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, ClassOverrideOwner.Value)) : ClassOverrideOwner,
+        DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DelegateType.Value)) : DelegateType,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -5272,6 +5973,13 @@ internal sealed record BirClrEventForwarder : BirGraphValue
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -5310,6 +6018,11 @@ internal sealed record BirClrEventAccessor : BirGraphNode, IBirStatement
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -5363,6 +6076,15 @@ internal sealed record BirNewSam : BirGraphNode, IBirExpression, IBirAttributeVa
     {
         SamType = SamType.HasValue ? OptionalField<TypeNode>.Of(rewrite(SamType.Value)) : SamType,
         TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => rewrite(item0)).ToArray()) : TypeArgs,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        SamType = SamType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SamType.Value)) : SamType,
+        Captures = Captures.HasValue ? OptionalField<IBirExpression[]>.Of(Captures.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Captures,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        SynthClass = SynthClass.HasValue ? OptionalField<BirClassDefinition>.Of((BirClassDefinition)child(BirGenericFrameRole.SyntheticDeclaration, (BirGraphValue)SynthClass.Value)) : SynthClass,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -5418,6 +6140,15 @@ internal sealed record BirSamConversion : BirGraphNode, IBirExpression, IBirAttr
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(rewrite(FuncType.Value)) : FuncType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FuncType.Value)) : FuncType,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -5470,6 +6201,15 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, KotlinType.Value)) : KotlinType,
+        NullableGeneric = NullableGeneric.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, NullableGeneric.Value)) : NullableGeneric,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -5506,6 +6246,7 @@ internal sealed record BirClosureDefinition : BirGraphValue
     public OptionalField<BirTypeParameter[]> TypeParams { get; set; }
     public OptionalField<string> SemanticOwner { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
+    public OptionalField<bool> _syntheticFrameBound { get; set; }
     public OptionalField<int> OuterTypeParamCount { get; set; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; set; }
     public OptionalField<SourceTypeFacts> KotlinSupertypesPre { get; set; }
@@ -5558,6 +6299,17 @@ internal sealed record BirClosureDefinition : BirGraphValue
     {
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Fields = Fields.HasValue ? OptionalField<BirCaptureDescriptor[]>.Of(Fields.Value.Select(item0 => (BirCaptureDescriptor)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Fields,
+        Params = Params.HasValue ? OptionalField<BirLambdaParameter[]>.Of(Params.Value.Select(item0 => (BirLambdaParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Params,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+        RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -5569,6 +6321,7 @@ internal sealed record BirClosureDefinition : BirGraphValue
         WriteOptional(writer, "typeParams", TypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "semanticOwner", SemanticOwner, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "_syntheticFrameBound", _syntheticFrameBound, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "outerTypeParamCount", OuterTypeParamCount, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         WriteOptional(writer, "kotlinSupertypesPre", KotlinSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
@@ -5585,6 +6338,7 @@ internal sealed record BirClosureDefinition : BirGraphValue
         if (TypeParams.IsPresent) result["typeParams"] = TypeParams.IsNull ? null : new JsonArray(TypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (SemanticOwner.IsPresent) result["semanticOwner"] = SemanticOwner.IsNull ? null : JsonValue.Create(SemanticOwner.Value);
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
+        if (_syntheticFrameBound.IsPresent) result["_syntheticFrameBound"] = _syntheticFrameBound.IsNull ? null : JsonValue.Create(_syntheticFrameBound.Value);
         if (OuterTypeParamCount.IsPresent) result["outerTypeParamCount"] = OuterTypeParamCount.IsNull ? null : JsonValue.Create(OuterTypeParamCount.Value);
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         if (KotlinSupertypesPre.IsPresent) result["kotlinSupertypesPre"] = KotlinSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(KotlinSupertypesPre.Value);
@@ -5640,6 +6394,19 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
         TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => rewrite(item0)).ToArray()) : TypeArgs,
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(rewrite(DotktDelegateSlot.Value)) : DotktDelegateSlot,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        ClosureType = ClosureType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, ClosureType.Value)) : ClosureType,
+        Captures = Captures.HasValue ? OptionalField<IBirExpression[]>.Of(Captures.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Captures,
+        FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FuncType.Value)) : FuncType,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        SynthClass = SynthClass.HasValue ? OptionalField<BirClosureDefinition>.Of((BirClosureDefinition)child(BirGenericFrameRole.SyntheticDeclaration, (BirGraphValue)SynthClass.Value)) : SynthClass,
+        DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DotktDelegateSlot.Value)) : DotktDelegateSlot,
+        DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)DelegateCtorRef.Value)) : DelegateCtorRef,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -5726,6 +6493,21 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(rewrite(DotktDelegateSlot.Value)) : DotktDelegateSlot,
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FuncType.Value)) : FuncType,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        CalleeOwner = CalleeOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CalleeOwner.Value)) : CalleeOwner,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DotktDelegateSlot.Value)) : DotktDelegateSlot,
+        DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)DelegateCtorRef.Value)) : DelegateCtorRef,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CalleeRet.Value)) : CalleeRet,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -5848,6 +6630,21 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
         _suspendDeclarationTypeArgs = _suspendDeclarationTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(_suspendDeclarationTypeArgs.Value.Select(item0 => rewrite(item0)).ToArray()) : _suspendDeclarationTypeArgs,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Captures = Captures.HasValue ? OptionalField<BirCaptureDescriptor[]>.Of(Captures.Value.Select(item0 => (BirCaptureDescriptor)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Captures,
+        CapValues = CapValues.HasValue ? OptionalField<IBirExpression?[]>.Of(CapValues.Value.Select(item0 => item0 is null ? null : (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : CapValues,
+        Params = Params.HasValue ? OptionalField<BirLambdaParameter[]>.Of(Params.Value.Select(item0 => (BirLambdaParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Params,
+        SuspendRet = SuspendRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SuspendRet.Value)) : SuspendRet,
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FuncType.Value)) : FuncType,
+        _suspendDeclarationTypeArgs = _suspendDeclarationTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(_suspendDeclarationTypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : _suspendDeclarationTypeArgs,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -5934,6 +6731,17 @@ internal sealed record BirEventGet : BirGraphNode, IBirExpression, IBirAttribute
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)child(BirGenericFrameRole.OverrideDeclaration, (BirGraphValue)item0)).ToArray()) : Overrides,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -6005,6 +6813,15 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -6061,6 +6878,15 @@ internal sealed record BirLambdaParameter : BirGraphValue
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         NominalParameterSignatureIdentity = NominalParameterSignatureIdentity.HasValue ? OptionalField<TypeNode>.Of(rewrite(NominalParameterSignatureIdentity.Value)) : NominalParameterSignatureIdentity,
         GenericParameterSignatureBounds = GenericParameterSignatureBounds.HasValue ? OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => rewrite(item0)).ToArray()) : GenericParameterSignatureBounds,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        NominalParameterSignatureIdentity = NominalParameterSignatureIdentity.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, NominalParameterSignatureIdentity.Value)) : NominalParameterSignatureIdentity,
+        GenericParameterSignatureBounds = GenericParameterSignatureBounds.HasValue ? OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : GenericParameterSignatureBounds,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -6120,6 +6946,16 @@ internal sealed record BirInlineCapture : BirGraphValue
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         SharedCellType = SharedCellType.HasValue ? OptionalField<TypeNode>.Of(rewrite(SharedCellType.Value)) : SharedCellType,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+        SharedCellType = SharedCellType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SharedCellType.Value)) : SharedCellType,
+        SharedCellTypeParams = SharedCellTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(SharedCellTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.SharedCaptureDeclaration, (BirGraphValue)item0)).ToArray()) : SharedCellTypeParams,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -6201,6 +7037,15 @@ internal sealed record BirInlineLambda : BirGraphNode, IBirExpression, IBirAttri
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Params = Params.HasValue ? OptionalField<BirLambdaParameter[]>.Of(Params.Value.Select(item0 => (BirLambdaParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Params,
+        Captures = Captures.HasValue ? OptionalField<BirInlineCapture[]>.Of(Captures.Value.Select(item0 => (BirInlineCapture)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Captures,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        Result = Result.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Result.Value)) : Result,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -6248,6 +7093,13 @@ internal sealed record BirStackAllocation : BirGraphNode, IBirExpression, IBirAt
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Count = Count.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Count.Value)) : Count,
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -6302,6 +7154,15 @@ internal sealed record BirStackGet : BirGraphNode, IBirExpression, IBirAttribute
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Ptr.Value)) : Ptr,
+        Len = Len.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Len.Value)) : Len,
+        Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Index.Value)) : Index,
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -6366,6 +7227,16 @@ internal sealed record BirStackSet : BirGraphNode, IBirExpression, IBirAttribute
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Ptr.Value)) : Ptr,
+        Len = Len.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Len.Value)) : Len,
+        Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Index.Value)) : Index,
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -6421,6 +7292,14 @@ internal sealed record BirStackAsSpan : BirGraphNode, IBirExpression, IBirAttrib
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Ptr.Value)) : Ptr,
+        Len = Len.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Len.Value)) : Len,
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -6473,6 +7352,15 @@ internal sealed record BirInlineReceivers : BirGraphValue
     {
         DispatchTypeArgs = DispatchTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(DispatchTypeArgs.Value.Select(item0 => rewrite(item0)).ToArray()) : DispatchTypeArgs,
         DispatchOwnerTypeArgs = DispatchOwnerTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(DispatchOwnerTypeArgs.Value.Select(item0 => rewrite(item0)).ToArray()) : DispatchOwnerTypeArgs,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Extension = Extension.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Extension.Value)) : Extension,
+        Dispatch = Dispatch.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Dispatch.Value)) : Dispatch,
+        DispatchTypeArgs = DispatchTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(DispatchTypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : DispatchTypeArgs,
+        DispatchOwnerTypeArgs = DispatchOwnerTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(DispatchOwnerTypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : DispatchOwnerTypeArgs,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -6547,6 +7435,20 @@ internal sealed record BirCallInline : BirGraphNode, IBirExpression, IBirAttribu
         TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => rewrite(item0)).ToArray()) : TypeArgs,
         RetType = RetType.HasValue ? OptionalField<TypeNode>.Of(rewrite(RetType.Value)) : RetType,
         ParamSig = ParamSig.HasValue ? OptionalField<TypeNode[]>.Of(ParamSig.Value.Select(item0 => rewrite(item0)).ToArray()) : ParamSig,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Callee = Callee.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Callee.Value)) : Callee,
+        Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Owner.Value)) : Owner,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        Recvs = Recvs.HasValue ? OptionalField<BirInlineReceivers>.Of((BirInlineReceivers)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recvs.Value)) : Recvs,
+        Args = Args.HasValue ? OptionalField<IBirExpression?[]>.Of(Args.Value.Select(item0 => item0 is null ? null : (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        RetType = RetType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, RetType.Value)) : RetType,
+        ParamSig = ParamSig.HasValue ? OptionalField<TypeNode[]>.Of(ParamSig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ParamSig,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        PreparedDefaults = PreparedDefaults.HasValue ? OptionalField<IBirExpression?[]>.Of(PreparedDefaults.Value.Select(item0 => item0 is null ? null : (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : PreparedDefaults,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -6678,6 +7580,29 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ArgTypes,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FuncType.Value)) : FuncType,
+        CalleeOwner = CalleeOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CalleeOwner.Value)) : CalleeOwner,
+        CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CompanionReceiver.Value)) : CompanionReceiver,
+        MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
+        MemberMethodTypeParams = MemberMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberMethodTypeParams,
+        MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : MemberSignature,
+        MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberReturnType.Value)) : MemberReturnType,
+        DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DotktDelegateSlot.Value)) : DotktDelegateSlot,
+        DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)DelegateCtorRef.Value)) : DelegateCtorRef,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CalleeRet.Value)) : CalleeRet,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)InvokeRef.Value)) : InvokeRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -6765,6 +7690,12 @@ internal sealed record BirByRefOf : BirGraphNode, IBirExpression, IBirAttributeV
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Inner = Inner.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Inner.Value)) : Inner,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -6808,6 +7739,13 @@ internal sealed record BirByRefLoad : BirGraphNode, IBirExpression, IBirAttribut
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Ptr.Value)) : Ptr,
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -6864,6 +7802,14 @@ internal sealed record BirByRefStore : BirGraphNode, IBirExpression, IBirAttribu
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Ptr.Value)) : Ptr,
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -6911,6 +7857,12 @@ internal sealed record BirReturnExpression : BirGraphNode, IBirExpression, IBirA
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -6944,6 +7896,11 @@ internal sealed record BirUnsupportedExpression : BirGraphNode, IBirExpression, 
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -6981,6 +7938,12 @@ internal sealed record BirPropertyFunction : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Iface = Iface.HasValue ? OptionalField<TypeNode>.Of(rewrite(Iface.Value)) : Iface,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Iface = Iface.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Iface.Value)) : Iface,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -7020,6 +7983,13 @@ internal sealed record BirConstant : BirGraphNode, IBirExpression, IBirAttribute
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -7069,6 +8039,13 @@ internal sealed record BirObjectEquals : BirGraphNode, IBirExpression, IBirAttri
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Lhs = Lhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Lhs.Value)) : Lhs,
+        Rhs = Rhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Rhs.Value)) : Rhs,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -7110,6 +8087,12 @@ internal sealed record BirExpressionStatement : BirGraphNode, IBirStatement
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Expr.Value)) : Expr,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -7148,6 +8131,12 @@ internal sealed record BirThrowExpression : BirGraphNode, IBirExpression, IBirAt
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -7188,6 +8177,12 @@ internal sealed record BirUnaryOperation : BirGraphNode, IBirExpression, IBirAtt
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -7247,6 +8242,16 @@ internal sealed record BirConditional : BirGraphNode, IBirExpression, IBirAttrib
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Cond.Value)) : Cond,
+        Then = Then.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Then.Value)) : Then,
+        Else = Else.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Else.Value)) : Else,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -7304,6 +8309,14 @@ internal sealed record BirNullableHasValue : BirGraphNode, IBirExpression, IBirA
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
+        HasValueRef = HasValueRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)HasValueRef.Value)) : HasValueRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -7356,6 +8369,14 @@ internal sealed record BirNullableValue : BirGraphNode, IBirExpression, IBirAttr
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
+        ValueRef = ValueRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)ValueRef.Value)) : ValueRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -7405,6 +8426,13 @@ internal sealed record BirEnumValue : BirGraphNode, IBirExpression, IBirAttribut
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -7461,6 +8489,14 @@ internal sealed record BirEnumValues : BirGraphNode, IBirExpression, IBirAttribu
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        Values = Values.HasValue ? OptionalField<BirPhysicalEnumValue[]>.Of(Values.Value.Select(item0 => (BirPhysicalEnumValue)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Values,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -7506,6 +8542,13 @@ internal sealed record BirCompanionValue : BirGraphNode, IBirExpression, IBirAtt
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
         CompanionType = CompanionType.HasValue ? OptionalField<TypeNode>.Of(rewrite(CompanionType.Value)) : CompanionType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        CompanionType = CompanionType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CompanionType.Value)) : CompanionType,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -7549,6 +8592,13 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -7594,6 +8644,13 @@ internal sealed record BirNullableNull : BirGraphNode, IBirExpression, IBirAttri
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)CtorRef.Value)) : CtorRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -7631,6 +8688,11 @@ internal sealed record BirDefaultParameter : BirGraphNode, IBirExpression, IBirA
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -7664,6 +8726,11 @@ internal sealed record BirDefaultReceiver : BirGraphNode, IBirExpression, IBirAt
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -7705,6 +8772,12 @@ internal sealed record BirBindingReference : BirGraphNode, IBirExpression, IBirA
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -7748,6 +8821,13 @@ internal sealed record BirLocalFunctionReference : BirGraphNode, IBirExpression,
     {
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(rewrite(FuncType.Value)) : FuncType,
         TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => rewrite(item0)).ToArray()) : TypeArgs,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FuncType.Value)) : FuncType,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -7812,6 +8892,16 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Stmts = Stmts.HasValue ? OptionalField<IBirStatement[]>.Of(Stmts.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Stmts,
+        Result = Result.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Result.Value)) : Result,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -7902,6 +8992,21 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => rewrite(item0)).ToArray()) : MemberSignature,
         MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(rewrite(MemberReturnType.Value)) : MemberReturnType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : ArgTypes,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        PropertyFunction = PropertyFunction.HasValue ? OptionalField<BirPropertyFunction>.Of((BirPropertyFunction)child(BirGenericFrameRole.Lexical, (BirGraphValue)PropertyFunction.Value)) : PropertyFunction,
+        MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
+        MemberMethodTypeParams = MemberMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberMethodTypeParams,
+        MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : MemberSignature,
+        MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberReturnType.Value)) : MemberReturnType,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -7969,6 +9074,12 @@ internal sealed record BirThrow : BirGraphNode, IBirStatement
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8007,6 +9118,12 @@ internal sealed record BirIf : BirGraphNode, IBirStatement
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Branches = Branches.HasValue ? OptionalField<BirBranch[]>.Of(Branches.Value.Select(item0 => (BirBranch)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Branches,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -8047,6 +9164,12 @@ internal sealed record BirReturn : BirGraphNode, IBirStatement
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8086,6 +9209,12 @@ internal sealed record BirSetLocal : BirGraphNode, IBirStatement
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -8171,6 +9300,21 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+        MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
+        MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberType.Value)) : MemberType,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8250,6 +9394,12 @@ internal sealed record BirBlock : BirGraphNode, IBirStatement
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8291,6 +9441,12 @@ internal sealed record BirBranchIf : BirGraphNode, IBirStatement
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Cond.Value)) : Cond,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -8343,6 +9499,13 @@ internal sealed record BirCatch : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         ExcType = ExcType.HasValue ? OptionalField<TypeNode>.Of(rewrite(ExcType.Value)) : ExcType,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        ExcType = ExcType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, ExcType.Value)) : ExcType,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -8407,6 +9570,16 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        Catches = Catches.HasValue ? OptionalField<BirCatch[]>.Of(Catches.Value.Select(item0 => (BirCatch)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Catches,
+        Finally = Finally.HasValue ? OptionalField<IBirStatement[]>.Of(Finally.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Finally,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8469,6 +9642,14 @@ internal sealed record BirForArray : BirGraphNode, IBirStatement
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Array.Value)) : Array,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -8543,6 +9724,16 @@ internal sealed record BirForIn : BirGraphNode, IBirStatement
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
         SrcType = SrcType.HasValue ? OptionalField<TypeNode>.Of(rewrite(SrcType.Value)) : SrcType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        Src = Src.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Src.Value)) : Src,
+        SrcType = SrcType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SrcType.Value)) : SrcType,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        Fallback = Fallback.HasValue ? OptionalField<BirBlock>.Of((BirBlock)child(BirGenericFrameRole.Lexical, (BirGraphValue)Fallback.Value)) : Fallback,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8605,6 +9796,14 @@ internal sealed record BirVariable : BirGraphNode, IBirStatement
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Init = Init.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Init.Value)) : Init,
+        SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8660,6 +9859,12 @@ internal sealed record BirLocal : BirGraphNode, IBirExpression, IBirAttributeVal
     {
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8704,6 +9909,12 @@ internal sealed record BirThis : BirGraphNode, IBirExpression, IBirAttributeValu
     {
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8745,6 +9956,12 @@ internal sealed record BirSourcePoint : BirGraphNode, IBirStatement
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Span = Span.HasValue ? OptionalField<BirSourceSpan>.Of((BirSourceSpan)child(BirGenericFrameRole.Lexical, (BirGraphValue)Span.Value)) : Span,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8780,6 +9997,11 @@ internal sealed record BirBreak : BirGraphNode, IBirStatement
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -8823,6 +10045,11 @@ internal sealed record BirContinue : BirGraphNode, IBirStatement
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8863,6 +10090,11 @@ internal sealed record BirGoto : BirGraphNode, IBirStatement
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -8898,6 +10130,11 @@ internal sealed record BirLabel : BirGraphNode, IBirStatement
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -8936,6 +10173,11 @@ internal sealed record BirSourceSpan : BirGraphValue
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -8994,6 +10236,13 @@ internal sealed record BirWhile : BirGraphNode, IBirStatement
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Cond.Value)) : Cond,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -9060,6 +10309,14 @@ internal sealed record BirFor : BirGraphNode, IBirStatement
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        From = From.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)From.Value)) : From,
+        To = To.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)To.Value)) : To,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -9133,6 +10390,14 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
     {
         AccessOwner = AccessOwner.HasValue ? OptionalField<TypeNode>.Of(rewrite(AccessOwner.Value)) : AccessOwner,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Range = Range.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Range.Value)) : Range,
+        AccessOwner = AccessOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessOwner.Value)) : AccessOwner,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -9190,6 +10455,13 @@ internal sealed record BirConvert : BirGraphNode, IBirExpression, IBirAttributeV
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         To = To.HasValue ? OptionalField<TypeNode>.Of(rewrite(To.Value)) : To,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        To = To.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, To.Value)) : To,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -9249,6 +10521,16 @@ internal sealed record BirNewList : BirGraphNode, IBirExpression, IBirAttributeV
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        Elems = Elems.HasValue ? OptionalField<IBirExpression[]>.Of(Elems.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Elems,
+        CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)CtorRef.Value)) : CtorRef,
+        AddRef = AddRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)AddRef.Value)) : AddRef,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -9311,6 +10593,16 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => rewrite(item0)).ToArray()) : ArgTypes,
         MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => rewrite(item0)).ToArray()) : MemberSignature,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ArgTypes,
+        MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : MemberSignature,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -9426,6 +10718,29 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(rewrite(_capturedGenericResult.Value)) : _capturedGenericResult,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Iface = Iface.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Iface.Value)) : Iface,
+        RecvType = RecvType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, RecvType.Value)) : RecvType,
+        CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CalleeRet.Value)) : CalleeRet,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ArgTypes,
+        FunctionCallSignature = FunctionCallSignature.HasValue ? OptionalField<TypeNode[]>.Of(FunctionCallSignature.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : FunctionCallSignature,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
+        _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0)).ToArray()) : _resolvedMethodTypeParams,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -9554,6 +10869,22 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
+        _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0)).ToArray()) : _resolvedMethodTypeParams,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -9667,6 +10998,23 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
+        _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0)).ToArray()) : _resolvedMethodTypeParams,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -9742,6 +11090,12 @@ internal sealed record BirClrStaticField : BirGraphNode, IBirExpression, IBirAtt
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)FieldRef.Value)) : FieldRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -9801,6 +11155,16 @@ internal sealed record BirEventAccessorBody : BirGraphNode, IBirStatement
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(rewrite(DelegateType.Value)) : DelegateType,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DelegateType.Value)) : DelegateType,
+        InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)InvokeRef.Value)) : InvokeRef,
+        CombineRef = CombineRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)CombineRef.Value)) : CombineRef,
+        RemoveRef = RemoveRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)RemoveRef.Value)) : RemoveRef,
+        CompareExchangeRef = CompareExchangeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)CompareExchangeRef.Value)) : CompareExchangeRef,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -9889,6 +11253,19 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(rewrite(DelegateType.Value)) : DelegateType,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Handler = Handler.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Handler.Value)) : Handler,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DelegateType.Value)) : DelegateType,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -9995,6 +11372,19 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(rewrite(DelegateType.Value)) : DelegateType,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Handler = Handler.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Handler.Value)) : Handler,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DelegateType.Value)) : DelegateType,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -10129,6 +11519,27 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(rewrite(_capturedGenericResult.Value)) : _capturedGenericResult,
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ArgTypes,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
+        _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0)).ToArray()) : _resolvedMethodTypeParams,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -10275,6 +11686,27 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ArgTypes,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
+        _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
+        ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
+        ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0)).ToArray()) : _resolvedMethodTypeParams,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -10400,6 +11832,21 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(rewrite(_capturedGenericResult.Value)) : _capturedGenericResult,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
+        _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -10535,6 +11982,21 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(rewrite(_capturedGenericResult.Value)) : _capturedGenericResult,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
+        _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
+        _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _capturedGenericResult.Value)) : _capturedGenericResult,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -10633,6 +12095,15 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
     {
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(rewrite(FuncType.Value)) : FuncType,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FuncType.Value)) : FuncType,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)InvokeRef.Value)) : InvokeRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -10684,6 +12155,14 @@ internal sealed record BirEnumBits : BirGraphNode, IBirExpression, IBirAttribute
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
         Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(rewrite(Underlying.Value)) : Underlying,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Underlying.Value)) : Underlying,
+        E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -10773,6 +12252,19 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
+        Src = Src.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Src.Value)) : Src,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+        EnumerableGetRef = EnumerableGetRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)EnumerableGetRef.Value)) : EnumerableGetRef,
+        EnumerableGetErasedRef = EnumerableGetErasedRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)EnumerableGetErasedRef.Value)) : EnumerableGetErasedRef,
+        CurrentRef = CurrentRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)CurrentRef.Value)) : CurrentRef,
+        CurrentErasedRef = CurrentErasedRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)CurrentErasedRef.Value)) : CurrentErasedRef,
+        MoveNextRef = MoveNextRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MoveNextRef.Value)) : MoveNextRef,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -10871,6 +12363,22 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(rewrite(DotktDelegateSlot.Value)) : DotktDelegateSlot,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FuncType.Value)) : FuncType,
+        ClrType = ClrType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, ClrType.Value)) : ClrType,
+        Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)DelegateCtorRef.Value)) : DelegateCtorRef,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DotktDelegateSlot.Value)) : DotktDelegateSlot,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -10971,6 +12479,21 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite(item0)).ToArray()) : CalleeParams,
         DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(rewrite(DotktDelegateSlot.Value)) : DotktDelegateSlot,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, FuncType.Value)) : FuncType,
+        ClrType = ClrType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, ClrType.Value)) : ClrType,
+        TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : TypeArgs,
+        DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)DelegateCtorRef.Value)) : DelegateCtorRef,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+        AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, AccessorOwner.Value)) : AccessorOwner,
+        Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
+        CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : CalleeParams,
+        DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DotktDelegateSlot.Value)) : DotktDelegateSlot,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -11044,6 +12567,13 @@ internal sealed record BirRepeat : BirGraphNode, IBirStatement, IBirExpression, 
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Count = Count.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Count.Value)) : Count,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -11104,6 +12634,14 @@ internal sealed record BirPInvoke : BirGraphValue
     {
         CallingConventionType = CallingConventionType.HasValue ? OptionalField<TypeNode>.Of(rewrite(CallingConventionType.Value)) : CallingConventionType,
         CharSetType = CharSetType.HasValue ? OptionalField<TypeNode>.Of(rewrite(CharSetType.Value)) : CharSetType,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        CallingConventionType = CallingConventionType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CallingConventionType.Value)) : CallingConventionType,
+        CharSetType = CharSetType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, CharSetType.Value)) : CharSetType,
+        AttributeCtorRef = AttributeCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)AttributeCtorRef.Value)) : AttributeCtorRef,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -11182,6 +12720,16 @@ internal sealed record BirMethodImpl : BirGraphValue
         Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => rewrite(item0)).ToArray()) : Params,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Owner.Value)) : Owner,
+        Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : Params,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
+        MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)MemberRef.Value)) : MemberRef,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -11236,6 +12784,13 @@ internal sealed record BirInterfaceSlotSet : BirGraphValue
     {
         Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(rewrite(Owner.Value)) : Owner,
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Owner.Value)) : Owner,
+        Slots = Slots.HasValue ? OptionalField<BirMemberReference[]>.Of(Slots.Value.Select(item0 => (BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Slots,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -11287,6 +12842,13 @@ internal sealed record BirBranch : BirGraphValue
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Cond.Value)) : Cond,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Body,
+    };
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -11323,6 +12885,11 @@ internal sealed record BirPhysicalEnumValue : BirGraphValue
     {
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
     };
     public override void WriteJson(Utf8JsonWriter writer)
@@ -11370,6 +12937,13 @@ internal sealed record BirTypeParameter : BirGraphValue
     {
         Constraints = Constraints.HasValue ? OptionalField<TypeNode[]>.Of(Constraints.Value.Select(item0 => rewrite(item0)).ToArray()) : Constraints,
         ErasedInnerConstraints = ErasedInnerConstraints.HasValue ? OptionalField<TypeNode[]>.Of(ErasedInnerConstraints.Value.Select(item0 => rewrite(item0)).ToArray()) : ErasedInnerConstraints,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Constraints = Constraints.HasValue ? OptionalField<TypeNode[]>.Of(Constraints.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : Constraints,
+        ErasedInnerConstraints = ErasedInnerConstraints.HasValue ? OptionalField<TypeNode[]>.Of(ErasedInnerConstraints.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : ErasedInnerConstraints,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -11437,6 +13011,14 @@ internal sealed record BirMemberReference : BirGraphValue
         DeclaringType = DeclaringType.HasValue ? OptionalField<TypeNode>.Of(rewrite(DeclaringType.Value)) : DeclaringType,
         ParameterTypes = ParameterTypes.HasValue ? OptionalField<TypeNode[]>.Of(ParameterTypes.Value.Select(item0 => rewrite(item0)).ToArray()) : ParameterTypes,
         ReturnType = ReturnType.HasValue ? OptionalField<TypeNode>.Of(rewrite(ReturnType.Value)) : ReturnType,
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        DeclaringType = DeclaringType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, DeclaringType.Value)) : DeclaringType,
+        ParameterTypes = ParameterTypes.HasValue ? OptionalField<TypeNode[]>.Of(ParameterTypes.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : ParameterTypes,
+        ReturnType = ReturnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, ReturnType.Value)) : ReturnType,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {

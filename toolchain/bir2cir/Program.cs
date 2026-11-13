@@ -57,6 +57,7 @@ static class Bir2Cir
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
                 SourceGraphRewrite.SelfTest();
+                TypedExecutableFrames.SelfTest();
                 FaithfulHintRecognition.TypedSelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
@@ -251,6 +252,7 @@ sealed class Pipeline
             }
         });
         CollectionHelperBinding.Apply(captured, refs, sourceIndex.CollisionAliases, collectionInputs);
+        var nullableWitnessDemand = NullableWitnessDemand.Collect(captured, refs);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -266,7 +268,7 @@ sealed class Pipeline
                 inputsWithSources[index].Suspend));
         }
 
-        return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex);
+        return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand);
     }
 
     // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
@@ -312,7 +314,7 @@ sealed class Pipeline
         // Kotlin `reified` is a declaration fact; the hidden nullable-instantiation Boolean is a distinct CLR ABI
         // demand. Derive the latter from nullable-sensitive operations and exact call/lift correspondences as one
         // module-wide fixed point before per-file materialization starts.
-        var nullableWitnessDemand = NullableWitnessDemand.Collect(birRoots, refs);
+        var nullableWitnessDemand = module.NullableWitnesses;
         RoundtripMetadata.FreezeSuspendResults(birRoots);
         InheritedMemberOwnerBinding.ProjectOwners(birRoots, refs);
         // A generic query implementation accepts its declared erased bound, not the closed CLR E.
@@ -1918,7 +1920,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
-    ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex);
+    ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex, NullableWitnessDemand NullableWitnesses);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions

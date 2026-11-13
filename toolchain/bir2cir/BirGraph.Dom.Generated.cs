@@ -2013,6 +2013,7 @@ internal static class BirGraphDom
                 case "enumRich": break;
                 case "richEnum": break;
                 case "kotlinSupertypesPre": break;
+                case "_syntheticFrameBound": break;
                 case "final": break;
                 case "specialName": break;
                 case "beforeFieldInit": break;
@@ -2057,6 +2058,7 @@ internal static class BirGraphDom
             EnumRich = Field<bool>(fields, "enumRich", value => value!.GetValue<bool>()),
             RichEnum = Field<BirRichEnumDeclaration>(fields, "richEnum", value => ReadBirRichEnumDeclaration(value!)),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
+            _syntheticFrameBound = Field<bool>(fields, "_syntheticFrameBound", value => value!.GetValue<bool>()),
             Final = Field<bool>(fields, "final", value => value!.GetValue<bool>()),
             SpecialName = Field<bool>(fields, "specialName", value => value!.GetValue<bool>()),
             BeforeFieldInit = Field<bool>(fields, "beforeFieldInit", value => value!.GetValue<bool>()),
@@ -2380,6 +2382,7 @@ internal static class BirGraphDom
                 case "typeParams": break;
                 case "semanticOwner": break;
                 case "retSuspendFnTypePre": break;
+                case "_syntheticFrameBound": break;
                 case "outerTypeParamCount": break;
                 case "methodTypeParameterBoundsPre": break;
                 case "kotlinSupertypesPre": break;
@@ -2395,6 +2398,7 @@ internal static class BirGraphDom
             TypeParams = Field<BirTypeParameter[]>(fields, "typeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             SemanticOwner = Field<string>(fields, "semanticOwner", value => value!.GetValue<string>()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            _syntheticFrameBound = Field<bool>(fields, "_syntheticFrameBound", value => value!.GetValue<bool>()),
             OuterTypeParamCount = Field<int>(fields, "outerTypeParamCount", value => value!.GetValue<int>()),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),

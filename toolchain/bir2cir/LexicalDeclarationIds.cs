@@ -5,13 +5,14 @@ using System.Text.Json.Nodes;
 
 // A BIR subtree clone must rename lexical declaration ids and every edge to them as one operation. Ownership remains
 // encoded by tree nesting; the id is only the reference relation for recursive/forward/cross-expression uses.
-static class LexicalDeclarationIds
+static partial class LexicalDeclarationIds
 {
     static int _cloneCounter;
+    static int FreshCloneIdentity() => System.Threading.Interlocked.Increment(ref _cloneCounter);
 
     public static void Freshen(params JsonNode[] roots)
     {
-        var cloneId = System.Threading.Interlocked.Increment(ref _cloneCounter);
+        var cloneId = FreshCloneIdentity();
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
         var generated = new Dictionary<string, string>(StringComparer.Ordinal);
 
