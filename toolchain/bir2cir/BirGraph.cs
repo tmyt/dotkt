@@ -33,6 +33,9 @@ internal abstract record BirGraphValue
     }
     public abstract void VisitChildren(Action<BirGraphValue> visit);
     public abstract void VisitChildSlots(Action<BirGraphSlot> visit);
+    // Own scalar name/var fields and structured type leaves only. The caller
+    // controls graph descent; encoded source facts and carrier bytes stay opaque.
+    public abstract void VisitNameFields(Action<string> visit);
     // Source recognition extends declaration parameters and walks each schema
     // statement vector in its own preceding-declaration environment.
     public virtual void VisitSourceParameters(Action<string, TypeNode> visit) { }

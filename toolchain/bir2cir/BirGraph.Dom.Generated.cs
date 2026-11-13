@@ -197,6 +197,9 @@ internal static class BirGraphDom
                 case "_physicalDeclarationSignature": break;
                 case "_exactBridgeCast": break;
                 case "functionValueRestoration": break;
+                case "kotlinTypeWitness": break;
+                case "kotlinRuntimeTypeWitness": break;
+                case "kotlinClassifierPredicate": break;
                 case "sty": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirCast at {source.GetPath()}");
             }
@@ -209,6 +212,9 @@ internal static class BirGraphDom
             _physicalDeclarationSignature = Field<bool>(fields, "_physicalDeclarationSignature", value => value!.GetValue<bool>()),
             _exactBridgeCast = Field<bool>(fields, "_exactBridgeCast", value => value!.GetValue<bool>()),
             FunctionValueRestoration = Field<bool>(fields, "functionValueRestoration", value => value!.GetValue<bool>()),
+            KotlinTypeWitness = Field<IBirExpression>(fields, "kotlinTypeWitness", value => ReadBirExpression(value!)),
+            KotlinRuntimeTypeWitness = Field<IBirExpression>(fields, "kotlinRuntimeTypeWitness", value => ReadBirExpression(value!)),
+            KotlinClassifierPredicate = Field<IBirExpression>(fields, "kotlinClassifierPredicate", value => ReadBirExpression(value!)),
             Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
@@ -223,6 +229,9 @@ internal static class BirGraphDom
                 case "type": break;
                 case "e": break;
                 case "suspendFnTypePre": break;
+                case "kotlinTypeWitness": break;
+                case "kotlinRuntimeTypeWitness": break;
+                case "kotlinClassifierPredicate": break;
                 case "nullMatches": break;
                 case "nullWitness": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirIsInstance at {source.GetPath()}");
@@ -232,6 +241,9 @@ internal static class BirGraphDom
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             E = Field<IBirExpression>(fields, "e", value => ReadBirExpression(value!)),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            KotlinTypeWitness = Field<IBirExpression>(fields, "kotlinTypeWitness", value => ReadBirExpression(value!)),
+            KotlinRuntimeTypeWitness = Field<IBirExpression>(fields, "kotlinRuntimeTypeWitness", value => ReadBirExpression(value!)),
+            KotlinClassifierPredicate = Field<IBirExpression>(fields, "kotlinClassifierPredicate", value => ReadBirExpression(value!)),
             NullMatches = Field<bool>(fields, "nullMatches", value => value!.GetValue<bool>()),
             NullWitness = Field<IBirExpression>(fields, "nullWitness", value => ReadBirExpression(value!)),
         };
@@ -248,6 +260,9 @@ internal static class BirGraphDom
                 case "reifiedTypeOperand": break;
                 case "e": break;
                 case "suspendFnTypePre": break;
+                case "kotlinTypeWitness": break;
+                case "kotlinRuntimeTypeWitness": break;
+                case "kotlinClassifierPredicate": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirInstanceOrNull at {source.GetPath()}");
             }
         return new BirInstanceOrNull
@@ -256,6 +271,9 @@ internal static class BirGraphDom
             ReifiedTypeOperand = Field<bool>(fields, "reifiedTypeOperand", value => value!.GetValue<bool>()),
             E = Field<IBirExpression>(fields, "e", value => ReadBirExpression(value!)),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            KotlinTypeWitness = Field<IBirExpression>(fields, "kotlinTypeWitness", value => ReadBirExpression(value!)),
+            KotlinRuntimeTypeWitness = Field<IBirExpression>(fields, "kotlinRuntimeTypeWitness", value => ReadBirExpression(value!)),
+            KotlinClassifierPredicate = Field<IBirExpression>(fields, "kotlinClassifierPredicate", value => ReadBirExpression(value!)),
         };
     }
 
@@ -725,7 +743,9 @@ internal static class BirGraphDom
                 case "memberReturnType": break;
                 case "retSuspendFnTypePre": break;
                 case "dotktKotlinSigId": break;
+                case "projectedHelperReceiver": break;
                 case "nullableWitnessCount": break;
+                case "nullablePendingWitnesses": break;
                 case "dotktDeclarationIdentityBound": break;
                 case "propertyName": break;
                 case "propertyAccessor": break;
@@ -774,7 +794,9 @@ internal static class BirGraphDom
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             DotktKotlinSigId = Field<int>(fields, "dotktKotlinSigId", value => value!.GetValue<int>()),
+            ProjectedHelperReceiver = Field<int>(fields, "projectedHelperReceiver", value => value!.GetValue<int>()),
             NullableWitnessCount = Field<int>(fields, "nullableWitnessCount", value => value!.GetValue<int>()),
+            NullablePendingWitnesses = Field<IBirExpression[]>(fields, "nullablePendingWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             DotktDeclarationIdentityBound = Field<bool>(fields, "dotktDeclarationIdentityBound", value => value!.GetValue<bool>()),
             PropertyName = Field<string>(fields, "propertyName", value => value!.GetValue<string>()),
             PropertyAccessor = Field<string>(fields, "propertyAccessor", value => value!.GetValue<string>()),
@@ -832,6 +854,7 @@ internal static class BirGraphDom
                 case "memberReturnType": break;
                 case "retSuspendFnTypePre": break;
                 case "nullableWitnessCount": break;
+                case "nullablePendingWitnesses": break;
                 case "dotktDeclarationIdentityBound": break;
                 case "propertyName": break;
                 case "propertyAccessor": break;
@@ -886,6 +909,7 @@ internal static class BirGraphDom
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableWitnessCount = Field<int>(fields, "nullableWitnessCount", value => value!.GetValue<int>()),
+            NullablePendingWitnesses = Field<IBirExpression[]>(fields, "nullablePendingWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             DotktDeclarationIdentityBound = Field<bool>(fields, "dotktDeclarationIdentityBound", value => value!.GetValue<bool>()),
             PropertyName = Field<string>(fields, "propertyName", value => value!.GetValue<string>()),
             PropertyAccessor = Field<string>(fields, "propertyAccessor", value => value!.GetValue<string>()),
@@ -958,6 +982,7 @@ internal static class BirGraphDom
                 case "retSuspendFnTypePre": break;
                 case "_nativeLocation": break;
                 case "_nativeFieldAddress": break;
+                case "type": break;
                 case "memberRef": break;
                 case "volatile": break;
                 case "member": break;
@@ -965,7 +990,6 @@ internal static class BirGraphDom
                 case "dispatch": break;
                 case "localAccessor": break;
                 case "accessorOwner": break;
-                case "type": break;
                 case "sig": break;
                 case "calleeParams": break;
                 case "resolvedMemberParams": break;
@@ -989,6 +1013,7 @@ internal static class BirGraphDom
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             _nativeLocation = Field<bool>(fields, "_nativeLocation", value => value!.GetValue<bool>()),
             _nativeFieldAddress = Field<bool>(fields, "_nativeFieldAddress", value => value!.GetValue<bool>()),
+            Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
             Volatile = Field<bool>(fields, "volatile", value => value!.GetValue<bool>()),
             Member = Field<string>(fields, "member", value => value!.GetValue<string>()),
@@ -996,7 +1021,6 @@ internal static class BirGraphDom
             Dispatch = Field<string>(fields, "dispatch", value => value!.GetValue<string>()),
             LocalAccessor = Field<bool>(fields, "localAccessor", value => value!.GetValue<bool>()),
             AccessorOwner = Field<TypeNode>(fields, "accessorOwner", value => TypeNode.Read(value) ?? throw new FormatException()),
-            Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             Sig = Field<TypeNode[]>(fields, "sig", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             CalleeParams = Field<TypeNode[]>(fields, "calleeParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
@@ -1568,6 +1592,8 @@ internal static class BirGraphDom
                 case "_syntheticTypeArgs": break;
                 case "lexicalOwnerTypeParamCount": break;
                 case "retSuspendFnTypePre": break;
+                case "semanticReifiedIndices": break;
+                case "nullableWitnessIndices": break;
                 case "suspendResult": break;
                 case "suspendTaskResult": break;
                 case "dotktValueReturn": break;
@@ -1641,6 +1667,8 @@ internal static class BirGraphDom
             _syntheticTypeArgs = Field<TypeNode[]>(fields, "_syntheticTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             LexicalOwnerTypeParamCount = Field<int>(fields, "lexicalOwnerTypeParamCount", value => value!.GetValue<int>()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            SemanticReifiedIndices = Field<int[]>(fields, "semanticReifiedIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
+            NullableWitnessIndices = Field<int[]>(fields, "nullableWitnessIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             SuspendResult = Field<TypeNode>(fields, "suspendResult", value => TypeNode.Parse(value!.GetValue<string>())),
             SuspendTaskResult = Field<TypeNode>(fields, "suspendTaskResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             DotktValueReturn = Field<bool>(fields, "dotktValueReturn", value => value!.GetValue<bool>()),
@@ -3358,12 +3386,14 @@ internal static class BirGraphDom
                 case "k": if (field.Value?.GetValue<string>() != "classRef") throw new FormatException(); break;
                 case "type": break;
                 case "suspendFnTypePre": break;
+                case "kotlinClassifierRef": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirClassReference at {source.GetPath()}");
             }
         return new BirClassReference
         {
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            KotlinClassifierRef = Field<bool>(fields, "kotlinClassifierRef", value => value!.GetValue<bool>()),
         };
     }
 
@@ -3501,6 +3531,7 @@ internal static class BirGraphDom
                 case "memberReturnType": break;
                 case "suspendFnTypePre": break;
                 case "nullableWitnessCount": break;
+                case "nullablePendingWitnesses": break;
                 case "localCtorIndex": break;
                 case "memberRef": break;
                 case "resolvedMemberParams": break;
@@ -3522,6 +3553,7 @@ internal static class BirGraphDom
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableWitnessCount = Field<int>(fields, "nullableWitnessCount", value => value!.GetValue<int>()),
+            NullablePendingWitnesses = Field<IBirExpression[]>(fields, "nullablePendingWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             LocalCtorIndex = Field<int>(fields, "localCtorIndex", value => value!.GetValue<int>()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
@@ -4178,6 +4210,7 @@ internal static class BirGraphDom
                 case "declarationId": break;
                 case "virtual": break;
                 case "argTypes": break;
+                case "nullablePendingWitnesses": break;
                 case "dotktDeclarationIdentityBound": break;
                 case "functionCallSignature": break;
                 case "nullableWitnessCount": break;
@@ -4207,6 +4240,7 @@ internal static class BirGraphDom
             DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
             Virtual = Field<bool>(fields, "virtual", value => value!.GetValue<bool>()),
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            NullablePendingWitnesses = Field<IBirExpression[]>(fields, "nullablePendingWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             DotktDeclarationIdentityBound = Field<bool>(fields, "dotktDeclarationIdentityBound", value => value!.GetValue<bool>()),
             FunctionCallSignature = Field<TypeNode[]>(fields, "functionCallSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             NullableWitnessCount = Field<int>(fields, "nullableWitnessCount", value => value!.GetValue<int>()),

@@ -325,14 +325,14 @@ def outputs(root, definitions):
             return f"{value}.Select({item} => {expr}).ToArray()"
         return f"{callback}({prefix}{value})"
 
-    def visit(field, value, depth=0, callback="visit", prefix="", cast="BirGraphValue"):
+    def visit(field, value, depth=0, callback="visit", prefix="", cast="BirGraphValue", suffix=""):
         field = base(field)
         if field.get("type") == "array":
             item = f"item{depth}"
-            body = visit(field["items"], item, depth + 1, callback, prefix, cast)
+            body = visit(field["items"], item, depth + 1, callback, prefix, cast, suffix)
             if is_nullable(field["items"]): body = f"if ({item} is not null) {{ {body} }}"
             return f"foreach (var {item} in {value}) {{ {body} }}"
-        return f"{callback}({prefix}({cast}){value});"
+        return f"{callback}({prefix}({cast}){value}{suffix});"
 
     def equal(field, left, right, depth=0):
         field = base(field)
@@ -431,6 +431,15 @@ def outputs(root, definitions):
             if field in shape["properties"]:
                 prop = member(field)
                 model += [f"    public override OptionalField<TypeNode> {api} {{ get => {prop}; set => {prop} = value; }}"]
+        model += ["    public override void VisitNameFields(Action<string> visit)", "    {"]
+        for field, value in fields:
+            prop = member(field)
+            if field in {"name", "var"} and cs(value) == "string":
+                model += [f"        if ({prop}.HasValue) visit({prop}.Value);"]
+            elif is_type_slot(value):
+                body = visit(value, prop + ".Value", callback="BirGraphNameFields.VisitType", cast="TypeNode", suffix=", visit")
+                model += [f"        if ({prop}.HasValue) {{ {body} }}"]
+        model += ["    }"]
         model += ["    public override void VisitChildren(Action<BirGraphValue> visit)", "    {"]
         for field, value in fields:
             if is_child(value):
@@ -656,5 +665,60 @@ def outputs(root, definitions):
               "    internal static IBirTypeDeclaration ReadBirTypeDeclaration(ref Utf8JsonReader reader) => Discriminator(reader, \"kind\") switch", "    {",
               *[f'        {json.dumps(kind)} => Read{name}(ref reader),' for kind, name in declaration_cases(definitions)],
               "        _ => throw new FormatException(),", "    };", "}", ""]
+    # Type nodes are structural leaves of the graph visitor, but their actual
+    # object-valued wire fields still participate in a name reservation scan.
+    # Generate this traversal from the same maintained type/classifier shapes;
+    # frozen JSON strings never arrive here through is_type_slot above.
+    model += ["internal static class BirGraphNameFields", "{"]
+
+    def type_names(field, expression, wire_name=None, depth=0):
+        field = base(field)
+        if field.get("x-dotkt-kotlin-json-type") or field.get("x-dotkt-csharp-codec"):
+            return []
+        if field.get("type") == "array":
+            item = f"item{depth}"
+            body = type_names(field["items"], item, depth=depth + 1)
+            return [f"foreach (var {item} in {expression}) {{ {' '.join(body)} }}"] if body else []
+        key = refkey(field)
+        if key == "type": return [f"VisitType({expression}, visit);"]
+        if key:
+            if "properties" in definitions.get(key, {}):
+                return [f"Visit{definitions[key]['x-dotkt-model']['name']}({expression}, visit);"]
+            return []
+        return [f"visit({expression});"] if wire_name in {"name", "var"} and field.get("type") == "string" else []
+
+    def type_name_fields(shape, variable):
+        result = []
+        for field, value in shape["properties"].items():
+            prop = value.get("x-dotkt-csharp-name", member(field))
+            expression = f"{variable}.{prop}"
+            body = type_names(value, expression, field)
+            if body:
+                if field not in shape.get("required", []) or is_nullable(value):
+                    result += [f"if ({expression} is not null) {{ {' '.join(body)} }}"]
+                else:
+                    result += body
+        return result
+
+    model += ["    internal static void VisitType(TypeNode value, Action<string> visit)", "    {",
+              "        switch (value)", "        {"]
+    type_shapes = [definitions[refkey(entry)] for entry in definitions["type"]["oneOf"]]
+    nested_shapes = {}
+    for shape in type_shapes:
+        for field in shape["properties"].values():
+            key = refkey(field)
+            if key and key != "type" and "properties" in definitions.get(key, {}):
+                nested_shapes[key] = definitions[key]
+        name = shape["x-dotkt-model"]["name"]
+        model += [f"            case TypeNode.{name} node:"]
+        model += ["                " + line for line in type_name_fields(shape, "node")]
+        model += ["                break;"]
+    model += ["        }", "    }"]
+    for shape in nested_shapes.values():
+        name = shape["x-dotkt-model"]["name"]
+        model += [f"    static void Visit{name}(TypeNode.{name} value, Action<string> visit)", "    {"]
+        model += ["        " + line for line in type_name_fields(shape, "value")]
+        model += ["    }"]
+    model += ["}", ""]
     return {root / "toolchain/bir2cir/BirGraph.Model.Generated.cs": "\n".join(model),
             root / "toolchain/bir2cir/BirGraph.Json.Generated.cs": "\n".join(codec)}

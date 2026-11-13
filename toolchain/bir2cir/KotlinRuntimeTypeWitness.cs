@@ -2,6 +2,8 @@ using System;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // A generic value's storage type is not its Kotlin runtime classifier: Int? can be stored as Object.
 // Keep the classifier beside the existing nullability/nominal flags in one declaration-owned ABI value.
@@ -19,29 +21,27 @@ static class KotlinRuntimeTypeWitness
     });
     internal static JsonNode TypeJsonNode() => TypeJson.Write(Type);
 
-    internal static JsonObject Flags(JsonNode witness) => Field(witness, "Item1", new TypeNode.Fqn("System.Int32"));
-    internal static JsonObject Classifier(JsonNode witness) => Field(witness, "Item2", new TypeNode.Fqn("System.Type"));
-    internal static JsonObject Predicate(JsonNode witness) => Field(witness, "Item3", PredicateType);
-    static JsonObject Field(JsonNode witness, string name, TypeNode result) => new() {
-        ["k"] = "field", ["ownerType"] = TypeJsonNode(), ["recv"] = witness.DeepClone(),
-        ["name"] = name, ["type"] = TypeJson.Write(result), ["sty"] = TypeJson.Write(result),
+    internal static BirFieldGet FlagsValue(IBirExpression witness) => FieldValue(witness, "Item1", new TypeNode.Fqn("System.Int32"));
+    internal static BirFieldGet ClassifierValue(IBirExpression witness) => FieldValue(witness, "Item2", new TypeNode.Fqn("System.Type"));
+    internal static BirFieldGet PredicateValue(IBirExpression witness) => FieldValue(witness, "Item3", PredicateType);
+    static BirFieldGet FieldValue(IBirExpression witness, string name, TypeNode result) => new() {
+        OwnerType = Type, Recv = OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)witness).DeepClone()),
+        Name = name, Type = result, Sty = BirGraphValue.CopyType(result),
     };
 
-    internal static JsonNode Create(JsonNode flags, JsonNode classifier, JsonNode predicate) => new JsonObject {
-        ["k"] = "new", ["type"] = TypeJsonNode(),
-        ["args"] = new JsonArray(flags, classifier, predicate),
-        ["argTypes"] = new JsonArray(TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.Type"), TypeJson.Write(PredicateType)),
+    internal static BirNew CreateValue(IBirExpression flags, IBirExpression classifier, IBirExpression predicate) => new() {
+        Type = Type, Args = new[] { flags, classifier, predicate },
+        ArgTypes = new TypeNode[] { new TypeNode.Fqn("System.Int32"), new TypeNode.Fqn("System.Type"), PredicateType },
     };
 
-    internal static JsonNode Known(TypeNode type) => Create(KotlinTypeWitness.Constant(KotlinTypeWitness.Flags(type)),
-        new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(ValueRepresentations?.ClassifierType(type) ?? type),
-            [ClassifierKey] = true },
-        ValueRepresentations?.Predicate(type) ?? new JsonObject {
-            ["k"] = "const", ["type"] = TypeJson.Write(PredicateType), ["value"] = null,
-        });
+    internal static IBirExpression KnownValue(TypeNode type, ValueRepresentationLowering values) => CreateValue(
+        KotlinTypeWitness.ConstantValue(KotlinTypeWitness.Flags(type)),
+        new BirClassReference { Type = BirGraphValue.CopyType(values?.ClassifierType(type) ?? type), KotlinClassifierRef = true },
+        values?.PredicateValue(type) ?? new BirConstant { Type = PredicateType, Value = new BirLiteral.NullLiteral() });
 
-    internal static JsonNode Nullable(JsonNode witness) => Create(
-        KotlinTypeWitness.Binary("|", Flags(witness), KotlinTypeWitness.Constant(1)), Classifier(witness), Predicate(witness));
+    internal static IBirExpression NullableValue(IBirExpression witness) => CreateValue(
+        KotlinTypeWitness.BinaryValue("|", FlagsValue(witness), KotlinTypeWitness.ConstantValue(1)),
+        ClassifierValue(witness), PredicateValue(witness));
 
     internal static void LowerOperations(JsonNode root, ReferenceMetadataIndex refs)
     {

@@ -2803,82 +2803,32 @@ static partial class MemberCallSubstitution
     internal static JsonNode Rule3HelperCall(JsonObject node, ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn, string member, JsonArray args, bool instance,
         IReadOnlySet<string> selectedLocalIds = null)
     {
-        var localIds = selectedLocalIds ?? _localDeclarationIds;
-        var ownerName = ownerFqn.Name;
         var hargs = new JsonArray();
         if (instance && node["recv"] != null) hargs.Add(node["recv"].DeepClone());
         foreach (var a in args) hargs.Add(a?.DeepClone());
-
-        // The alias class's instantiation args, padded to its declared arity (a bare/partially-erased owner — a raw or
-        // star-projected receiver — degrades to `object`, same as ClrOwnerType). Empty for a non-generic alias.
-        var classArgs = (ownerFqn.Args ?? Array.Empty<TypeNode>()).Where(a => a != null).ToList();
-        var arity = refs.OwnerArity(ownerName);
-        for (var i = classArgs.Count; i < arity; i++) classArgs.Add(ObjType);
-
+        var knownReturn = TypeJson.Read(RetToken(node));
+        var projectedReturn = knownReturn;
+        if (instance && ForeignStarProjectionBinding.IsForeignStarType(ownerFqn, refs))
+            projectedReturn ??= NodeType.Of(node);
+        var plan = PlanRule3Helper(refs, ownerFqn, member, Str(node[DeclarationIdentityBinding.Key]),
+            instance, node["recv"] != null, args.Count,
+            (node["sig"] as JsonArray)?.Select(TypeJson.Read).ToArray(),
+            (node["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray(), knownReturn, projectedReturn,
+            selectedLocalIds ?? _localDeclarationIds, _representations);
         var call = new JsonObject
         {
             ["k"] = "callStatic",
-            ["owner"] = TypeJson.Fqn(ReferenceMetadataIndex.HelperTypeName(ownerName)),
-            ["method"] = member,
+            ["owner"] = TypeJson.Write(plan.Owner),
+            ["method"] = plan.Method,
             ["args"] = hargs,
         };
-        var sourceIdentity = Str(node[DeclarationIdentityBinding.Key]);
-        if (sourceIdentity != null && localIds?.Contains(sourceIdentity) == true)
-            call[DeclarationIdentityBinding.Key] = AliasHelperHoist.DeclarationIdentity(sourceIdentity);
-        // The helper is instantiated with the alias class's args FIRST, then the method's own typeArgs (structured).
-        var typeArgs = new JsonArray();
-        foreach (var ca in classArgs) typeArgs.Add(TypeJson.Write(ca));
-        if (node["typeArgs"] is JsonArray ta) foreach (var t in ta) typeArgs.Add(t?.DeepClone());
-        if (typeArgs.Count > 0) call["typeArgs"] = typeArgs;
-        // Carry the HOISTED DECLARATION signature, not a constructed call-site projection. AliasHelperHoist moves the
-        // alias class's type params ahead of the member's own params onto one static helper method, so class-scoped !i
-        // becomes method-scoped !!i and the member's existing !!i is offset by the class arity. The receiver slot is
-        // likewise the open helper declaration (`OrderedDictionary<!!0,!!1>`), independent of this call's concrete
-        // typeArgs. This keeps CIR as the exact physical descriptor ilemit links.
-        var sigParts = new JsonArray();
-        if (instance && node["recv"] != null)
-        {
-            var frame = refs.NullableTypeFrames.TryGetValue(ownerName, out var recordedFrame)
-                ? recordedFrame : new NullableRepresentationFrame(arity, Array.Empty<int>());
-            sigParts.Add(TypeJson.Write(RemapHoistedTypeVars(
-                AliasHelperHoist.ReceiverType(ownerName, frame, _representations), arity)));
-        }
-        if (node["sig"] is JsonArray origSig)
-            foreach (var p in origSig)
-                sigParts.Add(TypeJson.Read(p) is TypeNode pt
-                    ? TypeJson.Write(RemapHoistedTypeVars(pt, arity))
-                    : p?.DeepClone());
-        // `sig` may be LONGER than args (omitted defaulted params, filled downstream) — the bridge matches
-        // positionally from the left; only a SHORTER sig would misalign.
-        if (sigParts.Count >= hargs.Count) call["sig"] = sigParts;
-        if (sourceIdentity != null && localIds?.Contains(sourceIdentity) != true)
-        {
-            // Reference stdlib retains the semantic alias declaration, not the runtime helper.
-            // Select that exact declaration by identity and project its complete signature using
-            // the same receiver insertion and generic-frame transfer as AliasHelperHoist.
-            var selected = refs.AliasHelperSourceSignature(sourceIdentity, ownerName);
-            call["method"] = selected.Name;
-            var linkage = new JsonArray();
-            if (instance && node["recv"] != null) linkage.Add(sigParts[0].DeepClone());
-            foreach (var parameter in selected.Parameters)
-                linkage.Add(TypeJson.Write(RemapHoistedTypeVars(parameter, arity)));
-            call["calleeParams"] = linkage;
-            call["calleeRet"] = TypeJson.Write(RemapHoistedTypeVars(selected.Return, arity));
-        }
-        // Carry the call's statically-known return: a helper returning the alias class's BARE type param
-        // (`ArrayList<Int>.removeAt` -> E) reflects as the callee's own `!!n` at the call site, and boxing that
-        // out-of-scope token is invalid IL (BadImageFormat); ilemit's RetOr/CoerceReturn recover the concrete type
-        // from `retType` (same channel the erased nullable-generic return conversion reads). NEVER a bare `gp:`
-        // token (an open call site inside another generic body): it buys no conversion there, and when the callee's
-        // return is the ERASED nullable-generic `object`, CoerceReturn would `unbox.any !!X` a possibly-null —
-        // NullReferenceException for a value instantiation. The open representation of such a value stays `object`.
-        if (RetToken(node) is JsonNode ret && !IsTvType(ret)) call["ret"] = ret;
-        if (instance && ForeignStarProjectionBinding.IsForeignStarType(ownerFqn, refs))
-        {
-            call["projectedHelperReceiver"] = 0;
-            call["ret"] = RetToken(node) ?? TypeJson.Write(NodeType.Of(node)
-                ?? throw new InvalidOperationException("Projected alias helper call has no declared result type"));
-        }
+        if (plan.DeclarationId != null) call[DeclarationIdentityBinding.Key] = plan.DeclarationId;
+        if (plan.TypeArgs != null) call["typeArgs"] = new JsonArray(plan.TypeArgs.Select(TypeJson.Write).ToArray());
+        if (plan.Signature != null) call["sig"] = new JsonArray(plan.Signature.Select(TypeJson.Write).ToArray());
+        if (plan.CalleeParams != null) call["calleeParams"] = new JsonArray(plan.CalleeParams.Select(TypeJson.Write).ToArray());
+        if (plan.CalleeReturn != null) call["calleeRet"] = TypeJson.Write(plan.CalleeReturn);
+        if (plan.Return != null) call["ret"] = TypeJson.Write(plan.Return);
+        if (plan.ProjectedHelperReceiver.HasValue) call["projectedHelperReceiver"] = plan.ProjectedHelperReceiver.Value;
         return call;
     }
 

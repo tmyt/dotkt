@@ -7,7 +7,7 @@ static partial class UncheckedGenericCastReturnErasure
 {
     internal sealed record SourceRoot(BirFileDeclaration Declaration, string FileClass);
     internal sealed record SourceOccurrence(int File, int Type, int Method, string Identity, Decl Facts,
-        BirFunctionDeclaration Declaration, IBirTypeDeclaration Owner);
+        BirFunctionDeclaration Declaration, IBirTypeDeclaration Owner, BirFunctionDeclaration[] OriginalMethods);
 
     public sealed class PendingSourceIndex
     {
@@ -49,7 +49,7 @@ static partial class UncheckedGenericCastReturnErasure
                         throw new ArgumentException($"An item with the same key has already been added. Key: {identity}");
                     var facts = new Decl { Owner = owner, TopLevel = typeIndex < 0, Static = method.Static.OrDefault(),
                         Return = (TypeNode.Tv)BirGraphValue.CopyType(method.Ret.Value) };
-                    occurrences.Add(new SourceOccurrence(fileIndex, typeIndex, methodIndex, identity, facts, method, declaration));
+                    occurrences.Add(new SourceOccurrence(fileIndex, typeIndex, methodIndex, identity, facts, method, declaration, methods));
                 }
             }
             Methods(file.Methods.OrEmpty(), sourceRoots[fileIndex].FileClass, -1, null);
@@ -95,7 +95,8 @@ static partial class UncheckedGenericCastReturnErasure
     // The only graph handoff is an association with the actual continuing DOM
     // occurrence produced by the single module projection. No candidate search,
     // name matching, body snapshot, or later replacement chasing occurs here.
-    public static DeclIndex BindDomDeclarations(PendingSourceIndex pending, IReadOnlyList<JsonObject> actualRoots)
+    public static DeclIndex BindDomDeclarations(PendingSourceIndex pending, IReadOnlyList<JsonObject> actualRoots,
+        IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations = null)
     {
         var (roots, occurrences) = pending.Consume();
         if (actualRoots.Count != roots.Length) throw ProjectionMismatch();
@@ -125,14 +126,36 @@ static partial class UncheckedGenericCastReturnErasure
                 sourceMethods = occurrence.Owner.Methods.OrEmpty();
                 container = owner;
             }
-            if (occurrence.Method >= sourceMethods.Length
-                || !ReferenceEquals(sourceMethods[occurrence.Method], occurrence.Declaration)
+            if (occurrence.Method >= occurrence.OriginalMethods.Length
+                || !ReferenceEquals(occurrence.OriginalMethods[occurrence.Method], occurrence.Declaration)
                 || occurrence.Declaration.DeclarationId.OrDefault() != occurrence.Identity
                 || occurrence.Declaration.Static.OrDefault() != occurrence.Facts.Static
-                || occurrence.Declaration.Ret.OrDefault() != occurrence.Facts.Return
-                || container["methods"] is not JsonArray methods || occurrence.Method >= methods.Count
-                || methods[occurrence.Method] is not JsonObject method
-                || Str(method[DeclarationIdentityBinding.Key]) != occurrence.Identity
+                || occurrence.Declaration.Ret.OrDefault() != occurrence.Facts.Return) throw ProjectionMismatch();
+            JsonObject method;
+            if (retiredDeclarations != null && retiredDeclarations.TryGetValue(occurrence.Declaration, out var retired))
+            {
+                if (retired == null || retired.Parent != null || sourceMethods.Any(value => ReferenceEquals(value, occurrence.Declaration)))
+                    throw ProjectionMismatch();
+                method = retired;
+            }
+            else
+            {
+                // Only explicit retirements in this captured owning vector can move this exact occurrence.
+                var position = occurrence.Method;
+                if (retiredDeclarations != null)
+                    for (var previous = 0; previous < occurrence.Method; previous++)
+                        if (retiredDeclarations.ContainsKey(occurrence.OriginalMethods[previous]))
+                        {
+                            if (sourceMethods.Any(value => ReferenceEquals(value, occurrence.OriginalMethods[previous])))
+                                throw ProjectionMismatch();
+                            position--;
+                        }
+                if (position >= sourceMethods.Length || !ReferenceEquals(sourceMethods[position], occurrence.Declaration)
+                    || container["methods"] is not JsonArray methods || position >= methods.Count
+                    || methods[position] is not JsonObject continuing) throw ProjectionMismatch();
+                method = continuing;
+            }
+            if (Str(method[DeclarationIdentityBinding.Key]) != occurrence.Identity
                 || Bool(method["static"]) != occurrence.Facts.Static
                 || TypeJson.Read(method["ret"]) != occurrence.Facts.Return
                 || !associated.Add(method)) throw ProjectionMismatch();

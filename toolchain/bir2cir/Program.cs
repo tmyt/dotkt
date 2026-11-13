@@ -58,6 +58,7 @@ static class Bir2Cir
                 TypedPhysicalOperandNormalization.SelfTest();
                 TypedPhysicalDelegateAdapter.SelfTest();
                 ClrMemberResolution.SelfTestTypedDelegateSlots();
+                BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
                 SourceGraphRewrite.SelfTest();
@@ -85,6 +86,7 @@ static class Bir2Cir
                 ExecutableBirCodec.SelfTest();
                 MaterializedExecutable.SelfTest();
                 NullableWitnessDemand.SelfTest();
+                ReifiedNullabilityWitnessLowering.SourceSelfTest();
                 NullableRepresentationDemand.SelfTest();
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
@@ -361,6 +363,22 @@ sealed class Pipeline
             NothingValueTermination.Apply(source);
         }
         ownership.ReleaseSourceDeclarations();
+        var valueRepresentations = ValueRepresentationLowering.CreateSource(captured, refs, referenceBuild,
+            valuePolicy, valueSources, genericRepresentations);
+        var retiredDeclarations = new HashSet<BirFunctionDeclaration>(ReferenceEqualityComparer.Instance);
+        void RetireDeclaration(BirFunctionDeclaration method)
+        {
+            valueRepresentations.RetireSourceDeclaration(method);
+            retiredDeclarations.Add(method);
+        }
+        // Value operations and nullable-sensitive generated frames consume the
+        // actual post-inline graph before closure ingredients become TypeDefs.
+        foreach (var source in captured)
+        {
+            if (!referenceBuild) KClassMemberBinding.Apply(source);
+            valueRepresentations.BindOperations(source);
+            ReifiedNullabilityWitnessLowering.Apply(source, nullableWitnessDemand, refs, valueRepresentations, RetireDeclaration);
+        }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -377,11 +395,19 @@ sealed class Pipeline
         }
 
         var continuingRoots = files.Select(file => file.Root).ToArray();
+        // Retired generated targets still supply source declaration facts. Put
+        // those explicitly reported declarations through the same frontier once;
+        // both continuing indexes receive the exact same detached DOM record.
+        var retiredDom = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance);
+        foreach (var method in retiredDeclarations) retiredDom.Add(method, method.ToDom());
         genericRepresentations.BindDomDeclarations(continuingRoots);
+        valueRepresentations.BindDomDeclarations(continuingRoots, retiredDom);
         var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
-            continuingRoots.Cast<JsonObject>().ToArray());
-        return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand,
-            genericRepresentations, scalarSlots, valueSources, representationMethodFrames, placement,
+            continuingRoots.Cast<JsonObject>().ToArray(), retiredDom);
+        retiredDeclarations.Clear();
+        retiredDom.Clear();
+        return new LoadedBirModule(files, signatures, sourceIndex,
+            genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames, placement,
             new ModulePreparation(inventory, forwardedEvents, nullableDeclarations, uncheckedReturns, enums));
     }
 
@@ -390,17 +416,12 @@ sealed class Pipeline
         var birFiles = module.Files;
         var birRoots = birFiles.Select(b => b.Root).ToList();
         var declarationSemanticSignatures = module.Signatures;
-        var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild, module.ValuePolicy,
-            module.ValueSources);
+        var valueRepresentations = module.ValueRepresentations;
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
         var localDeclarationIds = module.SourceIndex.DeclarationIds;
         var representationAliases = module.SourceIndex.CollisionAliases;
         var localValueTypeFqns = module.SourceIndex.ValueTypes;
         ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
-        // Kotlin `reified` is a declaration fact; the hidden nullable-instantiation Boolean is a distinct CLR ABI
-        // demand. Derive the latter from nullable-sensitive operations and exact call/lift correspondences as one
-        // module-wide fixed point before per-file materialization starts.
-        var nullableWitnessDemand = module.NullableWitnesses;
         // A generic query implementation accepts its declared erased bound, not the closed CLR E.
         // State that ABI before frame materialization and declaration/use snapshots; typed overrides
         // retain their concrete signature and their ordinary query guard.
@@ -510,18 +531,9 @@ sealed class Pipeline
             // SYNTHETIC CLR-REPRESENTATION TYPES (#52 kotc-purity): kotc emits only the FACTS — a capturing lambda's
             // `newClosure` carries a transient `synthClass` ingredient bag; a CharSequence use references the generated
             // bridge identity; a heap ref-cell rides the `refTypes` registry. Raw payloads were expanded on typed BIR;
-            // after witness capture below, ClosureSynthesis and SharedSyntheticSynthesis materialize these `types`.
+            // after typed witness capture, ClosureSynthesis and SharedSyntheticSynthesis materialize these `types`.
             // They run before ForIn classification and the global SuspendColdLowering declaration index; closure
             // synthesis runs first so SharedSyntheticSynthesis can scan the completed invoke bodies.
-            // Fold literal Kotlin names while their semantic accessors and fully-spliced receivers remain visible.
-            // Other reads belong to the declaration-owned value adapter, including user implementations of KClass.
-            if (!_options.RefBuild) KClassMemberBinding.Apply(bir.Root);
-            valueRepresentations.BindOperations(bir.Root);
-            // NULLABLE-INSTANTIATION WITNESS ABI (#316/#466): every raw inline/default payload is materialized now,
-            // while exact declaration identities and Kotlin type arguments are still present. Record structurally
-            // demanded call witnesses and capture lifted-frame witnesses before ClosureSynthesis/physical type
-            // lowering can erase those facts; Kotlin `reified` remains a separate round-trip declaration fact.
-            ReifiedNullabilityWitnessLowering.Apply(bir.Root, nullableWitnessDemand, refs);
             ClosureSynthesis.Apply(bir.Root, refs, scalarSlots.ProjectMethod);
             SharedSyntheticSynthesis.Apply(bir.Root, refs, sharedCells);
             // Heap ref-cell types only become declarations in the transition above. Preserve their pristine element
@@ -1802,9 +1814,9 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
-    ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex, NullableWitnessDemand NullableWitnesses,
+    SourceModuleIndex SourceIndex,
     GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots,
-    ValueRepresentationLowering.SourceIndex ValueSources,
+    ValueRepresentationLowering ValueRepresentations,
     IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames,
     DeclarationPlacement Placement, ModulePreparation Preparation);
 sealed record ModulePreparation(TypedModuleInventory Inventory,
