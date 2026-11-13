@@ -48,126 +48,13 @@ static partial class DefaultArgSplice
         var root = (BirFileDeclaration)source.DeepClone();
         var hoist = new List<BirFunctionDeclaration>();
         var owner = root.FileClass.OrDefault();
+        var expansion = new TypedDefaultExpansion(refs, hoist, owner, "nullable-witness demand");
         void Walk(BirGraphValue node)
         {
             if (node == null || node is IBirExecutablePayload) return;
-            if (node is BirCallEvaluation evaluation && evaluation.Expr.HasValue)
-                ExpandPlan((BirGraphValue)evaluation.Expr.Value, evaluation.Bindings.OrEmpty(), evaluation.SemanticOwner.OrDefault());
-            if (node is BirClassDefinition type)
-                foreach (var constructor in type.Ctors.OrEmpty())
-                {
-                    Delegation(constructor.BaseArgs.OrDefault(), (type.Base.OrDefault() as TypeNode.Fqn)?.Name,
-                        refs.SourceDeclarationArguments(type.Base.OrDefault()), constructor, type.Name.OrDefault());
-                    Delegation(constructor.ThisArgs.OrDefault(), type.Name.OrDefault(),
-                        refs.SourceDeclarationArguments(type.Base.OrDefault()), constructor, type.Name.OrDefault());
-                }
-            ExpandTrailing(node);
+            expansion.ExpandNode(node);
             if (node is BirCallInline inline) ExpandInline(inline);
             node.VisitChildSlots(slot => { Walk(slot.Value); });
-        }
-        void Fill(List<IBirExpression> arguments, BirCallBinding[] bindings, int count, Dictionary<int, IBirExpression> defaults,
-            IBirExpression dispatch, IBirExpression extension, IBirExpression enclosing, string semantic,
-            TypeNode[] methods, TypeNode[] owners, string label)
-        {
-            BirCallBinding Binding(IBirExpression argument) => argument is BirBindingReference { Id.HasValue: true } read
-                ? bindings.FirstOrDefault(binding => binding.Id.OrDefault() == read.Id.Value) : null;
-            for (var index = 0; index < arguments.Count; index++)
-            {
-                var binding = Binding(arguments[index]);
-                if (binding?.Expr.OrDefault() is not BirDefaultArgument || !defaults.TryGetValue(index, out var expression)) continue;
-                var fill = SpliceOne(expression, dispatch, extension, enclosing, arguments, hoist, owner, semantic, methods, owners, label, index);
-                if (fill == null) continue;
-                binding.Expr = OptionalField<IBirExpression>.Of(fill);
-                binding.Stable = ValueStability.IsReReadable(((BirGraphNode)fill).Tag,
-                    fill is BirEnumValue { PhysicalValue.HasValue: true, Underlying.HasValue: true });
-            }
-            for (var index = arguments.Count; index < count; index++)
-            {
-                if (!defaults.TryGetValue(index, out var expression)) break;
-                var fill = SpliceOne(expression, dispatch, extension, enclosing, arguments, hoist, owner, semantic, methods, owners, label, index);
-                if (fill == null) break;
-                arguments.Add(fill);
-            }
-        }
-        void ExpandPlan(BirGraphValue call, BirCallBinding[] bindings, string semantic)
-        {
-            var arguments = call switch {
-                BirNew value => value.Args.OrDefault(), BirCallStatic value => value.Args.OrDefault(),
-                BirCallInstance value => value.Args.OrDefault(), _ => null,
-            };
-            if (arguments == null || !arguments.OfType<BirBindingReference>().Any(read =>
-                bindings.FirstOrDefault(binding => binding.Id.OrDefault() == read.Id.OrDefault())?.Expr.OrDefault() is BirDefaultArgument)) return;
-            var facts = CallFacts(call);
-            var constructor = call as BirNew;
-            var signature = constructor?.ArgTypes.OrDefault() ?? facts.Signature;
-            var calledOwner = constructor?.Type.OrDefault() ?? facts.Owner;
-            var method = constructor == null ? facts.Method : ReferenceMetadataIndex.CtorKeyName;
-            if (signature == null || method == null || constructor != null && calledOwner is not TypeNode.Fqn) return;
-            if (constructor != null && arguments.Length != signature.Length)
-                throw new InvalidOperationException(ConstructorDefaultPosition(((TypeNode.Fqn)calledOwner).Name, arguments.Length, signature.Length));
-            var label = constructor == null ? method : ((TypeNode.Fqn)calledOwner).Name + " constructor";
-            var defaults = constructor == null ? DefaultValuesForCall(facts, refs, out _)
-                : refs.KotlinDefaultValuesFor(((TypeNode.Fqn)calledOwner).Name, method, signature.Length,
-                    ReferenceMetadataIndex.SignatureKeyOf(signature), ReferenceMetadataIndex.SignatureKeyOf(signature, relaxed: true));
-            if (defaults == null)
-            {
-                if (refs.KotlinDefaultsAmbiguous((calledOwner as TypeNode.Fqn)?.Name, method, signature.Length))
-                    throw new InvalidOperationException(AmbiguousDefault(label, signature.Length));
-                return;
-            }
-            var methodArguments = call switch {
-                BirCallStatic value => value.TypeArgs.OrDefault(), BirCallInstance value => value.TypeArgs.OrDefault(), _ => null,
-            };
-            var ownerApplication = facts.DefaultOwner ?? (constructor?.Type.OrDefault() ?? facts.Owner);
-            var values = arguments.ToList();
-            Fill(values, bindings, signature.Length, defaults, (call as BirCallInstance)?.Recv.OrDefault(),
-                arguments.FirstOrDefault(), constructor == null ? null : arguments.FirstOrDefault(), semantic, methodArguments,
-                refs.SourceDeclarationArguments(ownerApplication), label);
-            switch (call)
-            {
-                case BirNew value: value.Args = values.ToArray(); break;
-                case BirCallStatic value: value.Args = values.ToArray(); value.DefaultDeclarationId = default; value.DefaultOwnerType = default; break;
-                case BirCallInstance value: value.Args = values.ToArray(); value.DefaultDeclarationId = default; value.DefaultOwnerType = default; break;
-            }
-        }
-        void Delegation(IBirExpression[] arguments, string calledOwner, TypeNode[] application, BirConstructor constructor, string semantic)
-        {
-            var bindings = constructor.DelegationBindings.OrDefault();
-            if (arguments == null || calledOwner == null || bindings == null || !arguments.OfType<BirBindingReference>().Any(read =>
-                bindings.FirstOrDefault(binding => binding.Id.OrDefault() == read.Id.OrDefault())?.Expr.OrDefault() is BirDefaultArgument)) return;
-            var defaults = refs.KotlinDefaultValuesFor(calledOwner, ReferenceMetadataIndex.CtorKeyName, arguments.Length);
-            if (defaults == null)
-            {
-                if (refs.KotlinDefaultsAmbiguous(calledOwner, ReferenceMetadataIndex.CtorKeyName, arguments.Length))
-                    throw new InvalidOperationException(AmbiguousDefault(calledOwner, arguments.Length, constructorDelegation: true));
-                return;
-            }
-            Fill(arguments.ToList(), bindings, arguments.Length, defaults, null, null, arguments.FirstOrDefault(), semantic, null, application,
-                calledOwner + " constructor");
-        }
-        void ExpandTrailing(BirGraphValue node)
-        {
-            var facts = CallFacts(node);
-            var arguments = node switch { BirCallStatic call => call.Args.OrDefault(), BirCallInstance call => call.Args.OrDefault(), _ => null };
-            if (arguments == null || facts.Signature == null || arguments.Length >= facts.Signature.Length
-                || facts.Owner is not TypeNode.Fqn || facts.Method == null) return;
-            var defaults = DefaultValuesForCall(facts, refs, out var parameterNames);
-            var label = ((TypeNode.Fqn)facts.Owner).Name + "." + facts.Method;
-            var values = arguments.ToList();
-            for (var index = arguments.Length; index < facts.Signature.Length; index++)
-            {
-                if (defaults?.TryGetValue(index, out var expression) != true)
-                    throw new InvalidOperationException(UnrepresentableDefault("nullable-witness demand", label, index, parameterNames));
-                var fill = (IBirExpression)ObjectSlotRename.Apply((BirGraphValue)Clone(expression));
-                var methodArguments = node is BirCallStatic staticCall ? staticCall.TypeArgs.OrEmpty() : ((BirCallInstance)node).TypeArgs.OrEmpty();
-                fill = (IBirExpression)TypedExecutableFrames.Substitute((BirGraphValue)fill, methodArguments, methodArguments.Length,
-                    refs.SourceDeclarationArguments(facts.DefaultOwner ?? facts.Owner));
-                if (!IsMetadataConstant(fill))
-                    throw new InvalidOperationException(UnrepresentableDefault("nullable-witness demand", label, index, parameterNames));
-                values.Add(fill);
-            }
-            if (node is BirCallStatic target) target.Args = values.ToArray();
-            else ((BirCallInstance)node).Args = values.ToArray();
         }
         void ExpandInline(BirCallInline call)
         {

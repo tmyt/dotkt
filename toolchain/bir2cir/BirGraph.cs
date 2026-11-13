@@ -14,6 +14,22 @@ internal abstract record BirGraphValue
 {
     public virtual TypeNode? ResultTypeStamp => null;
     public virtual TypeNode? CallBindingTypeHint => null;
+    public virtual OptionalField<string> DeclarationIdentityFact => default;
+    public virtual OptionalField<TypeNode[]> ApplicationTypeArguments
+    {
+        get => default;
+        set => throw new InvalidOperationException("This graph occurrence has no application type arguments");
+    }
+    public virtual OptionalField<TypeNode> SuspendFunctionTypeFact
+    {
+        get => default;
+        set => throw new InvalidOperationException("This graph occurrence has no saved suspend function type");
+    }
+    public virtual OptionalField<TypeNode> SuspendFunctionReturnFact
+    {
+        get => default;
+        set => throw new InvalidOperationException("This graph occurrence has no saved suspend return type");
+    }
     public abstract void VisitChildren(Action<BirGraphValue> visit);
     public abstract void VisitChildSlots(Action<BirGraphSlot> visit);
     // Source recognition extends declaration parameters and walks each schema
@@ -37,18 +53,42 @@ internal abstract record BirGraphValue
     // Structured type slots only. Frozen source facts encoded as strings in the
     // maintained schema are opaque to this operation, as they were on the wire.
     public abstract BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite);
+    public abstract void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite);
+    public abstract bool StructurallyEquals(BirGraphValue other);
     // The schema states which declaration owns each type-bearing occurrence.
     // Consumers choose their traversal policy; the model does not perform an
     // inline substitution or infer a frame from a field's physical spelling.
     public abstract BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
         Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child);
+    public abstract void RewriteGenericFrameInPlace(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Action<BirGenericFrameRole, BirGraphValue> child);
+    public abstract void RewriteRepresentationInPlace(
+        Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
+        Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child);
+    public virtual void RewriteRepresentationParametersInPlace(
+        Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite) { }
     public abstract void WriteJson(Utf8JsonWriter writer);
     // Temporary frontier to the not-yet-migrated owning passes. It builds
     // nodes directly: no serialized child, parse, or generic extension-data bag.
     public abstract JsonObject ToDom();
     public BirGraphValue Rewrite(Func<BirGraphValue, BirGraphValue> rewrite)
         => rewrite(RewriteChildren(child => child.Rewrite(rewrite)));
+
+    protected static bool EqualField<T>(OptionalField<T> left, OptionalField<T> right, Func<T, T, bool> equal)
+        => left.IsPresent == right.IsPresent && left.IsNull == right.IsNull
+            && (!left.HasValue || equal(left.Value, right.Value));
+
+    protected static bool EqualItems<T>(T[]? left, T[]? right, Func<T, T, bool> equal)
+        => ReferenceEquals(left, right) || left is not null && right is not null
+            && left.Length == right.Length && left.Zip(right).All(pair => equal(pair.First, pair.Second));
+
+    protected static bool EqualFrame(NullableRepresentationFrame left, NullableRepresentationFrame right)
+        => left.SourceArity == right.SourceArity && left.NullableIndices.SequenceEqual(right.NullableIndices)
+            && left.StorageIndices.SequenceEqual(right.StorageIndices)
+            && left.NullableStorageIndices.SequenceEqual(right.NullableStorageIndices)
+            && left.PhysicalOrder.SequenceEqual(right.PhysicalOrder);
 
     internal static TypeNode CopyType(TypeNode type) => type switch {
         TypeNode.Fqn value => value with {
@@ -88,6 +128,14 @@ internal enum BirGenericFrameRole
     FrozenSourceFact,
     StorageSourceType,
 }
+
+internal enum BirRepresentationRole
+{
+    Lexical, ValueType, TypeArguments, Element, Return, ResultStamp, DeclaredMemberType,
+    Declaration, Constraint, Foreign, TypeParameterDeclarations, Attributes, InheritedImplementation,
+}
+
+internal enum BirRepresentationParameterRole { Owner, Method, SharedCell }
 
 // A short-lived address into an owning typed graph, not a string-key property
 // view. Generated setters retain each declared child role. Replacements change

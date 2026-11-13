@@ -36,13 +36,19 @@ static class NullableFlags
         Convention convention = Convention.KotlinDeclaration,
         Func<TypeNode.Fqn, TypeNode[]> annotationArguments = null)
     {
-        if (t == null) return null;
-        var flags = new List<int>();
-        bool anyNullable = Walk(t, nullableHere: false, flags, isValue, convention, annotationArguments);
-        if (!anyNullable) return null;
+        var flags = ComputeValues(t, isValue, convention, annotationArguments);
+        if (flags == null) return null;
         var arr = new JsonArray();
         foreach (var b in flags) arr.Add(b);
         return arr;
+    }
+
+    internal static int[] ComputeValues(TypeNode type, ValueTypeOracle isValue,
+        Convention convention = Convention.KotlinDeclaration, Func<TypeNode.Fqn, TypeNode[]> annotationArguments = null)
+    {
+        if (type == null) return null;
+        var flags = new List<int>();
+        return Walk(type, nullableHere: false, flags, isValue, convention, annotationArguments) ? flags.ToArray() : null;
     }
 
     // Append the pre-order NRT bytes for `t`, returning whether any nullable (2) byte was emitted. `nullableHere` marks

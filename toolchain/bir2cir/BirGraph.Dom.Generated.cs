@@ -1446,6 +1446,7 @@ internal static class BirGraphDom
                 case "typeParams": break;
                 case "sig": break;
                 case "kotlinSupertypesPre": break;
+                case "methodTypeParameterBoundsPre": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirInheritedImplementation at {source.GetPath()}");
             }
         return new BirInheritedImplementation
@@ -1457,6 +1458,7 @@ internal static class BirGraphDom
             TypeParams = Field<BirTypeParameter[]>(fields, "typeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             Sig = Field<TypeNode[]>(fields, "sig", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
+            MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
         };
     }
 
@@ -1522,6 +1524,7 @@ internal static class BirGraphDom
                 case "suspendResult": break;
                 case "_physicalDeclarationSignature": break;
                 case "retKotlinType": break;
+                case "_preparedDelegateReturnArgument": break;
                 case "nullableGenericRet": break;
                 case "nullableGenericSuspendRet": break;
                 case "declarationSourceName": break;
@@ -1588,6 +1591,7 @@ internal static class BirGraphDom
             SuspendResult = Field<TypeNode>(fields, "suspendResult", value => TypeNode.Parse(value!.GetValue<string>())),
             _physicalDeclarationSignature = Field<bool>(fields, "_physicalDeclarationSignature", value => value!.GetValue<bool>()),
             RetKotlinType = Field<TypeNode>(fields, "retKotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
+            _preparedDelegateReturnArgument = Field<bool>(fields, "_preparedDelegateReturnArgument", value => value!.GetValue<bool>()),
             NullableGenericRet = Field<TypeNode>(fields, "nullableGenericRet", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableGenericSuspendRet = Field<TypeNode>(fields, "nullableGenericSuspendRet", value => TypeNode.Parse(value!.GetValue<string>())),
             DeclarationSourceName = Field<string>(fields, "declarationSourceName", value => value!.GetValue<string>()),
@@ -1748,6 +1752,7 @@ internal static class BirGraphDom
                 case "elem": break;
                 case "typeParams": break;
                 case "methodTypeParameterBoundsPre": break;
+                case "kotlinSupertypesPre": break;
                 case "_nativeLocation": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirRefTypeDeclaration at {source.GetPath()}");
             }
@@ -1757,6 +1762,7 @@ internal static class BirGraphDom
             Elem = Field<TypeNode>(fields, "elem", value => TypeNode.Read(value) ?? throw new FormatException()),
             TypeParams = Field<BirTypeParameter[]>(fields, "typeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
+            KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
             _nativeLocation = Field<bool>(fields, "_nativeLocation", value => value!.GetValue<bool>()),
         };
     }
@@ -2175,6 +2181,7 @@ internal static class BirGraphDom
                 case "overrides": break;
                 case "implementation": break;
                 case "retSuspendFnTypePre": break;
+                case "nullableGenericRet": break;
                 case "signatureOverrideDeclarations": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirInheritedDefaultAccessor at {source.GetPath()}");
             }
@@ -2187,6 +2194,7 @@ internal static class BirGraphDom
             Overrides = Field<BirOverride[]>(fields, "overrides", value => ((JsonArray)value!).Select(item0 => ReadBirOverride(item0!)).ToArray()),
             Implementation = Field<BirInheritedImplementation>(fields, "implementation", value => ReadBirInheritedImplementation(value!)),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableGenericRet = Field<TypeNode>(fields, "nullableGenericRet", value => TypeNode.Parse(value!.GetValue<string>())),
             SignatureOverrideDeclarations = Field<string[]>(fields, "signatureOverrideDeclarations", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<string>()).ToArray()),
         };
     }
@@ -2203,6 +2211,7 @@ internal static class BirGraphDom
                 case "overrides": break;
                 case "implementation": break;
                 case "retSuspendFnTypePre": break;
+                case "nullableGenericRet": break;
                 case "signatureOverrideDeclarations": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirInheritedDefaultMethod at {source.GetPath()}");
             }
@@ -2214,6 +2223,7 @@ internal static class BirGraphDom
             Overrides = Field<BirOverride[]>(fields, "overrides", value => ((JsonArray)value!).Select(item0 => ReadBirOverride(item0!)).ToArray()),
             Implementation = Field<BirInheritedImplementation>(fields, "implementation", value => ReadBirInheritedImplementation(value!)),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableGenericRet = Field<TypeNode>(fields, "nullableGenericRet", value => TypeNode.Parse(value!.GetValue<string>())),
             SignatureOverrideDeclarations = Field<string[]>(fields, "signatureOverrideDeclarations", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<string>()).ToArray()),
         };
     }
@@ -2235,6 +2245,7 @@ internal static class BirGraphDom
                 case "overrides": break;
                 case "inheritedImplementation": break;
                 case "retSuspendFnTypePre": break;
+                case "nullableGenericRet": break;
                 case "retKotlinType": break;
                 case "methodTypeParameterBoundsPre": break;
                 case "signatureOverrideDeclarations": break;
@@ -2253,6 +2264,7 @@ internal static class BirGraphDom
             Overrides = Field<BirOverride[]>(fields, "overrides", value => ((JsonArray)value!).Select(item0 => ReadBirOverride(item0!)).ToArray()),
             InheritedImplementation = Field<BirInheritedImplementation>(fields, "inheritedImplementation", value => ReadBirInheritedImplementation(value!)),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableGenericRet = Field<TypeNode>(fields, "nullableGenericRet", value => TypeNode.Parse(value!.GetValue<string>())),
             RetKotlinType = Field<TypeNode>(fields, "retKotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
             SignatureOverrideDeclarations = Field<string[]>(fields, "signatureOverrideDeclarations", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<string>()).ToArray()),
@@ -2416,6 +2428,9 @@ internal static class BirGraphDom
                 case "retSuspendFnTypePre": break;
                 case "_syntheticFrameBound": break;
                 case "outerTypeParamCount": break;
+                case "outerTypeParamOffset": break;
+                case "nullableGenericRet": break;
+                case "retNullableFlags": break;
                 case "methodTypeParameterBoundsPre": break;
                 case "kotlinSupertypesPre": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirClosureDefinition at {source.GetPath()}");
@@ -2432,6 +2447,9 @@ internal static class BirGraphDom
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             _syntheticFrameBound = Field<bool>(fields, "_syntheticFrameBound", value => value!.GetValue<bool>()),
             OuterTypeParamCount = Field<int>(fields, "outerTypeParamCount", value => value!.GetValue<int>()),
+            OuterTypeParamOffset = Field<int>(fields, "outerTypeParamOffset", value => value!.GetValue<int>()),
+            NullableGenericRet = Field<TypeNode>(fields, "nullableGenericRet", value => TypeNode.Parse(value!.GetValue<string>())),
+            RetNullableFlags = Field<int[]>(fields, "retNullableFlags", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
         };
@@ -2531,6 +2549,7 @@ internal static class BirGraphDom
                 case "funcType": break;
                 case "externalCompanionOwner": break;
                 case "companionCaptureOwner": break;
+                case "declarationId": break;
                 case "typeFrame": break;
                 case "_suspendDeclarationTypeArgs": break;
                 case "sty": break;
@@ -2549,6 +2568,7 @@ internal static class BirGraphDom
             FuncType = Field<TypeNode>(fields, "funcType", value => TypeNode.Read(value) ?? throw new FormatException()),
             ExternalCompanionOwner = Field<string>(fields, "externalCompanionOwner", value => value!.GetValue<string>()),
             CompanionCaptureOwner = Field<string>(fields, "companionCaptureOwner", value => value!.GetValue<string>()),
+            DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
             TypeFrame = Field<string>(fields, "typeFrame", value => value!.GetValue<string>()),
             _suspendDeclarationTypeArgs = Field<TypeNode[]>(fields, "_suspendDeclarationTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
@@ -2626,6 +2646,17 @@ internal static class BirGraphDom
                 case "name": break;
                 case "type": break;
                 case "suspendFnTypePre": break;
+                case "outer": break;
+                case "mods": break;
+                case "default": break;
+                case "defaultBir": break;
+                case "ctxFnType": break;
+                case "sharedCellType": break;
+                case "attrs": break;
+                case "functionSignatureType": break;
+                case "kotlinType": break;
+                case "nullableGeneric": break;
+                case "nullableFlags": break;
                 case "nominalParameterSignatureIdentity": break;
                 case "genericParameterSignatureBounds": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirLambdaParameter at {source.GetPath()}");
@@ -2635,6 +2666,17 @@ internal static class BirGraphDom
             Name = Field<string>(fields, "name", value => value!.GetValue<string>()),
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            Outer = Field<bool>(fields, "outer", value => value!.GetValue<bool>()),
+            Mods = Field<BirModifiers>(fields, "mods", value => ReadBirModifiers(value!)),
+            Default = Field<IBirExpression>(fields, "default", value => ReadBirExpression(value!)),
+            DefaultBir = Field<BirDefaultBody>(fields, "defaultBir", value => ReadBirDefaultBody(value!)),
+            CtxFnType = Field<int>(fields, "ctxFnType", value => value!.GetValue<int>()),
+            SharedCellType = Field<TypeNode>(fields, "sharedCellType", value => TypeNode.Read(value) ?? throw new FormatException()),
+            Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
+            FunctionSignatureType = Field<TypeNode>(fields, "functionSignatureType", value => TypeNode.Read(value) ?? throw new FormatException()),
+            KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableGeneric = Field<TypeNode>(fields, "nullableGeneric", value => TypeNode.Parse(value!.GetValue<string>())),
+            NullableFlags = Field<int[]>(fields, "nullableFlags", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             NominalParameterSignatureIdentity = Field<TypeNode>(fields, "nominalParameterSignatureIdentity", value => TypeNode.Read(value) ?? throw new FormatException()),
             GenericParameterSignatureBounds = Field<TypeNode[]>(fields, "genericParameterSignatureBounds", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
         };

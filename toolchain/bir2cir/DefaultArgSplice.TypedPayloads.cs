@@ -129,7 +129,7 @@ static partial class DefaultArgSplice
             };
             if (synthetic is BirClosureDefinition closure)
             {
-                closure.SemanticOwner = owner; closure.OuterTypeParamCount = default;
+                closure.SemanticOwner = owner; closure.OuterTypeParamCount = default; closure.OuterTypeParamOffset = default;
             }
             if (synthetic is BirClassDefinition type)
             {

@@ -44,3 +44,245 @@ public abstract record SourceAnnotationValue(bool Unsigned)
     public sealed record AnnotationValue(bool Unsigned, SourceAnnotation Value) : SourceAnnotationValue(Unsigned);
     public sealed record ArrayValue(bool Unsigned, SourceAnnotationValue[] Value) : SourceAnnotationValue(Unsigned);
 }
+
+// Logical data equality includes every maintained field and nested vector.
+// Record equality alone would compare array storage rather than its contents.
+internal static class SourceMetadataDataEquality
+{
+    internal static bool Equal(SourceTypeAlias? left, SourceTypeAlias? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && global::System.String.Equals(left.PackageName, right.PackageName, global::System.StringComparison.Ordinal)
+            && ArrayEqual(left.OwnerPath, right.OwnerPath, (left0, right0) => global::System.String.Equals(left0, right0, global::System.StringComparison.Ordinal))
+            && global::System.String.Equals(left.Name, right.Name, global::System.StringComparison.Ordinal)
+            && global::System.String.Equals(left.Visibility, right.Visibility, global::System.StringComparison.Ordinal)
+            && ArrayEqual(left.TypeParameters, right.TypeParameters, (left0, right0) => Equal(left0, right0))
+            && Equal(left.UnderlyingType, right.UnderlyingType)
+            && Equal(left.ExpandedType, right.ExpandedType)
+            && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0));
+
+    internal static bool Equal(SourceClassifier? left, SourceClassifier? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && global::System.String.Equals(left.PackageName, right.PackageName, global::System.StringComparison.Ordinal)
+            && ArrayEqual(left.OwnerPath, right.OwnerPath, (left0, right0) => global::System.String.Equals(left0, right0, global::System.StringComparison.Ordinal))
+            && global::System.String.Equals(left.Name, right.Name, global::System.StringComparison.Ordinal);
+
+    internal static bool Equal(SourceTypeParameter? left, SourceTypeParameter? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Id == right.Id
+            && global::System.String.Equals(left.Name, right.Name, global::System.StringComparison.Ordinal)
+            && global::System.String.Equals(left.Variance, right.Variance, global::System.StringComparison.Ordinal)
+            && ArrayEqual(left.Bounds, right.Bounds, (left0, right0) => Equal(left0, right0))
+            && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0));
+
+    internal static bool Equal(SourceType? left, SourceType? right)
+    {
+        if (global::System.Object.ReferenceEquals(left, right)) return true;
+        return (left, right) switch
+        {
+            (SourceType.ClassType first, SourceType.ClassType second) => Equal(first, second),
+            (SourceType.AliasType first, SourceType.AliasType second) => Equal(first, second),
+            (SourceType.ParameterType first, SourceType.ParameterType second) => Equal(first, second),
+            _ => false,
+        };
+    }
+
+    internal static bool Equal(SourceType.ClassType? left, SourceType.ClassType? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && Equal(left.Classifier, right.Classifier)
+            && left.Nullable == right.Nullable
+            && left.Suspend == right.Suspend
+            && left.DefinitelyNotNull == right.DefinitelyNotNull
+            && ArrayEqual(left.Arguments, right.Arguments, (left0, right0) => Equal(left0, right0))
+            && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0))
+            && Equal(left.OuterType, right.OuterType)
+            && Equal(left.AbbreviatedType, right.AbbreviatedType)
+            && Equal(left.FlexibleUpperBound, right.FlexibleUpperBound)
+            && global::System.String.Equals(left.FlexibleCapabilities, right.FlexibleCapabilities, global::System.StringComparison.Ordinal);
+
+    internal static bool Equal(SourceType.AliasType? left, SourceType.AliasType? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && Equal(left.Classifier, right.Classifier)
+            && left.Nullable == right.Nullable
+            && left.Suspend == right.Suspend
+            && left.DefinitelyNotNull == right.DefinitelyNotNull
+            && ArrayEqual(left.Arguments, right.Arguments, (left0, right0) => Equal(left0, right0))
+            && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0))
+            && Equal(left.OuterType, right.OuterType)
+            && Equal(left.AbbreviatedType, right.AbbreviatedType)
+            && Equal(left.FlexibleUpperBound, right.FlexibleUpperBound)
+            && global::System.String.Equals(left.FlexibleCapabilities, right.FlexibleCapabilities, global::System.StringComparison.Ordinal);
+
+    internal static bool Equal(SourceType.ParameterType? left, SourceType.ParameterType? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Id == right.Id
+            && left.Nullable == right.Nullable
+            && left.Suspend == right.Suspend
+            && left.DefinitelyNotNull == right.DefinitelyNotNull
+            && ArrayEqual(left.Arguments, right.Arguments, (left0, right0) => Equal(left0, right0))
+            && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0))
+            && Equal(left.OuterType, right.OuterType)
+            && Equal(left.AbbreviatedType, right.AbbreviatedType)
+            && Equal(left.FlexibleUpperBound, right.FlexibleUpperBound)
+            && global::System.String.Equals(left.FlexibleCapabilities, right.FlexibleCapabilities, global::System.StringComparison.Ordinal);
+
+    internal static bool Equal(SourceTypeArgument? left, SourceTypeArgument? right)
+    {
+        if (global::System.Object.ReferenceEquals(left, right)) return true;
+        return (left, right) switch
+        {
+            (SourceTypeArgument.InvArgument first, SourceTypeArgument.InvArgument second) => Equal(first, second),
+            (SourceTypeArgument.InArgument first, SourceTypeArgument.InArgument second) => Equal(first, second),
+            (SourceTypeArgument.OutArgument first, SourceTypeArgument.OutArgument second) => Equal(first, second),
+            (SourceTypeArgument.StarArgument first, SourceTypeArgument.StarArgument second) => Equal(first, second),
+            _ => false,
+        };
+    }
+
+    internal static bool Equal(SourceTypeArgument.InvArgument? left, SourceTypeArgument.InvArgument? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && Equal(left.Type, right.Type);
+
+    internal static bool Equal(SourceTypeArgument.InArgument? left, SourceTypeArgument.InArgument? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && Equal(left.Type, right.Type);
+
+    internal static bool Equal(SourceTypeArgument.OutArgument? left, SourceTypeArgument.OutArgument? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && Equal(left.Type, right.Type);
+
+    internal static bool Equal(SourceTypeArgument.StarArgument? left, SourceTypeArgument.StarArgument? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null;
+
+    internal static bool Equal(SourceAnnotation? left, SourceAnnotation? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && Equal(left.Classifier, right.Classifier)
+            && ArrayEqual(left.Arguments, right.Arguments, (left0, right0) => Equal(left0, right0));
+
+    internal static bool Equal(SourceAnnotationArgument? left, SourceAnnotationArgument? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && global::System.String.Equals(left.Name, right.Name, global::System.StringComparison.Ordinal)
+            && Equal(left.Value, right.Value);
+
+    internal static bool Equal(SourceAnnotationValue? left, SourceAnnotationValue? right)
+    {
+        if (global::System.Object.ReferenceEquals(left, right)) return true;
+        return (left, right) switch
+        {
+            (SourceAnnotationValue.ByteValue first, SourceAnnotationValue.ByteValue second) => Equal(first, second),
+            (SourceAnnotationValue.CharValue first, SourceAnnotationValue.CharValue second) => Equal(first, second),
+            (SourceAnnotationValue.ShortValue first, SourceAnnotationValue.ShortValue second) => Equal(first, second),
+            (SourceAnnotationValue.IntValue first, SourceAnnotationValue.IntValue second) => Equal(first, second),
+            (SourceAnnotationValue.LongValue first, SourceAnnotationValue.LongValue second) => Equal(first, second),
+            (SourceAnnotationValue.BooleanValue first, SourceAnnotationValue.BooleanValue second) => Equal(first, second),
+            (SourceAnnotationValue.StringValue first, SourceAnnotationValue.StringValue second) => Equal(first, second),
+            (SourceAnnotationValue.FloatValue first, SourceAnnotationValue.FloatValue second) => Equal(first, second),
+            (SourceAnnotationValue.DoubleValue first, SourceAnnotationValue.DoubleValue second) => Equal(first, second),
+            (SourceAnnotationValue.ClassValue first, SourceAnnotationValue.ClassValue second) => Equal(first, second),
+            (SourceAnnotationValue.EnumValue first, SourceAnnotationValue.EnumValue second) => Equal(first, second),
+            (SourceAnnotationValue.AnnotationValue first, SourceAnnotationValue.AnnotationValue second) => Equal(first, second),
+            (SourceAnnotationValue.ArrayValue first, SourceAnnotationValue.ArrayValue second) => Equal(first, second),
+            _ => false,
+        };
+    }
+
+    internal static bool Equal(SourceAnnotationValue.ByteValue? left, SourceAnnotationValue.ByteValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && left.Value == right.Value;
+
+    internal static bool Equal(SourceAnnotationValue.CharValue? left, SourceAnnotationValue.CharValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && left.Value == right.Value;
+
+    internal static bool Equal(SourceAnnotationValue.ShortValue? left, SourceAnnotationValue.ShortValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && left.Value == right.Value;
+
+    internal static bool Equal(SourceAnnotationValue.IntValue? left, SourceAnnotationValue.IntValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && left.Value == right.Value;
+
+    internal static bool Equal(SourceAnnotationValue.LongValue? left, SourceAnnotationValue.LongValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && left.Value == right.Value;
+
+    internal static bool Equal(SourceAnnotationValue.BooleanValue? left, SourceAnnotationValue.BooleanValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && left.Value == right.Value;
+
+    internal static bool Equal(SourceAnnotationValue.StringValue? left, SourceAnnotationValue.StringValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && global::System.String.Equals(left.Value, right.Value, global::System.StringComparison.Ordinal);
+
+    internal static bool Equal(SourceAnnotationValue.FloatValue? left, SourceAnnotationValue.FloatValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && left.Bits == right.Bits;
+
+    internal static bool Equal(SourceAnnotationValue.DoubleValue? left, SourceAnnotationValue.DoubleValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && left.Bits == right.Bits;
+
+    internal static bool Equal(SourceAnnotationValue.ClassValue? left, SourceAnnotationValue.ClassValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && Equal(left.Classifier, right.Classifier)
+            && left.ArrayDimensions == right.ArrayDimensions;
+
+    internal static bool Equal(SourceAnnotationValue.EnumValue? left, SourceAnnotationValue.EnumValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && Equal(left.Classifier, right.Classifier)
+            && global::System.String.Equals(left.Name, right.Name, global::System.StringComparison.Ordinal);
+
+    internal static bool Equal(SourceAnnotationValue.AnnotationValue? left, SourceAnnotationValue.AnnotationValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && Equal(left.Value, right.Value);
+
+    internal static bool Equal(SourceAnnotationValue.ArrayValue? left, SourceAnnotationValue.ArrayValue? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && left.Unsigned == right.Unsigned
+            && ArrayEqual(left.Value, right.Value, (left0, right0) => Equal(left0, right0));
+
+    private static bool ArrayEqual<T>(T[]? left, T[]? right, global::System.Func<T, T, bool> equal)
+    {
+        if (global::System.Object.ReferenceEquals(left, right)) return true;
+        if (left is null || right is null || left.Length != right.Length) return false;
+        for (var index = 0; index < left.Length; index++)
+            if (!equal(left[index], right[index])) return false;
+        return true;
+    }
+}

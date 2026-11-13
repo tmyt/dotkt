@@ -3,12 +3,15 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Source declaration variables and Kotlin inner applications use distinct orders. The intermediate
 // application retains own-first groups, including their companions, until TypeOwnershipLowering.
 sealed class InnerApplicationFrames
 {
-    readonly Dictionary<string, JsonObject> _locals = new(StringComparer.Ordinal);
+    readonly record struct LocalShape(int Arity, bool Inner, string Parent, int Offset);
+    readonly Dictionary<string, LocalShape> _locals = new(StringComparer.Ordinal);
     readonly ReferenceMetadataIndex _references;
 
     public InnerApplicationFrames(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references)
@@ -16,10 +19,31 @@ sealed class InnerApplicationFrames
         _references = references;
         void Discover(JsonObject owner)
         {
-            if (Text(owner["name"]) is string name) _locals[name] = owner;
+            if (Text(owner["name"]) is string name) _locals[name] = new(
+                (owner["typeParams"] as JsonArray)?.Count ?? 0,
+                owner["mods"]?["inner"]?.GetValue<bool>() == true,
+                Text(owner["semanticOwner"]), owner["outerTypeParamOffset"]?.GetValue<int>() ?? 0);
             foreach (var child in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Discover(child);
         }
         foreach (var root in roots.OfType<JsonObject>()) Discover(root);
+    }
+
+    internal InnerApplicationFrames(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex references)
+    {
+        _references = references;
+        foreach (var declaration in roots.SelectMany(root => root.Types.OrEmpty()))
+        {
+            var (name, parameters, modifiers, parent, offset) = declaration switch {
+                BirClassDefinition type => (type.Name.OrDefault(), type.TypeParams.OrEmpty().Length,
+                    type.Mods.OrDefault(), type.SemanticOwner.OrDefault(), type.OuterTypeParamOffset.OrDefault()),
+                BirInterfaceDefinition type => (type.Name.OrDefault(), type.TypeParams.OrEmpty().Length,
+                    type.Mods.OrDefault(), type.SemanticOwner.OrDefault(), 0),
+                BirEnumDefinition type => (type.Name.OrDefault(), type.TypeParams.OrEmpty().Length,
+                    type.Mods.OrDefault(), type.SemanticOwner.OrDefault(), 0),
+                _ => throw new InvalidOperationException("Unaccounted inner application owner: " + declaration.GetType().Name),
+            };
+            if (name != null) _locals[name] = new(parameters, modifiers?.Inner.OrDefault() == true, parent, offset);
+        }
     }
 
     public Dictionary<string, NullableRepresentationFrame> Project(
@@ -33,7 +57,7 @@ sealed class InnerApplicationFrames
             if (!_locals.ContainsKey(name)) name = _references?.RecordedPhysicalTypeName(name) ?? name;
             if (declarations.TryGetValue(name, out var frame)) return frame;
             if (_locals.TryGetValue(name, out var local))
-                return new NullableRepresentationFrame((local["typeParams"] as JsonArray)?.Count ?? 0, Array.Empty<int>());
+                return new NullableRepresentationFrame(local.Arity, Array.Empty<int>());
             if (_references?.TryReferenceTypeShape(new TypeNode.Fqn(name), out var count, out _, out _, out _) == true)
                 return new NullableRepresentationFrame(count, Array.Empty<int>());
             throw new InvalidOperationException($"Inner semantic owner '{name}' has no declaration frame");
@@ -48,10 +72,10 @@ sealed class InnerApplicationFrames
                 var offset = 0;
                 if (_locals.TryGetValue(name, out var local))
                 {
-                    if (local["mods"]?["inner"]?.GetValue<bool>() == true)
+                    if (local.Inner)
                     {
-                        parent = Text(local["semanticOwner"]) ?? throw new InvalidOperationException("Inner declaration has no semantic owner");
-                        offset = local["outerTypeParamOffset"]?.GetValue<int>() ?? 0;
+                        parent = local.Parent ?? throw new InvalidOperationException("Inner declaration has no semantic owner");
+                        offset = local.Offset;
                     }
                 }
                 else if (_references?.TryInnerSemanticOwner(name, out var referencedParent) == true)

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class NullableRepresentationDemand
 {
@@ -131,18 +132,19 @@ static partial class NullableRepresentationDemand
             && reordered.NullableStorageIndices.SequenceEqual(new[] { 1 }), "source renumbering preserves physical order");
         Malformed(() => roles.RetainSources(new[] { 0, 0 }));
 
-        static JsonNode Tv(string scope = "type", int index = 0) => TypeJson.Write(new TypeNode.Tv(scope, index));
-        static JsonNode NullableTv(string scope = "type") => new JsonObject { ["t"] = "nullable", ["of"] = Tv(scope) };
-        static JsonNode Applied(string name, JsonNode argument) => new JsonObject {
-            ["t"] = "fqn", ["name"] = name, ["args"] = new JsonArray(argument),
+        static TypeNode Tv(string scope = "type", int index = 0) => new TypeNode.Tv(scope, index);
+        static TypeNode NullableTv(string scope = "type") => new TypeNode.Nullable(Tv(scope));
+        static TypeNode Applied(string name, TypeNode argument) => new TypeNode.Fqn(name, new[] { argument });
+        static BirClassDefinition Owner(string name, TypeNode field) => new() {
+            Kind = "class", Name = name, TypeParams = new[] { new BirTypeParameter { Name = "T" } },
+            Fields = new[] { new BirFieldDeclaration { Name = "value", Vis = "private", Type = field } },
         };
-        static JsonObject Owner(string name, JsonNode field) => new() {
-            ["kind"] = "class", ["name"] = name, ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
-            ["fields"] = new JsonArray(new JsonObject { ["name"] = "value", ["vis"] = "private", ["type"] = field }),
-        };
-        static JsonObject Method(string id, JsonNode result, JsonArray body) => new() {
-            ["name"] = id, [DeclarationIdentityBinding.Key] = id,
-            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "U" }), ["params"] = new JsonArray(), ["ret"] = result, ["body"] = body,
+        static BirFunctionDeclaration Method(string id, TypeNode result, params IBirExpression[] body) => new() {
+            Name = id, DeclarationId = id, TypeParams = new[] { new BirTypeParameter { Name = "U" } },
+            Params = Array.Empty<BirParameter>(), Ret = result,
+            Body = body.Select(expression => (IBirStatement)new BirExpressionStatement {
+                Expr = OptionalField<IBirExpression>.Of(expression),
+            }).ToArray(),
         };
 
         var box = Owner("Box", Tv());
@@ -150,31 +152,27 @@ static partial class NullableRepresentationDemand
         var wrapper = Owner("Wrapper", Applied("Exchange", Tv()));
         var outer = Owner("Outer", Applied("Wrapper", Tv()));
         var scalar = Owner("Scalar", NullableTv());
-        var callee = Method("callee", Applied("Box", NullableTv("method")), new JsonArray());
-        var caller = Method("caller", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
-            ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = "callee", ["typeArgs"] = new JsonArray(Tv("method")),
-        }));
-        caller["virtual"] = true;
-        var arrayBody = Method("arrayBody", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
-            ["k"] = "newArraySized", ["elem"] = NullableTv("method"),
-        }));
-        var refBody = Method("refBody", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
-            ["k"] = "byrefLoad", ["elem"] = NullableTv("method"),
-        }));
-        var callFromCtor = Owner("BodyOnly", Tv());
-        callFromCtor["ctors"] = new JsonArray(new JsonObject {
-            ["params"] = new JsonArray(), ["body"] = new JsonArray(new JsonObject {
-                ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = "callee", ["typeArgs"] = new JsonArray(Tv()),
-            }),
+        var callee = Method("callee", Applied("Box", NullableTv("method")));
+        var caller = Method("caller", new TypeNode.Fqn("kotlin.Unit"), new BirCallStatic {
+            DeclarationId = "callee", TypeArgs = new[] { Tv("method") },
         });
+        caller.Virtual = true;
+        var arrayBody = Method("arrayBody", new TypeNode.Fqn("kotlin.Unit"), new BirNewArraySized { Elem = NullableTv("method") });
+        var refBody = Method("refBody", new TypeNode.Fqn("kotlin.Unit"), new BirByRefLoad { Elem = NullableTv("method") });
+        var callFromCtor = Owner("BodyOnly", Tv());
+        callFromCtor.Ctors = new[] { new BirConstructor {
+            Params = Array.Empty<BirParameter>(), Body = new IBirStatement[] { new BirExpressionStatement {
+                Expr = new BirCallStatic { DeclarationId = "callee", TypeArgs = new[] { Tv() } },
+            } },
+        } };
         var usesBodyOwner = Owner("UsesBodyOwner", Applied("BodyOnly", Tv()));
-        var file = new JsonObject {
-            ["fileClass"] = "FrameTests", ["types"] = new JsonArray(outer, wrapper, exchange, box, scalar, callFromCtor, usesBodyOwner),
-            ["methods"] = new JsonArray(caller, callee, arrayBody, refBody),
+        var file = new BirFileDeclaration {
+            FileClass = "FrameTests", Types = new IBirTypeDeclaration[] { outer, wrapper, exchange, box, scalar, callFromCtor, usesBodyOwner },
+            Methods = new[] { caller, callee, arrayBody, refBody },
         };
-        var original = file.ToJsonString();
+        var original = file.DeepClone();
         var demands = Collect(new[] { file });
-        OwnerDemand Find(JsonObject declaration) => demands.Single(owner => ReferenceEquals(owner.Declaration, declaration));
+        SourceOwnerDemand Find(BirGraphValue declaration) => demands.Single(owner => ReferenceEquals(owner.Declaration, declaration));
         Check(Find(box).Frame.PhysicalArity == 1, "ordinary invariant type stays exact");
         Check(Find(scalar).Frame.PhysicalArity == 1, "direct nullable scalar does not require reified argument frame");
         Check(Find(exchange).Frame.NullableIndices.SequenceEqual(new[] { 0 }), "direct constructed demand");
@@ -191,24 +189,22 @@ static partial class NullableRepresentationDemand
             "array element is a reified argument position even without a container type");
         Check(Find(file).Methods.Single(method => ReferenceEquals(method.Declaration, refBody)).Body.Method.Count == 0,
             "managed reference referent is a direct scalar slot");
-        Check(file.ToJsonString() == original, "analysis must preserve all source facts");
+        Check(file.StructurallyEquals(original), "analysis must preserve all source facts");
 
         // Static implementation demand propagates through calls without changing a fixed instance/virtual slot.
-        var freeArray = Method("freeArray", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
-            ["k"] = "newArraySized", ["elem"] = NullableTv("method"),
-        }));
-        freeArray["static"] = true;
-        var freeCaller = Method("freeCaller", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
-            ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = "freeArray", ["typeArgs"] = new JsonArray(Tv("method")),
-        }));
-        freeCaller["static"] = true;
-        var fixedCaller = Method("fixedCaller", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
-            ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = "freeCaller", ["typeArgs"] = new JsonArray(Tv("method")),
-        }));
-        fixedCaller["static"] = false;
-        fixedCaller["virtual"] = true;
-        var freeDemands = Collect(new[] { new JsonObject { ["fileClass"] = "FreeFrame",
-            ["methods"] = new JsonArray(fixedCaller, freeCaller, freeArray) } }).Single().Methods;
+        var freeArray = Method("freeArray", new TypeNode.Fqn("kotlin.Unit"), new BirNewArraySized { Elem = NullableTv("method") });
+        freeArray.Static = true;
+        var freeCaller = Method("freeCaller", new TypeNode.Fqn("kotlin.Unit"), new BirCallStatic {
+            DeclarationId = "freeArray", TypeArgs = new[] { Tv("method") },
+        });
+        freeCaller.Static = true;
+        var fixedCaller = Method("fixedCaller", new TypeNode.Fqn("kotlin.Unit"), new BirCallStatic {
+            DeclarationId = "freeCaller", TypeArgs = new[] { Tv("method") },
+        });
+        fixedCaller.Static = false;
+        fixedCaller.Virtual = true;
+        var freeFile = new BirFileDeclaration { FileClass = "FreeFrame", Methods = new[] { fixedCaller, freeCaller, freeArray } };
+        var freeDemands = Collect(new[] { freeFile }).Single().Methods;
         Check(freeDemands.Single(m => ReferenceEquals(m.Declaration, freeArray)).Frame.PhysicalArity == 2,
             "static body-only demand owns a method frame");
         Check(freeDemands.Single(m => ReferenceEquals(m.Declaration, freeCaller)).Frame.PhysicalArity == 2,
@@ -216,22 +212,21 @@ static partial class NullableRepresentationDemand
         var fixedDemand = freeDemands.Single(m => ReferenceEquals(m.Declaration, fixedCaller));
         Check(fixedDemand.Frame.PhysicalArity == 1 && fixedDemand.Body.Method.SetEquals(new[] { 0 }),
             "static body-only propagation must not grow an instance dispatch slot");
-        freeCaller["static"] = false;
-        var instanceDemand = Collect(new[] { freeCaller.Parent.Parent }).Single().Methods
+        freeCaller.Static = false;
+        var instanceDemand = Collect(new[] { freeFile }).Single().Methods
             .Single(m => ReferenceEquals(m.Declaration, freeCaller));
         Check(instanceDemand.Frame.PhysicalArity == 2,
             "independent instance body owns its frame without a private dispatch helper");
 
         var importedUse = Owner("ImportedUse", Applied("ForeignProducer", Tv()));
-        var publishedThin = Method("publishedThin", TypeJson.Fqn("kotlin.Unit"), new JsonArray());
-        publishedThin["static"] = true;
-        var thinCaller = Method("thinCaller", TypeJson.Fqn("kotlin.Unit"), new JsonArray(new JsonObject {
-            ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = "publishedThin",
-            ["typeArgs"] = new JsonArray(Tv("method")),
-        }));
-        thinCaller["static"] = true;
-        var published = Collect(new[] { new JsonObject {
-            ["fileClass"] = "PublishedFrame", ["methods"] = new JsonArray(publishedThin, thinCaller),
+        var publishedThin = Method("publishedThin", new TypeNode.Fqn("kotlin.Unit"));
+        publishedThin.Static = true;
+        var thinCaller = Method("thinCaller", new TypeNode.Fqn("kotlin.Unit"), new BirCallStatic {
+            DeclarationId = "publishedThin", TypeArgs = new[] { Tv("method") },
+        });
+        thinCaller.Static = true;
+        var published = Collect(new[] { new BirFileDeclaration {
+            FileClass = "PublishedFrame", Methods = new[] { publishedThin, thinCaller },
         } }, declaredMethods: new Dictionary<string, NullableRepresentationFrame> {
             ["publishedThin"] = new(1, Array.Empty<int>(), storageIndices: new[] { 0 }),
         }).Single().Methods;
@@ -239,19 +234,19 @@ static partial class NullableRepresentationDemand
             "a thin definition retains the exact published declaration frame");
         Check(published.Single(method => ReferenceEquals(method.Declaration, thinCaller)).Frame.PhysicalArity == 2,
             "calls of a thin local definition propagate its published frame");
-        var unrelated = publishedThin.DeepClone().AsObject();
-        var unpaired = Collect(new[] { new JsonObject {
-            ["fileClass"] = "UnpairedDefinition", ["methods"] = new JsonArray(unrelated),
+        var unrelated = (BirFunctionDeclaration)publishedThin.DeepClone();
+        var unpaired = Collect(new[] { new BirFileDeclaration {
+            FileClass = "UnpairedDefinition", Methods = new[] { unrelated },
         } }, referencedMethods: new Dictionary<string, NullableRepresentationFrame> {
             ["publishedThin"] = new(1, Array.Empty<int>(), storageIndices: new[] { 0 }),
         }).Single().Methods.Single();
         Check(unpaired.Frame.PhysicalArity == 1,
             "an ordinary definition does not inherit an unrelated referenced declaration frame");
-        var imported = Collect(new[] { importedUse }, new Dictionary<string, NullableRepresentationFrame> {
+        var imported = Collect(new[] { new BirFileDeclaration { Types = new IBirTypeDeclaration[] { importedUse } } }, new Dictionary<string, NullableRepresentationFrame> {
             ["ForeignProducer"] = new NullableRepresentationFrame(1, new[] { 0 }),
         });
-        Check(imported[0].Frame.NullableIndices.SequenceEqual(new[] { 0 }), "referenced declaration correspondence");
-        var constrainedInherited = JsonNode.Parse("""
+        Check(imported.Single(owner => ReferenceEquals(owner.Declaration, importedUse)).Frame.NullableIndices.SequenceEqual(new[] { 0 }), "referenced declaration correspondence");
+        var constrainedInherited = BirGraphDom.ReadBirClassDefinition(JsonNode.Parse("""
         {"kind":"class","name":"ConstraintUser","inheritedDefaultMethods":[{
           "member":"use","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},
           "implementation":{"owner":{"t":"fqn","name":"Foreign"},"member":"use","arity":2,
@@ -259,8 +254,9 @@ static partial class NullableRepresentationDemand
               {"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]},
               {"t":"fqn","name":"Box","args":[{"t":"nullable","of":{"t":"tv","scope":"type","i":4}}]}
             ]}]}}]}
-        """);
-        var constrainedDemand = Collect(new[] { constrainedInherited }).Single();
+        """));
+        var constrainedDemand = Collect(new[] { new BirFileDeclaration { Types = new IBirTypeDeclaration[] { constrainedInherited } } })
+            .Single(owner => ReferenceEquals(owner.Declaration, constrainedInherited));
         Check(constrainedDemand.Methods.Single().Frame.NullableIndices.SequenceEqual(new[] { 0 })
             && constrainedDemand.Frame.PhysicalArity == 0,
             "inherited implementation constraints contribute method demand without importing the foreign owner's frame");
@@ -272,7 +268,7 @@ static partial class NullableRepresentationDemand
 
     static void DeclarationValueDemandSelfTest()
     {
-        var root = JsonNode.Parse("""
+        var root = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"fileClass":"ValueDemand","methods":[
           {"name":"make","typeParams":[{"name":"T"}],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
            "ret":{"t":"fqn","name":"ValueOwner","args":[{"t":"tv","scope":"method","i":0}]},"body":[]},
@@ -283,37 +279,33 @@ static partial class NullableRepresentationDemand
             {"name":"value","vis":"private","type":{"t":"tv","scope":"type","i":0}}]},
           {"kind":"class","name":"ForeignOwner","typeParams":[{"name":"T"}],"fields":[
             {"name":"value","type":{"t":"tv","scope":"type","i":0}}]}]}
-        """)!.AsObject();
-        var policy = new GenericRepresentationPolicy(new Dictionary<string, string> {
+        """));
+        var policy = GenericRepresentationPolicy.CreateSource(new[] { root }, new Dictionary<string, string> {
             ["ForeignOwner"] = "NativeOwner",
-        }, roots: new[] { root });
-        var dispatch = (JsonObject)root["methods"][1].DeepClone();
-        dispatch["name"] = "dispatch";
-        dispatch["abstract"] = true;
-        dispatch["virtual"] = true;
-        var nativeDispatch = (JsonObject)dispatch.DeepClone();
-        nativeDispatch["name"] = "nativeDispatch";
-        nativeDispatch["overrides"] = new JsonArray(new JsonObject {
-            ["owner"] = TypeJson.Fqn("ForeignOwner"), ["member"] = "identity",
-        });
-        ((JsonArray)root["methods"]).Add(dispatch);
-        ((JsonArray)root["methods"]).Add(nativeDispatch);
-        var nativeIntrinsic = (JsonObject)dispatch.DeepClone();
-        nativeIntrinsic["name"] = "nativeIntrinsic";
-        nativeIntrinsic["attrs"] = new JsonArray(new JsonObject { ["attr"] = TypeJson.Fqn("kotlin.clr.ClrIntrinsic") });
-        ((JsonArray)root["methods"]).Add(nativeIntrinsic);
-        var original = root.ToJsonString();
+        }, null);
+        var dispatch = (BirFunctionDeclaration)root.Methods.Value[1].DeepClone();
+        dispatch.Name = "dispatch";
+        dispatch.Abstract = true;
+        dispatch.Virtual = true;
+        var nativeDispatch = (BirFunctionDeclaration)dispatch.DeepClone();
+        nativeDispatch.Name = "nativeDispatch";
+        nativeDispatch.Overrides = new[] { new BirOverride { Owner = new TypeNode.Fqn("ForeignOwner"), Member = "identity" } };
+        var nativeIntrinsic = (BirFunctionDeclaration)dispatch.DeepClone();
+        nativeIntrinsic.Name = "nativeIntrinsic";
+        nativeIntrinsic.Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("kotlin.clr.ClrIntrinsic") } };
+        root.Methods = root.Methods.Value.Concat(new[] { dispatch, nativeDispatch, nativeIntrinsic }).ToArray();
+        var original = root.DeepClone();
         var demands = Collect(new[] { root }, policy: policy);
-        var value = demands.Single(owner => Text(owner.Declaration["name"]) == "ValueOwner");
-        var foreign = demands.Single(owner => Text(owner.Declaration["name"]) == "ForeignOwner");
+        var value = demands.Single(owner => owner.View.Name == "ValueOwner");
+        var foreign = demands.Single(owner => owner.View.Name == "ForeignOwner");
         var methods = demands.Single(owner => ReferenceEquals(owner.Declaration, root)).Methods;
         if (!value.Frame.StorageIndices.SequenceEqual(new[] { 0 })
-            || !methods.Single(method => Text(method.Declaration["name"]) == "make").Frame.StorageIndices.SequenceEqual(new[] { 0 })
-            || !methods.Single(method => Text(method.Declaration["name"]) == "identity").Frame.StorageIndices.SequenceEqual(new[] { 0 })
-            || !methods.Single(method => Text(method.Declaration["name"]) == "dispatch").Frame.StorageIndices.SequenceEqual(new[] { 0 })
-            || methods.Single(method => Text(method.Declaration["name"]) == "nativeDispatch").Frame.PhysicalArity != 1
-            || methods.Single(method => Text(method.Declaration["name"]) == "nativeIntrinsic").Frame.PhysicalArity != 1
-            || foreign.Frame.PhysicalArity != 1 || root.ToJsonString() != original)
+            || !methods.Single(method => method.View.Name == "make").Frame.StorageIndices.SequenceEqual(new[] { 0 })
+            || !methods.Single(method => method.View.Name == "identity").Frame.StorageIndices.SequenceEqual(new[] { 0 })
+            || !methods.Single(method => method.View.Name == "dispatch").Frame.StorageIndices.SequenceEqual(new[] { 0 })
+            || methods.Single(method => method.View.Name == "nativeDispatch").Frame.PhysicalArity != 1
+            || methods.Single(method => method.View.Name == "nativeIntrinsic").Frame.PhysicalArity != 1
+            || foreign.Frame.PhysicalArity != 1 || !root.StructurallyEquals(original))
             throw new InvalidOperationException("Declaration value demand changed an unrelated or native frame");
         Console.WriteLine("[declaration value demand] self-test OK (stored variable, factory fixed point, method value slots and native owner frames)");
     }
@@ -328,78 +320,78 @@ static partial class NullableRepresentationDemand
             nullableStorageIndices: new[] { 0 });
         var types = new Dictionary<string, NullableRepresentationFrame> { ["StorageSource"] = importedFrame };
         var methods = new Dictionary<string, NullableRepresentationFrame> { ["storage-source"] = importedFrame };
-        var root = JsonNode.Parse("""
+        var root = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"fileClass":"StorageCalls","methods":[
           {"name":"virtualUse","declarationId":"virtual-use","virtual":true,"typeParams":[{"name":"T"}],"params":[],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
-            {"k":"callStatic","declarationId":"forward","typeArgs":[{"t":"tv","scope":"method","i":0}]}]},
+            {"k":"exprStmt","expr":{"k":"callStatic","declarationId":"forward","typeArgs":[{"t":"tv","scope":"method","i":0}]}}]},
           {"name":"forward","declarationId":"forward","typeParams":[{"name":"T"}],"params":[],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
-            {"k":"callStatic","declarationId":"leaf","typeArgs":[{"t":"tv","scope":"method","i":0}]}]},
+            {"k":"exprStmt","expr":{"k":"callStatic","declarationId":"leaf","typeArgs":[{"t":"tv","scope":"method","i":0}]}}]},
           {"name":"leaf","declarationId":"leaf","typeParams":[{"name":"T"}],"params":[],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
-            {"k":"callStatic","declarationId":"storage-source","typeArgs":[{"t":"tv","scope":"method","i":0}]}]},
+            {"k":"exprStmt","expr":{"k":"callStatic","declarationId":"storage-source","typeArgs":[{"t":"tv","scope":"method","i":0}]}}]},
           {"name":"nullableForward","typeParams":[{"name":"T"}],"params":[],
            "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
-            {"k":"callStatic","declarationId":"storage-source","typeArgs":[
-              {"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]}]}],
+            {"k":"exprStmt","expr":{"k":"callStatic","declarationId":"storage-source","typeArgs":[
+              {"t":"nullable","of":{"t":"tv","scope":"method","i":0}}]}}]}],
          "types":[
           {"kind":"class","name":"StorageOuter","typeParams":[{"name":"T"}],"fields":[
-            {"name":"value","type":{"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"type","i":0}]}}],
-           "types":[{"kind":"class","name":"StorageNested","typeParams":[{"name":"U"},{"name":"T"}],
-             "semanticOwner":"StorageOuter","outerTypeParamCount":1,"outerTypeParamOffset":1}]},
+            {"name":"value","type":{"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"type","i":0}]}}]},
+          {"kind":"class","name":"StorageNested","typeParams":[{"name":"U"},{"name":"T"}],
+           "semanticOwner":"StorageOuter","outerTypeParamCount":1,"outerTypeParamOffset":1},
           {"kind":"class","name":"StorageIndirect","typeParams":[{"name":"T"}],"fields":[
             {"name":"value","type":{"t":"fqn","name":"StorageOuter","args":[{"t":"tv","scope":"type","i":0}]}}]},
           {"kind":"class","name":"StorageScope","typeParams":[{"name":"T"}],"methods":[
             {"name":"both","typeParams":[{"name":"T"}],"params":[{"name":"owner","type":
               {"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"type","i":0}]}}],
              "ret":{"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"method","i":0}]},"body":[]}]}]}
-        """)!.AsObject();
-        var original = root.ToJsonString();
+        """));
+        var original = root.DeepClone();
         var demands = Collect(new[] { root }, types, methods);
         var calls = demands.Single(owner => ReferenceEquals(owner.Declaration, root)).Methods;
         foreach (var name in new[] { "leaf", "forward" })
         {
-            var method = calls.Single(method => Text(method.Declaration["name"]) == name);
+            var method = calls.Single(method => method.View.Name == name);
             Check(method.Frame.StorageIndices.SequenceEqual(new[] { 0 })
                 && method.Frame.NullableStorageIndices.SequenceEqual(new[] { 0 }) && method.Frame.PhysicalArity == 3,
                 "body-only role demand reaches nonvirtual callers: " + name);
         }
-        var virtualUse = calls.Single(method => Text(method.Declaration["name"]) == "virtualUse");
+        var virtualUse = calls.Single(method => method.View.Name == "virtualUse");
         Check(virtualUse.Frame.PhysicalArity == 1
             && virtualUse.Body.For("method", NullableRepresentationFrame.Role.Storage).SetEquals(new[] { 0 })
             && virtualUse.Body.For("method", NullableRepresentationFrame.Role.NullableStorage).SetEquals(new[] { 0 }),
             "virtual body storage demand does not change its dispatch ABI");
-        var nullableUse = calls.Single(method => Text(method.Declaration["name"]) == "nullableForward");
+        var nullableUse = calls.Single(method => method.View.Name == "nullableForward");
         Check(nullableUse.Frame.StorageIndices.Count == 0
             && nullableUse.Frame.NullableStorageIndices.SequenceEqual(new[] { 0 })
             && nullableUse.Frame.NullableIndices.SequenceEqual(new[] { 0 }),
             "storage of a nullable argument demands nullable-storage alongside its ordinary nullable form");
-        var indirect = demands.Single(owner => Text(owner.Declaration["name"]) == "StorageIndirect");
+        var indirect = demands.Single(owner => owner.View.Name == "StorageIndirect");
         Check(indirect.Frame.StorageIndices.SequenceEqual(new[] { 0 })
             && indirect.Frame.NullableStorageIndices.SequenceEqual(new[] { 0 }), "type application fixed point retains roles");
-        var nested = demands.Single(owner => Text(owner.Declaration["name"]) == "StorageNested");
+        var nested = demands.Single(owner => owner.View.Name == "StorageNested");
         Check(nested.Frame.PhysicalOrder.SequenceEqual(new[] { 1, 2, 3, 0 })
             && nested.Frame.StorageIndices.SequenceEqual(new[] { 1 })
             && nested.Frame.NullableStorageIndices.SequenceEqual(new[] { 1 }), "enclosing captures retain storage role groups");
-        var scoped = demands.Single(owner => Text(owner.Declaration["name"]) == "StorageScope");
+        var scoped = demands.Single(owner => owner.View.Name == "StorageScope");
         Check(scoped.Frame.PhysicalArity == 3 && scoped.Methods.Single().Frame.PhysicalArity == 3,
             "method and owner source index zero remain independent");
-        Check(root.ToJsonString() == original, "role analysis does not rewrite declarations");
-        var localRoot = JsonNode.Parse("""
+        Check(root.StructurallyEquals(original), "role analysis does not rewrite declarations");
+        var localRoot = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"fileClass":"LocalStorage","methods":[{"name":"entry","typeParams":[{"name":"U"}],"params":[],
           "ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
             {"k":"localFun","id":"local-storage","decl":{"name":"local","typeParams":[{"name":"T"}],
               "_syntheticTypeArgs":[{"t":"tv","scope":"method","i":0}],"params":[],
               "ret":{"t":"fqn","name":"StorageSource","args":[{"t":"tv","scope":"method","i":0}]},"body":[]}},
-            {"k":"callLocal","id":"local-storage","typeArgs":[{"t":"tv","scope":"method","i":0}],"args":[]}]}]}
-        """)!.AsObject();
+            {"k":"exprStmt","expr":{"k":"callLocal","id":"local-storage","typeArgs":[{"t":"tv","scope":"method","i":0}],"args":[]}}]}]}
+        """));
         var locals = Collect(new[] { localRoot }, types, methods).Single().Methods;
-        Check(locals.Single(method => Text(method.Declaration["name"]) == "entry").Frame.PhysicalArity == 3,
+        Check(locals.Single(method => method.View.Name == "entry").Frame.PhysicalArity == 3,
             "local call explicitly relates its storage demand to the lexical method frame");
-        ((JsonArray)localRoot["methods"][0]["body"]).RemoveAt(1);
+        localRoot.Methods.Value[0].Body = localRoot.Methods.Value[0].Body.Value.Take(1).ToArray();
         locals = Collect(new[] { localRoot }, types, methods).Single().Methods;
-        Check(locals.Single(method => Text(method.Declaration["name"]) == "entry").Frame.PhysicalArity == 1
+        Check(locals.Single(method => method.View.Name == "entry").Frame.PhysicalArity == 1
             && locals.Single(method => method.IsLocal).Frame.PhysicalArity == 3,
             "a local function's own method index is not an implicit lexical capture");
     }

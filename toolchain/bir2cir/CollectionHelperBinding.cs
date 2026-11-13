@@ -39,11 +39,13 @@ static partial class CollectionHelperBinding
         if (Text(call[DeclarationIdentityBinding.Key]) != "map-keys" || Text(call["k"]) != "callStatic"
             || TypeJson.Read(call["typeArgs"][0]) != new TypeNode.Tv("method", 1))
             throw new InvalidOperationException("Map helper binding lost the selected source argument");
-        NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
+        var materialized = ReadFixture(root);
+        NullableRepresentationMaterialization.Apply(new[] { materialized }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));
-        if (((JsonArray)call["typeArgs"]).Count != 2
-            || root["methods"][1][NullableRepresentationTypes.MethodFrameKey] != null
-            || TypeJson.Read(call["typeArgs"][0]) != new TypeNode.Tv("method", 1))
+        var materializedCall = (BirCallStatic)((BirExpressionStatement)materialized.Methods.Value[1].Body.Value[0]).Expr.Value;
+        if (materializedCall.TypeArgs.Value.Length != 2
+            || materialized.Methods.Value[1].NullableRepresentationFrame.IsPresent
+            || materializedCall.TypeArgs.Value[0] != new TypeNode.Tv("method", 1))
             throw new InvalidOperationException("Source-bound map helper did not retain its canonical source argument");
         Console.WriteLine("[map default binding] self-test OK (source selection, projected argument, canonical representation)");
         CollectionSelectionSelfTest();
@@ -96,12 +98,15 @@ static partial class CollectionHelperBinding
             || Text(body[2][DeclarationIdentityBinding.Key]) != "render-collection"
             || Render()[DeclarationIdentityBinding.Key] != null)
             throw new InvalidOperationException("Semantic helper source binding escaped its lowering scope");
-        NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
+        var materialized = ReadFixture(root);
+        NullableRepresentationMaterialization.Apply(new[] { materialized }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));
-        if (((JsonArray)body[0]["typeArgs"]).Count != 1
-            || ((JsonArray)body[1]["parts"][0]["typeArgs"]).Count != 1
-            || ((JsonArray)body[2]["typeArgs"]).Count != 1
-            || TypeJson.Read(body[0]["typeArgs"][0]) != variable)
+        var materializedCalls = new List<BirCallStatic>();
+        materialized.Methods.Value[1].Visit(node => {
+            if (node is BirCallStatic selected && selected.DeclarationId.OrDefault() == "render-collection") materializedCalls.Add(selected);
+        });
+        if (materializedCalls.Count != 3 || materializedCalls.Any(selected => selected.TypeArgs.Value.Length != 1)
+            || materializedCalls[0].TypeArgs.Value[0] != variable)
             throw new InvalidOperationException("Semantic helper changed its canonical argument");
         Console.WriteLine("[semantic helper binding] self-test OK (source identity, scoped binding, canonical argument)");
     }
@@ -280,10 +285,11 @@ static partial class CollectionHelperBinding
             || Text(body[inheritedIndex + 1]["k"]) != "callInstance"
             || TypeJson.Read(body[innerIndex]["typeArgs"][0]) != variable)
             throw new InvalidOperationException("Source collection helper selection changed projection, default index or exact-owner routing");
-        NullableRepresentationMaterialization.Apply(new[] { root }, _ => false,
+        var materialized = ReadFixture(root);
+        NullableRepresentationMaterialization.Apply(new[] { materialized }, _ => false,
             policy: new GenericRepresentationPolicy(aliases));
-        if (((JsonArray)body[0]["typeArgs"]).Count != 1
-            || TypeJson.Read(body[0]["typeArgs"][0]) != variable)
+        var materializedCall = (BirCallStatic)((BirExpressionStatement)materialized.Methods.Value[^1].Body.Value[0]).Expr.Value;
+        if (materializedCall.TypeArgs.Value.Length != 1 || materializedCall.TypeArgs.Value[0] != variable)
             throw new InvalidOperationException("Source collection helper changed its canonical argument");
         Console.WriteLine("[collection helper binding] self-test OK (static family/preference, source selection, mutation, default index, exact owner, canonical argument)");
     }

@@ -149,10 +149,23 @@ sealed partial class GenericRepresentationPolicy
     }
 
     internal bool IsNativeField(JsonObject node) => node[NativeLocationKey]?.GetValue<bool>() == true || _nativeFields.Contains(node)
-        || Text(node["k"]) is "field" or "staticField" or "setField" or "setStaticField"
-            && TypeJson.OwnerName(node["ownerType"] ?? node["owner"]) is string owner
-            && Text(node["name"]) is string name
-            && _nativeFieldNames.Contains(FieldKey(owner, name, Text(node["k"]) is "staticField" or "setStaticField", node));
+        || IsNativeFieldUse(Text(node["k"]), TypeJson.Read(node["ownerType"] ?? node["owner"]), Text(node["name"]),
+            Text(node["companionReceiver"]) is string receiver ? TypeNode.Parse(receiver) : null);
+
+    bool IsNativeFieldUse(string kind, TypeNode ownerType, string name, TypeNode companionReceiver) =>
+        kind is "field" or "staticField" or "setField" or "setStaticField" && ownerType is TypeNode.Fqn owner && name != null
+        && _nativeFieldNames.Contains(FieldKey(owner.Name, name, kind is "staticField" or "setStaticField", companionReceiver));
+
+    internal bool IsNativeField(BirGraphValue node) => node switch {
+        BirFieldDeclaration field => field._nativeLocation.OrDefault(),
+        BirRefTypeDeclaration cell => cell._nativeLocation.OrDefault(),
+        BirFieldGet field => field._nativeLocation.OrDefault()
+            || IsNativeFieldUse(field.Tag, field.OwnerType.OrDefault(), field.Name.OrDefault(), null),
+        BirStaticFieldGet field => field._nativeLocation.OrDefault()
+            || IsNativeFieldUse(field.Tag, field.OwnerType.OrDefault(), field.Name.OrDefault(), field.CompanionReceiver.OrDefault()),
+        BirSetField field => IsNativeFieldUse(field.Tag, field.OwnerType.OrDefault(), field.Name.OrDefault(), null),
+        _ => false,
+    };
 
     // Before companion binding allocates physical storage names, the explicit association is part of a
     // field's semantic identity. The same declaration object retains its location role after binding.
@@ -191,11 +204,8 @@ sealed partial class GenericRepresentationPolicy
             ? new TypeNode.Fqn(bound.Name, bound.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray()) : bound
         : HasNativeConstraint(bound) ? bound : null;
 
-    internal bool OwnsMethodValueSlots(JsonObject declaration) =>
-        !(declaration["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-            .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic")
-        && !(declaration["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-            .Any(edge => !OwnsValueSlots(TypeJson.OwnerName(edge["owner"])));
+    internal bool OwnsMethodValueSlots(bool intrinsic, IEnumerable<TypeNode> overrideOwners) =>
+        !intrinsic && !overrideOwners.Any(owner => !OwnsValueSlots((owner as TypeNode.Fqn)?.Name));
 
     // A Kotlin binding alias owns its own value projection; merely overriding that
     // semantic surface does not select an exact imported CLR method signature.
@@ -216,8 +226,6 @@ sealed partial class GenericRepresentationPolicy
     public NullableRepresentationFrame.Role ApplicationRole(string owner, NullableRepresentationFrame.Role role) =>
         role;
 
-    public bool IsStorageElement(string kind, string key) => false;
-
     // Frame expansion must retain the source owner until declaration matching is complete. Lowering only a
     // call's type arguments here would compare CLR IReadOnlyList<T> with a selected Kotlin List<T> descriptor.
     // BirTypeLowering owns the eventual alias substitution for both positions.
@@ -231,12 +239,12 @@ sealed partial class GenericRepresentationPolicy
     public static void SelfTest()
     {
         SourcePolicySelfTest();
-        var heads = JsonNode.Parse("""
+        var heads = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"types":[
           {"kind":"class","name":"SourceHead","typeParams":[{"name":"T"}]},
           {"kind":"class","name":"GeneratedHead","generated":true,"typeParams":[{"name":"T"}]}]}
-        """)!.AsObject();
-        var headPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { heads });
+        """));
+        var headPolicy = CreateSource(new[] { heads }, new Dictionary<string, string>(), null);
         var headArguments = new TypeNode[] { new TypeNode.Tv("method", 0) };
         var sourceHead = new TypeNode.Fqn("SourceHead", headArguments);
         var generatedHead = new TypeNode.Fqn("GeneratedHead", headArguments);
@@ -246,51 +254,52 @@ sealed partial class GenericRepresentationPolicy
             || headPolicy.ProjectArgumentHead(generatedHead, true, null) != generatedHead)
             throw new InvalidOperationException("Storage heads must use only declaration-owned existential views");
 
-        var fieldRoot = JsonNode.Parse("""
+        var fieldRoot = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"fileClass":"FieldFrames","types":[{"kind":"class","name":"FieldFrame","typeParams":[{"name":"T"}],
           "fields":[{"name":"native","type":{"t":"tv","scope":"type","i":0},
                      "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrField"},"args":[]}]},
                     {"name":"ordinary","type":{"t":"tv","scope":"type","i":0}}],
           "methods":[{"name":"pass","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
-            {"k":"callStatic","sig":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],
+            {"k":"exprStmt","expr":{"k":"callStatic","sig":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],
              "typeArgs":[{"t":"tv","scope":"type","i":0}],"args":[
               {"k":"field","ownerType":{"t":"fqn","name":"FieldFrame","args":[{"t":"tv","scope":"type","i":0}]},
                "recv":{"k":"this"},"name":"native","memberType":{"t":"tv","scope":"type","i":0},
-               "memberOwnerTypeParams":[{"name":"T"}]}]}]}]}]}
-        """)!.AsObject();
-        ((JsonArray)fieldRoot["types"]).Add(JsonNode.Parse("""
-        {"kind":"object","name":"FieldSingleton","fields":[
-          {"name":"INSTANCE","vis":"private","type":{"t":"fqn","name":"kotlin.String"}},
-          {"name":"INSTANCE","static":true,"type":{"t":"fqn","name":"FieldSingleton"}}]}
+               "memberOwnerTypeParams":[{"name":"T"}]}]}}]}]}]}
         """));
-        var fieldPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { fieldRoot });
+        fieldRoot.Types = fieldRoot.Types.Value.Append(new BirClassDefinition {
+            Kind = "class", Name = "FieldSingleton", Fields = new[] {
+                new BirFieldDeclaration { Name = "INSTANCE", Vis = "private", Type = new TypeNode.Fqn("kotlin.String") },
+                new BirFieldDeclaration { Name = "INSTANCE", Static = true, Type = new TypeNode.Fqn("FieldSingleton") },
+            },
+        }).ToArray();
+        var fieldPolicy = CreateSource(new[] { fieldRoot }, new Dictionary<string, string>(), null);
         NullableRepresentationMaterialization.Apply(new[] { fieldRoot }, _ => false, policy: fieldPolicy);
-        var fieldOwner = fieldRoot["types"][0];
-        var addressedField = fieldOwner["methods"][0]["body"][0]["args"][0];
-        if (TypeJson.Read(fieldOwner["fields"][0]["type"]) != new TypeNode.Tv("type", 0)
-            || TypeJson.Read(fieldOwner["fields"][1]["type"]) != new TypeNode.Tv("type", 1)
-            || TypeJson.Read(addressedField["memberType"]) != new TypeNode.Tv("type", 0)
-            || ((JsonArray)addressedField["ownerType"]["args"]).Count != 2)
+        var fieldOwner = (BirClassDefinition)fieldRoot.Types.Value[0];
+        var addressedField = (BirFieldGet)((BirCallStatic)((BirExpressionStatement)fieldOwner.Methods.Value[0].Body.Value[0]).Expr.Value).Args.Value[0];
+        if (fieldOwner.Fields.Value[0].Type.Value != new TypeNode.Tv("type", 0)
+            || fieldOwner.Fields.Value[1].Type.Value != new TypeNode.Tv("type", 1)
+            || addressedField.MemberType.Value != new TypeNode.Tv("type", 0)
+            || ((TypeNode.Fqn)addressedField.OwnerType.Value).Args.Length != 2)
             throw new InvalidOperationException("Native field allocation changed an unrelated field or lost declaration correspondence");
-        var importedAddressRoot = JsonNode.Parse("""
+        var importedAddressRoot = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
           {"fileClass":"ImportedFieldAddresses","methods":[{"name":"pass","typeParams":[{"name":"T"}],"params":[],"body":[
-            {"k":"callStatic","shapeTypes":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],"args":[
+            {"k":"exprStmt","expr":{"k":"callStatic","shapeTypes":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],"args":[
               {"k":"field","ownerType":{"t":"fqn","name":"System.Runtime.CompilerServices.StrongBox`1","args":[{"t":"tv","scope":"method","i":0}]},
-               "name":"Value","recv":{"k":"local","name":"box"},"ret":{"t":"tv","scope":"method","i":0}}]},
-            {"k":"field","ownerType":{"t":"fqn","name":"System.Runtime.CompilerServices.StrongBox`1","args":[{"t":"tv","scope":"method","i":0}]},
-             "name":"Value","recv":{"k":"local","name":"box"},"ret":{"t":"tv","scope":"method","i":0}}]}]}
-          """)!.AsObject();
-        var importedPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(),
-            ReferenceMetadataIndex.Build(new[] { typeof(System.Runtime.CompilerServices.StrongBox<>).Assembly.Location }),
-            new[] { importedAddressRoot });
-        var addressedImport = importedAddressRoot["methods"][0]["body"][0]["args"][0].AsObject();
-        if (!importedPolicy.IsNativeField(addressedImport) || addressedImport[FieldAddressKey]?.GetValue<bool>() != true
-            || importedPolicy.IsNativeField(importedAddressRoot["methods"][0]["body"][1].AsObject()))
+               "name":"Value","recv":{"k":"local","name":"box"},"ret":{"t":"tv","scope":"method","i":0}}]}},
+            {"k":"exprStmt","expr":{"k":"field","ownerType":{"t":"fqn","name":"System.Runtime.CompilerServices.StrongBox`1","args":[{"t":"tv","scope":"method","i":0}]},
+             "name":"Value","recv":{"k":"local","name":"box"},"ret":{"t":"tv","scope":"method","i":0}}}]}]}
+          """));
+        var importedPolicy = CreateSource(new[] { importedAddressRoot }, new Dictionary<string, string>(),
+            ReferenceMetadataIndex.Build(new[] { typeof(System.Runtime.CompilerServices.StrongBox<>).Assembly.Location }));
+        var importedBody = importedAddressRoot.Methods.Value[0].Body.Value;
+        var addressedImport = (BirFieldGet)((BirCallStatic)((BirExpressionStatement)importedBody[0]).Expr.Value).Args.Value[0];
+        if (!importedPolicy.IsNativeField(addressedImport) || !addressedImport._nativeFieldAddress.OrDefault()
+            || importedPolicy.IsNativeField((BirGraphValue)((BirExpressionStatement)importedBody[1]).Expr.Value))
             throw new InvalidOperationException("A selected referenced FieldDef address was lost or changed an ordinary value read");
         NullableRepresentationMaterialization.Apply(new[] { importedAddressRoot }, _ => false, policy: importedPolicy);
-        if (TypeJson.Read(addressedImport["ret"]) != new TypeNode.Tv("method", 0))
+        if (addressedImport.Ret.Value != new TypeNode.Tv("method", 0))
             throw new InvalidOperationException("Referenced field address result lost its native witness frame");
-        var companionFields = JsonNode.Parse("""
+        var companionFields = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"fileClass":"CompanionFieldFrames","fields":[
           {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"},
            "companionReceiver":"{\"t\":\"fqn\",\"name\":\"First\"}",
@@ -300,20 +309,20 @@ sealed partial class GenericRepresentationPolicy
           {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"},
            "companionReceiver":"{\"t\":\"fqn\",\"name\":\"Third\"}"},
           {"name":"slot","static":true,"type":{"t":"fqn","name":"kotlin.String"}}],
-         "methods":[{"body":[{"k":"callStatic","sig":[{"t":"byRef","of":{"t":"fqn","name":"kotlin.String"}}],
+         "methods":[{"body":[{"k":"exprStmt","expr":{"k":"callStatic","sig":[{"t":"byRef","of":{"t":"fqn","name":"kotlin.String"}}],
           "args":[{"k":"byrefOf","inner":{"k":"staticField","ownerType":{"t":"fqn","name":"CompanionFieldFrames"},
-           "name":"slot","companionReceiver":"{\"t\":\"fqn\",\"name\":\"Second\"}"}}]}]}]}
-        """)!.AsObject();
-        var companionPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { companionFields });
+           "name":"slot","companionReceiver":"{\"t\":\"fqn\",\"name\":\"Second\"}"}}]}}]}]}
+        """));
+        var companionPolicy = CreateSource(new[] { companionFields }, new Dictionary<string, string>(), null);
         foreach (var (index, native) in new[] { (0, true), (1, true), (2, false), (3, false) })
         {
-            var field = companionFields["fields"][index]!.AsObject();
-            var use = new JsonObject { ["k"] = "staticField", ["ownerType"] = TypeJson.Fqn("CompanionFieldFrames"),
-                ["name"] = "slot", ["companionReceiver"] = field["companionReceiver"]?.DeepClone() };
+            var field = companionFields.Fields.Value[index];
+            var use = new BirStaticFieldGet { OwnerType = new TypeNode.Fqn("CompanionFieldFrames"),
+                Name = "slot", CompanionReceiver = field.CompanionReceiver };
             if (companionPolicy.IsNativeField(field) != native || companionPolicy.IsNativeField(use) != native)
                 throw new InvalidOperationException("Native companion storage selection leaked into a sibling field");
         }
-        var nullableRead = JsonNode.Parse("""
+        var nullableRead = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"types":[{"name":"NativeNullableRead","kind":"class","typeParams":[{"name":"T"}],"fields":[
           {"name":"value","type":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}},
            "attrs":[{"attr":{"t":"fqn","name":"kotlin.clr.ClrField"}}]}],"methods":[
@@ -321,13 +330,13 @@ sealed partial class GenericRepresentationPolicy
            "body":[{"k":"return","value":{"k":"field","ownerType":{"t":"fqn","name":"NativeNullableRead","args":[{"t":"tv","scope":"type","i":0}]},
              "name":"value","recv":{"k":"this"},"ret":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}},
              "sty":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}}}]}]}]}
-        """)!.AsObject();
-        var readPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { nullableRead });
+        """));
+        var readPolicy = CreateSource(new[] { nullableRead }, new Dictionary<string, string>(), null);
         NullableRepresentationMaterialization.Apply(new[] { nullableRead }, _ => false, policy: readPolicy);
-        var physicalRead = nullableRead["types"][0]["methods"][0]["body"][0]["value"];
-        var physicalField = TypeJson.Read(nullableRead["types"][0]["fields"][0]["type"]);
-        if (physicalField is not TypeNode.Tv || TypeJson.Read(physicalRead["ret"]) != physicalField
-            || TypeJson.Read(physicalRead["sty"]) != physicalField)
+        var readOwner = (BirClassDefinition)nullableRead.Types.Value[0];
+        var physicalRead = (BirFieldGet)((BirReturn)readOwner.Methods.Value[0].Body.Value[0]).Value.Value;
+        var physicalField = readOwner.Fields.Value[0].Type.Value;
+        if (physicalField is not TypeNode.Tv || physicalRead.Ret.Value != physicalField || physicalRead.Sty.Value != physicalField)
             throw new InvalidOperationException("Native nullable field read lost its physical result frame");
         var policy = new GenericRepresentationPolicy(new Dictionary<string, string> {
             ["kotlin.collections.Map"] = "System.Collections.Generic.IDictionary",
@@ -337,7 +346,7 @@ sealed partial class GenericRepresentationPolicy
             || !policy.UsesNativeOwnerSlots("kotlin.collections.Collection`1")
             || policy.UsesNativeOwnerSlots("Unrelated`1"))
             throw new InvalidOperationException("Native owner roles must use the selected alias identity, including exact metadata owners");
-        var root = JsonNode.Parse("""
+        var root = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"fileClass":"BindingRoles","methods":[
           {"name":"choose","declarationId":"choose","typeParams":[{"name":"T"}],"params":[
             {"name":"array","type":{"t":"array","elem":{"t":"tv","scope":"method","i":0}}},
@@ -347,18 +356,18 @@ sealed partial class GenericRepresentationPolicy
              {"k":"arrayGet","array":{"k":"local","name":"array"},"index":{"k":"const","type":{"t":"fqn","name":"kotlin.Int"},"value":0},
               "elem":{"t":"tv","scope":"method","i":0}}}]},
           {"name":"use","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},"body":[
-            {"k":"callStatic","declarationId":"choose","typeArgs":[
-              {"t":"fqn","name":"kotlin.collections.Collection","args":[{"t":"fqn","name":"kotlin.String"}]}],"args":[]}]}]}
-        """)!.AsObject();
+            {"k":"exprStmt","expr":{"k":"callStatic","declarationId":"choose","typeArgs":[
+              {"t":"fqn","name":"kotlin.collections.Collection","args":[{"t":"fqn","name":"kotlin.String"}]}],"args":[]}}]}]}
+        """));
         NullableRepresentationMaterialization.Apply(new[] { root }, _ => false, policy: policy);
-        var choose = root["methods"][0];
-        if (((JsonArray)choose["typeParams"]).Count != 2
-            || TypeJson.Read(choose["ret"]) != new TypeNode.Tv("method", 1)
-            || TypeJson.Read(choose["params"][0]["type"]) != new TypeNode.Array(new TypeNode.Tv("method", 0))
-            || TypeJson.Read(choose["params"][1]["type"]) is not TypeNode.Fqn { Args: { } mapArguments }
+        var choose = root.Methods.Value[0];
+        if (choose.TypeParams.Value.Length != 2
+            || choose.Ret.Value != new TypeNode.Tv("method", 1)
+            || choose.Params.Value[0].Type.Value != new TypeNode.Array(new TypeNode.Tv("method", 0))
+            || choose.Params.Value[1].Type.Value is not TypeNode.Fqn { Args: { } mapArguments }
             || mapArguments[1] != new TypeNode.Tv("method", 0))
             throw new InvalidOperationException("Binding policy changed a native array or map element's canonical representation");
-        var arguments = ((JsonArray)root["methods"][1]["body"][0]["typeArgs"]).Select(TypeJson.Read).ToArray();
+        var arguments = ((BirCallStatic)((BirExpressionStatement)root.Methods.Value[1].Body.Value[0]).Expr.Value).TypeArgs.Value;
         if (arguments.Length != 2 || arguments.Any(argument => argument is not TypeNode.Fqn { Name: "kotlin.collections.Collection" }))
             throw new InvalidOperationException("Frame expansion changed a collection's source declaration identity");
 

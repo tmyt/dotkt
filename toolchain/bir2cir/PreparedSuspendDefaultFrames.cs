@@ -1,83 +1,84 @@
-using System.Text.Json.Nodes;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
+using static ClosureSynthesis;
 
-// A materialized source suspend lambda owns a declaration frame distinct from its application.
-// Stage that declaration for the ordinary generic-frame pass, then return its transformed fields
-// to the lambda before suspend lowering. The temporary method is never emitted or published.
+// Expose a source suspend lambda's declaration frame through an ordinary
+// temporary MethodDef, then return its transformed facts to the same occurrence.
 static class PreparedSuspendDefaultFrames
 {
     static int _next;
 
-    public static Action Stage(JsonObject file, IEnumerable<JsonNode> inputs)
+    internal static Action Stage(BirFileDeclaration file, IEnumerable<MaterializedOccurrence> inputs)
     {
-        var staged = new List<(JsonObject Node, JsonObject Declaration, int Captures)>();
-        var seen = new HashSet<JsonNode>();
-        var methods = (JsonArray)file["methods"];
-        void Walk(JsonNode value)
+        var staged = new List<(BirNewSuspendLambda Node, BirFunctionDeclaration Declaration, int Captures)>();
+        var seen = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
+        void Walk(BirGraphValue node)
         {
-            if (value == null || !seen.Add(value)) return;
-            if (value is JsonArray array)
+            if (node == null || node is BirAttribute or IBirExecutablePayload || !seen.Add(node)) return;
+            if (node is BirNewSuspendLambda { _suspendDeclarationTypeArgs.HasValue: true } lambda)
             {
-                foreach (var child in array.ToArray()) Walk(child);
-                return;
-            }
-            if (value is not JsonObject node) return;
-            if (node["k"]?.GetValue<string>() == "newSuspendLambda"
-                && node[SuspendLambdaLowering.SplicedDeclarationFrameKey] is JsonArray origins)
-            {
-                var sourceParameters = (JsonArray)node["typeParams"];
-                if (origins.Count != sourceParameters.Count)
+                var origins = lambda._suspendDeclarationTypeArgs.Value;
+                var sourceParameters = lambda.TypeParams.Value;
+                if (origins.Length != sourceParameters.Length)
                     throw new InvalidOperationException("Prepared suspend default has inconsistent source frame");
-                var owner = new JsonArray();
-                var method = new JsonArray();
-                for (var i = 0; i < origins.Count; i++)
+                var owner = new List<TypeNode>();
+                var method = new List<TypeNode>();
+                for (var index = 0; index < origins.Length; index++)
                 {
-                    if (TypeJson.Read(origins[i]) is not TypeNode.Tv variable)
+                    if (origins[index] is not TypeNode.Tv variable)
                         throw new InvalidOperationException("Suspend declaration frame requires authored type variables");
                     var target = variable.Scope == "type" ? owner : method;
-                    var index = node["typeFrame"]?.GetValue<string>() == "dense" ? i : variable.I;
-                    while (target.Count <= index) target.Add((JsonNode)null);
-                    target[index] = TypeJson.Write(new TypeNode.Tv("method", i));
+                    var at = lambda.TypeFrame.OrDefault() == "dense" ? index : variable.I;
+                    while (target.Count <= at) target.Add(null);
+                    target[at] = new TypeNode.Tv("method", index);
                 }
-                var captures = node["captures"] as JsonArray ?? new JsonArray();
-                var parameters = node["params"] as JsonArray ?? new JsonArray();
-                var serial = System.Threading.Interlocked.Increment(ref _next);
-                var declaration = new JsonObject {
-                    ["name"] = "__preparedSuspendDefault$" + serial,
-                    [DeclarationIdentityBinding.Key] = DeclarationIdentityBinding.PhysicalOnlyId("prepared-suspend-default", serial.ToString()),
-                    ["generated"] = true, ["static"] = true,
-                    ["typeParams"] = sourceParameters.DeepClone(),
-                    ["params"] = new JsonArray(captures.Concat(parameters).Select(p => p.DeepClone()).ToArray()),
-                    ["ret"] = node["suspendRet"]?.DeepClone(),
-                    ["body"] = node["body"]?.DeepClone(),
+                var captures = lambda.Captures.OrEmpty();
+                var parameters = lambda.Params.OrEmpty();
+                var serial = Interlocked.Increment(ref _next);
+                var declaration = new BirFunctionDeclaration {
+                    Name = "__preparedSuspendDefault$" + serial,
+                    DeclarationId = DeclarationIdentityBinding.PhysicalOnlyId("prepared-suspend-default", serial.ToString()),
+                    Generated = true, Static = true,
+                    TypeParams = sourceParameters.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray(),
+                    Params = captures.Select(capture => ToParameter((BirCaptureDescriptor)capture.DeepClone()))
+                        .Concat(parameters.Select(parameter => ToParameter((BirLambdaParameter)parameter.DeepClone()))).ToArray(),
+                    Ret = lambda.SuspendRet.HasValue ? OptionalField<TypeNode>.Of(BirGraphValue.CopyType(lambda.SuspendRet.Value)) : OptionalField<TypeNode>.Null,
+                    Body = lambda.Body.HasValue ? OptionalField<IBirStatement[]>.Of(lambda.Body.Value
+                        .Select(statement => (IBirStatement)((BirGraphValue)statement).DeepClone()).ToArray()) : OptionalField<IBirStatement[]>.Null,
                 };
-                InlineSplice.SubstTvIn(declaration, method, method.Count, owner);
-                foreach (var key in new[] { "captures", "params", "suspendRet", "body", "typeParams",
-                    SuspendLambdaLowering.SplicedDeclarationFrameKey }) node.Remove(key);
-                node[DeclarationIdentityBinding.Key] = declaration[DeclarationIdentityBinding.Key].DeepClone();
-                methods.Add(declaration);
-                staged.Add((node, declaration, captures.Count));
+                declaration = (BirFunctionDeclaration)TypedExecutableFrames.Substitute(declaration, method.ToArray(), method.Count, owner.ToArray());
+                lambda.Captures = default; lambda.Params = default; lambda.SuspendRet = default; lambda.Body = default;
+                lambda.TypeParams = default; lambda._suspendDeclarationTypeArgs = default;
+                lambda.DeclarationId = declaration.DeclarationId;
+                if (!file.Methods.HasValue) throw new InvalidOperationException("Prepared suspend default has no methods array");
+                file.Methods = file.Methods.Value.Append(declaration).ToArray();
+                staged.Add((lambda, declaration, captures.Length));
                 Walk(declaration);
             }
-            foreach (var (key, child) in node.ToArray()) if (key != "attrs") Walk(child);
+            node.VisitChildren(Walk);
         }
-        foreach (var input in inputs.ToArray()) Walk(input);
+        foreach (var input in inputs.ToArray()) Walk(input.Slot.Value);
         return () => {
-            // Inner declarations are restored before their containing bodies are copied back.
+            // Nested declarations must be restored before an outer transformed
+            // body is independently cloned back into its source occurrence.
             foreach (var (node, declaration, captures) in staged.AsEnumerable().Reverse())
             {
-                var parameters = (JsonArray)declaration["params"];
-                node["captures"] = new JsonArray(parameters.Take(captures).Select(p => p.DeepClone()).ToArray());
-                node["params"] = new JsonArray(parameters.Skip(captures).Select(p => p.DeepClone()).ToArray());
-                node["suspendRet"] = declaration["ret"].DeepClone();
-                node["body"] = declaration["body"].DeepClone();
-                var typeParameters = (JsonArray)declaration["typeParams"];
-                node["typeParams"] = typeParameters.DeepClone();
-                node["typeFrame"] = "dense";
-                node[SuspendLambdaLowering.SplicedDeclarationFrameKey] = new JsonArray(
-                    Enumerable.Range(0, typeParameters.Count).Select(i => TypeJson.Write(new TypeNode.Tv("method", i))).ToArray());
-                node.Remove(DeclarationIdentityBinding.Key);
-                methods.Remove(declaration);
+                var parameters = declaration.Params.Value;
+                node.Captures = parameters.Take(captures).Select(parameter => ToCapture((BirParameter)parameter.DeepClone())).ToArray();
+                node.Params = parameters.Skip(captures).Select(parameter => ToLambdaParameter((BirParameter)parameter.DeepClone())).ToArray();
+                node.SuspendRet = BirGraphValue.CopyType(declaration.Ret.Value);
+                node.Body = declaration.Body.Value.Select(statement => (IBirStatement)((BirGraphValue)statement).DeepClone()).ToArray();
+                var typeParameters = declaration.TypeParams.Value;
+                node.TypeParams = typeParameters.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray();
+                node.TypeFrame = "dense";
+                node._suspendDeclarationTypeArgs = Enumerable.Range(0, typeParameters.Length).Select(index => (TypeNode)new TypeNode.Tv("method", index)).ToArray();
+                node.DeclarationId = default;
+                file.Methods = file.Methods.Value.Where(method => !ReferenceEquals(method, declaration)).ToArray();
             }
         };
     }

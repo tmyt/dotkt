@@ -15,7 +15,7 @@ static class InnerRepresentationFrameTests
         SourceCarrierIdentity();
         SyntheticOwnerFrames();
         // Declarations use enclosing-first variables; Kotlin inner applications use own-first arguments.
-        var root = JsonNode.Parse("""
+        var source = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"fileClass":"InnerFrameProbe","types":[
           {"kind":"class","name":"Box","typeParams":[{"name":"T"}]},
           {"kind":"class","name":"Outer","typeParams":[{"name":"O"}],
@@ -28,8 +28,10 @@ static class InnerRepresentationFrameTests
              "body":[{"k":"return","value":{"k":"field","name":"captured","recv":{"k":"this"},
                "ownerType":{"t":"fqn","name":"Outer.Inner","args":[{"t":"tv","scope":"type","i":1},{"t":"tv","scope":"type","i":0}]},
                "memberOwnerTypeParams":[{"name":"O"},{"name":"I"}],"memberType":{"t":"nullable","of":{"t":"tv","scope":"type","i":0}}}}]}]}]}
-        """)!;
-        NullableRepresentationMaterialization.Apply(new[] { root }, _ => false);
+        """));
+        NullableRepresentationMaterialization.Apply(new[] { source }, _ => false);
+        // The remaining ownership pass is still a downstream DOM consumer.
+        var root = source.ToDom();
         var materializedOwner = root["types"]![2]!["methods"]![0]!["body"]![0]!["value"]!["ownerType"]!.ToJsonString();
         TypeOwnershipLowering.PrepareOwnershipFacts(new[] { root });
         TypeOwnershipLowering.ProjectInnerApplications(new[] { root }, null);

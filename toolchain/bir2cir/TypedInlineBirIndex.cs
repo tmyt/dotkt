@@ -56,7 +56,7 @@ sealed class TypedInlineBirIndex
         }
     }
 
-    internal BirInlinePayload Resolve(BirCallInline call, ReferenceMetadataIndex references)
+    internal BirInlinePayload Resolve(BirCallInline call, ReferenceMetadataIndex references, string context = "default witness demand")
     {
         var owner = (call.Owner.OrDefault() as TypeNode.Fqn)?.Name;
         var callee = (call.Callee.OrDefault() as TypeNode.Fqn)?.Name;
@@ -66,7 +66,7 @@ sealed class TypedInlineBirIndex
             (o, n, p, a) => candidates.GetValueOrDefault((o, n, p, a)), references == null ? null : references.InlineValueCandidates,
             (n, p, a) => ownerless.GetValueOrDefault((n, p, a)), references == null ? null : references.OwnerlessInlineValueCandidates,
             payload => payload.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()).ToArray());
-        if (result.Payload == null) throw new InvalidOperationException("bir2cir: default witness demand: " + result.Diagnostic);
+        if (result.Payload == null) throw new InvalidOperationException("bir2cir: " + context + ": " + result.Diagnostic);
         return (BirInlinePayload)result.Payload.DeepClone();
     }
 }

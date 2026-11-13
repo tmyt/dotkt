@@ -194,6 +194,33 @@ def outputs(root, schema):
     def parameters_in_order(definition):
         return sorted(parameters(definition), key=lambda field: field[2])
 
+    def cs_data_equal(shape, left, right, depth=0):
+        if "$ref" in shape:
+            target = definitions[shape["$ref"].removeprefix("#/$defs/")]
+            if "x-dotkt-model" in target:
+                return f"Equal({left}, {right})"
+            return cs_data_equal(target, left, right, depth)
+        if shape.get("type") == "array":
+            item_left, item_right = f"left{depth}", f"right{depth}"
+            item = cs_data_equal(shape["items"], item_left, item_right, depth + 1)
+            return f"ArrayEqual({left}, {right}, ({item_left}, {item_right}) => {item})"
+        scalar = cs_type(shape)
+        if scalar == "string":
+            return f"global::System.String.Equals({left}, {right}, global::System.StringComparison.Ordinal)"
+        if scalar in {"bool", "int", "long"}:
+            return f"{left} == {right}"
+        raise ValueError(f"Unsupported source metadata equality scalar: {scalar}")
+
+    def cs_equal_record(name, definition):
+        comparisons = [cs_data_equal(shape, f"left.{cs_name(key)}", f"right.{cs_name(key)}")
+                       for key, shape, _ in parameters_in_order(definition)]
+        lines = [f"    internal static bool Equal({name}? left, {name}? right) =>",
+                 "        global::System.Object.ReferenceEquals(left, right)",
+                 "        || left is not null && right is not null"]
+        lines.extend(f"            && {comparison}" for comparison in comparisons)
+        lines[-1] += ";"
+        return [*lines, ""]
+
     def cs_case(name, definition):
         properties = definition["properties"]
         fields = parameters_in_order(definition)
@@ -262,6 +289,33 @@ def outputs(root, schema):
         else:
             cs_model.extend([cs_record(name, definition), ""])
             cs_case(name, definition)
+    cs_model.extend(["// Logical data equality includes every maintained field and nested vector.",
+                     "// Record equality alone would compare array storage rather than its contents.",
+                     "internal static class SourceMetadataDataEquality", "{"])
+    for definition in named:
+        info = definition["x-dotkt-model"]
+        name = info["name"]
+        if "discriminator" in info:
+            cases = list(variants(definition))
+            cs_model.extend([f"    internal static bool Equal({name}? left, {name}? right)", "    {",
+                             "        if (global::System.Object.ReferenceEquals(left, right)) return true;",
+                             "        return (left, right) switch", "        {"])
+            for variant, _ in cases:
+                cs_model.append(f"            ({name}.{variant} first, {name}.{variant} second) => Equal(first, second),")
+            cs_model.extend(["            _ => false,", "        };", "    }", ""])
+            for variant, shape in cases:
+                cs_model.extend(cs_equal_record(name + "." + variant, shape))
+        else:
+            cs_model.extend(cs_equal_record(name, definition))
+    cs_model.extend(['''    private static bool ArrayEqual<T>(T[]? left, T[]? right, global::System.Func<T, T, bool> equal)
+    {
+        if (global::System.Object.ReferenceEquals(left, right)) return true;
+        if (left is null || right is null || left.Length != right.Length) return false;
+        for (var index = 0; index < left.Length; index++)
+            if (!equal(left[index], right[index])) return false;
+        return true;
+    }
+}''', ""])
     cs_codec.extend(['''    private delegate T Reader<T>(ref Utf8JsonReader reader);
     private static T[] ReadArray<T>(ref Utf8JsonReader reader, Reader<T> read)
     {

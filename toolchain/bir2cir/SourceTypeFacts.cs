@@ -38,6 +38,18 @@ sealed class SourceTypeFacts
 
     internal SourceTypeFacts Merge(IReadOnlyDictionary<int, TypeNode[]> bounds) => Merge(null, null, bounds);
 
+    internal SourceTypeFacts MergeNullableFrame(NullableRepresentationFrame frame)
+    {
+        if (NullableFrame is { } prior && (prior.SourceArity != frame.SourceArity
+            || !prior.NullableIndices.SequenceEqual(frame.NullableIndices)
+            || !prior.StorageIndices.SequenceEqual(frame.StorageIndices)
+            || !prior.NullableStorageIndices.SequenceEqual(frame.NullableStorageIndices)
+            || !prior.PhysicalOrder.SequenceEqual(frame.PhysicalOrder)))
+            throw new InvalidOperationException("Conflicting declaration-owned nullable representation frames");
+        return new SourceTypeFacts(Base, Interfaces, Bounds,
+            NullableFrame == null ? order.Append(Part.NullableFrame).ToArray() : order, frame);
+    }
+
     internal SourceTypeFacts Merge(TypeNode baseType, IReadOnlyList<TypeNode> interfaces,
         IReadOnlyDictionary<int, TypeNode[]> bounds)
     {
