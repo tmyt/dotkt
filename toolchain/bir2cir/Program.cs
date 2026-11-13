@@ -306,6 +306,8 @@ sealed class Pipeline
         // Current local declarations, including file facades, shadow referenced
         // CLR types before the first selected-slot resolver consumes this index.
         refs.SetLocalEmittedTypes(inventory.EmittedTypeFqns);
+        // Nested invariant override slots adopt the selected declaration shape before
+        // snapshots; top-level object seams remain for the later bridge owner.
         KotlinOverrideSlotBridge.PropagateErasedSlots(captured, sourceIsValue, refs, referenceBuild,
             genericRepresentations, valuePolicy.HasClassifier);
         var nullableDeclarations = NullableTvErasureCallRealign.CollectDeclaredMemberRets(captured, refs);
@@ -377,9 +379,6 @@ sealed class Pipeline
         // a LOCAL type (rt-stdlib self-build -> bare base + local slot override) or a REFERENCED one
         // (app build -> clr: base + pendingOverrideOwner linkage).
         var localTypeFqns = module.Preparation.Inventory.EmittedTypeFqns;
-        // LOCAL-OVER-REF (#15): tell the refs index which FQNs are this-assembly-emitted, so ResolveNetType refuses to
-        // bind a locally-declared type to a referenced dll of the same identity — `new`/callInstance/callStatic/field
-        // on a source-compiled `demo.Plain` route to the emitted type, not `newClr`/`clr*` against the ref copy.
         // The DIRECT supertypes (base + interfaces, by FQN) of each type DECLARED in this compilation, aggregated
         // across all input files. ForInLowering walks it to decide whether a stdlib self-build for-loop source is a
         // kotlin.collections iterable (a concrete subtype such as ArrayList : MutableList matches even though its own
@@ -404,14 +403,6 @@ sealed class Pipeline
         // Exact declaration identities select the callee's parameter-type vector,
         // captured module-wide before override or per-file declaration changes.
         var calleeTypeParams = module.Preparation.Inventory.CalleeTypeParameters;
-
-        // OVERRIDE SLOTS, THE HALF THAT MOVES A DECLARATION (#86 D3). An override narrowing a base `T?` NESTED in a
-        // constructed generic (`Box<T?>` overridden as `Box<Int?>`) has no conversion available in either direction —
-        // `Box<object>` and `Box<Nullable<int32>>` are unrelated invariant reified generics — so that slot must adopt
-        // the base's shape. It happens over every file at once, because a base may be declared in another one, and
-        // BEFORE the declaration snapshot below: a call reached through the DERIVED type is typed against that
-        // declaration, so a snapshot taken first would type it against the slot the override no longer has. The
-        // top-level `object` seam is bridged instead, beside the other bridge synthesizers.
 
         // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
         // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds

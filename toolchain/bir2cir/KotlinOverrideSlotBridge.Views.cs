@@ -33,9 +33,6 @@ static partial class KotlinOverrideSlotBridge
         internal NullableRepresentationFrame Frame => source == null ? KotlinSupertypesRecord.ReadNullableFrame(definition.Node)
             : NullableRepresentationViews.TypeFacts((BirGraphValue)source)?.NullableFrame;
         internal BirTypeParameter[] DeclaredParameters => source == null ? ReadParameters(definition.Node?["typeParams"] as JsonArray) : source.TypeParams.OrDefault();
-        internal BirTypeParameter[] CompleteParameters => source == null
-            ? TypeParameterFrame.Declarations(definition.Node).OfType<JsonObject>().Select(ReadParameter).ToArray()
-            : source.CapturedTypeParams.OrEmpty().Concat(source.TypeParams.OrEmpty()).ToArray();
         internal IEnumerable<OverrideMethod> Methods => source == null
             ? definition.Methods.OfType<JsonObject>().Select(views.Method)
             : source.Methods.OrEmpty().Select(views.Method);
@@ -82,7 +79,6 @@ static partial class KotlinOverrideSlotBridge
         internal BirFunctionDeclaration Source { get; }
         internal OverrideMethod(JsonObject value) => Dom = value;
         internal OverrideMethod(BirFunctionDeclaration value) => Source = value;
-        internal object Identity => (object)Source ?? Dom;
         internal string Name => Source == null ? Str(Dom["name"]) : Source.Name.OrDefault();
         internal string DeclarationId => Source == null ? Str(Dom[DeclarationIdentityBinding.Key]) : Source.DeclarationId.OrDefault();
         internal string KotlinSourceMember => Source == null ? Str(Dom[DeclarationRename.SourceMemberKey]) : null;
@@ -100,7 +96,6 @@ static partial class KotlinOverrideSlotBridge
         internal bool SuspendSourceParametersPresent => Source == null && Dom[KotlinPropertyAccessors.SuspendSourceParamsKey] is JsonArray;
         internal TypeNode Return => Source == null ? TypeJson.Read(Dom["ret"]) : Source.Ret.OrDefault();
         internal TypeNode NullableReturn => Source == null ? FrozenType(Dom["nullableGenericRet"]) : Source.NullableGenericRet.OrDefault();
-        internal TypeNode KotlinReturn => Source == null ? FrozenType(Dom["retKotlinType"]) : Source.RetKotlinType.OrDefault();
         internal BirTypeParameter[] TypeParameters => Source == null ? ReadParameters(Dom["typeParams"] as JsonArray) : Source.TypeParams.OrDefault();
         internal int Arity => TypeParameters?.Length ?? 0;
         internal NullableRepresentationFrame Frame => Source == null ? NullableRepresentationTypes.DeclarationMethodFrame(Dom) : Source.NullableRepresentationFrame.OrDefault();
@@ -133,11 +128,6 @@ static partial class KotlinOverrideSlotBridge
                 if (!Dom.ContainsKey("retNullableFlags") && NullableFlags.ComputeValues(original, isValue, annotationArguments: annotationArguments) is { } flags)
                     Dom["retNullableFlags"] = new JsonArray(flags.Select(flag => (JsonNode)JsonValue.Create(flag)).ToArray());
             }
-        }
-        internal void SetSuspendTaskResult(TypeNode value)
-        {
-            if (Source != null) Source.SuspendTaskResult = value;
-            else Dom[KotlinPropertyAccessors.SuspendTaskResultKey] = TypeJson.Write(value);
         }
         internal void SetVirtual()
         {
