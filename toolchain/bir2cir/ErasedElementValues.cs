@@ -377,28 +377,46 @@ static class ErasedElementValues
     internal static TypeNode ErasedBound(TypeNode.Tv variable, JsonObject method, JsonObject owner,
         Func<TypeNode, bool> isInterface, IReadOnlyDictionary<string, NullableRepresentationFrame> frames = null,
         ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null, HashSet<TypeNode.Tv> visited = null)
+        => ErasedBound(variable, MethodBounds(method), OwnerBounds(owner), isInterface, frames, isValue, policy, visited);
+
+    // Source and physical readers supply the same declaration-owned bounds. The
+    // choice of representative bound and its frame mapping lives only here.
+    internal sealed record BoundDeclaration(NullableRepresentationFrame Frame, IReadOnlyList<TypeNode[]> Constraints,
+        IReadOnlyDictionary<int, TypeNode[]> SavedBounds);
+
+    internal static BoundDeclaration MethodBounds(JsonObject method) => new(
+        method == null ? null : NullableRepresentationTypes.DeclarationMethodFrame(method),
+        DeclarationConstraints((method?["typeParams"] as JsonArray ?? new JsonArray())),
+        Text(method?[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string saved
+            ? SourceBoundsSnapshot.ReadFrozenText(saved).Bounds : null);
+
+    internal static BoundDeclaration OwnerBounds(JsonObject owner) => new(
+        owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner),
+        DeclarationConstraints(TypeParameterFrame.Declarations(owner)),
+        owner == null ? null : KotlinSupertypesRecord.ReadBounds(owner));
+
+    static TypeNode[][] DeclarationConstraints(IEnumerable<JsonNode> parameters) => parameters.Select(parameter =>
+        parameter is JsonObject declaration && declaration["constraints"] is JsonArray constraints
+            ? constraints.Select(TypeJson.Read).Where(type => type != null).ToArray()
+            : Array.Empty<TypeNode>()).ToArray();
+
+    internal static TypeNode ErasedBound(TypeNode.Tv variable, BoundDeclaration method, BoundDeclaration owner,
+        Func<TypeNode, bool> isInterface, IReadOnlyDictionary<string, NullableRepresentationFrame> frames = null,
+        ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null, HashSet<TypeNode.Tv> visited = null)
     {
         visited ??= new HashSet<TypeNode.Tv>();
         if (!visited.Add(variable)) throw new InvalidOperationException("Cyclic erased element bound");
         var declaration = variable.Scope == "method" ? method : owner;
-        var frame = declaration == null ? null : variable.Scope == "method"
-            ? NullableRepresentationTypes.DeclarationMethodFrame(declaration)
-            : KotlinSupertypesRecord.ReadNullableFrame(declaration);
+        var frame = declaration?.Frame;
         var index = frame?.PhysicalSlot(variable.I).SourceIndex ?? variable.I;
         var position = frame?.SourcePosition(index) ?? variable.I;
-        var key = variable.Scope == "method" ? NullableGenericErasure.MethodTypeParameterBoundsPre : KotlinSupertypesRecord.PreKey;
-        var source = Text(declaration?[key]) is string encoded
-            ? JsonNode.Parse(encoded)?["bounds"]?[index.ToString()] as JsonArray : null;
-        var parameters = variable.Scope == "type" ? TypeParameterFrame.Declarations(declaration).ToArray()
-            : (declaration?["typeParams"] as JsonArray ?? new JsonArray()).ToArray();
-        var parameter = position < parameters.Length ? parameters[position] as JsonObject : null;
-        var bounds = (source ?? parameter?["constraints"] as JsonArray ?? new JsonArray())
-            .Select(TypeJson.Read).Where(type => type != null).ToArray();
+        var source = declaration?.SavedBounds?.GetValueOrDefault(index);
+        var bounds = source ?? (position < (declaration?.Constraints.Count ?? 0)
+            ? declaration.Constraints[position] : Array.Empty<TypeNode>());
         if (source != null)
         {
             var mapping = new NullableRepresentationTypes(
-                owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner),
-                NullableRepresentationTypes.DeclarationMethodFrame(method),
+                owner?.Frame, method?.Frame,
                 frames ?? new Dictionary<string, NullableRepresentationFrame>(), isValue ?? (_ => false), policy: policy);
             bounds = bounds.Select(mapping.Slot).ToArray();
         }

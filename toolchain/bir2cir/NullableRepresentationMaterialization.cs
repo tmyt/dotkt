@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // Materializes signature frames and independently owned nonvirtual implementation frames. Virtual body-only
 // specialization is separate: it must not grow a published virtual slot. Runs after the Kotlin declaration snapshot.
@@ -754,9 +755,11 @@ static class NullableRepresentationMaterialization
                "inheritedImplementation":{"owner":{"t":"fqn","name":"StorageBody"},
                  "member":"identity","kind":"method","arity":1,"typeParams":[{"name":"T"}]}}]}]}
           """).AsObject();
-        var erasedStorage = inheritedStorage.DeepClone().AsObject();
-        var erasedPolicy = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { erasedStorage });
-        KotlinGenericScalarSlots.ApplyAll(new[] { erasedStorage }, erasedPolicy, null);
+        var typedStorage = BirGraphDom.ReadBirFileDeclaration(inheritedStorage.DeepClone());
+        var erasedPolicy = GenericRepresentationPolicy.CreateSource(new[] { typedStorage }, new Dictionary<string, string>(), null);
+        KotlinGenericScalarSlots.ApplyAll(new[] { typedStorage }, erasedPolicy, null);
+        var erasedStorage = typedStorage.ToDom();
+        erasedPolicy.BindDomDeclarations(new[] { erasedStorage });
         Apply(new[] { erasedStorage }, _ => false, policy: erasedPolicy);
         if (erasedStorage["types"][0]["methods"][0]["typeParams"].AsArray().Count != 2
             || TypeJson.Read(erasedStorage["types"][0]["methods"][0]["params"][0]["type"])

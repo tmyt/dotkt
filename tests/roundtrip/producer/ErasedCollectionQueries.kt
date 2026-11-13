@@ -29,7 +29,7 @@ open class CountingQuerySet<E>(values: List<E>) : QuerySet<E>(values) {
     }
 }
 
-open class CountingQueryMap<K, V> : AbstractMap<K, V>() {
+open class CountingQueryMap<K, out V> : AbstractMap<K, V>() {
     var calls = 0
     var lastKey: Any? = null
     var failure: IllegalStateException? = null

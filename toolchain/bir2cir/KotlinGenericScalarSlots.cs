@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -6,59 +7,62 @@ using DotKt.Bir;
 // A non-reified Kotlin scalar parameter/result transports a value, not a request to
 // extract the caller's exact CLR T. Keep that witness in the declaration's generic
 // frame; native signatures, managed locations and concrete scalar slots remain exact.
-static class KotlinGenericScalarSlots
+static partial class KotlinGenericScalarSlots
 {
-    internal sealed record Projection(Dictionary<string, int[]> Parameters, HashSet<string> Returns,
+    internal sealed partial record Projection(Dictionary<string, int[]> Parameters, HashSet<string> Returns,
         GenericRepresentationPolicy Policy, HashSet<string> Intrinsics, ReferenceMetadataIndex References)
     {
+        internal bool ProjectsMethod(bool nativeSignature, IEnumerable<string> overrideIdentities) =>
+            !nativeSignature && !overrideIdentities.Any(id => id != null
+                && (Intrinsics.Contains(id) || References?.TryDeclarationIdentity(id,
+                    out _, out _, out var intrinsic, out _) == true && intrinsic != null));
+
+        internal void Record(string identity, int[] projected, TypeNode sourceReturn)
+        {
+            if (identity == null) return;
+            if (projected.Length != 0) Parameters[identity] = projected;
+            if (sourceReturn is TypeNode.Tv) Returns.Add(identity);
+        }
+
+        internal int[] CallParameters(string identity, IEnumerable<string> overrideIdentities)
+        {
+            // A fake override can carry only its exact override closure. Project a position
+            // only when every selected declaration agrees on the opaque parameter contract.
+            var identities = identity != null ? new[] { identity } : overrideIdentities.ToArray();
+            if (identities.Length == 0 || identities.Any(id => id == null)) return Array.Empty<int>();
+            int[] Indices(string id) => Parameters.TryGetValue(id, out var localIndices)
+                ? localIndices : References?.GenericScalarParameters(id) ?? Array.Empty<int>();
+            return identities.Select(Indices).Aggregate((left, right) => left.Intersect(right).ToArray());
+        }
+
+        // Late synthesized methods join this same authority; they do not create another
+        // projection or replay the original source inventory.
         internal void ProjectMethod(JsonObject method)
         {
-            TypeNode SourceVariable(TypeNode.Tv physical)
-            {
-                var owner = method.Parent?.Parent as JsonObject;
-                var frame = physical.Scope == "method"
-                    ? NullableRepresentationTypes.DeclarationMethodFrame(method)
-                    : owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner);
-                return frame?.SemanticVariable(physical) ?? physical;
-            }
-            if (Policy.HasNativeMethodSignature(method)
-                || (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>().Any(edge =>
-                    edge[DeclarationIdentityBinding.Key]?.GetValue<string>() is string id
-                    && (Intrinsics.Contains(id) || References?.TryDeclarationIdentity(id,
-                        out _, out _, out var intrinsic, out _) == true && intrinsic != null))) return;
-            var projected = new List<int>();
+            if (!ProjectsMethod(Policy.HasNativeMethodSignature(method),
+                (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                    .Select(edge => edge[DeclarationIdentityBinding.Key]?.GetValue<string>()))) return;
+            var owner = method.Parent?.Parent as JsonObject;
+            var ownerFrame = owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner);
+            var methodFrame = NullableRepresentationTypes.DeclarationMethodFrame(method);
             var slots = method["params"] as JsonArray ?? new JsonArray();
-            // Query entry barriers belong to their selected collection contract;
-            // its dedicated lowering retains concrete/representative-bound guards.
-            var query = KotlinCollectionSlotSynthesis.ErasedQueryOverride(method) != null;
-            for (var index = 0; index < slots.Count; index++)
+            var projected = ParameterIndices(slots.Select(parameter => TypeJson.Read(parameter["type"])).ToArray(),
+                KotlinCollectionSlotSynthesis.ErasedQueryOverride(method) != null);
+            foreach (var index in projected)
             {
                 var parameter = slots[index].AsObject();
-                if (!query && TypeJson.Read(parameter["type"]) is TypeNode.Tv variable)
-                {
-                    parameter["kotlinType"] ??= parameter["nullableGeneric"]?.DeepClone()
-                        ?? JsonValue.Create(TypeNode.ToJson(SourceVariable(variable)));
-                    parameter["type"] = TypeJson.Fqn("object");
-                    projected.Add(index);
-                }
+                parameter["kotlinType"] ??= parameter["nullableGeneric"]?.DeepClone()
+                    ?? JsonValue.Create(TypeNode.ToJson(SourceVariable((TypeNode.Tv)TypeJson.Read(parameter["type"]), ownerFrame, methodFrame)));
+                parameter["type"] = TypeJson.Fqn("object");
             }
-            // A suspend declaration has no ordinary scalar CLR return slot:
-            // its cold Object result and exact hot Task signature belong to
-            // suspend lowering, independently of scalar parameter transport.
-            if (method["mods"]?["suspend"]?.GetValue<bool>() != true
-                && TypeJson.Read(method["ret"]) is TypeNode.Tv result)
+            if (ProjectsReturn(TypeJson.Read(method["ret"]), method["mods"]?["suspend"]?.GetValue<bool>() == true))
             {
                 method["retKotlinType"] ??= method["nullableGenericRet"]?.DeepClone()
-                    ?? JsonValue.Create(TypeNode.ToJson(SourceVariable(result)));
+                    ?? JsonValue.Create(TypeNode.ToJson(SourceVariable((TypeNode.Tv)TypeJson.Read(method["ret"]), ownerFrame, methodFrame)));
                 method["ret"] = TypeJson.Fqn("object");
             }
-            if (method[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity)
-            {
-                if (projected.Count != 0) Parameters[identity] = projected.ToArray();
-                if (method["retKotlinType"]?.GetValue<string>() is string sourceReturn
-                    && TypeNode.Parse(sourceReturn) is TypeNode.Tv)
-                    Returns.Add(identity);
-            }
+            Record(method[DeclarationIdentityBinding.Key]?.GetValue<string>(), projected,
+                method["retKotlinType"]?.GetValue<string>() is string saved ? TypeNode.Parse(saved) : null);
         }
 
         internal TypeNode.Tv Result(JsonObject call, ReferenceMetadataIndex refs) =>
@@ -68,77 +72,13 @@ static class KotlinGenericScalarSlots
             && (Returns.Contains(identity) || refs.IsGenericScalarReturn(identity)) ? variable : null;
     }
 
-    internal static Projection ApplyAll(IEnumerable<JsonNode> roots, GenericRepresentationPolicy policy,
-        ReferenceMetadataIndex references)
-    {
-        var files = roots.ToArray();
-        var intrinsics = new HashSet<string>();
-        void NativeBindings(JsonObject owner)
-        {
-            foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (method[DeclarationIdentityBinding.Key]?.GetValue<string>() is string id
-                    && (method["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-                        .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic"))
-                    intrinsics.Add(id);
-            foreach (var type in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) NativeBindings(type);
-        }
-        foreach (var root in files.OfType<JsonObject>()) NativeBindings(root);
-        var declarations = new Dictionary<string, JsonObject>();
-        var projection = new Projection(new Dictionary<string, int[]>(), new HashSet<string>(), policy, intrinsics, references);
-        void Method(JsonObject method)
-        {
-            projection.ProjectMethod(method);
-            if (method[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity)
-                declarations[identity] = method;
-        }
-        void Owner(JsonObject owner)
-        {
-            var name = (owner["name"] ?? owner["fileClass"])?.GetValue<string>();
-            if (!policy.IsBindingAlias(name))
-            {
-                foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                    Method(method);
-                foreach (var inherited in (owner["inheritedClassMethods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                    projection.ProjectMethod(inherited);
-                foreach (var property in (owner["properties"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                    if (!policy.HasNativeMethodSignature(property)
-                        && TypeJson.Read(property["type"]) is TypeNode.Tv variable)
-                    {
-                        property["kotlinType"] ??= TypeNode.ToJson(variable);
-                        property["type"] = TypeJson.Fqn("object");
-                    }
-            }
-            foreach (var type in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Owner(type);
-        }
-        foreach (var root in files.OfType<JsonObject>()) Owner(root);
-        void Calls(JsonNode node)
-        {
-            if (node is JsonArray array) { foreach (var child in array) Calls(child); return; }
-            if (node is not JsonObject operation) return;
-            foreach (var (key, child) in operation.ToArray())
-                if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)) Calls(child);
-            if (operation["k"]?.GetValue<string>() is not ("callStatic" or "callInstance" or "constrainedCall")) return;
-            var identity = operation[DeclarationIdentityBinding.Key]?.GetValue<string>();
-            // A fake override can carry only its exact override closure. Project a position
-            // only when every selected declaration agrees on the opaque parameter contract.
-            var identities = identity != null ? new[] { identity }
-                : (operation["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-                    .Select(edge => edge[DeclarationIdentityBinding.Key]?.GetValue<string>()).ToArray();
-            if (identities.Length == 0 || identities.Any(id => id == null)) return;
-            int[] Parameters(string id) => projection.Parameters.TryGetValue(id, out var localIndices)
-                ? localIndices : references?.GenericScalarParameters(id) ?? System.Array.Empty<int>();
-            var indices = identities.Select(Parameters).Aggregate((left, right) => left.Intersect(right).ToArray());
-            var selected = identity != null ? declarations.GetValueOrDefault(identity) : null;
-            if (operation["sig"] is JsonArray signature)
-                foreach (var index in indices) signature[index] = TypeJson.Fqn("object");
-            // The invocation retains its caller-facing value type. The selected
-            // declaration supplies the erased physical return independently;
-            // overwriting this hint would lose concrete arithmetic/nullable uses.
-            if (identity != null && projection.Returns.Contains(identity))
-                operation["ret"] ??= operation["sty"]?.DeepClone() ?? operation["dynRet"]?.DeepClone()
-                    ?? selected?["ret"]?.DeepClone();
-        }
-        foreach (var root in files) Calls(root);
-        return projection;
-    }
+    static int[] ParameterIndices(IReadOnlyList<TypeNode> slots, bool query) => query ? Array.Empty<int>()
+        : Enumerable.Range(0, slots.Count).Where(index => slots[index] is TypeNode.Tv).ToArray();
+
+    // Suspend has no ordinary scalar CLR result slot; its cold Object/hot Task
+    // result belongs to suspend lowering, independently of scalar parameters.
+    static bool ProjectsReturn(TypeNode result, bool suspend) => !suspend && result is TypeNode.Tv;
+
+    static TypeNode SourceVariable(TypeNode.Tv physical, NullableRepresentationFrame owner, NullableRepresentationFrame method) =>
+        (physical.Scope == "method" ? method : owner)?.SemanticVariable(physical) ?? physical;
 }

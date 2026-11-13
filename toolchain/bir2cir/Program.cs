@@ -81,6 +81,7 @@ static class Bir2Cir
                 CompanionRepresentationLoweringTests.SelfTest();
                 InnerRepresentationFrameTests.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
+                KotlinGenericScalarSlots.SourceScalarSelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
                 BirTypeLowering.SelfTestFunctionPointers();
                 UncheckedGenericCastReturnErasure.SelfTest();
@@ -257,6 +258,9 @@ sealed class Pipeline
         var nullableWitnessDemand = NullableWitnessDemand.Collect(captured, refs);
         RoundtripMetadata.FreezeSuspendResults(captured);
         InheritedMemberOwnerBinding.ProjectOwners(captured, refs);
+        var genericRepresentations = GenericRepresentationPolicy.CreateSource(captured, sourceIndex.CollisionAliases, refs);
+        var scalarSlots = KotlinGenericScalarSlots.ApplyAll(captured, genericRepresentations, refs);
+        KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(captured, refs, sourceIndex.CollisionAliases);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -272,7 +276,9 @@ sealed class Pipeline
                 inputsWithSources[index].Suspend));
         }
 
-        return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand);
+        genericRepresentations.BindDomDeclarations(files.Select(file => file.Root).ToArray());
+        return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand,
+            genericRepresentations, scalarSlots);
     }
 
     // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
@@ -322,10 +328,9 @@ sealed class Pipeline
         // A generic query implementation accepts its declared erased bound, not the closed CLR E.
         // State that ABI before frame materialization and declaration/use snapshots; typed overrides
         // retain their concrete signature and their ordinary query guard.
-        var genericRepresentations = new GenericRepresentationPolicy(representationAliases, refs, birRoots);
-        var scalarSlots = KotlinGenericScalarSlots.ApplyAll(birRoots, genericRepresentations, refs);
+        var genericRepresentations = module.GenericRepresentations;
+        var scalarSlots = module.ScalarSlots;
         var physicalParameterIndices = scalarSlots.Parameters;
-        KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(birRoots, refs, representationAliases);
         var restoreDefaultFrames = DefaultArgSplice.PrepareInlineDefaults(birRoots, refs);
         // The runtime implementation consumes its paired reference declaration's
         // ABI by exact source identity, independently of body-only demand. Ordinary
@@ -1922,7 +1927,8 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
-    ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex, NullableWitnessDemand NullableWitnesses);
+    ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex, NullableWitnessDemand NullableWitnesses,
+    GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions

@@ -2378,6 +2378,8 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<BirTypeParameter[]> MemberOwnerTypeParams { get; set; }
     public OptionalField<TypeNode> MemberType { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
+    public OptionalField<bool> _nativeLocation { get; set; }
+    public OptionalField<bool> _nativeFieldAddress { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
     public OptionalField<bool> Volatile { get; set; }
     public OptionalField<string> Member { get; set; }
@@ -2468,6 +2470,8 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         WriteOptional(writer, "memberOwnerTypeParams", MemberOwnerTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberType", MemberType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "_nativeLocation", _nativeLocation, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "_nativeFieldAddress", _nativeFieldAddress, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "volatile", Volatile, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "member", Member, (writer, value) => { writer.WriteStringValue(value); });
@@ -2497,6 +2501,8 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         if (MemberOwnerTypeParams.IsPresent) result["memberOwnerTypeParams"] = MemberOwnerTypeParams.IsNull ? null : new JsonArray(MemberOwnerTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberType.IsPresent) result["memberType"] = MemberType.IsNull ? null : TypeNode.Write(MemberType.Value);
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
+        if (_nativeLocation.IsPresent) result["_nativeLocation"] = _nativeLocation.IsNull ? null : JsonValue.Create(_nativeLocation.Value);
+        if (_nativeFieldAddress.IsPresent) result["_nativeFieldAddress"] = _nativeFieldAddress.IsNull ? null : JsonValue.Create(_nativeFieldAddress.Value);
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
         if (Volatile.IsPresent) result["volatile"] = Volatile.IsNull ? null : JsonValue.Create(Volatile.Value);
         if (Member.IsPresent) result["member"] = Member.IsNull ? null : JsonValue.Create(Member.Value);
@@ -2524,6 +2530,8 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<BirTypeParameter[]> MemberOwnerTypeParams { get; set; }
     public OptionalField<TypeNode> MemberType { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
+    public OptionalField<bool> _nativeLocation { get; set; }
+    public OptionalField<bool> _nativeFieldAddress { get; set; }
     public OptionalField<BirMemberReference> FieldRef { get; set; }
     public OptionalField<bool> Volatile { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
@@ -2588,6 +2596,8 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
         WriteOptional(writer, "memberOwnerTypeParams", MemberOwnerTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberType", MemberType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "_nativeLocation", _nativeLocation, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "_nativeFieldAddress", _nativeFieldAddress, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "fieldRef", FieldRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "volatile", Volatile, (writer, value) => { writer.WriteBooleanValue(value); });
         writer.WriteEndObject();
@@ -2606,6 +2616,8 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
         if (MemberOwnerTypeParams.IsPresent) result["memberOwnerTypeParams"] = MemberOwnerTypeParams.IsNull ? null : new JsonArray(MemberOwnerTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberType.IsPresent) result["memberType"] = MemberType.IsNull ? null : TypeNode.Write(MemberType.Value);
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
+        if (_nativeLocation.IsPresent) result["_nativeLocation"] = _nativeLocation.IsNull ? null : JsonValue.Create(_nativeLocation.Value);
+        if (_nativeFieldAddress.IsPresent) result["_nativeFieldAddress"] = _nativeFieldAddress.IsNull ? null : JsonValue.Create(_nativeFieldAddress.Value);
         if (FieldRef.IsPresent) result["fieldRef"] = FieldRef.IsNull ? null : ((BirGraphValue)FieldRef.Value).ToDom();
         if (Volatile.IsPresent) result["volatile"] = Volatile.IsNull ? null : JsonValue.Create(Volatile.Value);
         return result;
@@ -4345,6 +4357,7 @@ internal sealed record BirFieldDeclaration : BirGraphValue
     public OptionalField<string> CompanionGetterDeclarationId { get; set; }
     public OptionalField<string> CompanionSetterDeclarationId { get; set; }
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
+    public OptionalField<bool> _nativeLocation { get; set; }
     public OptionalField<BirLiteral> Constant { get; set; }
     public OptionalField<TypeNode> KotlinType { get; set; }
     public OptionalField<TypeNode> NullableGeneric { get; set; }
@@ -4429,6 +4442,7 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         WriteOptional(writer, "companionGetterDeclarationId", CompanionGetterDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "companionSetterDeclarationId", CompanionSetterDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "_nativeLocation", _nativeLocation, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "constant", Constant, (writer, value) => { BirLiteral.WriteJson(writer, value); });
         WriteOptional(writer, "kotlinType", KotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nullableGeneric", NullableGeneric, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
@@ -4465,6 +4479,7 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         if (CompanionGetterDeclarationId.IsPresent) result["companionGetterDeclarationId"] = CompanionGetterDeclarationId.IsNull ? null : JsonValue.Create(CompanionGetterDeclarationId.Value);
         if (CompanionSetterDeclarationId.IsPresent) result["companionSetterDeclarationId"] = CompanionSetterDeclarationId.IsNull ? null : JsonValue.Create(CompanionSetterDeclarationId.Value);
         if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
+        if (_nativeLocation.IsPresent) result["_nativeLocation"] = _nativeLocation.IsNull ? null : JsonValue.Create(_nativeLocation.Value);
         if (Constant.IsPresent) result["constant"] = Constant.IsNull ? null : LiteralToDom(Constant.Value);
         if (KotlinType.IsPresent) result["kotlinType"] = KotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(KotlinType.Value));
         if (NullableGeneric.IsPresent) result["nullableGeneric"] = NullableGeneric.IsNull ? null : JsonValue.Create(TypeNode.ToJson(NullableGeneric.Value));
@@ -4481,6 +4496,7 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
     public OptionalField<TypeNode> Elem { get; set; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; set; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; set; }
+    public OptionalField<bool> _nativeLocation { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
@@ -4516,6 +4532,7 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
         WriteOptional(writer, "elem", Elem, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "typeParams", TypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
+        WriteOptional(writer, "_nativeLocation", _nativeLocation, (writer, value) => { writer.WriteBooleanValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -4525,6 +4542,7 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
         if (Elem.IsPresent) result["elem"] = Elem.IsNull ? null : TypeNode.Write(Elem.Value);
         if (TypeParams.IsPresent) result["typeParams"] = TypeParams.IsNull ? null : new JsonArray(TypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
+        if (_nativeLocation.IsPresent) result["_nativeLocation"] = _nativeLocation.IsNull ? null : JsonValue.Create(_nativeLocation.Value);
         return result;
     }
 }
@@ -5785,6 +5803,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
     public OptionalField<BirOverride[]> Overrides { get; set; }
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
+    public OptionalField<TypeNode> RetKotlinType { get; set; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; set; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -5825,6 +5844,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)((BirGraphValue)item0).DeepClone()).ToArray()) : Overrides,
         InheritedImplementation = InheritedImplementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)((BirGraphValue)InheritedImplementation.Value).DeepClone()) : InheritedImplementation,
         RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        RetKotlinType = RetKotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetKotlinType.Value)) : RetKotlinType,
         SignatureOverrideDeclarations = SignatureOverrideDeclarations.HasValue ? OptionalField<string[]>.Of(SignatureOverrideDeclarations.Value.Select(item0 => item0).ToArray()) : SignatureOverrideDeclarations,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
@@ -5842,6 +5862,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)child(BirGenericFrameRole.OverrideDeclaration, (BirGraphValue)item0)).ToArray()) : Overrides,
         InheritedImplementation = InheritedImplementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)child(BirGenericFrameRole.Lexical, (BirGraphValue)InheritedImplementation.Value)) : InheritedImplementation,
         RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        RetKotlinType = RetKotlinType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, RetKotlinType.Value)) : RetKotlinType,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -5857,6 +5878,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         WriteOptional(writer, "overrides", Overrides, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "inheritedImplementation", InheritedImplementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "retKotlinType", RetKotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
@@ -5875,6 +5897,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         if (Overrides.IsPresent) result["overrides"] = Overrides.IsNull ? null : new JsonArray(Overrides.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (InheritedImplementation.IsPresent) result["inheritedImplementation"] = InheritedImplementation.IsNull ? null : ((BirGraphValue)InheritedImplementation.Value).ToDom();
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
+        if (RetKotlinType.IsPresent) result["retKotlinType"] = RetKotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetKotlinType.Value));
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         return result;
