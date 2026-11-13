@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Computes the CLR-only demand for a nullable-instantiation witness.  Kotlin `reified` is deliberately absent from
 // this analysis: it is a source/declaration fact, whereas a witness is needed only when a nullable-sensitive operation
@@ -23,126 +25,39 @@ sealed partial class NullableWitnessDemand
 
     public IReadOnlyDictionary<string, int[]> LocalDeclarations => _localDeclarations;
 
-    public static NullableWitnessDemand Collect(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
-    {
-        var rootList = roots.ToList();
-        if (refs != null)
-        {
-            var inlineDeclarations = new InlineBirIndex();
-            foreach (var root in rootList) inlineDeclarations.Stash(root.DeepClone());
-            rootList = rootList.Select(root => DefaultArgSplice.CreateDemandView(root, refs, inlineDeclarations)).ToList();
-        }
-        var methods = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-
-        void Owner(JsonObject owner)
-        {
-            if (owner["methods"] is JsonArray declarations)
-                foreach (var method in declarations.OfType<JsonObject>())
-                    if (Str(method[DeclarationIdentityBinding.Key]) is string id)
-                    {
-                        if (!methods.TryAdd(id, method) && !ReferenceEquals(methods[id], method))
-                            throw new InvalidOperationException(
-                                $"bir2cir: duplicate declaration identity '{id}' in nullable-witness analysis");
-                    }
-            if (owner["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>()) Owner(type);
-        }
-
-        foreach (var root in rootList.OfType<JsonObject>()) Owner(root);
-
-        var demands = methods.Keys.ToDictionary(
-            id => id, _ => new HashSet<int>(), StringComparer.Ordinal);
-        bool changed;
-        do
-        {
-            changed = false;
-            var snapshot = Freeze(demands);
-            var analyzer = new NullableWitnessDemand(snapshot, refs);
-            var generated = rootList.OfType<JsonObject>()
-                .Select(analyzer.AnalyzeGeneratedFrames)
-                .ToArray();
-
-            foreach (var (id, method) in methods)
-            {
-                var required = analyzer.Analyze(method, generated)
-                    .Where(variable => variable.Scope == "method")
-                    .Select(variable => variable.Index)
-                    .Distinct()
-                    .OrderBy(index => index)
-                    .ToArray();
-                var arity = (method["typeParams"] as JsonArray)?.Count ?? 0;
-                foreach (var index in required)
-                {
-                    if (index < 0 || index >= arity)
-                        throw new InvalidOperationException(
-                            $"bir2cir: nullable-witness demand for declaration '{id}' names method type parameter " +
-                            $"{index}, but its generic arity is {arity}");
-                    if (demands[id].Add(index)) changed = true;
-                }
-            }
-        } while (changed);
-
-        return new NullableWitnessDemand(Freeze(demands), refs);
-    }
-
     public static void SelfTest()
     {
         var directId = "selftest:direct";
         var forwardId = "selftest:forward";
         var unusedId = "selftest:unused";
-        JsonObject TypeParameter(string name) => new() { ["name"] = name, ["reified"] = true };
-        JsonObject Tv(int index) => new() { ["t"] = "tv", ["scope"] = "method", ["i"] = index };
-        JsonObject Method(string name, string id, JsonNode body) => new() {
-            ["name"] = name,
-            [DeclarationIdentityBinding.Key] = id,
-            ["typeParams"] = new JsonArray(TypeParameter("T")),
-            ["params"] = new JsonArray(),
-            ["ret"] = new JsonObject { ["t"] = "fqn", ["name"] = "kotlin.Boolean" },
-            ["body"] = new JsonArray(body),
+        var boolean = new TypeNode.Fqn("kotlin.Boolean");
+        var variable = new TypeNode.Tv("method", 0);
+        BirConstant Null() => new() { Type = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Nothing")), Value = new BirLiteral.NullLiteral() };
+        BirFunctionDeclaration Method(string name, string id, IBirExpression value) => new() {
+            Name = name, DeclarationId = id, Static = true, TypeParams = new[] { new BirTypeParameter { Name = "T", Reified = true } },
+            Params = Array.Empty<BirParameter>(), Ret = boolean,
+            Body = new IBirStatement[] { new BirReturn { Value = OptionalField<IBirExpression>.Of(value) } },
         };
-        var direct = Method("direct", directId, new JsonObject {
-            ["k"] = "return",
-            ["value"] = new JsonObject {
-                ["k"] = "isInst", ["type"] = Tv(0),
-                ["e"] = new JsonObject { ["k"] = "const", ["value"] = null },
-            },
-        });
-        var forward = Method("forward", forwardId, new JsonObject {
-            ["k"] = "return",
-            ["value"] = new JsonObject {
-                ["k"] = "callStatic", [DeclarationIdentityBinding.Key] = directId,
-                ["typeArgs"] = new JsonArray(Tv(0)), ["args"] = new JsonArray(),
-            },
-        });
-        var unused = Method("unused", unusedId, new JsonObject {
-            ["k"] = "return",
-            ["value"] = new JsonObject { ["k"] = "const", ["value"] = true },
-        });
-        var safe = Method("safe", "selftest:safe", new JsonObject {
-            ["k"] = "return", ["value"] = new JsonObject {
-                ["k"] = "isInstRef", ["type"] = Tv(0), ["reifiedTypeOperand"] = true,
-                ["e"] = new JsonObject { ["k"] = "const", ["value"] = null },
-            },
-        });
-        safe["ret"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Tv("method", 0)));
-        var uncheckedCast = (JsonObject)safe.DeepClone();
-        uncheckedCast[DeclarationIdentityBinding.Key] = "selftest:unchecked";
-        uncheckedCast["name"] = "unchecked";
-        uncheckedCast["body"][0]["value"]["reifiedTypeOperand"] = false;
-        var nullableForward = (JsonObject)forward.DeepClone();
-        nullableForward[DeclarationIdentityBinding.Key] = "selftest:nullable-forward";
-        nullableForward["name"] = "nullableForward";
-        nullableForward["body"][0]["value"]["typeArgs"] = new JsonArray(
-            TypeJson.Write(new TypeNode.Nullable(new TypeNode.Tv("method", 0))));
-        var root = new JsonObject {
-            ["fileClass"] = "WitnessSelfTest",
-            ["methods"] = new JsonArray(direct, forward, unused, safe, uncheckedCast, nullableForward),
-            ["types"] = new JsonArray(),
+        BirCallStatic Forward(TypeNode argument) => new() {
+            OwnerType = new TypeNode.Fqn("WitnessSelfTest"), Method = "direct", DeclarationId = directId,
+            TypeArgs = new[] { argument }, Args = Array.Empty<IBirExpression>(), Sig = Array.Empty<TypeNode>(), Ret = boolean,
         };
-
-        var withMarkers = Collect(new[] { root.DeepClone() }, null).LocalDeclarations;
-        var withoutMarkersRoot = root.DeepClone();
-        DropReifiedMarkers(withoutMarkersRoot);
+        var root = new BirFileDeclaration {
+            FileClass = "WitnessSelfTest", Types = Array.Empty<IBirTypeDeclaration>(),
+            Methods = new[] {
+                Method("direct", directId, new BirIsInstance { Type = variable, E = Null() }),
+                Method("forward", forwardId, Forward(variable)),
+                Method("unused", unusedId, new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(true) }),
+                Method("safe", "selftest:safe", new BirInstanceOrNull { Type = variable, ReifiedTypeOperand = true, E = Null() }),
+                Method("unchecked", "selftest:unchecked", new BirInstanceOrNull { Type = variable, ReifiedTypeOperand = false, E = Null() }),
+                Method("nullableForward", "selftest:nullable-forward", Forward(new TypeNode.Nullable(variable))),
+            },
+        };
+        root.Methods.Value[3].Ret = new TypeNode.Nullable(variable);
+        root.Methods.Value[4].Ret = new TypeNode.Nullable(variable);
+        var withMarkers = Collect(new[] { root }, null).LocalDeclarations;
+        var withoutMarkersRoot = (BirFileDeclaration)root.DeepClone();
+        withoutMarkersRoot.Visit(node => { if (node is BirTypeParameter parameter) parameter.Reified = default; });
         var withoutMarkers = Collect(new[] { withoutMarkersRoot }, null).LocalDeclarations;
         if (!withMarkers[directId].SequenceEqual(new[] { 0 })
             || !withMarkers[forwardId].SequenceEqual(new[] { 0 })
@@ -153,9 +68,6 @@ sealed partial class NullableWitnessDemand
             || withMarkers.Any(entry => !entry.Value.SequenceEqual(withoutMarkers[entry.Key])))
             throw new InvalidOperationException(
                 "nullable-witness demand self-test failed: demand depends on Kotlin reified markers or call propagation");
-        var owning = Collect(new[] { DotKt.Bir.Lowering.BirGraphDom.ReadBirFileDeclaration(root) }, null).LocalDeclarations;
-        if (withMarkers.Any(entry => !entry.Value.SequenceEqual(owning[entry.Key])))
-            throw new InvalidOperationException("Owning nullable-witness analysis disagrees with source fixture demands");
         TypedDefaultDemandSelfTest();
     }
 
@@ -458,21 +370,6 @@ sealed partial class NullableWitnessDemand
         (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
     static bool Bool(JsonNode node) =>
         (node as JsonValue)?.TryGetValue<bool>(out var value) == true && value;
-
-    static void DropReifiedMarkers(JsonNode node)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                obj.Remove("reified");
-                foreach (var child in obj.Select(property => property.Value).ToList())
-                    if (child != null) DropReifiedMarkers(child);
-                break;
-            case JsonArray array:
-                foreach (var child in array) if (child != null) DropReifiedMarkers(child);
-                break;
-        }
-    }
 
     readonly record struct TypeVariable(string Scope, int Index);
 

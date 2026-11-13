@@ -9,15 +9,7 @@ static partial class DefaultArgSplice
 {
     static IBirExpression Clone(IBirExpression value) => value == null ? null : (IBirExpression)((BirGraphValue)value).DeepClone();
 
-    static IBirExpression ParameterDefault(BirParameter parameter)
-    {
-        var carriers = parameter.Attrs.OrEmpty().Where(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: DefaultBirCarrier.AttributeName }).ToArray();
-        if (carriers.Length == 0) return null;
-        if (carriers.Length != 1) throw new InvalidOperationException("Multiple KotlinDefault carriers on one parameter");
-        var arguments = carriers[0].Args.Value;
-        var codec = ((BirLiteral.TextLiteral)((BirConstant)arguments[1]).Value.Value).Value;
-        return ExecutableBirCodec.ReadExpression(codec, ((BirOpaqueBytes)arguments[2]).Bytes.Value);
-    }
+    static IBirExpression ParameterDefault(BirParameter parameter) => DefaultBirCarrier.OfParameter(parameter);
 
     internal static IBirExpression MaterializeDefault(IBirExpression source, List<BirFunctionDeclaration> hoist, string localOwner)
     {
@@ -64,7 +56,7 @@ static partial class DefaultArgSplice
     static void AssertPlanned(BirGraphValue node, bool bindingExpression)
     {
         if (node is BirDefaultArgument && !bindingExpression)
-            throw new InvalidOperationException("An omitted cross-module default argument reached the splice outside a call-evaluation plan");
+            throw new InvalidOperationException(UnplannedDefault());
         if (node is BirCallBinding binding)
         {
             if (binding.Expr.HasValue) AssertPlanned((BirGraphValue)binding.Expr.Value, binding.Id.IsPresent && binding.Phase.IsPresent);
@@ -93,11 +85,11 @@ static partial class DefaultArgSplice
 
     static IBirExpression SpliceOne(IBirExpression source, IBirExpression dispatch, IBirExpression extension,
         IBirExpression enclosing, IReadOnlyList<IBirExpression> arguments, List<BirFunctionDeclaration> hoist,
-        string localOwner, string semanticOwner, TypeNode[] methodArguments, TypeNode[] ownerArguments)
+        string localOwner, string semanticOwner, TypeNode[] methodArguments, TypeNode[] ownerArguments, string method, int slot)
     {
         var expression = MaterializeDefault(source, hoist, localOwner);
         if (expression == null) return null;
-        if (semanticOwner == null) throw new InvalidOperationException("default argument splice has no authored semantic use-site owner");
+        if (semanticOwner == null) throw new InvalidOperationException(MissingDefaultOwner(method));
         expression = (IBirExpression)Rehome((BirGraphValue)expression, semanticOwner, FreshDefaultIdentity());
         expression = (IBirExpression)TypedExecutableFrames.Prebind((BirGraphValue)expression);
         expression = (IBirExpression)TypedExecutableFrames.Substitute((BirGraphValue)expression,
@@ -105,7 +97,7 @@ static partial class DefaultArgSplice
         expression = SubstituteTokens(expression, dispatch, extension, enclosing, arguments);
         string unbound = null;
         ((BirGraphValue)expression).Visit(node => { if (node is BirDefaultReceiver receiver) unbound ??= receiver.Kind.OrDefault() ?? "unknown"; });
-        if (unbound != null) throw new InvalidOperationException("Default argument reads an unavailable " + unbound + " receiver");
+        if (unbound != null) throw new InvalidOperationException(UnavailableDefaultReceiver(method, slot, unbound));
         return expression;
     }
 

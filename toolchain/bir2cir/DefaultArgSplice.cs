@@ -127,81 +127,6 @@ static partial class DefaultArgSplice
         return () => { foreach (var action in restore) action(); };
     }
 
-    // Demand collection precedes physical representation and executable splicing. Analyze an independent
-    // source-vocabulary graph with the same omitted-argument expansion, so a default's operations belong
-    // to the omitting caller rather than becoming an unconditional ABI requirement of the callee.
-    internal static JsonNode CreateDemandView(JsonNode source, ReferenceMetadataIndex refs, InlineBirIndex inlineDeclarations)
-    {
-        var root = source.DeepClone();
-        if (root is not JsonObject file) return root;
-        var owner = Str(file["fileClass"]) is string fileClass ? TypeJson.Fqn(fileClass) : null;
-        var hoist = new JsonArray();
-        void Walk(JsonNode node)
-        {
-            if (node is JsonObject obj)
-            {
-                // Force enumeration: expansion captures the replaced binding expressions lazily.
-                _ = ExpandNode(obj, refs, hoist, owner, "nullable-witness demand").ToArray();
-                ExpandInlineDefaultsForDemand(obj, refs, inlineDeclarations, hoist, owner);
-                foreach (var pair in obj.ToList())
-                    if (pair.Value != null) Walk(pair.Value);
-            }
-            else if (node is JsonArray array)
-                foreach (var child in array.ToList())
-                    if (child != null) Walk(child);
-        }
-        Walk(root);
-        if (hoist.Count != 0)
-        {
-            var methods = file["methods"] as JsonArray
-                ?? throw new InvalidOperationException("default demand view has no file methods for carried helpers");
-            while (hoist.Count != 0)
-            {
-                var method = hoist[0];
-                hoist.RemoveAt(0);
-                Walk(method);
-                methods.Add(method);
-            }
-        }
-        return root;
-    }
-
-    // A callInline uses null argument slots instead of callEval's default bindings. Resolve the same declaration
-    // as executable splicing, but materialize only omitted values: a supplied argument must not inherit the
-    // unused default's witness demand. This graph is analysis-only and never becomes executable BIR.
-    static void ExpandInlineDefaultsForDemand(JsonObject call, ReferenceMetadataIndex refs,
-        InlineBirIndex declarations, JsonArray hoist, JsonNode owner)
-    {
-        if (Str(call["k"]) != "callInline" || call["args"] is not JsonArray args || args.All(arg => arg != null)) return;
-        var (payload, _, diagnostic) = InlineSplice.ResolvePayload(call, declarations, refs);
-        if (payload == null) throw new InvalidOperationException($"bir2cir: default witness demand: {diagnostic}");
-        var parameters = payload["params"] as JsonArray
-            ?? throw new InvalidOperationException("bir2cir: inline default demand has no declaration parameters");
-        var extension = Str(payload["recv"]) == "extensionParam";
-        var boundArguments = new JsonArray();
-        if (extension) boundArguments.Add(call["recvs"]?["extension"]?.DeepClone());
-        var typeArgs = call["typeArgs"] as JsonArray ?? new JsonArray();
-        var dispatchTypeArgs = call["recvs"]?["dispatchTypeArgs"] as JsonArray;
-        for (var i = 0; i < args.Count; i++)
-        {
-            var parameterIndex = i + (extension ? 1 : 0);
-            if (args[i] == null)
-            {
-                var parameter = (JsonObject)parameters[parameterIndex];
-                JsonNode expression;
-                if (parameter["default"] is JsonNode constant) expression = constant.DeepClone();
-                else if (InlineSplice.KotlinDefaultCarrier(parameter) is JsonNode carrier)
-                    expression = MaterializeDefault(carrier, hoist, refs, TypeJson.OwnerName(call["callee"]), parameterIndex, owner);
-                else throw new InvalidOperationException("bir2cir: omitted inline argument has no default carrier");
-                ClosureSynthesis.PrebindSplicedFrames(expression);
-                InlineSplice.SubstTvIn(expression, typeArgs, (payload["typeParams"] as JsonArray)?.Count ?? 0, dispatchTypeArgs);
-                args[i] = SubstituteTokens(expression, call["recvs"]?["dispatch"],
-                    extension ? boundArguments[0] : null, null, boundArguments);
-            }
-            boundArguments.Add(args[i]?.DeepClone());
-        }
-    }
-
     // Expand the current declaration/call before the shared inline/default walker visits its children.
     // Return only newly materialized graphs so their use-site bindings are established at this boundary.
     internal static IEnumerable<JsonNode> ExpandNode(JsonObject obj, ReferenceMetadataIndex refs,
@@ -277,14 +202,7 @@ static partial class DefaultArgSplice
 
         void ThrowUnrepresentable(int pos)
         {
-            var parameter = parameterNames != null && pos >= 0 && pos < parameterNames.Length
-                ? $"default of parameter '{parameterNames[pos]}'"
-                : $"default of parameter at position {pos}";
-            throw new InvalidOperationException(
-                DiagnosticPrefix(context) +
-                $"cannot fill an omitted default argument for '{CallLabel(node)}' ({parameter}) from the selected " +
-                "referenced declaration: its optional value could not be obtained or represented. The reference may " +
-                "be stale or the value may not be carryable. Pass the argument explicitly.");
+            throw new InvalidOperationException(UnrepresentableDefault(context, CallLabel(node), pos, parameterNames));
         }
     }
 
@@ -334,10 +252,7 @@ static partial class DefaultArgSplice
         if (node is JsonObject o)
         {
             if (Str(o["k"]) == "defaultArg" && !inBindingExpr)
-                throw new InvalidOperationException(
-                    "bir2cir: an omitted cross-module default argument reached the splice outside a call-evaluation " +
-                    "plan. Its carrier binds this call's own receiver and arguments, so without bindings to read they " +
-                    "would each be evaluated a second time; the call site must emit an evaluation plan.");
+                throw new InvalidOperationException(UnplannedDefault());
             var isBinding = o["id"] != null && o["phase"] != null && o.ContainsKey("expr");
             foreach (var kv in o) if (kv.Value != null) AssertPlaceholdersPlanned(kv.Value, isBinding && kv.Key == "expr");
         }
@@ -384,10 +299,7 @@ static partial class DefaultArgSplice
             sigKey = ReferenceMetadataIndex.SignatureKeyOf(ctorParamTypes);
             relaxedSigKey = ReferenceMetadataIndex.SignatureKeyOf(ctorParamTypes, relaxed: true);
             if (args.Count != sigCount)
-                throw new InvalidOperationException(
-                    $"bir2cir: cannot fill an omitted default argument of '{owner}''s constructor — the call emits " +
-                    $"{args.Count} argument(s) for {sigCount} parameter(s), so the omitted slot is not identifiable; " +
-                    "pass the argument explicitly");
+                throw new InvalidOperationException(ConstructorDefaultPosition(owner, args.Count, sigCount));
         }
         else
         {
@@ -414,9 +326,7 @@ static partial class DefaultArgSplice
         if (defaults == null)
         {
             if (refs.KotlinDefaultsAmbiguous(owner, method, sigCount))
-                throw new InvalidOperationException(
-                    $"bir2cir: cannot fill an omitted default argument of '{label}' (arity {sigCount}) — that name+arity is " +
-                    "carried by several referenced declarations whose defaults disagree; pass the argument explicitly");
+                throw new InvalidOperationException(AmbiguousDefault(label, sigCount));
             return;
         }
         // The call site's TYPE arguments, for closing the carrier's own frame below: a generic callee's default is
@@ -532,9 +442,7 @@ static partial class DefaultArgSplice
             if (defaults == null)
             {
                 if (refs.KotlinDefaultsAmbiguous(owner, ReferenceMetadataIndex.CtorKeyName, args.Count))
-                    throw new InvalidOperationException(
-                        $"bir2cir: cannot fill an omitted default argument of '{owner}' constructor (arity {args.Count}) — " +
-                        "that arity is carried by several constructors whose defaults disagree; pass the argument explicitly");
+                    throw new InvalidOperationException(AmbiguousDefault(owner, args.Count, constructorDelegation: true));
                 return;
             }
             // A delegation names its target by TYPE, so the base's own type arguments are the frame to close against;
@@ -560,8 +468,7 @@ static partial class DefaultArgSplice
         var parsed = MaterializeDefault(bir, hoist, refs, method, slot, localOwner);
         if (parsed == null) return null;
         if (Str(semanticOwner) is not string owner)
-            throw new InvalidOperationException(
-                $"default argument splice for {method} has no authored semantic use-site owner");
+            throw new InvalidOperationException(MissingDefaultOwner(method));
         RehomeSynthClasses(parsed, owner, Interlocked.Increment(ref _counter));
         // Preserve each synthesized declaration's own frame before construction
         // arguments are replaced by types from the caller's unrelated frame.
@@ -577,9 +484,7 @@ static partial class DefaultArgSplice
         InlineSplice.SubstTvIn(parsed, methodTypeArgs ?? new JsonArray(), methodTypeArgs?.Count ?? 0, ownerTypeArgs);
         var result = SubstituteTokens(parsed, dispatchReceiver, extensionReceiver, enclosingReceiver, args);
         if (FirstUnboundReceiver(result) is string kind)
-            throw new InvalidOperationException(
-                $"bir2cir: cannot fill the omitted default argument at slot {slot} of {method}: its default reads the " +
-                $"{kind} receiver, but this call shape carries no value for that receiver kind");
+            throw new InvalidOperationException(UnavailableDefaultReceiver(method, slot, kind));
         return result;
     }
 
@@ -853,6 +758,39 @@ static partial class DefaultArgSplice
     }
 
     static string DiagnosticPrefix(string context) => context == null ? "bir2cir: " : context + ": bir2cir: ";
+
+    static string UnplannedDefault() =>
+        "bir2cir: an omitted cross-module default argument reached the splice outside a call-evaluation " +
+        "plan. Its carrier binds this call's own receiver and arguments, so without bindings to read they " +
+        "would each be evaluated a second time; the call site must emit an evaluation plan.";
+
+    static string ConstructorDefaultPosition(string owner, int arguments, int parameters) =>
+        $"bir2cir: cannot fill an omitted default argument of '{owner}''s constructor — the call emits " +
+        $"{arguments} argument(s) for {parameters} parameter(s), so the omitted slot is not identifiable; " +
+        "pass the argument explicitly";
+
+    static string AmbiguousDefault(string label, int arity, bool constructorDelegation = false) => constructorDelegation
+        ? $"bir2cir: cannot fill an omitted default argument of '{label}' constructor (arity {arity}) — " +
+          "that arity is carried by several constructors whose defaults disagree; pass the argument explicitly"
+        : $"bir2cir: cannot fill an omitted default argument of '{label}' (arity {arity}) — that name+arity is " +
+          "carried by several referenced declarations whose defaults disagree; pass the argument explicitly";
+
+    static string UnrepresentableDefault(string context, string label, int position, string[] names)
+    {
+        var parameter = names != null && position >= 0 && position < names.Length
+            ? $"default of parameter '{names[position]}'" : $"default of parameter at position {position}";
+        return DiagnosticPrefix(context) +
+            $"cannot fill an omitted default argument for '{label}' ({parameter}) from the selected " +
+            "referenced declaration: its optional value could not be obtained or represented. The reference may " +
+            "be stale or the value may not be carryable. Pass the argument explicitly.";
+    }
+
+    static string MissingDefaultOwner(string method) =>
+        $"default argument splice for {method} has no authored semantic use-site owner";
+
+    static string UnavailableDefaultReceiver(string method, int slot, string kind) =>
+        $"bir2cir: cannot fill the omitted default argument at slot {slot} of {method}: its default reads the " +
+        $"{kind} receiver, but this call shape carries no value for that receiver kind";
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 }
