@@ -83,6 +83,7 @@ static class Bir2Cir
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
                 EnumIntrinsicLowering.SelfTest();
+                ClrEnumLowering.SelfTest();
                 EnumValueLowering.SelfTest();
                 EnumEntriesLowering.SelfTest();
                 CompanionRepresentationLoweringTests.SelfTest();
@@ -313,8 +314,11 @@ sealed class Pipeline
         var nullableDeclarations = NullableTvErasureCallRealign.CollectDeclaredMemberRets(captured, refs);
         var uncheckedDeclarations = UncheckedGenericCastReturnErasure.CaptureSource(captured);
         var richEnums = EnumIntrinsicLowering.CollectRichEnums(captured);
+        // Snapshot producer-owned instance slots before lowering cross-file enum access.
         var richEnumFields = EnumValueLowering.CollectRichInstanceFields(captured);
         var basicEnums = EnumMemberBinding.CollectBasicEnums(captured);
+        // Select exact CLR integral widths and ordered physical constants once,
+        // retaining separate explicit-remapping and all-enum parsing inventories.
         var explicitEnums = ClrEnumLowering.Apply(captured, out var parseEnums);
         var enums = new EnumPreparation(richEnums, richEnumFields, basicEnums, explicitEnums, parseEnums);
         var files = new List<BirFile>();
@@ -424,7 +428,7 @@ sealed class Pipeline
         // ALL input files: EnumIntrinsicLowering lowers `enumValues<RichEnum>()` to the synthesized static values()
         // (not the System.Enum-reflection semantic node — a rich enum is a plain singleton class).
         var localRichEnums = module.Preparation.Enums.Rich;
-        // Snapshot producer-owned instance slots module-wide before lowering any cross-file enum access.
+        // Producer-owned instance slots, captured module-wide in the typed prefix.
         var localRichEnumFields = module.Preparation.Enums.RichFields;
 
         // The local BASIC (value-type, `kind:"enum"`) enum type names across ALL files — EnumMemberBinding rebinds a
@@ -435,8 +439,7 @@ sealed class Pipeline
         // `kotlin.*` enum arrives from kotc already as an `objMethod`; neither reaches this local `callInstance` gap.
         var localBasicEnums = module.Preparation.Enums.Basic;
 
-        // EXPLICIT CLR ENUMS (#526): validate kotc's source-owned ordered constant map and resolve the Kotlin
-        // integral type to its exact CLR underlying type before any use-site enum operation is lowered.
+        // Typed declaration lowering already selected exact physical constants.
         var localExplicitEnums = module.Preparation.Enums.Explicit;
         var localParseEnums = module.Preparation.Enums.Parse;
 

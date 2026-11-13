@@ -13,10 +13,10 @@ static class EnumValueLowering
     {
         var fields = new Dictionary<string, (string Name, string Ordinal)>(StringComparer.Ordinal);
         foreach (var root in roots)
-                foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>())
-                    if (type.EnumRich.OrDefault())
-                        fields.Add(type.Name.Value,
-                            (type.RichEnum.Value.Name.Value, type.RichEnum.Value.Ordinal.Value));
+            foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>())
+                if (type.EnumRich.OrDefault())
+                    fields.Add(type.Name.Value,
+                        (type.RichEnum.Value.Name.Value, type.RichEnum.Value.Ordinal.Value));
         return fields;
     }
 
