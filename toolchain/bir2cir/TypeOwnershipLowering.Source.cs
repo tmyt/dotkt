@@ -40,6 +40,9 @@ static partial class TypeOwnershipLowering
         }
     }
 
+    // Lifted types start in Kotlin order [own..., owner..., other captured...].
+    // CLR nested TypeDefs require the owner segment first. Local functions remain
+    // lexical localFun declarations and are handled by LocalFunctionLowering.
     public static PreparedFacts PrepareOwnershipFacts(IReadOnlyList<BirFileDeclaration> roots)
     {
         var prepared = new PreparedFacts(roots);
@@ -82,6 +85,9 @@ static partial class TypeOwnershipLowering
             RewriteOwnership(type, value => RemapOwnerSlots(value, oldToNew), lexicalOnly: true);
             if (type.Name.OrDefault() is string name) permutations[name] = (newToOld, oldToNew);
         }
+        // A child copied its owner's original frame, so compose the owner's full
+        // permutation into that copied prefix. Slot positions, not parameter
+        // names, identify correspondence: Kotlin allows name shadowing.
         var completed = new Dictionary<string, (int[] NewToOld, int[] OldToNew)>(StringComparer.Ordinal);
         var visiting = new HashSet<string>(StringComparer.Ordinal);
         (int[] NewToOld, int[] OldToNew) Resolve(string name, IBirTypeDeclaration type)

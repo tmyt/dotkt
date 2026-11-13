@@ -38,8 +38,8 @@ necessary for these paths. The presence of an adapter does not imply a live Stri
 ## Layer ownership
 
 `kotc` projects Kotlin CharSequence identities and operations into BIR. In `bir2cir`,
-`SubstituteCharSeqIdentity` establishes the synthetic identity, the emission-unit scan detects
-user implementers, `CharSeqStringLowering` selects eligible string slots, and
+`TypedCharSequenceIdentity` establishes the synthetic identity before
+`TypedModuleInventory` detects user implementers. `CharSeqStringLowering` selects eligible string slots, and
 `StringCharSequenceBridge` closes the interface boundaries. `ilemit` emits the resulting CIR.
 
 The driver coordinates the passes in `toolchain/bir2cir/Program.cs`. A stdlib signature change would

@@ -101,8 +101,9 @@ static partial class TypeOwnershipLowering
         type.Remove("outerTypeParamOffset");
     }
 
-    // Inline/default splices mutate only their current consumer root. Reuse the module type index prepared above and
-    // revisit that root alone; walking every file after each consumer splice makes phase 1 quadratic in file count.
+    // Inline/default splices mutate only their current consumer root. Reuse the
+    // current declarations bound at the owning frontier; a full module walk after
+    // each consumer splice would make this phase quadratic in file count.
     public static void PrepareSplicedOwnershipFacts(JsonNode root, PreparedFacts prepared) =>
         PrepareSyntheticOwnerCaptures(root, prepared.Types);
 
@@ -121,8 +122,9 @@ static partial class TypeOwnershipLowering
                 {
                     var value = obj[key];
                     if (value == null || (!root && key == "synthClass")) continue;
-                    // Descriptor vectors name the referenced declaration's frame, not the synthesized class's lexical
-                    // frame. This is the same boundary used by NormalizeOwnerCapturePrefixes above.
+                    // A synthetic declaration owns its dense frame. Unlike an
+                    // initial owner-prefix permutation, this excludes complete
+                    // member descriptors as well as target signature vectors.
                     if (key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
                         or "delegationSig" or "memberOwnerTypeParams" or "memberMethodTypeParams"
                         or "memberReturnType" or "memberSignature" or "memberType"

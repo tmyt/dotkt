@@ -4,6 +4,8 @@ using DotKt.Cir;
 
 // This is the source identity selection, not CharSequence's later optional string representation.
 // Declaration names and frozen source facts stay Kotlin; all structured use-site references use the bridge.
+// Run before module implementer detection, CharSeqStringLowering and synthetic
+// interface materialization so all three consume the same selected identity.
 static class TypedCharSequenceIdentity
 {
     internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots)

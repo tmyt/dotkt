@@ -17,13 +17,16 @@ static partial class TypeOwnershipLowering
         var descriptor = new BirFieldGet { Name = "value", MemberType = Tv(0),
             MemberOwnerTypeParams = new[] { new BirTypeParameter { Name = "R", Constraints = new TypeNode[] { Tv(0) } } } };
         var call = new BirCallStatic { Method = "read", Sig = new TypeNode[] { Tv(0) } };
-        lifted.Methods = new[] { new BirFunctionDeclaration { Name = "read", Body = new IBirStatement[] { Expr(descriptor), Expr(call) } } };
+        var construction = new BirNew { Type = Named("Target"), ArgTypes = new TypeNode[] { Tv(0) },
+            MemberSignature = new TypeNode[] { Tv(0) } };
+        lifted.Methods = new[] { new BirFunctionDeclaration { Name = "read", Body = new IBirStatement[] { Expr(descriptor), Expr(call), Expr(construction) } } };
         var application = new BirFieldDeclaration { Name = "application", Type = new TypeNode.Fqn("Lifted", new TypeNode[] { Named("OwnArgument"), Named("OuterArgument") }) };
         var root = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { outer, lifted, child }, Fields = new[] { application } };
         PrepareOwnershipFacts(new[] { root });
         if (!lifted.TypeParams.Value.Select(parameter => parameter.Name.Value).SequenceEqual(new[] { "O", "Own" })
             || !child.TypeParams.Value.Select(parameter => parameter.Name.Value).SequenceEqual(new[] { "O", "Own", "Child" })
             || field.Type.Value != Tv(1) || field.KotlinType.Value != Tv(0) || call.Sig.Value.Single() != Tv(0)
+            || construction.ArgTypes.Value[0] != Tv(1) || construction.MemberSignature.Value[0] != Tv(1)
             || descriptor.MemberType.Value != Tv(1) || descriptor.MemberOwnerTypeParams.Value[0].Constraints.Value[0] != Tv(1)
             || application.Type.Value != new TypeNode.Fqn("Lifted", new TypeNode[] { Named("OuterArgument"), Named("OwnArgument") })
             || lifted.OuterTypeParamOffset.IsPresent || !ReferenceEquals(root.Types.Value[1], lifted))
@@ -33,19 +36,29 @@ static partial class TypeOwnershipLowering
         var liveOwner = Class("LiveOwner", "O", "PO");
         liveOwner.KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(ownerFrame);
         var denseRead = new BirFieldGet { Name = "value", Sty = Tv(0), MemberType = Tv(0) };
+        var denseCall = new BirCallStatic { Method = "read", TypeArgs = new TypeNode[] { Tv(0) }, Sig = new TypeNode[] { Tv(0) } };
         var nested = new BirClosureDefinition { Name = "Nested", TypeParams = new[] { Parameter("N") },
             Ret = Tv(0), _syntheticFrameBound = true };
         var nestedCall = new BirNewClosure { SynthClass = nested, TypeArgs = new TypeNode[] { Tv(0) } };
         var dense = new BirClosureDefinition { Name = "Dense", SemanticOwner = "LiveOwner", _syntheticFrameBound = true,
             TypeParams = new[] { Parameter("M") }, Ret = Tv(0),
-            Body = new IBirStatement[] { Expr(denseRead), Expr(nestedCall) } };
+            Body = new IBirStatement[] { Expr(denseRead), Expr(denseCall), Expr(nestedCall) } };
         var createDense = new BirNewClosure { SynthClass = dense, TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 0) } };
+        var samRead = new BirFieldGet { Name = "captured", Sty = Tv(0), MemberType = Tv(0) };
+        var sam = new BirClassDefinition { Kind = "class", Name = "Sam", SemanticOwner = "LiveOwner", _syntheticFrameBound = true,
+            TypeParams = new[] { Parameter("M") }, Methods = new[] { new BirFunctionDeclaration {
+                Name = "invoke", Ret = Tv(0), Body = new IBirStatement[] { Expr(samRead) } } } };
+        var createSam = new BirNewSam { SynthClass = sam, TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 0) } };
         var live = new BirFileDeclaration { FileClass = "LiveFile", Types = new IBirTypeDeclaration[] { liveOwner },
-            Methods = new[] { new BirFunctionDeclaration { Name = "use", Body = new IBirStatement[] { Expr(createDense) } } } };
+            Methods = new[] { new BirFunctionDeclaration { Name = "use", Body = new IBirStatement[] { Expr(createDense), Expr(createSam) } } } };
         var facts = PrepareOwnershipFacts(new[] { live });
         if (dense.Ret.Value != Tv(2) || denseRead.Sty.Value != Tv(2) || denseRead.MemberType.Value != Tv(0)
             || nested.Ret.Value != Tv(0) || nestedCall.TypeArgs.Value[0] != Tv(2))
             throw new InvalidOperationException("Synthetic owner remapping entered a foreign descriptor or nested declaration frame");
+        if (denseCall.TypeArgs.Value[0] != Tv(2) || denseCall.Sig.Value[0] != Tv(0)
+            || sam.Methods.Value[0].Ret.Value != Tv(2) || samRead.Sty.Value != Tv(2) || samRead.MemberType.Value != Tv(0)
+            || sam.OuterTypeParamCount.Value != 2 || createSam.TypeArgs.Value.Length != 3)
+            throw new InvalidOperationException("Synthetic owner preparation lost SAM coverage or entered a foreign signature vector");
 
         // This terminal projection is the actual still-live splice boundary.
         // Mutate the continuing owner afterwards, proving no frozen typed copy
