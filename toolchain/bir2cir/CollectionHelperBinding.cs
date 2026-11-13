@@ -13,70 +13,17 @@ static class CollectionHelperBinding
     const string HelperOwner = "kotlin.collections.ClrMapDefaultsKt";
 
     public static void Apply(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references,
-        IReadOnlyDictionary<string, string> aliases,
+        IReadOnlyDictionary<string, string> aliases, SourceCollectionInputs captured,
         Action<Action<JsonObject>, Func<BirCallStatic, BirCallStatic>> prepareHelpers = null)
     {
         var inputs = roots.ToArray();
-        var applicationOrder = new InnerApplicationOrder(inputs, references);
-        var closedViews = references == null ? new Dictionary<string, TypeNode.Fqn>()
-            : ForeignStarProjectionBinding.CollectClosedViewHints(inputs, references);
-        var declaredIteratorTypes = inputs.SelectMany(MemberCallSubstitution.CollectDeclaredIteratorTypes)
-            .ToHashSet(StringComparer.Ordinal);
-        var iteratorTypeDefinitions = SupertypeGraph.Collect(inputs);
-        var localHelpers = inputs.OfType<JsonObject>()
-            .SelectMany(root => (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-                .Select(method => (Owner: Text(root["fileClass"]), Method: method))).ToArray();
-        var localKinds = new Dictionary<string, string>(StringComparer.Ordinal);
-        void CollectKinds(JsonObject owner)
-        {
-            if (owner["types"] is not JsonArray types) return;
-            foreach (var type in types.OfType<JsonObject>())
-            {
-                if (Text(type["name"]) is string name) localKinds[name] = Text(type["kind"]);
-                CollectKinds(type);
-            }
-        }
-        foreach (var input in inputs.OfType<JsonObject>()) CollectKinds(input);
-        bool IsInterface(string owner) => localKinds.TryGetValue(owner, out var kind) ? kind == "interface"
+        var applicationOrder = captured.Applications;
+        var closedViews = captured.ClosedViews;
+        var declaredIteratorTypes = captured.DeclaredIterators;
+        var iteratorTypeDefinitions = captured.Definitions;
+        bool IsInterface(string owner) => captured.Kinds.TryGetValue(owner, out var kind) ? kind == "interface"
             : references != null && references.TryResolveClrOwner(owner, out _, out var referencedKind) && referencedKind == "interface";
-
-        string SelectHelper(string owner, string name, int arity, TypeNode[] parameters)
-        {
-            var matches = localHelpers.Where(entry => entry.Owner == owner).Select(entry => entry.Method)
-                .Where(method => Text(method["name"]) == name
-                && method["static"]?.GetValue<bool>() == true
-                && ((method["typeParams"] as JsonArray)?.Count ?? 0) == arity
-                && method["params"] is JsonArray declared
-                && declared.Count == parameters.Length
-                && declared.OfType<JsonObject>().Select((parameter, index) =>
-                    ReferenceMetadataIndex.SourceDeclarationDescribesCall(TypeJson.Read(parameter["type"]), parameters[index]))
-                    .All(match => match)).ToArray();
-            if (matches.Length == 1)
-                return Text(matches[0][DeclarationIdentityBinding.Key])
-                    ?? throw new InvalidOperationException("Collection helper has no declaration identity");
-            if (matches.Length > 1)
-                throw new InvalidOperationException("Ambiguous source collection helper declaration: " + owner + "." + name);
-            return references?.AuthoredKotlinHelper(owner, name, arity, parameters).DeclarationId
-                ?? throw new InvalidOperationException("Missing source collection helper declaration: " + owner + "." + name);
-        }
-
-        TypeNode SourceArgument(TypeNode argument) => argument switch {
-            TypeNode.Projection projection => SourceArgument(projection.Of),
-            TypeNode.Star => new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")),
-            _ => argument,
-        };
-
-        BirCallStatic BindAuthoredCall(BirCallStatic call)
-        {
-            var arguments = call.TypeArgs;
-            return call with {
-                DeclarationId = SelectHelper(((TypeNode.Fqn)call.Owner.Value).Name,
-                    call.Method.Value, arguments.HasValue ? arguments.Value.Length : 0, call.Sig.Value),
-                TypeArgs = arguments.HasValue ? arguments.Value.Select(SourceArgument).ToArray() : arguments,
-            };
-        }
-
-        prepareHelpers?.Invoke(call => FaithfulHints.BindHelper(call, BindAuthoredCall), BindAuthoredCall);
+        prepareHelpers?.Invoke(call => FaithfulHints.BindHelper(call, captured.Helpers.Bind), captured.Helpers.Bind);
 
         JsonNode Walk(JsonNode node, MemberCallSubstitution.SubstCtx context)
         {
@@ -161,9 +108,9 @@ static class CollectionHelperBinding
                         MemberCallSubstitution.CollectionOperationPhase.Source, preferred)) as JsonObject;
                 if (call == null) return obj;
             }
-            var sourceArguments = ((JsonArray)call["typeArgs"]).Select(TypeJson.Read).Select(SourceArgument).ToArray();
+            var sourceArguments = ((JsonArray)call["typeArgs"]).Select(TypeJson.Read).Select(SourceHelperBinder.SourceArgument).ToArray();
             call["typeArgs"] = new JsonArray(sourceArguments.Select(TypeJson.Write).ToArray());
-            call[DeclarationIdentityBinding.Key] = SelectHelper(TypeJson.OwnerName(call["owner"]),
+            call[DeclarationIdentityBinding.Key] = captured.Helpers.Select(TypeJson.OwnerName(call["owner"]),
                 Text(call["method"]), sourceArguments.Length, ((JsonArray)call["sig"]).Select(TypeJson.Read).ToArray());
             var result = obj["sty"] ?? obj["ret"];
             call["ret"] = result?.DeepClone();
@@ -193,7 +140,7 @@ static class CollectionHelperBinding
             ["kotlin.collections.Map"] = "System.Collections.Generic.IDictionary",
             ["kotlin.collections.Set"] = "System.Collections.Generic.ISet",
         };
-        Apply(new[] { root }, null, aliases);
+        Apply(new[] { root }, null, aliases, CaptureFixture(root));
         var call = root["methods"][1]["body"][0];
         if (Text(call[DeclarationIdentityBinding.Key]) != "map-keys" || Text(call["k"]) != "callStatic"
             || TypeJson.Read(call["typeArgs"][0]) != new TypeNode.Tv("method", 1))
@@ -232,7 +179,7 @@ static class CollectionHelperBinding
         JsonObject Operand() => new JsonObject { ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(collection) };
         var typedArguments = new IBirExpression[] { new BirLocal { Name = "value" } };
         BirCallStatic typedRender = null;
-        Apply(new[] { root }, null, aliases, (_, bind) =>
+        Apply(new[] { root }, null, aliases, CaptureFixture(root), (_, bind) =>
             FaithfulHints.WithHelperBinding(bind, () => {
                 typedRender = bind(new BirCallStatic {
                     Owner = new TypeNode.Fqn("kotlin.collections.ClrCollectionDefaultsKt"), Method = "clrCollToString",
@@ -401,7 +348,7 @@ static class CollectionHelperBinding
             ["capturedTypeParams"] = new JsonArray(new JsonObject { ["name"] = "A" }), ["outerTypeParamCount"] = 1,
             ["semanticOwner"] = "probe.Outer", ["mods"] = new JsonObject { ["inner"] = true },
         });
-        Apply(new[] { root }, null, aliases);
+        Apply(new[] { root }, null, aliases, CaptureFixture(root));
         if (Text(body[0][DeclarationIdentityBinding.Key]) != "clrProjectedViewIsEmpty"
             || body[0]["args"][2]["value"].GetValue<int>() != 0
             || TypeJson.Read(body[0]["args"][1]["type"]) is not TypeNode.Fqn {
@@ -442,6 +389,23 @@ static class CollectionHelperBinding
             || TypeJson.Read(body[0]["typeArgs"][0]) != variable)
             throw new InvalidOperationException("Source collection helper changed its canonical argument");
         Console.WriteLine("[collection helper binding] self-test OK (static family/preference, source selection, mutation, default index, exact owner, canonical argument)");
+    }
+
+    // These DOM-consumer fixtures keep direct expression handles for assertions.
+    // Author their statement wrappers only in the owning capture fixture, before
+    // the production pass or its callback mutates the original graph.
+    static SourceCollectionInputs CaptureFixture(JsonObject root)
+    {
+        var source = root.DeepClone().AsObject();
+        foreach (var method in (source["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+            if (method["body"] is JsonArray body)
+                for (var index = 0; index < body.Count; index++)
+                {
+                    var expression = body[index];
+                    body[index] = null;
+                    body[index] = new JsonObject { ["k"] = "exprStmt", ["expr"] = expression };
+                }
+        return new SourceCollectionInputs(new[] { BirGraphDom.ReadBirFileDeclaration(source) }, null);
     }
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;

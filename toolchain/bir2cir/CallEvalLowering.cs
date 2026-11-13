@@ -547,28 +547,30 @@ static class CallEvalLowering
     /// Deliberately says nothing about side effects. A `field` link can throw and a `staticField` link can run a type
     /// initializer; both stay when they are the actual storage link, and then happen at the location's own position,
     /// which is where Kotlin puts them.
-    static bool StaysWithoutPin(JsonObject node) => Str(node["k"]) switch
+    static bool StaysWithoutPin(JsonObject node) => StaysWithoutPin(Str(node["k"]));
+
+    internal static bool StaysWithoutPin(string kind) => kind switch
     {
         "const" or "this" or "local" or "bindRef" or "default" or "classRef" or "enumValue" => true,
         _ => false,
     };
 
-    static bool IsValueOwner(JsonObject location, ValueTypeOracle isValue)
+    static bool IsValueOwner(TypeNode owner, ValueTypeOracle isValue) => owner switch
     {
-        var ownerKey = Str(location["k"]) == "clrPropGet" ? "type" : "ownerType";
-        return TypeJson.Read(location[ownerKey]) switch
-        {
-            TypeNode.Fqn f => isValue(f),
-            TypeNode.Nullable => true,
-            TypeNode.Oblivious o => o.Of is TypeNode.Fqn f && isValue(f) || o.Of is TypeNode.Nullable,
-            _ => false,
-        };
-    }
+        TypeNode.Fqn f => isValue(f),
+        TypeNode.Nullable => true,
+        TypeNode.Oblivious o => o.Of is TypeNode.Fqn f && isValue(f) || o.Of is TypeNode.Nullable,
+        _ => false,
+    };
 
     static bool IsStoragePathOperand(JsonObject location, string key, JsonObject child,
-        ValueTypeOracle isValue) =>
-        key == "recv" && IsLvalueFormer(child) && IsValueOwner(location, isValue)
-        && Str(location["k"]) is "field" or "clrPropGet";
+        ValueTypeOracle isValue) => key == "recv" && IsLvalueFormer(child)
+        && IsStoragePathOperand(Str(location["k"]), true, true,
+            TypeJson.Read(location[Str(location["k"]) == "clrPropGet" ? "type" : "ownerType"]), isValue);
+
+    internal static bool IsStoragePathOperand(string kind, bool isReceiver, bool isLvalueFormer,
+        TypeNode owner, ValueTypeOracle isValue) => isReceiver && isLvalueFormer
+        && IsValueOwner(owner, isValue) && kind is "field" or "clrPropGet";
 
     static bool StaysInLocation(JsonObject location, string key, JsonObject child,
         ValueTypeOracle isValue) =>

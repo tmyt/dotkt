@@ -10,7 +10,6 @@ static class TypedCallEvalLowering
     static IBirExpression Expr(BirGraphValue value) => (IBirExpression)value;
     static OptionalField<IBirExpression> Field(IBirExpression value) => value == null
         ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(value);
-    static IBirExpression Copy(IBirExpression value) => value == null ? null : Expr(Graph(value).DeepClone());
 
     internal static T Apply<T>(T root, ValueTypeOracle isValue) where T : BirGraphValue
     {
@@ -63,7 +62,7 @@ static class TypedCallEvalLowering
 
     internal static (IBirStatement[] Stmts, Dictionary<string, IBirExpression> Repl) Materialise(
         BirCallBinding[] bindings, IReadOnlyList<BirGraphValue> readers, string site,
-        bool[] force = null, ValueTypeOracle isValue = null)
+        ValueTypeOracle isValue = null)
     {
         isValue ??= _ => false;
         var ids = bindings.Select(binding => binding.Id.Value).ToArray();
@@ -78,7 +77,7 @@ static class TypedCallEvalLowering
         var drop = bindings.Select((binding, index) => reads[ids[index]] == 0
             && ValueStability.IsDroppable((Graph(binding.Expr.Value) as BirGraphNode)?.Tag)).ToArray();
         var variables = CallEvalLowering.DecideMaterialisation(ids, kinds, stable, drop, reads, positions, deferred,
-            index => LocationHasPinWork(bindings[index].Expr.Value, isValue), force);
+            index => LocationHasPinWork(bindings[index].Expr.Value, isValue), null);
         var statements = new List<IBirStatement>();
         var replacements = new Dictionary<string, IBirExpression>(StringComparer.Ordinal);
         for (var index = 0; index < bindings.Length; index++)
@@ -136,56 +135,13 @@ static class TypedCallEvalLowering
         return Replace(node.DeepClone());
     }
 
-    internal static void FreshenPlanIds(BirGraphValue root)
-    {
-        void Rename(BirGraphValue host, BirCallBinding[] bindings)
-        {
-            var map = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var binding in bindings)
-            {
-                var old = binding.Id.Value;
-                var fresh = CallEvalLowering.FreshBindingId();
-                map[old] = fresh;
-                binding.Id = fresh;
-            }
-            host.Visit(node => {
-                if (node is BirBindingReference reference && map.TryGetValue(reference.Id.Value, out var fresh)) reference.Id = fresh;
-            });
-        }
-        void WalkPlan(BirGraphValue node)
-        {
-            if (node is BirCallEvaluation plan) Rename(plan, plan.Bindings.OrEmpty());
-            else if (node is BirConstructor { DelegationBindings.HasValue: true } constructor)
-                Rename(constructor, constructor.DelegationBindings.Value);
-            node.VisitChildren(WalkPlan);
-        }
-        WalkPlan(root);
-    }
-
     internal static TypeNode StaticTypeOf(BirGraphValue value) => BirNodeType.Of(value as BirGraphNode,
         node => StaticTypeOf(node), name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var element) ? element : null);
 
-    internal static IBirExpression PreserveUnreadValueBefore(IBirExpression value, IBirExpression lowered, string site)
-    {
-        if (value == null) return lowered;
-        var type = StaticTypeOf(Graph(value));
-        if (type == null && value is BirStaticFieldGet)
-            throw new InvalidOperationException("A static-field value whose evaluation is retained has no exact result type");
-        var binding = new BirCallBinding {
-            Id = CallEvalLowering.FreshBindingId(), Expr = Field(Copy(value)),
-            Stable = ValueStability.IsReReadable((Graph(value) as BirGraphNode)?.Tag,
-                value is BirEnumValue { Underlying.HasValue: true, PhysicalValue.HasValue: true }),
-        };
-        if (type != null) binding.Type = type;
-        var (statements, replacements) = Materialise(new[] { binding }, new[] { Graph(lowered) }, site);
-        var result = Expr(Substitute(Graph(lowered), replacements));
-        return statements.Length == 0 ? result : new BirValueBlock { Stmts = statements, Result = Field(result) };
-    }
-
     internal static bool IsLvalueFormer(IBirExpression value) => CallEvalLowering.IsLvalueFormer(Graph(value));
 
-    static bool StaysWithoutPin(IBirExpression value) => value is BirConstant or BirThis or BirLocal
-        or BirBindingReference or BirDefaultValue or BirClassReference or BirEnumValue;
+    static bool StaysWithoutPin(IBirExpression value)
+        => CallEvalLowering.StaysWithoutPin((Graph(value) as BirGraphNode)?.Tag);
 
     static bool IsStoragePathOperand(IBirExpression location, BirGraphSlot slot, ValueTypeOracle isValue)
     {
@@ -194,13 +150,8 @@ static class TypedCallEvalLowering
             BirPropertyGet field => (field.Type.OrDefault(), field.Recv.OrDefault()),
             _ => ((TypeNode)null, (IBirExpression)null),
         };
-        var valueOwner = owner switch {
-            TypeNode.Fqn named => isValue(named), TypeNode.Nullable => true,
-            TypeNode.Oblivious oblivious => oblivious.Of is TypeNode.Nullable
-                || oblivious.Of is TypeNode.Fqn named && isValue(named),
-            _ => false,
-        };
-        return valueOwner && ReferenceEquals(slot.Value, Graph(receiver)) && IsLvalueFormer(receiver);
+        return CallEvalLowering.IsStoragePathOperand((Graph(location) as BirGraphNode)?.Tag,
+            ReferenceEquals(slot.Value, Graph(receiver)), IsLvalueFormer(receiver), owner, isValue);
     }
 
     static IEnumerable<BirGraphSlot> LocationOperands(IBirExpression location)
@@ -313,7 +264,7 @@ static class TypedCallEvalLowering
 
         var literal = new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(7) };
         var ignored = new[] { Binding("ignored", literal), Binding("effect", Effect("effect")) };
-        (statements, replacements) = Materialise(ignored, Array.Empty<BirGraphValue>(), "unread values", force: new[] { false, false });
+        (statements, replacements) = Materialise(ignored, Array.Empty<BirGraphValue>(), "unread values");
         if (statements.Length != 1 || ((BirVariable)statements[0]).Init.Value is not BirCallStatic { Method.Value: "effect" })
             throw new InvalidOperationException("Owning call plan dropped an unread effect or retained an unread literal");
 
@@ -327,14 +278,12 @@ static class TypedCallEvalLowering
 
         var original = new BirCallEvaluation { Type = integer, Bindings = new[] { Binding("producer", Effect("once")) },
             Expr = new BirCallStatic { Method = "invoke", Ret = integer, Args = new IBirExpression[] { Read("producer") } } };
-        var first = (BirCallEvaluation)original.DeepClone();
-        var second = (BirCallEvaluation)original.DeepClone();
-        FreshenPlanIds(first); FreshenPlanIds(second);
-        if (first.Bindings.Value[0].Id.Value == second.Bindings.Value[0].Id.Value
-            || ((BirBindingReference)((BirCallStatic)first.Expr.Value).Args.Value[0]).Id.Value != first.Bindings.Value[0].Id.Value
-            || original.Bindings.Value[0].Id.Value != "producer")
-            throw new InvalidOperationException("Owning call-plan freshening lost declaration/read edges or source independence");
-        _ = Apply<BirGraphValue>(first, _ => false);
-        Console.WriteLine("[owning call evaluation] self-test OK (order, address pins, unread effects, independent reads, fresh ids)");
+        var first = Apply(original.DeepClone(), _ => false);
+        var second = Apply(original.DeepClone(), _ => false);
+        if (ReferenceEquals(first, second) || first is BirCallEvaluation || second is BirCallEvaluation
+            || original.Bindings.Value[0].Id.Value != "producer"
+            || ((BirBindingReference)((BirCallStatic)original.Expr.Value).Args.Value[0]).Id.Value != "producer")
+            throw new InvalidOperationException("Owning call-plan application mutated its source or retained a plan wrapper");
+        Console.WriteLine("[owning call evaluation] self-test OK (order, address pins, unread effects, independent reads, source isolation)");
     }
 }

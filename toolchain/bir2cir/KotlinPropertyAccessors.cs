@@ -71,6 +71,11 @@ static class KotlinPropertyAccessors
     {
         sourceName = Str(declaration[SourceNameKey]);
         kind = Str(declaration[KindKey]);
+        return HasIdentity(sourceName, kind);
+    }
+
+    internal static bool HasIdentity(string sourceName, string kind)
+    {
         if (sourceName == null && kind == null) return false;
         if (sourceName == null || kind is not ("get" or "set"))
             throw new InvalidOperationException("incomplete Kotlin property accessor identity");

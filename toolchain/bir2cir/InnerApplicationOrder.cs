@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Reorder an application's own/enclosing segments without changing the types carried in those slots.
 // Declaration-relative substitution needs this order even before the application itself is projected.
@@ -17,17 +19,30 @@ sealed class InnerApplicationOrder
         foreach (var root in roots) Add(root);
     }
 
+    internal InnerApplicationOrder(IEnumerable<BirFileDeclaration> roots, ReferenceMetadataIndex references)
+    {
+        _references = references;
+        foreach (var declaration in roots.SelectMany(root => root.Types.OrEmpty()))
+            if (declaration is BirClassDefinition type)
+                Add(type.Name.OrDefault(), type.Mods.OrDefault()?.Inner.OrDefault() == true,
+                    type.OuterTypeParamCount.OrDefault(), type.SemanticOwner.OrDefault());
+    }
+
     public void Add(JsonNode node)
     {
         if (node is JsonObject owner)
         {
-            if (owner["mods"]?["inner"]?.GetValue<bool>() == true
-                && owner["outerTypeParamCount"]?.GetValue<int>() is int count && count > 0
-                && owner["name"]?.GetValue<string>() is string name)
-                _locals[name] = (count, owner["semanticOwner"]?.GetValue<string>()
-                    ?? throw new InvalidOperationException($"Kotlin inner type '{name}' has no semantic owner"));
+            Add(owner["name"]?.GetValue<string>(), owner["mods"]?["inner"]?.GetValue<bool>() == true,
+                owner["outerTypeParamCount"]?.GetValue<int>() ?? 0, owner["semanticOwner"]?.GetValue<string>());
             foreach (var child in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Add(child);
         }
+    }
+
+    void Add(string name, bool inner, int count, string semanticOwner)
+    {
+        if (inner && count > 0 && name != null)
+            _locals[name] = (count, semanticOwner
+                ?? throw new InvalidOperationException($"Kotlin inner type '{name}' has no semantic owner"));
     }
 
     public TypeNode[] DeclarationArguments(TypeNode.Fqn application)
