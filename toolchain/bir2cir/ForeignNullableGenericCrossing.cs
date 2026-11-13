@@ -576,15 +576,26 @@ static class ForeignNullableGenericCrossing
         // The parameter vector comes off the resolved reference — the declaration's own, which is the whole point:
         // the node's argument types are the caller's Kotlin view and would hide the crossing.
         if (call["memberRef"] is JsonObject reference && reference["parameterTypes"] is JsonArray sig)
-            for (var i = 0; i < sig.Count; i++)
-                if (TypeJson.Read(sig[i]) is TypeNode p && NullableGenericErasure.ErasureWouldMove(AsDocumentNullable(p)))
-                    throw Refuse(file, owner, member, "parameter " + i, AsDocumentNullable(p));
+            CheckParameters(sig.Select(TypeJson.Read).ToArray(), file, owner, member);
         // The RETURN is read off the stamped FOREIGN declaration, never off the node's own `ret`: that one is the
         // caller's Kotlin view and has already been erased as a Kotlin slot, so it says `List<object>` for a member
         // declaring `List<int?>` and the crossing would be invisible.
         if (TypeJson.Read(call[ClrMemberResolution.ResolvedMemberReturnKey]) is TypeNode ret
             && NullableGenericErasure.ErasureWouldMove(ret))
             throw Refuse(file, owner, member, "return", ret);
+    }
+
+    // One declaration-parameter policy for the DOM member lane and owning
+    // applied-attribute constructors resolved after that lane has completed.
+    internal static void CheckParameters(IReadOnlyList<TypeNode> parameters, string file, string owner, string member)
+    {
+        for (var index = 0; index < parameters.Count; index++)
+            if (parameters[index] is { } parameter)
+            {
+                var documentType = AsDocumentNullable(parameter);
+                if (NullableGenericErasure.ErasureWouldMove(documentType))
+                    throw Refuse(file, owner, member, "parameter " + index, documentType);
+            }
     }
 
     // WHAT THE MESSAGE MAY OFFER is only what actually works. Constructing the .NET type by hand does NOT: a Kotlin
