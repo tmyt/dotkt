@@ -487,6 +487,7 @@
     },
     "birFunctionDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": { "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "suspendResult": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "_physicalDeclarationSignature": { "type": "boolean" },
         "retKotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },
         "nullableGenericRet": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },

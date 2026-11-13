@@ -57,6 +57,8 @@ static class Bir2Cir
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
                 SourceGraphRewrite.SelfTest();
+                RoundtripMetadata.SourceSuspendResultSelfTest();
+                InheritedMemberOwnerBinding.SourceProjectionSelfTest();
                 TypedExecutableFrames.SelfTest();
                 FaithfulHintRecognition.TypedSelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
@@ -253,6 +255,8 @@ sealed class Pipeline
         });
         CollectionHelperBinding.Apply(captured, refs, sourceIndex.CollisionAliases, collectionInputs);
         var nullableWitnessDemand = NullableWitnessDemand.Collect(captured, refs);
+        RoundtripMetadata.FreezeSuspendResults(captured);
+        InheritedMemberOwnerBinding.ProjectOwners(captured, refs);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -315,8 +319,6 @@ sealed class Pipeline
         // demand. Derive the latter from nullable-sensitive operations and exact call/lift correspondences as one
         // module-wide fixed point before per-file materialization starts.
         var nullableWitnessDemand = module.NullableWitnesses;
-        RoundtripMetadata.FreezeSuspendResults(birRoots);
-        InheritedMemberOwnerBinding.ProjectOwners(birRoots, refs);
         // A generic query implementation accepts its declared erased bound, not the closed CLR E.
         // State that ABI before frame materialization and declaration/use snapshots; typed overrides
         // retain their concrete signature and their ordinary query guard.

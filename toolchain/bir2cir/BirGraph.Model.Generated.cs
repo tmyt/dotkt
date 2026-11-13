@@ -3862,6 +3862,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; set; }
     public OptionalField<TypeNode[]> _syntheticTypeArgs { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
+    public OptionalField<TypeNode> SuspendResult { get; set; }
     public OptionalField<bool> _physicalDeclarationSignature { get; set; }
     public OptionalField<TypeNode> RetKotlinType { get; set; }
     public OptionalField<TypeNode> NullableGenericRet { get; set; }
@@ -3980,6 +3981,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         InheritedImplementation = InheritedImplementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)((BirGraphValue)InheritedImplementation.Value).DeepClone()) : InheritedImplementation,
         _syntheticTypeArgs = _syntheticTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(_syntheticTypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : _syntheticTypeArgs,
         RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        SuspendResult = SuspendResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendResult.Value)) : SuspendResult,
         RetKotlinType = RetKotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetKotlinType.Value)) : RetKotlinType,
         NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericRet.Value)) : NullableGenericRet,
         NullableGenericSuspendRet = NullableGenericSuspendRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericSuspendRet.Value)) : NullableGenericSuspendRet,
@@ -4018,6 +4020,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         InheritedImplementation = InheritedImplementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)child(BirGenericFrameRole.Lexical, (BirGraphValue)InheritedImplementation.Value)) : InheritedImplementation,
         _syntheticTypeArgs = _syntheticTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(_syntheticTypeArgs.Value.Select(item0 => type(BirGenericFrameRole.SyntheticApplication, item0)).ToArray()) : _syntheticTypeArgs,
         RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        SuspendResult = SuspendResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendResult.Value)) : SuspendResult,
         RetKotlinType = RetKotlinType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, RetKotlinType.Value)) : RetKotlinType,
         NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, NullableGenericRet.Value)) : NullableGenericRet,
         NullableGenericSuspendRet = NullableGenericSuspendRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, NullableGenericSuspendRet.Value)) : NullableGenericSuspendRet,
@@ -4066,6 +4069,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "inheritedImplementation", InheritedImplementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "_syntheticTypeArgs", _syntheticTypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "suspendResult", SuspendResult, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "_physicalDeclarationSignature", _physicalDeclarationSignature, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "retKotlinType", RetKotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nullableGenericRet", NullableGenericRet, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
@@ -4132,6 +4136,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (InheritedImplementation.IsPresent) result["inheritedImplementation"] = InheritedImplementation.IsNull ? null : ((BirGraphValue)InheritedImplementation.Value).ToDom();
         if (_syntheticTypeArgs.IsPresent) result["_syntheticTypeArgs"] = _syntheticTypeArgs.IsNull ? null : new JsonArray(_syntheticTypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
+        if (SuspendResult.IsPresent) result["suspendResult"] = SuspendResult.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendResult.Value));
         if (_physicalDeclarationSignature.IsPresent) result["_physicalDeclarationSignature"] = _physicalDeclarationSignature.IsNull ? null : JsonValue.Create(_physicalDeclarationSignature.Value);
         if (RetKotlinType.IsPresent) result["retKotlinType"] = RetKotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetKotlinType.Value));
         if (NullableGenericRet.IsPresent) result["nullableGenericRet"] = NullableGenericRet.IsNull ? null : JsonValue.Create(TypeNode.ToJson(NullableGenericRet.Value));
