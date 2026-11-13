@@ -68,6 +68,16 @@ static partial class FaithfulHintRecognition
                 if (!JsonNode.DeepEquals(dom, typed.ToDom()))
                     throw new InvalidOperationException("Typed Map view preference disagrees with the shared source/physical plan");
             }
+        var boxedNullable = new BirCast { Type = any, E = Local("later") };
+        var resultRegion = new BirValueBlock {
+            Stmts = new IBirStatement[] { new BirVariable { Name = "later", Type = new TypeNode.Nullable(text) } },
+            Result = new BirConcat { Parts = new IBirExpression[] { boxedNullable } },
+        };
+        var renderedRegion = (BirValueBlock)Apply(resultRegion, names);
+        if (renderedRegion.Result.Value is not BirConcat { Parts.HasValue: true } resultConcat
+            || resultConcat.Parts.Value.Single() is not BirCallStatic { Method.Value: "toString", Args.HasValue: true } renderer
+            || !ReferenceEquals(renderer.Args.Value.Single(), boxedNullable))
+            throw new InvalidOperationException("Result rendering lost its local's nullable type or stripped the required Any cast");
         BirCallStatic Reinterpret() => new() { Method = "toByteArray", Args = new IBirExpression[] {
             new BirLocal { Name = "bytes", Sty = new TypeNode.Fqn("kotlin.UByteArray") },
         } };
