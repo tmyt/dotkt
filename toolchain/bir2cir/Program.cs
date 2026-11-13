@@ -231,9 +231,8 @@ sealed class Pipeline
             captured, refs, sourceIsValue, carryForReference: referenceBuild);
         if (!referenceBuild)
             foreach (var source in captured) aliasConstructorDelegations.Apply(source);
-        // Snapshot collection-selection facts before any semantic helper producer
-        // rewrites source expressions.
-        // Only declaration/scalar facts survive this owning-to-DOM frontier.
+        // Snapshot source collection-selection facts before helper producers
+        // change expressions; consume them before entering the DOM frontier.
         var collectionInputs = new SourceCollectionInputs(captured, refs);
         var sourceTopLevelFns = captured.SelectMany(source => source.Methods.OrEmpty())
             .Select(method => method.Name.OrDefault()).Where(name => name != null).ToHashSet(StringComparer.Ordinal);

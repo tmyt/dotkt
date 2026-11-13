@@ -1967,7 +1967,7 @@ static partial class MemberCallSubstitution
     internal static JsonNode MissingCollectionIteratorCall(JsonObject node, JsonArray args, bool declaresIterator)
         => RenderCollectionOperation(SelectMissingCollectionIterator(Str(node["method"]), args.Count, declaresIterator,
             KotlinPropertyAccessors.TryCallIdentity(node, out _, out _), (node["typeArgs"] as JsonArray)?.Count ?? 0,
-            TypeJson.Read(node["sty"] ?? node["ret"])), node, args, null, CollectionOperationPhase.Source);
+            TypeJson.Read(node["sty"] ?? node["ret"])), node, args, null, CollectionOperationPhase.Physical);
     internal static JsonNode CollectionMutationCall(JsonObject node, TypeNode.Fqn ownerFqnNode,
         JsonArray args, ReferenceMetadataIndex refs, SubstCtx ctx,
         CollectionOperationPhase phase = CollectionOperationPhase.Physical, TypeNode.Fqn preferredOwner = null)
