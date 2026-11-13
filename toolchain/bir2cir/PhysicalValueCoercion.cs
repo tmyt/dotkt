@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Materialize representation-induced value conversions in CIR.
 //
@@ -327,9 +329,9 @@ static class PhysicalValueCoercion
           {"name":"closureCapture","typeParams":[{"name":"T"},{"name":"P"}],
            "params":[{"name":"value","type":{"t":"tv","scope":"method","i":1}}],
            "ret":{"t":"fqn","name":"void"},"body":[
-             {"k":"expr","e":{"k":"newClosure","closureType":{"t":"fqn","name":"CapturedValue"},
+             {"k":"exprStmt","expr":{"k":"newClosure","closureType":{"t":"fqn","name":"CapturedValue"},
                "typeArgs":[{"t":"tv","scope":"method","i":0}],"captures":[{"k":"local","name":"value"}]}},
-             {"k":"expr","e":{"k":"newClosure","closureType":{"t":"fqn","name":"CapturedValue"},
+             {"k":"exprStmt","expr":{"k":"newClosure","closureType":{"t":"fqn","name":"CapturedValue"},
                "typeArgs":[{"t":"tv","scope":"method","i":1}],"captures":[{"k":"local","name":"value"}]}}]}
           """).AsObject();
         root["methods"].AsArray().Add(closureCapture);
@@ -348,7 +350,7 @@ static class PhysicalValueCoercion
                   "declaringType":{"t":"fqn","name":"NativeOwner"},"name":"get_Value",
                   "returnType":{"t":"fqn","name":"NativeView"},"parameterTypes":[]}}}]}]}
           """).AsObject();
-        ApplyAll(new JsonNode[] { opaqueResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
+        ApplyBothForSelfTest(new JsonNode[] { opaqueResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
         var opaqueEdges = opaqueResults["methods"][2]["body"].AsArray();
         foreach (var (edge, expected) in opaqueEdges.Select((edge, index) => (edge,
                      index == 1 ? "System.Object" : "NativeView")))
@@ -363,7 +365,7 @@ static class PhysicalValueCoercion
                 {"k":"callStatic","owner":{"t":"fqn","name":"GenericResults"},"method":"read",
                  "typeArgs":[{"t":"tv","scope":"method","i":0}],"sig":[],"args":[],"ret":{"t":"fqn","name":"object"}}}]}]}
           """).AsObject();
-        ApplyAll(new JsonNode[] { genericResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
+        ApplyBothForSelfTest(new JsonNode[] { genericResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
         var genericBox = genericResults["methods"][1]["body"][0]["init"];
         if (Str(genericBox["k"]) != "cast"
             || TypeJson.Read(genericBox["type"]) != new TypeNode.Fqn("object")
@@ -385,7 +387,7 @@ static class PhysicalValueCoercion
             valueBody.Add(new JsonObject { ["k"] = "var", ["name"] = "value" + valueBody.Count,
                 ["type"] = TypeJson.Write(type), ["init"] = ReadAs(type) });
         valueBody.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ReadAs(integer) });
-        ApplyAll(new JsonNode[] { valueResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"),
+        ApplyBothForSelfTest(new JsonNode[] { valueResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"),
             type => type.Name == "System.Int32");
         foreach (var position in new[] { 0, 1 })
             if (Str(valueBody[position]["init"]["k"]) != "cast"
@@ -395,7 +397,7 @@ static class PhysicalValueCoercion
         if (Str(valueBody[2]["init"]["k"]) != "callStatic" || Str(valueBody[3]["expr"]["k"]) != "callStatic"
             || TypeJson.Read(valueBody[3]["expr"]["dynRet"]) != new TypeNode.Fqn("object"))
             throw new InvalidOperationException("Object storage or discarded invocation acquired a premature extraction");
-        ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
+        ApplyBothForSelfTest(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
             isExistentialOwner: owner => owner.Name is "Carrier" or "DerivedCarrier",
             isNativeReference: owner => owner.Name == "System.Collections.Generic.IReadOnlyList",
             referencedCarrier: (target, source) => target.Name == "ReferencedOwner" && source.Name == "Carrier");
@@ -427,10 +429,10 @@ static class PhysicalValueCoercion
             || Str(referenceCall["recv"]["k"]) != "cast"
             || TypeJson.Read(referenceCall["recv"]["type"]) != new TypeNode.Fqn("PlainOwner"))
             throw new InvalidOperationException("A local non-generic declaring class lost its explicit reference receiver");
-        var captures = closureCapture["body"][0]["e"]["captures"];
+        var captures = closureCapture["body"][0]["expr"]["captures"];
         if (Str(captures[0]["k"]) != "cast"
             || TypeJson.Read(captures[0]["type"]) != new TypeNode.Tv("method", 0)
-            || Str(closureCapture["body"][1]["e"]["captures"][0]["k"]) != "local")
+            || Str(closureCapture["body"][1]["expr"]["captures"][0]["k"]) != "local")
             throw new InvalidOperationException("Closure captures did not use the exact allocated constructor frame");
         var unusedParameters = JsonNode.Parse("""
           [{"name":"<unused var>","type":{"t":"fqn","name":"object"}},
@@ -442,7 +444,47 @@ static class PhysicalValueCoercion
         if (emptyBody.Count != 0 || unchanged != new JsonArray(
                 unusedParameters.Select(parameter => parameter.DeepClone()).ToArray()).ToJsonString())
             throw new InvalidOperationException("Unused anonymous parameters acquired addressable storage");
+        var owningParameters = unusedParameters.Select(BirGraphDom.ReadBirParameter).ToArray();
+        var owningBody = new List<IBirStatement>();
+        TypedPhysicalValueCoercion.AllocateNativeLocals(Array.Empty<BirGraphValue>(), owningParameters, owningBody);
+        if (owningBody.Count != 0 || unchanged != new JsonArray(owningParameters.Select(parameter => (JsonNode)parameter.ToDom()).ToArray()).ToJsonString())
+            throw new InvalidOperationException("Owning unused anonymous parameters acquired addressable storage");
         Console.WriteLine("[physical value edges] self-test OK (local generic result, erased result, native carrier view)");
+    }
+
+    // The authored cases remain one corpus. A DOM input/output view is useful
+    // here as an oracle, not a production frontier around the owning passes.
+    static void ApplyBothForSelfTest(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue,
+        ValueTypeOracle isValue, bool referenceBuild = false, Func<TypeNode.Fqn, bool> isReferenceOwner = null,
+        Func<TypeNode.Fqn, bool> isExistentialOwner = null, Func<TypeNode.Fqn, bool> isNativeReference = null,
+        Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null)
+    {
+        var owning = roots.Select(BirGraphDom.ReadBirFileDeclaration).ToArray();
+        ApplyAll(roots, unitValue, isValue, referenceBuild, isReferenceOwner,
+            isExistentialOwner, isNativeReference, referencedCarrier);
+        TypedPhysicalValueCoercion.ApplyAll(owning, () => BirGraphDom.ReadBirExpression(unitValue()),
+            isValue, referenceBuild, isReferenceOwner, isExistentialOwner, isNativeReference, referencedCarrier);
+        for (var index = 0; index < roots.Count; index++)
+            if (!JsonNode.DeepEquals(roots[index], owning[index].ToDom()))
+                throw new InvalidOperationException("Owning physical value coercion disagrees with the authored fixture: "
+                    + owning[index].FileClass.OrDefault() + "\nDOM: " + roots[index].ToJsonString()
+                    + "\nOwning: " + owning[index].ToDom().ToJsonString());
+    }
+
+    static void AssertOwningNumericForSelfTest(JsonObject before, JsonObject expected,
+        IReadOnlyDictionary<string, TypeNode> locals, bool referenceBuild)
+    {
+        var expression = BirGraphDom.ReadBirExpression(before);
+        var statement = new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of(expression) };
+        var root = new BirFileDeclaration { FileClass = "NumericValueEdges", Methods = new[] { new BirFunctionDeclaration {
+            Name = "probe", Params = locals.Select(local => new BirParameter { Name = local.Key, Type = local.Value }).ToArray(),
+            Ret = new TypeNode.Fqn("void"), Body = new IBirStatement[] { statement },
+        } } };
+        TypedPhysicalValueCoercion.ApplyAll(new[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"),
+            _ => false, referenceBuild);
+        if (!JsonNode.DeepEquals(expected, ((BirGraphValue)statement.Expr.Value).ToDom()))
+            throw new InvalidOperationException("Owning numeric coercion disagrees with the authored fixture: "
+                + "\nDOM: " + expected.ToJsonString() + "\nOwning: " + ((BirGraphValue)statement.Expr.Value).ToDom().ToJsonString());
     }
 
     static void NumericOperandsSelfTest()
@@ -465,7 +507,9 @@ static class PhysicalValueCoercion
                 ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "left" },
                 ["rhs"] = new JsonObject { ["k"] = "local", ["name"] = "right" },
             };
+            var owningInput = operation.DeepClone().AsObject();
             CoerceInputs(operation, scope, index);
+            AssertOwningNumericForSelfTest(owningInput, operation, scope.Locals, referenceBuild);
             foreach (var side in new[] { "lhs", "rhs" })
                 if (BirTypeLowering.CanonicalExpressionResult(ExprType(operation[side], scope, index))
                     != new TypeNode.Fqn(target))
@@ -484,6 +528,7 @@ static class PhysicalValueCoercion
                 };
                 var before = shifted.DeepClone();
                 CoerceInputs(shifted, scope, index);
+                AssertOwningNumericForSelfTest(before.AsObject(), shifted, scope.Locals, referenceBuild);
                 if (!JsonNode.DeepEquals(before, shifted))
                     throw new InvalidOperationException("Numeric coercion rewrote a shift distance");
             }
@@ -501,7 +546,9 @@ static class PhysicalValueCoercion
                 ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int64"), ["value"] = 1 },
             };
             var index = Index.Build(Array.Empty<JsonNode>(), () => throw new InvalidOperationException());
+            var owningInput = operation.DeepClone().AsObject();
             CoerceInputs(operation, new Scope(), index);
+            AssertOwningNumericForSelfTest(owningInput, operation, new Dictionary<string, TypeNode>(), referenceBuild: false);
             if (Str(operation["lhs"]?["k"]) != "conv"
                 || TypeJson.Read(operation["lhs"]?["to"]) != new TypeNode.Fqn("System.Int64")
                 || !JsonNode.DeepEquals(operation["lhs"]?["e"], call))
