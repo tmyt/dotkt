@@ -1495,6 +1495,7 @@ internal static class BirGraphDom
                 case "inheritedImplementation": break;
                 case "_syntheticTypeArgs": break;
                 case "retSuspendFnTypePre": break;
+                case "suspendResult": break;
                 case "_physicalDeclarationSignature": break;
                 case "retKotlinType": break;
                 case "nullableGenericRet": break;
@@ -1560,6 +1561,7 @@ internal static class BirGraphDom
             InheritedImplementation = Field<BirInheritedImplementation>(fields, "inheritedImplementation", value => ReadBirInheritedImplementation(value!)),
             _syntheticTypeArgs = Field<TypeNode[]>(fields, "_syntheticTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            SuspendResult = Field<TypeNode>(fields, "suspendResult", value => TypeNode.Parse(value!.GetValue<string>())),
             _physicalDeclarationSignature = Field<bool>(fields, "_physicalDeclarationSignature", value => value!.GetValue<bool>()),
             RetKotlinType = Field<TypeNode>(fields, "retKotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableGenericRet = Field<TypeNode>(fields, "nullableGenericRet", value => TypeNode.Parse(value!.GetValue<string>())),

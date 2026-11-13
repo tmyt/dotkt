@@ -31,7 +31,7 @@ using DotKt.Cir;
 //   field:  [ Nullable?, KotlinReadOnly?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user,
 //             KotlinExtensionFunctionType? ]
 //   prop:   [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType? ]
-static class RoundtripMetadata
+static partial class RoundtripMetadata
 {
     const string Ns = "DotKt.Runtime.CompilerServices.";
     const string ClrNs = "System.Runtime.CompilerServices.";

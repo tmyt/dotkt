@@ -25,15 +25,19 @@ using DotKt.Bir;
 //   * ambiguity or incomplete type information leaves the node untouched (never guesses
 //     an overload).
 // No library/member FQNs are special-cased.
-static class InheritedMemberOwnerBinding
+static partial class InheritedMemberOwnerBinding
 {
-    sealed class TypeDef
+    class TypeShape
     {
         public string Name;
         public string Kind;
         public int TypeParamCount;
         public TypeNode.Fqn Base;
         public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
+    }
+
+    sealed class TypeDef : TypeShape
+    {
         public JsonArray Methods;
         public JsonArray InheritedDefaultMethods;
     }
@@ -47,15 +51,6 @@ static class InheritedMemberOwnerBinding
         var types = CollectTypes(rootList);
         var localDeclarations = CollectLocalDeclarations(types);
         foreach (var root in rootList) Walk(root, types, localDeclarations, refs, null);
-    }
-
-    // Frame materialization must see use-site owner arguments, not the variables of an inherited
-    // declaration. This early phase only constructs that owner; member selection remains in ApplyAll.
-    public static void ProjectOwners(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
-    {
-        var rootList = roots.ToList();
-        var types = CollectTypes(rootList);
-        foreach (var root in rootList) Walk(root, types, null, refs, null, projectOnly: true);
     }
 
     static Dictionary<string, LocalDeclaration> CollectLocalDeclarations(Dictionary<string, TypeDef> types)
@@ -104,7 +99,7 @@ static class InheritedMemberOwnerBinding
 
     static void Walk(JsonNode node, Dictionary<string, TypeDef> types,
         IReadOnlyDictionary<string, LocalDeclaration> localDeclarations, ReferenceMetadataIndex refs,
-        TypeNode.Fqn enclosingOwner, bool projectOnly = false)
+        TypeNode.Fqn enclosingOwner)
     {
         switch (node)
         {
@@ -120,17 +115,17 @@ static class InheritedMemberOwnerBinding
                         ownerArgs.Length == 0 ? null : ownerArgs);
                 }
                 var ownerBefore = DeclaringOwner(obj)?.DeepClone();
-                Bind(obj, types, localDeclarations, refs, enclosingOwner, projectOnly);
-                // The early projection still carries own-first Kotlin inner arguments. Declaration-relative
-                // result slots close only after inner applications have their physical argument order.
-                if (!projectOnly && !JsonNode.DeepEquals(ownerBefore, DeclaringOwner(obj)))
+                Bind(obj, types, localDeclarations, refs, enclosingOwner);
+                // This late binding owns physical owner applications; unlike
+                // the source projection it may now close declaration results.
+                if (!JsonNode.DeepEquals(ownerBefore, DeclaringOwner(obj)))
                     ConstructedMemberReturnSubstitution.ApplyCall(obj);
                 foreach (var kv in obj)
-                    if (kv.Value != null) Walk(kv.Value, types, localDeclarations, refs, enclosingOwner, projectOnly);
+                    if (kv.Value != null) Walk(kv.Value, types, localDeclarations, refs, enclosingOwner);
                 break;
             case JsonArray arr:
                 foreach (var item in arr)
-                    if (item != null) Walk(item, types, localDeclarations, refs, enclosingOwner, projectOnly);
+                    if (item != null) Walk(item, types, localDeclarations, refs, enclosingOwner);
                 break;
         }
     }
@@ -145,7 +140,7 @@ static class InheritedMemberOwnerBinding
 
     static void Bind(JsonObject call, Dictionary<string, TypeDef> types,
         IReadOnlyDictionary<string, LocalDeclaration> localDeclarations, ReferenceMetadataIndex refs,
-        TypeNode.Fqn enclosingOwner, bool projectOnly)
+        TypeNode.Fqn enclosingOwner)
     {
         var kind = Str(call["k"]);
         if (kind is not ("callInstance" or "newBoundDelegate" or "newBoundClrDelegate"
@@ -171,25 +166,17 @@ static class InheritedMemberOwnerBinding
         // its immediate Kotlin superclass is preserved, but its owner type variables must be constructed before the
         // class-only lookup below can identify the exact CLR MethodDef. Interface-qualified `super<I>` retains that
         // projected interface owner and is returned unchanged by the dedicated guard below.
-        var projectionRoot = TypeJson.Read(call["recv"]?["sty"]) as TypeNode.Fqn;
         // A bare `this` without expression `sty` uses the enclosing class declaration frame as its receiver,
         // both for ordinary inherited calls and for super calls. A downstream `Derived : Base<String>` may have a BIR
         // member fact naming the open declaration Base<T> (or even Base without arguments): the current hierarchy, not the
         // argument expression, is the authoritative construction.
-        if (projectionRoot == null && (Bool(call["super"]) || Str(call["recv"]?["k"]) == "this"))
-            projectionRoot = enclosingOwner;
-        if (projectionRoot != null
-            && (projectionRoot.Name != owner.Name || owner.Args == null && projectionRoot.Args != null))
+        if (ProjectUseOwner(owner, TypeJson.Read(call["recv"]?["sty"]) as TypeNode.Fqn,
+            Str(call["recv"]?["k"]) == "this", Bool(call["super"]), enclosingOwner, types, refs, sourceFrames: false) is { } projectedUseOwner)
         {
-            var projectedOwners = ConstructedOwners(projectionRoot, owner.Name, types, refs, sourceFrames: projectOnly);
-            if (projectedOwners.Count == 1)
-            {
-                owner = projectedOwners[0];
-                call[ownerSlot] = TypeJson.Write(owner);
-                if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(owner);
-            }
+            owner = projectedUseOwner;
+            call[ownerSlot] = TypeJson.Write(owner);
+            if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(owner);
         }
-        if (projectOnly) return;
         // The CLR-shaped nodes have already crossed MemberCallSubstitution. Their declaration descriptor and member
         // kind are resolved later by ClrMemberResolution; this pass owns only the constructed declaring owner.
         if (kind is "newBoundClrDelegate" or "clrInstance" or "clrPropGet" or "clrPropSet"
@@ -400,8 +387,17 @@ static class InheritedMemberOwnerBinding
     // Reference hierarchy edges can use the index's semantic spelling while the selected declaration names
     // an exact CLR TypeDef. Match only through the recorded arity-aware identity map, never by stripping names
     // or borrowing argument types. Keep the selected owner spelling and the hierarchy's constructed arguments.
-    static List<TypeNode.Fqn> ConstructedOwners(TypeNode.Fqn start, string selectedOwner,
-        Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs, bool sourceFrames = false) =>
+    static TypeNode.Fqn ProjectUseOwner<T>(TypeNode.Fqn owner, TypeNode.Fqn receiver, bool bareThis, bool super,
+        TypeNode.Fqn enclosing, IReadOnlyDictionary<string, T> types, ReferenceMetadataIndex refs, bool sourceFrames) where T : TypeShape
+    {
+        var start = receiver ?? (bareThis || super ? enclosing : null);
+        if (start == null || start.Name == owner.Name && !(owner.Args == null && start.Args != null)) return null;
+        var candidates = ConstructedOwners(start, owner.Name, types, refs, sourceFrames);
+        return candidates.Count == 1 ? candidates[0] : null;
+    }
+
+    static List<TypeNode.Fqn> ConstructedOwners<T>(TypeNode.Fqn start, string selectedOwner,
+        IReadOnlyDictionary<string, T> types, ReferenceMetadataIndex refs, bool sourceFrames = false) where T : TypeShape =>
         ReachableTypes(start, types, refs, sourceFrames)
             .Where(candidate => candidate.Type.Name == selectedOwner
                 || !types.ContainsKey(candidate.Type.Name) && !types.ContainsKey(selectedOwner)
@@ -412,8 +408,8 @@ static class InheritedMemberOwnerBinding
             .Select(group => group.First())
             .ToList();
 
-    static IEnumerable<Reachable> ReachableTypes(TypeNode.Fqn start, Dictionary<string, TypeDef> types,
-        ReferenceMetadataIndex refs, bool sourceFrames = false)
+    static IEnumerable<Reachable> ReachableTypes<T>(TypeNode.Fqn start, IReadOnlyDictionary<string, T> types,
+        ReferenceMetadataIndex refs, bool sourceFrames = false) where T : TypeShape
     {
         var queue = new Queue<Reachable>();
         var seen = new HashSet<TypeNode.Fqn>();

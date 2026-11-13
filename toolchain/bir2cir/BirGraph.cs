@@ -50,7 +50,7 @@ internal abstract record BirGraphValue
     public BirGraphValue Rewrite(Func<BirGraphValue, BirGraphValue> rewrite)
         => rewrite(RewriteChildren(child => child.Rewrite(rewrite)));
 
-    protected static TypeNode CopyType(TypeNode type) => type switch {
+    internal static TypeNode CopyType(TypeNode type) => type switch {
         TypeNode.Fqn value => value with {
             Args = value.Args?.Select(CopyType).ToArray(),
             Classifier = value.Classifier is { } classifier
