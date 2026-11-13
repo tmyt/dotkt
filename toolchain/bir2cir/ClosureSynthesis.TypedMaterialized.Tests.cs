@@ -91,6 +91,7 @@ static partial class ClosureSynthesis
         var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
         try
         {
+            TypedFileSelfTest(refs);
             var target = new TypeNode.Fqn("System.Action");
             var sam = new BirNewSam {
                 SamType = new TypeNode.Fqn("TypedMaterialized.Delegate"), Captures = Array.Empty<IBirExpression>(),

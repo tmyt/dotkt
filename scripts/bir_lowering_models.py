@@ -316,6 +316,11 @@ def outputs(root, definitions):
         if field.get("type") == "array": return is_type_slot(field["items"])
         return refkey(field) == "type"
 
+    def is_string_slot(field):
+        field = base(field)
+        if field.get("type") == "array": return is_string_slot(field["items"])
+        return cs(field) == "string"
+
     def rewrite_type(field, value, depth=0, callback="rewrite", prefix=""):
         field = base(field)
         if field.get("type") == "array":
@@ -431,6 +436,33 @@ def outputs(root, definitions):
             if field in shape["properties"]:
                 prop = member(field)
                 model += [f"    public override OptionalField<TypeNode> {api} {{ get => {prop}; set => {prop} = value; }}"]
+        model += ["    public override void VisitOwnTypeFields(Action<string, TypeNode> visit)", "    {"]
+        for field, value in fields:
+            if is_type_slot(value):
+                prop = member(field)
+                body = visit(value, prop + ".Value", callback="visit", cast="TypeNode",
+                             prefix=json.dumps(field) + ", ")
+                model += [f"        if ({prop}.HasValue) {{ {body} }}"]
+        model += ["    }"]
+        model += ["    public override void VisitStringFields(Action<string> visit)", "    {"]
+        for field, value in fields:
+            prop = member(field)
+            if is_string_slot(value):
+                body = visit(value, prop + ".Value", cast="string")
+                model += [f"        if ({prop}.HasValue) {{ {body} }}"]
+            elif is_type_slot(value):
+                body = visit(value, prop + ".Value", callback="BirGraphNameFields.VisitTypeStrings",
+                             cast="TypeNode", suffix=", visit")
+                model += [f"        if ({prop}.HasValue) {{ {body} }}"]
+            elif cs(value) == "BirLiteral":
+                model += [f"        if ({prop}.HasValue && {prop}.Value is BirLiteral.TextLiteral text) visit(text.Value);"]
+        model += ["    }"]
+        synthetic_facts = [member(field) for field, _ in fields
+                           if field in {"_syntheticTypeArgs", "sharedCellType", "sharedCellTypeParams"}]
+        if synthetic_facts:
+            model += ["    public override void ClearSyntheticFrameFacts()", "    {"]
+            model += [f"        {prop} = default;" for prop in synthetic_facts]
+            model += ["    }"]
         model += ["    public override void VisitNameFields(Action<string> visit)", "    {"]
         for field, value in fields:
             prop = member(field)
@@ -671,28 +703,29 @@ def outputs(root, definitions):
     # frozen JSON strings never arrive here through is_type_slot above.
     model += ["internal static class BirGraphNameFields", "{"]
 
-    def type_names(field, expression, wire_name=None, depth=0):
+    def type_names(field, expression, wire_name=None, depth=0, all_strings=False, nodes=False):
         field = base(field)
         if field.get("x-dotkt-kotlin-json-type") or field.get("x-dotkt-csharp-codec"):
             return []
         if field.get("type") == "array":
             item = f"item{depth}"
-            body = type_names(field["items"], item, depth=depth + 1)
+            body = type_names(field["items"], item, depth=depth + 1, all_strings=all_strings, nodes=nodes)
             return [f"foreach (var {item} in {expression}) {{ {' '.join(body)} }}"] if body else []
         key = refkey(field)
-        if key == "type": return [f"VisitType({expression}, visit);"]
+        suffix = "Nodes" if nodes else "Strings" if all_strings else ""
+        if key == "type": return [f"VisitType{suffix}({expression}, visit);"]
         if key:
             if "properties" in definitions.get(key, {}):
-                return [f"Visit{definitions[key]['x-dotkt-model']['name']}({expression}, visit);"]
+                return [f"Visit{definitions[key]['x-dotkt-model']['name']}{suffix}({expression}, visit);"]
             return []
-        return [f"visit({expression});"] if wire_name in {"name", "var"} and field.get("type") == "string" else []
+        return [f"visit({expression});"] if not nodes and (all_strings or wire_name in {"name", "var"}) and field.get("type") == "string" else []
 
-    def type_name_fields(shape, variable):
+    def type_name_fields(shape, variable, all_strings=False, nodes=False):
         result = []
         for field, value in shape["properties"].items():
             prop = value.get("x-dotkt-csharp-name", member(field))
             expression = f"{variable}.{prop}"
-            body = type_names(value, expression, field)
+            body = type_names(value, expression, field, all_strings=all_strings, nodes=nodes)
             if body:
                 if field not in shape.get("required", []) or is_nullable(value):
                     result += [f"if ({expression} is not null) {{ {' '.join(body)} }}"]
@@ -700,8 +733,6 @@ def outputs(root, definitions):
                     result += body
         return result
 
-    model += ["    internal static void VisitType(TypeNode value, Action<string> visit)", "    {",
-              "        switch (value)", "        {"]
     type_shapes = [definitions[refkey(entry)] for entry in definitions["type"]["oneOf"]]
     nested_shapes = {}
     for shape in type_shapes:
@@ -709,16 +740,23 @@ def outputs(root, definitions):
             key = refkey(field)
             if key and key != "type" and "properties" in definitions.get(key, {}):
                 nested_shapes[key] = definitions[key]
-        name = shape["x-dotkt-model"]["name"]
-        model += [f"            case TypeNode.{name} node:"]
-        model += ["                " + line for line in type_name_fields(shape, "node")]
-        model += ["                break;"]
-    model += ["        }", "    }"]
-    for shape in nested_shapes.values():
-        name = shape["x-dotkt-model"]["name"]
-        model += [f"    static void Visit{name}(TypeNode.{name} value, Action<string> visit)", "    {"]
-        model += ["        " + line for line in type_name_fields(shape, "value")]
-        model += ["    }"]
+    for all_strings, nodes in ((False, False), (True, False), (False, True)):
+        suffix = "Nodes" if nodes else "Strings" if all_strings else ""
+        callback_type = "TypeNode" if nodes else "string"
+        model += [f"    internal static void VisitType{suffix}(TypeNode value, Action<{callback_type}> visit)", "    {"]
+        if nodes: model += ["        visit(value);"]
+        model += ["        switch (value)", "        {"]
+        for shape in type_shapes:
+            name = shape["x-dotkt-model"]["name"]
+            model += [f"            case TypeNode.{name} node:"]
+            model += ["                " + line for line in type_name_fields(shape, "node", all_strings, nodes)]
+            model += ["                break;"]
+        model += ["        }", "    }"]
+        for shape in nested_shapes.values():
+            name = shape["x-dotkt-model"]["name"]
+            model += [f"    static void Visit{name}{suffix}(TypeNode.{name} value, Action<{callback_type}> visit)", "    {"]
+            model += ["        " + line for line in type_name_fields(shape, "value", all_strings, nodes)]
+            model += ["    }"]
     model += ["}", ""]
     return {root / "toolchain/bir2cir/BirGraph.Model.Generated.cs": "\n".join(model),
             root / "toolchain/bir2cir/BirGraph.Json.Generated.cs": "\n".join(codec)}

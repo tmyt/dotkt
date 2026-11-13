@@ -41,22 +41,6 @@ static partial class ClosureSynthesis
 
     internal static void MarkPreboundFrame(JsonObject source) => source[PreboundFrameKey] = true;
 
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, Action<JsonObject> projectSamMethod = null)
-    {
-        if (root is not JsonObject file) return;
-        var inputs = new List<JsonNode>();
-        if (file["methods"] is JsonArray methods)
-            inputs.AddRange(methods.Where(node => node != null));
-        if (file["fields"] is JsonArray fields)
-            inputs.AddRange(fields.Where(node => node != null));
-        if (file["types"] is JsonArray types)
-            // ToList: the walk appends closure classes to `newTypes` (added below), but a closure can also live inside
-            // an already-declared type's member body — walk the pre-existing types without mutating while enumerating.
-            inputs.AddRange(types.Where(node => node != null).ToList());
-        SynthesizeAndAppend(file, inputs, refs, projectSamMethod: projectSamMethod);
-        RejectDirectClrDelegateImplementations(file, refs);
-    }
-
     // A later phase that deliberately constructs executable subtrees supplies those exact roots here. Only the new
     // graph is inspected; already-normalized declarations in the file are not swept again. The returned list contains
     // the physical closure/SAM types actually appended to the file, for the producer's next declared capability.
@@ -107,26 +91,6 @@ static partial class ClosureSynthesis
                 && (declaration["body"] != null || declaration["methods"] != null || declaration["ctors"] != null))
                 return declaration;
         return file;
-    }
-
-    static void RejectDirectClrDelegateImplementations(JsonObject file, ReferenceMetadataIndex refs)
-    {
-        if (file["types"] is not JsonArray types) return;
-        foreach (var type in types.OfType<JsonObject>())
-        {
-            if (type["interfaces"] is not JsonArray interfaces) continue;
-            foreach (var implemented in interfaces)
-            {
-                var candidate = TypeJson.Read(implemented);
-                while (candidate is TypeNode.Nullable nullable) candidate = nullable.Of;
-                while (candidate is TypeNode.Oblivious oblivious) candidate = oblivious.Of;
-                if (candidate is not TypeNode.Fqn named || !refs.IsClrDelegate(named)) continue;
-                throw new InvalidOperationException(
-                    $"bir2cir: type '{Str(type["name"])}' directly implements CLR delegate '{named.Name}'. " +
-                    "Projected CLR delegates may be constructed through their SAM constructor but cannot be " +
-                    "inherited or implemented as CLR interfaces");
-            }
-        }
     }
 
     // `decl` is the nearest enclosing DECLARATION (method/field/type), carried only so a capture diagnostic can
@@ -206,12 +170,9 @@ static partial class ClosureSynthesis
 
     static bool LowerClrDelegateSam(JsonObject node, JsonObject synthClass)
     {
-        if (_refs == null
-            || synthClass["interfaces"] is not JsonArray interfaces || interfaces.Count != 1
-            || interfaces[0] is not JsonNode interfaceNode
-            || TypeJson.Read(interfaceNode) is not TypeNode.Fqn delegateType
-            || !_refs.IsClrDelegate(delegateType)
-            || synthClass["methods"] is not JsonArray methods || methods.Count != 1
+        if (synthClass["interfaces"] is not JsonArray interfaces
+            || synthClass["methods"] is not JsonArray methods
+            || ProjectedDelegateSamTarget(interfaces.Select(TypeJson.Read).ToArray(), methods.Count, _refs) is not { } delegateType
             || methods[0] is not JsonObject invoke
             || node["samType"] is not JsonNode syntheticType)
             return false;
