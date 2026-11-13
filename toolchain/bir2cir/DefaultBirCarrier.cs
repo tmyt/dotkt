@@ -53,8 +53,6 @@ static class DefaultBirCarrier
         attribute["args"][1]["value"].GetValue<string>(),
         Convert.FromBase64String(attribute["args"][2]["bytes"].GetValue<string>()));
 
-    internal static JsonNode Decode(JsonObject attribute) => ((BirGraphValue)DecodeTyped(attribute)).ToDom();
-
     // The surrounding attribute is still owned by a DOM declaration pass. Only
     // its declared scalar codec/bytes cross this boundary: executable ownership
     // starts at the real decoder, not a fabricated typed attribute header.
@@ -97,8 +95,9 @@ static class DefaultBirCarrier
         if (TypeJson.OwnerName(attribute["argTypes"][0]) != "System.Int32"
             || TypeJson.OwnerName(attribute["argTypes"][1]) != "System.String")
             throw new InvalidOperationException("Default carrier must name its exact physical constructor slots");
-        MaterializedBirPayload.HideSourceSpans(attribute);
-        if (Decode(attribute)["stmts"][0]["span"] != null || body.Stmts.Value[0] is not BirSourcePoint { Span.HasValue: true }
+        MaterializedBirPayload.HideDefaultSourceSpans(attribute);
+        if (DecodeTyped(attribute) is not BirValueBlock { Stmts.Value: [BirSourcePoint { Span.IsPresent: false }] }
+            || body.Stmts.Value[0] is not BirSourcePoint { Span.HasValue: true }
             || attribute["args"][0]["value"].GetValue<int>() != 2)
             throw new InvalidOperationException("Default carrier rewriting changed source ownership or argument position");
     }
