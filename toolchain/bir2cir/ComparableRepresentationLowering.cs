@@ -171,6 +171,7 @@ static class ComparableRepresentationLowering
     {
         var formalOwners = typeof(BirGraphValue).Assembly.GetTypes().Where(type => type.IsSubclassOf(typeof(BirGraphValue))
             && !type.IsSubclassOf(typeof(BirGraphNode))
+            && !typeof(IBirExecutablePayload).IsAssignableFrom(type)
             && type.GetProperty("TypeParams")?.PropertyType == typeof(OptionalField<BirTypeParameter[]>))
             .Select(type => type.Name).ToHashSet(StringComparer.Ordinal);
         if (!formalOwners.SetEquals(new[] { nameof(BirFunctionDeclaration), nameof(BirClassDefinition), nameof(BirInterfaceDefinition),

@@ -486,7 +486,10 @@ static class DeclarationSignatureIdentity
     static void SelfTestTypedCapture()
     {
         var graphTypes = typeof(BirGraphValue).Assembly.GetTypes().Where(type => typeof(BirGraphValue).IsAssignableFrom(type)).ToArray();
-        var parameterOwners = graphTypes.Where(type => type.GetProperty("Params")?.PropertyType is Type parameters
+        // A saved executable payload contains already-captured signatures, not
+        // a new source declaration owned by this pass.
+        var parameterOwners = graphTypes.Where(type => !typeof(IBirExecutablePayload).IsAssignableFrom(type)
+            && type.GetProperty("Params")?.PropertyType is Type parameters
             && (parameters == typeof(OptionalField<BirParameter[]>) || parameters == typeof(OptionalField<BirLambdaParameter[]>)));
         if (!parameterOwners.ToHashSet().SetEquals(new[] { typeof(BirFunctionDeclaration), typeof(BirConstructor),
                 typeof(BirClassDefinition), typeof(BirInterfaceDefinition), typeof(BirEnumDefinition),

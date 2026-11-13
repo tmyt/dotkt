@@ -658,21 +658,21 @@ sealed partial class ReferenceMetadataIndex
     readonly HashSet<string> _kotlinDefaultsAmbiguous = new(StringComparer.Ordinal);
     // OWNERFUL keys two same-arity declarations carry with different defaults (see ReferenceAssemblyMetadata).
     readonly HashSet<DefaultKey> _kotlinDefaultsConflicted = new();
-    // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the CANDIDATE decoded carrier JSONs (one per overload
+    // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> owning decoded payloads (one per overload
     // sharing that key; the raw pre-lowering decl facts InlineBirStash stashed). Read cross-module by InlineSplice, which
     // picks the UNIQUE candidate matching the call's `paramSig` (§4.2), then splices its body at the call site (so it
     // re-lowers in THIS app's context). owner = the .NET type FullName (file-facade class); pc/ga = the reflected
     // GetParameters/GetGenericArguments counts (parity with InlineBirStash's params.Count / typeParams.Count).
-    readonly Dictionary<string, List<string>> _inlinePayloads = new(StringComparer.Ordinal);
-    // OWNER-LESS callInline index (S3, §4.2 #75 S4b): "name|pc|ga" -> the CANDIDATE payload JSONs across EVERY `kotlin.*`
+    readonly Dictionary<string, List<BirInlinePayload>> _inlinePayloads = new(StringComparer.Ordinal);
+    // OWNER-LESS callInline index (S3, §4.2 #75 S4b): "name|pc|ga" -> owning payloads across EVERY `kotlin.*`
     // file-class hosting that shape. kotc cannot name the stdlib file class (the stdlib KLIB carries no physical owner —
     // whole stdlib rides the klib), so a scope-fn/@InlineOnly callInline carries owner=null. Since the bare `name|pc|ga`
     // collides across owners (Iterable/Array/IntArray/CharSequence `filter`/`map`/`forEach` etc.), the owner canNOT be picked
     // by the key alone — InlineSplice gathers ALL candidates here and picks the UNIQUE one whose declared params match the
     // call's `paramSig`; the winning payload's own `owner` field names the host. Restricted to `kotlin.*` so a user-lib
     // inline fn sharing a name|pc|ga cannot leak in.
-    readonly Dictionary<string, List<string>> _ownerlessInlineCandidates = new(StringComparer.Ordinal);
-    readonly Dictionary<string, string> _inlinePayloadByDeclarationId = new(StringComparer.Ordinal);
+    readonly Dictionary<string, List<BirInlinePayload>> _ownerlessInlineCandidates = new(StringComparer.Ordinal);
+    readonly Dictionary<string, BirInlinePayload> _inlinePayloadByDeclarationId = new(StringComparer.Ordinal);
     readonly HashSet<string> _conflictingInlineDeclarationIds = new(StringComparer.Ordinal);
 
     // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the exact compile references.
@@ -1022,12 +1022,12 @@ sealed partial class ReferenceMetadataIndex
             // call site disambiguates by paramSig. (No poisoning: structural selection replaces the recv0-key collision.)
             foreach (var kv in asm.DotKt.InlinePayloads)
             {
-                if (!_inlinePayloads.TryGetValue(kv.Key, out var lst)) _inlinePayloads[kv.Key] = lst = new List<string>();
+                if (!_inlinePayloads.TryGetValue(kv.Key, out var lst)) _inlinePayloads[kv.Key] = lst = new List<BirInlinePayload>();
                 lst.AddRange(kv.Value);
             }
             foreach (var kv in asm.DotKt.InlinePayloadsByDeclarationId)
                 if (!_inlinePayloadByDeclarationId.TryAdd(kv.Key, kv.Value)
-                    && _inlinePayloadByDeclarationId[kv.Key] != kv.Value)
+                    && !ExecutableBirCodec.SameInline(_inlinePayloadByDeclarationId[kv.Key], kv.Value))
                     _conflictingInlineDeclarationIds.Add(kv.Key);
         }
         // A flattened Kotlin identity cannot distinguish where nested CLR generic slots are owned. Current-format
@@ -1041,7 +1041,7 @@ sealed partial class ReferenceMetadataIndex
             _publicParameterlessConstructibleOwners.Remove(ambiguous);
             _referenceTypeShapes.Remove(ambiguous);
         }
-        // Build the owner-less candidate index (S3, §4.2): "name|pc|ga" -> the candidate payload JSONs across every `kotlin.*`
+        // Build the owner-less candidate index (S3, §4.2): "name|pc|ga" -> candidate payloads across every `kotlin.*`
         // file-class hosting that shape. The owner is NOT resolvable from the bare key (it collides across owners) — the call
         // site selects by paramSig and reads the winner's own `owner` field. Restricted to `kotlin.*` (kotc emits owner-less
         // ONLY for the klib stdlib; a user-lib inline fn is always owner-ful) so a user `T.use(block)` cannot leak in.
@@ -1051,7 +1051,7 @@ sealed partial class ReferenceMetadataIndex
             if (bar < 0) continue;
             if (!key.AsSpan(0, bar).StartsWith("kotlin.")) continue;
             var npg = key[(bar + 1)..];   // name|pc|ga
-            if (!_ownerlessInlineCandidates.TryGetValue(npg, out var lst)) _ownerlessInlineCandidates[npg] = lst = new List<string>();
+            if (!_ownerlessInlineCandidates.TryGetValue(npg, out var lst)) _ownerlessInlineCandidates[npg] = lst = new List<BirInlinePayload>();
             lst.AddRange(jsons);
         }
     }
@@ -1075,29 +1075,13 @@ sealed partial class ReferenceMetadataIndex
     {
         if (id != null && _conflictingInlineDeclarationIds.Contains(id))
             throw new InvalidOperationException($"conflicting inline declaration identity '{id}'");
-        if (id == null || !_inlinePayloadByDeclarationId.TryGetValue(id, out var json)) return null;
-        return JsonNode.Parse(json) as JsonObject
-            ?? throw new InvalidDataException($"malformed inline payload for declaration identity '{id}'");
+        if (id == null || !_inlinePayloadByDeclarationId.TryGetValue(id, out var payload)) return null;
+        return payload.ToDom();
     }
 
-    static List<JsonObject> ParseCandidates(List<string> jsons)
+    static List<JsonObject> ParseCandidates(List<BirInlinePayload> payloads)
     {
-        if (jsons == null || jsons.Count == 0) return null;
-        var list = new List<JsonObject>(jsons.Count);
-        foreach (var j in jsons)
-        {
-            try
-            {
-                list.Add((JsonObject)JsonNode.Parse(j, documentOptions: BirJson.DocOptions));
-            }
-            catch (Exception ex)
-            {
-                // Compiler carriers are internal ABI. Preserve failure across the broad foreign-metadata scan guard;
-                // no compatibility interpretation or dedicated legacy diagnostic is required.
-                throw new InvalidDataException(null, ex);
-            }
-        }
-        return list;
+        return payloads == null || payloads.Count == 0 ? null : payloads.Select(payload => payload.ToDom()).ToList();
     }
 
     // Name index used by MapVarianceRealign for calls without a declaration identity.
@@ -5777,18 +5761,17 @@ sealed partial class ReferenceMetadataIndex
                             {
                                 var ver = (string)inlineCad.ConstructorArguments[0].Value!;
                                 var content = ReadByteArrayArg(inlineCad.ConstructorArguments[1]);
-                                var decoded = DotKt.Bir.BirCarrier.DecodeBody(ver, content);
-                                var json = decoded.ToJsonString();
+                                var decoded = ExecutableBirCodec.ReadInline(ver, content);
                                 // §4.2 (#75 S4b): key `owner|name|pc|ga` -> a LIST of candidate overload payloads. pc/ga come
                                 // from the .NET method (the payload counts them identically: an extension receiver rides as a
                                 // leading `__self` param). InlineSplice picks the UNIQUE candidate whose decoded `params[i].type`
                                 // structurally matches the call's paramSig — the decoded params are kotc-emitted decl nodes, so
                                 // they equal the callInline's paramSig exactly (both from `birType(param.type)`).
                                 var ikey = indexedOwnerFqn + "|" + method.Name + "|" + method.GetParameters().Length + "|" + method.GetGenericArguments().Length;
-                                if (!metadata.InlinePayloads.TryGetValue(ikey, out var ilst)) metadata.InlinePayloads[ikey] = ilst = new List<string>();
-                                ilst.Add(json);
+                                if (!metadata.InlinePayloads.TryGetValue(ikey, out var ilst)) metadata.InlinePayloads[ikey] = ilst = new List<BirInlinePayload>();
+                                ilst.Add(decoded);
                                 if (declarationIdentity?.Id is string declarationId
-                                    && !metadata.InlinePayloadsByDeclarationId.TryAdd(declarationId, json))
+                                    && !metadata.InlinePayloadsByDeclarationId.TryAdd(declarationId, decoded))
                                     throw new InvalidDataException($"duplicate inline declaration identity '{declarationId}'");
                             }
                             catch (Exception ex)
@@ -7451,7 +7434,7 @@ sealed partial class ReferenceMetadataIndex
         {
             var a = p.GetCustomAttributesData().FirstOrDefault(x => x.AttributeType.FullName == DefaultBirCarrier.AttributeName);
             if (a == null) continue;
-            var bir = BirCarrier.DecodeBody((string)a.ConstructorArguments[1].Value,
+            var bir = ExecutableBirCodec.ReadExpressionDom((string)a.ConstructorArguments[1].Value,
                 ReadByteArrayArg(a.ConstructorArguments[2]));
             (map ??= new Dictionary<int, JsonNode>())[Convert.ToInt32(a.ConstructorArguments[0].Value)] = bir;
         }
@@ -7942,9 +7925,9 @@ sealed partial class ReferenceMetadataIndex
         a.KotlinDefaultsByDeclarationId["default-conflict"] = new() { [0] = "a" };
         b.KotlinDefaultsByDeclarationId["default-conflict"] = new() { [0] = "b" };
         a.KotlinDefaultsByDeclarationId["unique-default"] = new() { [0] = "retained" };
-        a.InlinePayloadsByDeclarationId["inline-conflict"] = "{\"body\":[]}";
-        b.InlinePayloadsByDeclarationId["inline-conflict"] = "{\"body\":[{\"k\":\"return\"}]}";
-        a.InlinePayloadsByDeclarationId["unique-inline"] = "{\"body\":[]}";
+        a.InlinePayloadsByDeclarationId["inline-conflict"] = new BirInlinePayload { Body = Array.Empty<IBirStatement>() };
+        b.InlinePayloadsByDeclarationId["inline-conflict"] = new BirInlinePayload { Body = new IBirStatement[] { new BirReturn() } };
+        a.InlinePayloadsByDeclarationId["unique-inline"] = new BirInlinePayload { Body = Array.Empty<IBirStatement>() };
         var sharedDeclaration = new MemberBinding("CollisionRich", "read", 1, null, false, false,
             DeclarationId: "same-declaration", ReturnTypeNode: new TypeNode.Fqn("System.Int32"),
             MetadataToken: 0x06000001, ParamTypeNodes: new TypeNode[] { new TypeNode.Fqn("System.String") },
@@ -8744,9 +8727,9 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> InnerCapturedCount = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> InnerSemanticOwner = new(StringComparer.Ordinal);
-    // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the candidate decoded carrier JSONs (one per overload).
-    public readonly Dictionary<string, List<string>> InlinePayloads = new(StringComparer.Ordinal);
-    public readonly Dictionary<string, string> InlinePayloadsByDeclarationId = new(StringComparer.Ordinal);
+    // Decoded inline graphs are retained as owning values; DOM consumers materialize independent neighbours.
+    public readonly Dictionary<string, List<BirInlinePayload>> InlinePayloads = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, BirInlinePayload> InlinePayloadsByDeclarationId = new(StringComparer.Ordinal);
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.
     public readonly Dictionary<string, string> TopLevelIntrinsics = new(StringComparer.Ordinal);

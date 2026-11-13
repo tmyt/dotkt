@@ -334,6 +334,7 @@ def outputs(root, definitions):
         bases += ["IBir" + role.capitalize() for role in roles]
         if "expression" in roles: bases += ["IBirAttributeValue"]
         if info.get("attributeValue"): bases += ["IBirAttributeValue"]
+        if info.get("executablePayload"): bases += ["IBirExecutablePayload"]
         if key in {"birClassDefinition", "birInterfaceDefinition", "birEnumDefinition"}: bases += ["IBirTypeDeclaration"]
         model += [f"internal sealed record {name} : " + ", ".join(bases), "{"]
         if node:

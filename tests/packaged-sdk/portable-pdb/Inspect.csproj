@@ -4,12 +4,19 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <DotKtSharedIrDirectory Condition="'$(DotKtSharedIrDirectory)' == ''">$(MSBuildThisFileDirectory)../../../toolchain/bir-common</DotKtSharedIrDirectory>
+    <DotKtDll2KlibDirectory Condition="'$(DotKtDll2KlibDirectory)' == ''">$(MSBuildThisFileDirectory)../../../build/dll2klib-bin</DotKtDll2KlibDirectory>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="$(DotKtSharedIrDirectory)/TypeNode.cs" Link="TypeNode.cs" />
     <Compile Include="$(DotKtSharedIrDirectory)/TypeNode.Model.Generated.cs" Link="TypeNode.Model.Generated.cs" />
     <Compile Include="$(DotKtSharedIrDirectory)/TypeNode.Json.Generated.cs" Link="TypeNode.Json.Generated.cs" />
     <Compile Include="$(DotKtSharedIrDirectory)/BirJson.cs" Link="BirJson.cs" />
+    <Compile Include="$(DotKtSharedIrDirectory)/BirCarrier.MessagePack.cs" Link="BirCarrier.MessagePack.cs" />
     <Compile Include="$(DotKtSharedIrDirectory)/../dll2klib/MetadataAttributes.cs" Link="MetadataAttributes.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="MessagePack">
+      <HintPath>$(DotKtDll2KlibDirectory)/MessagePack.dll</HintPath>
+    </Reference>
   </ItemGroup>
 </Project>

@@ -55,6 +55,7 @@ static class Bir2Cir
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 DefaultBirCarrier.SelfTest();
+                ExecutableBirCodec.SelfTest();
                 MaterializedExecutable.SelfTest();
                 NullableWitnessDemand.SelfTest();
                 NullableRepresentationDemand.SelfTest();
