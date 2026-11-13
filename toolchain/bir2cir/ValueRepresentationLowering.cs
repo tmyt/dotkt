@@ -441,6 +441,7 @@ sealed partial class ValueRepresentationLowering
                 Type = new TypeNode.Tv("method", 0), ReifiedTypeOperand = false,
                 E = new BirLocal { Name = "value", Sty = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) } } } } };
         var materializedBound = boundMethod.ToDom();
+        var assertNestedBoundGuards = PrepareNestedBoundGuardSelfTest(policy);
         policy.BindOperations(new BirFileDeclaration { Methods = new[] { boundMethod } });
         policy.BindOperations(source);
         root = source.ToDom();
@@ -449,6 +450,7 @@ sealed partial class ValueRepresentationLowering
         if (!JsonNode.DeepEquals(boundMethod.ToDom(), materializedBound)
             || materializedBound["body"][0]["expr"]["e"]?["e"]?["k"]?.GetValue<string>() != "valueBlock")
             throw new InvalidOperationException("Source and materialized value operations diverged on their shared saved-bound decision");
+        assertNestedBoundGuards();
         var method = root["methods"][3];
         foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
             method[key] = JsonNode.Parse("""
