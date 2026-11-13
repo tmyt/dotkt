@@ -41,7 +41,7 @@ internal static class SourceMetadataTests
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
                 var references = tool.GetType("ReferenceMetadataIndex", true)!.GetMethod("Build")!
                     .Invoke(null, [Array.Empty<string>()])!;
-                var module = load.Invoke(null, [new[] { inputPath }, false, false, references])!;
+                var module = load.Invoke(null, [new[] { inputPath }, false, false, true, references])!;
                 var loaded = (System.Collections.IEnumerable)module.GetType().GetProperty("Files")!.GetValue(module)!;
                 var file = loaded.Cast<object>().Single();
                 root = (JsonObject)file.GetType().GetProperty("Root")!.GetValue(file)!;
