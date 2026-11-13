@@ -261,6 +261,7 @@ sealed class Pipeline
         var genericRepresentations = GenericRepresentationPolicy.CreateSource(captured, sourceIndex.CollisionAliases, refs);
         var scalarSlots = KotlinGenericScalarSlots.ApplyAll(captured, genericRepresentations, refs);
         KotlinCollectionSlotSynthesis.EraseGenericQueryParameters(captured, refs, sourceIndex.CollisionAliases);
+        var valueSources = ValueRepresentationLowering.CaptureSource(captured, sourceIndex.DeclarationIds);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -278,7 +279,7 @@ sealed class Pipeline
 
         genericRepresentations.BindDomDeclarations(files.Select(file => file.Root).ToArray());
         return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand,
-            genericRepresentations, scalarSlots);
+            genericRepresentations, scalarSlots, valueSources);
     }
 
     // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
@@ -315,7 +316,7 @@ sealed class Pipeline
         var birRoots = birFiles.Select(b => b.Root).ToList();
         var declarationSemanticSignatures = module.Signatures;
         var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild, module.ValuePolicy,
-            module.SourceIndex.DeclarationIds);
+            module.ValueSources);
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
         var localDeclarationIds = module.SourceIndex.DeclarationIds;
         var representationAliases = module.SourceIndex.CollisionAliases;
@@ -1928,7 +1929,8 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
     ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex, NullableWitnessDemand NullableWitnesses,
-    GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots);
+    GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots,
+    ValueRepresentationLowering.SourceIndex ValueSources);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions
