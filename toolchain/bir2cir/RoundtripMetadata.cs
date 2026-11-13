@@ -447,7 +447,7 @@ static class RoundtripMetadata
         // [KotlinInline(version, bytes)] — the S1 raw-BIR carrier, stamped verbatim (inlineBir is already the base64
         // of BirCarrier.EncodeBody). Only for an inline fn that actually stashed a carrier.
         if (ModFlag(mo, "inline") && (mo["inlineBir"] as JsonValue)?.GetValue<string>() is string ib)
-            Append(mo, Marker(AKInline, StringArg(BirCarrier.JsonV1), BytesArg(ib)));
+            Append(mo, Marker(AKInline, StringArg(ExecutableBirCodec.Codec), BytesArg(ib)));
         // [KotlinCompanionExtension(version, bytes)] — a Kotlin 2.4 `companion fun C.foo()`. The declaration is a
         // receiverless static of the file class physically; the carrier holds the KOTLIN type it is associated with,
         // which is the only thing a consuming module needs to spell `C.foo(...)` again. Opaque to CLR lowering.

@@ -7,7 +7,7 @@ using DotKt.Bir;
 // INLINE-BIR STASH (#71/#75 S1). Runs after module-wide companion representation selection but before the ordinary
 // per-file lowering passes. For each `mods.inline` method it deep-clones the representation-selected, otherwise raw BIR
 // facts {v,fqn,owner,recv,typeParams,params,ret,body,lifted} and stores them as ONE
-// OPAQUE STRING field `"inlineBir"` = base64(BirCarrier.EncodeBody(JsonV1, payload)). Encoding AT STASH TIME is load-
+// OPAQUE STRING field `"inlineBir"` = base64(MessagePack payload). Encoding AT STASH TIME is load-
 // bearing: every downstream walker (BirTypeLowering, RefBodySquash, …) then sees an inert JsonValue string and cannot
 // descend into / rewrite the captured body. ilemit later stamps that string VERBATIM as the [KotlinInline] carrier
 // (base64-decode -> the (version, byte[]) ctor args). The payload remains re-lowerable BIR in the app context rather
@@ -166,7 +166,7 @@ sealed class InlineBirIndex
         // Same-module lookups above own the original source spans. Only the outgoing DLL carrier hides
         // them: the consumer doesn't own those documents, and the producer's paths aren't part of its ABI.
         MaterializedBirPayload.HideSourceSpans(payload);
-        byte[] enc = BirCarrier.EncodeBody(BirCarrier.JsonV1, payload);
+        byte[] enc = ExecutableBirCodec.EncodeInlineDom(ExecutableBirCodec.Codec, payload);
         mo["inlineBir"] = Convert.ToBase64String(enc);
     }
 

@@ -104,6 +104,7 @@ internal sealed record BirAttributeLiteral : BirGraphValue, IBirAttributeValue
 {
     public OptionalField<BirLiteral> Value { get; set; }
     public OptionalField<TypeNode> Type { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
     }
@@ -118,6 +119,7 @@ internal sealed record BirAttributeLiteral : BirGraphValue, IBirAttributeValue
         writer.WriteStartObject();
         WriteOptional(writer, "value", Value, (writer, value) => { BirLiteral.WriteJson(writer, value); });
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -125,6 +127,7 @@ internal sealed record BirAttributeLiteral : BirGraphValue, IBirAttributeValue
         var result = new JsonObject();
         if (Value.IsPresent) result["value"] = Value.IsNull ? null : LiteralToDom(Value.Value);
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -259,6 +262,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<bool> ReifiedTypeOperand { get; set; }
     public OptionalField<IBirExpression> E { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<bool> _physicalDeclarationSignature { get; set; }
     public OptionalField<bool> _exactBridgeCast { get; set; }
     public OptionalField<bool> FunctionValueRestoration { get; set; }
@@ -283,6 +287,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "reifiedTypeOperand", ReifiedTypeOperand, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "e", E, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "_physicalDeclarationSignature", _physicalDeclarationSignature, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "_exactBridgeCast", _exactBridgeCast, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "functionValueRestoration", FunctionValueRestoration, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -296,6 +301,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (ReifiedTypeOperand.IsPresent) result["reifiedTypeOperand"] = ReifiedTypeOperand.IsNull ? null : JsonValue.Create(ReifiedTypeOperand.Value);
         if (E.IsPresent) result["e"] = E.IsNull ? null : ((BirGraphValue)E.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (_physicalDeclarationSignature.IsPresent) result["_physicalDeclarationSignature"] = _physicalDeclarationSignature.IsNull ? null : JsonValue.Create(_physicalDeclarationSignature.Value);
         if (_exactBridgeCast.IsPresent) result["_exactBridgeCast"] = _exactBridgeCast.IsNull ? null : JsonValue.Create(_exactBridgeCast.Value);
         if (FunctionValueRestoration.IsPresent) result["functionValueRestoration"] = FunctionValueRestoration.IsNull ? null : JsonValue.Create(FunctionValueRestoration.Value);
@@ -309,6 +315,7 @@ internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttribu
     public override string Tag => "isInst";
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<IBirExpression> E { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<bool> NullMatches { get; set; }
     public OptionalField<IBirExpression> NullWitness { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -332,6 +339,7 @@ internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttribu
         writer.WriteString("k", "isInst");
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "e", E, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nullMatches", NullMatches, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "nullWitness", NullWitness, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         writer.WriteEndObject();
@@ -342,6 +350,7 @@ internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttribu
         result["k"] = "isInst";
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (E.IsPresent) result["e"] = E.IsNull ? null : ((BirGraphValue)E.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (NullMatches.IsPresent) result["nullMatches"] = NullMatches.IsNull ? null : JsonValue.Create(NullMatches.Value);
         if (NullWitness.IsPresent) result["nullWitness"] = NullWitness.IsNull ? null : ((BirGraphValue)NullWitness.Value).ToDom();
         return result;
@@ -354,6 +363,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<bool> ReifiedTypeOperand { get; set; }
     public OptionalField<IBirExpression> E { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (E.HasValue) { visit((BirGraphValue)E.Value); }
@@ -373,6 +383,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "reifiedTypeOperand", ReifiedTypeOperand, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "e", E, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -382,6 +393,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (ReifiedTypeOperand.IsPresent) result["reifiedTypeOperand"] = ReifiedTypeOperand.IsNull ? null : JsonValue.Create(ReifiedTypeOperand.Value);
         if (E.IsPresent) result["e"] = E.IsNull ? null : ((BirGraphValue)E.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -870,6 +882,7 @@ internal sealed record BirDefaultValue : BirGraphNode, IBirExpression, IBirAttri
 {
     public override string Tag => "default";
     public OptionalField<TypeNode> Type { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
     }
@@ -884,6 +897,7 @@ internal sealed record BirDefaultValue : BirGraphNode, IBirExpression, IBirAttri
         writer.WriteStartObject();
         writer.WriteString("k", "default");
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -891,6 +905,7 @@ internal sealed record BirDefaultValue : BirGraphNode, IBirExpression, IBirAttri
         var result = new JsonObject();
         result["k"] = "default";
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -900,6 +915,7 @@ internal sealed record BirEnumName : BirGraphNode, IBirExpression, IBirAttribute
     public override string Tag => "enumName";
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<IBirExpression> E { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (E.HasValue) { visit((BirGraphValue)E.Value); }
@@ -918,6 +934,7 @@ internal sealed record BirEnumName : BirGraphNode, IBirExpression, IBirAttribute
         writer.WriteString("k", "enumName");
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "e", E, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -926,6 +943,7 @@ internal sealed record BirEnumName : BirGraphNode, IBirExpression, IBirAttribute
         result["k"] = "enumName";
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (E.IsPresent) result["e"] = E.IsNull ? null : ((BirGraphValue)E.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -935,6 +953,7 @@ internal sealed record BirEnumOrdinal : BirGraphNode, IBirExpression, IBirAttrib
     public override string Tag => "enumOrdinal";
     public OptionalField<IBirExpression> E { get; set; }
     public OptionalField<TypeNode> Type { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<BirPhysicalEnumValue[]> Values { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -957,6 +976,7 @@ internal sealed record BirEnumOrdinal : BirGraphNode, IBirExpression, IBirAttrib
         writer.WriteString("k", "enumOrdinal");
         WriteOptional(writer, "e", E, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "values", Values, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
@@ -966,6 +986,7 @@ internal sealed record BirEnumOrdinal : BirGraphNode, IBirExpression, IBirAttrib
         result["k"] = "enumOrdinal";
         if (E.IsPresent) result["e"] = E.IsNull ? null : ((BirGraphValue)E.Value).ToDom();
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (Values.IsPresent) result["values"] = Values.IsNull ? null : new JsonArray(Values.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         return result;
     }
@@ -976,6 +997,7 @@ internal sealed record BirEnumParse : BirGraphNode, IBirExpression, IBirAttribut
     public override string Tag => "enumParse";
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<IBirExpression> Arg { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Arg.HasValue) { visit((BirGraphValue)Arg.Value); }
@@ -994,6 +1016,7 @@ internal sealed record BirEnumParse : BirGraphNode, IBirExpression, IBirAttribut
         writer.WriteString("k", "enumParse");
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "arg", Arg, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -1002,6 +1025,7 @@ internal sealed record BirEnumParse : BirGraphNode, IBirExpression, IBirAttribut
         result["k"] = "enumParse";
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Arg.IsPresent) result["arg"] = Arg.IsNull ? null : ((BirGraphValue)Arg.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -1063,6 +1087,7 @@ internal sealed record BirCallBinding : BirGraphValue
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<string> Role { get; set; }
     public OptionalField<IBirExpression> Expr { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Expr.HasValue) { visit((BirGraphValue)Expr.Value); }
@@ -1085,6 +1110,7 @@ internal sealed record BirCallBinding : BirGraphValue
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "role", Role, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "expr", Expr, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -1097,6 +1123,7 @@ internal sealed record BirCallBinding : BirGraphValue
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Role.IsPresent) result["role"] = Role.IsNull ? null : JsonValue.Create(Role.Value);
         if (Expr.IsPresent) result["expr"] = Expr.IsNull ? null : ((BirGraphValue)Expr.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -1108,6 +1135,7 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<string> SemanticOwner { get; set; }
     public OptionalField<BirCallBinding[]> Bindings { get; set; }
     public OptionalField<IBirExpression> Expr { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Bindings.HasValue) { foreach (var item0 in Bindings.Value) { visit((BirGraphValue)item0); } }
@@ -1131,6 +1159,7 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
         WriteOptional(writer, "semanticOwner", SemanticOwner, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "bindings", Bindings, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "expr", Expr, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -1141,6 +1170,7 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
         if (SemanticOwner.IsPresent) result["semanticOwner"] = SemanticOwner.IsNull ? null : JsonValue.Create(SemanticOwner.Value);
         if (Bindings.IsPresent) result["bindings"] = Bindings.IsNull ? null : new JsonArray(Bindings.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (Expr.IsPresent) result["expr"] = Expr.IsNull ? null : ((BirGraphValue)Expr.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -1240,6 +1270,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<BirTypeParameter[]> MemberMethodTypeParams { get; set; }
     public OptionalField<TypeNode[]> MemberSignature { get; set; }
     public OptionalField<TypeNode> MemberReturnType { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<int> DotktKotlinSigId { get; set; }
     public OptionalField<int> NullableWitnessCount { get; set; }
     public OptionalField<bool> DotktDeclarationIdentityBound { get; set; }
@@ -1311,6 +1342,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "memberMethodTypeParams", MemberMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "dotktKotlinSigId", DotktKotlinSigId, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "nullableWitnessCount", NullableWitnessCount, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "dotktDeclarationIdentityBound", DotktDeclarationIdentityBound, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -1359,6 +1391,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (MemberMethodTypeParams.IsPresent) result["memberMethodTypeParams"] = MemberMethodTypeParams.IsNull ? null : new JsonArray(MemberMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (DotktKotlinSigId.IsPresent) result["dotktKotlinSigId"] = DotktKotlinSigId.IsNull ? null : JsonValue.Create(DotktKotlinSigId.Value);
         if (NullableWitnessCount.IsPresent) result["nullableWitnessCount"] = NullableWitnessCount.IsNull ? null : JsonValue.Create(NullableWitnessCount.Value);
         if (DotktDeclarationIdentityBound.IsPresent) result["dotktDeclarationIdentityBound"] = DotktDeclarationIdentityBound.IsNull ? null : JsonValue.Create(DotktDeclarationIdentityBound.Value);
@@ -1411,6 +1444,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<BirTypeParameter[]> MemberMethodTypeParams { get; set; }
     public OptionalField<TypeNode[]> MemberSignature { get; set; }
     public OptionalField<TypeNode> MemberReturnType { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<int> NullableWitnessCount { get; set; }
     public OptionalField<bool> DotktDeclarationIdentityBound { get; set; }
     public OptionalField<string> PropertyName { get; set; }
@@ -1493,6 +1527,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         WriteOptional(writer, "memberMethodTypeParams", MemberMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nullableWitnessCount", NullableWitnessCount, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "dotktDeclarationIdentityBound", DotktDeclarationIdentityBound, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "propertyName", PropertyName, (writer, value) => { writer.WriteStringValue(value); });
@@ -1546,6 +1581,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (MemberMethodTypeParams.IsPresent) result["memberMethodTypeParams"] = MemberMethodTypeParams.IsNull ? null : new JsonArray(MemberMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (NullableWitnessCount.IsPresent) result["nullableWitnessCount"] = NullableWitnessCount.IsNull ? null : JsonValue.Create(NullableWitnessCount.Value);
         if (DotktDeclarationIdentityBound.IsPresent) result["dotktDeclarationIdentityBound"] = DotktDeclarationIdentityBound.IsNull ? null : JsonValue.Create(DotktDeclarationIdentityBound.Value);
         if (PropertyName.IsPresent) result["propertyName"] = PropertyName.IsNull ? null : JsonValue.Create(PropertyName.Value);
@@ -1576,6 +1612,7 @@ internal sealed record BirCallLocal : BirGraphNode, IBirExpression, IBirAttribut
     public OptionalField<TypeNode> Ret { get; set; }
     public OptionalField<TypeNode> Sty { get; set; }
     public OptionalField<bool> SuspendCall { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -1600,6 +1637,7 @@ internal sealed record BirCallLocal : BirGraphNode, IBirExpression, IBirAttribut
         WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "sty", Sty, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "suspendCall", SuspendCall, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -1613,6 +1651,7 @@ internal sealed record BirCallLocal : BirGraphNode, IBirExpression, IBirAttribut
         if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
         if (Sty.IsPresent) result["sty"] = Sty.IsNull ? null : TypeNode.Write(Sty.Value);
         if (SuspendCall.IsPresent) result["suspendCall"] = SuspendCall.IsNull ? null : JsonValue.Create(SuspendCall.Value);
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         return result;
     }
 }
@@ -1632,6 +1671,7 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<string> MemberVisibility { get; set; }
     public OptionalField<BirTypeParameter[]> MemberOwnerTypeParams { get; set; }
     public OptionalField<TypeNode> MemberType { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
     public OptionalField<bool> Volatile { get; set; }
     public OptionalField<string> Member { get; set; }
@@ -1677,6 +1717,7 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         WriteOptional(writer, "memberVisibility", MemberVisibility, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "memberOwnerTypeParams", MemberOwnerTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberType", MemberType, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "volatile", Volatile, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "member", Member, (writer, value) => { writer.WriteStringValue(value); });
@@ -1705,6 +1746,7 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         if (MemberVisibility.IsPresent) result["memberVisibility"] = MemberVisibility.IsNull ? null : JsonValue.Create(MemberVisibility.Value);
         if (MemberOwnerTypeParams.IsPresent) result["memberOwnerTypeParams"] = MemberOwnerTypeParams.IsNull ? null : new JsonArray(MemberOwnerTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberType.IsPresent) result["memberType"] = MemberType.IsNull ? null : TypeNode.Write(MemberType.Value);
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
         if (Volatile.IsPresent) result["volatile"] = Volatile.IsNull ? null : JsonValue.Create(Volatile.Value);
         if (Member.IsPresent) result["member"] = Member.IsNull ? null : JsonValue.Create(Member.Value);
@@ -1731,6 +1773,7 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<string> MemberVisibility { get; set; }
     public OptionalField<BirTypeParameter[]> MemberOwnerTypeParams { get; set; }
     public OptionalField<TypeNode> MemberType { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<BirMemberReference> FieldRef { get; set; }
     public OptionalField<bool> Volatile { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
@@ -1762,6 +1805,7 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
         WriteOptional(writer, "memberVisibility", MemberVisibility, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "memberOwnerTypeParams", MemberOwnerTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberType", MemberType, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "fieldRef", FieldRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "volatile", Volatile, (writer, value) => { writer.WriteBooleanValue(value); });
         writer.WriteEndObject();
@@ -1779,6 +1823,7 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
         if (MemberVisibility.IsPresent) result["memberVisibility"] = MemberVisibility.IsNull ? null : JsonValue.Create(MemberVisibility.Value);
         if (MemberOwnerTypeParams.IsPresent) result["memberOwnerTypeParams"] = MemberOwnerTypeParams.IsNull ? null : new JsonArray(MemberOwnerTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberType.IsPresent) result["memberType"] = MemberType.IsNull ? null : TypeNode.Write(MemberType.Value);
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (FieldRef.IsPresent) result["fieldRef"] = FieldRef.IsNull ? null : ((BirGraphValue)FieldRef.Value).ToDom();
         if (Volatile.IsPresent) result["volatile"] = Volatile.IsNull ? null : JsonValue.Create(Volatile.Value);
         return result;
@@ -2201,12 +2246,87 @@ internal sealed record BirDefaultBody : BirGraphValue
     }
 }
 
+internal sealed record BirInlinePayload : BirGraphValue, IBirExecutablePayload
+{
+    public OptionalField<int> V { get; set; }
+    public OptionalField<string> Fqn { get; set; }
+    public OptionalField<string> Owner { get; set; }
+    public OptionalField<string> FileClass { get; set; }
+    public OptionalField<string> Recv { get; set; }
+    public OptionalField<bool> Static { get; set; }
+    public OptionalField<BirTypeParameter[]> TypeParams { get; set; }
+    public OptionalField<BirParameter[]> Params { get; set; }
+    public OptionalField<TypeNode> Ret { get; set; }
+    public OptionalField<IBirStatement[]> Body { get; set; }
+    public OptionalField<BirFunctionDeclaration[]> Lifted { get; set; }
+    public OptionalField<string> DeclarationId { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { visit((BirGraphValue)item0); } }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
+        if (Lifted.HasValue) { foreach (var item0 in Lifted.Value) { visit((BirGraphValue)item0); } }
+    }
+    public override void VisitChildSlots(Action<BirGraphSlot> visit)
+    {
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (Lifted.HasValue) { for (var index0 = 0; index0 < Lifted.Value.Length; index0++) { var at0 = index0; var child0 = Lifted.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Lifted.Value[at0]!, replacement => Lifted.Value[at0] = (BirFunctionDeclaration)replacement)); } }
+    }
+    public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
+    {
+        TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : TypeParams,
+        Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)rewrite((BirGraphValue)item0)).ToArray()) : Params,
+        Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)rewrite((BirGraphValue)item0)).ToArray()) : Body,
+        Lifted = Lifted.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Lifted.Value.Select(item0 => (BirFunctionDeclaration)rewrite((BirGraphValue)item0)).ToArray()) : Lifted,
+    };
+    public override void WriteJson(Utf8JsonWriter writer)
+    {
+        writer.WriteStartObject();
+        WriteOptional(writer, "v", V, (writer, value) => { writer.WriteNumberValue(value); });
+        WriteOptional(writer, "fqn", Fqn, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "owner", Owner, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "fileClass", FileClass, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "recv", Recv, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "static", Static, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "typeParams", TypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "params", Params, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "body", Body, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "lifted", Lifted, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        writer.WriteEndObject();
+    }
+    public override JsonObject ToDom()
+    {
+        var result = new JsonObject();
+        if (V.IsPresent) result["v"] = V.IsNull ? null : JsonValue.Create(V.Value);
+        if (Fqn.IsPresent) result["fqn"] = Fqn.IsNull ? null : JsonValue.Create(Fqn.Value);
+        if (Owner.IsPresent) result["owner"] = Owner.IsNull ? null : JsonValue.Create(Owner.Value);
+        if (FileClass.IsPresent) result["fileClass"] = FileClass.IsNull ? null : JsonValue.Create(FileClass.Value);
+        if (Recv.IsPresent) result["recv"] = Recv.IsNull ? null : JsonValue.Create(Recv.Value);
+        if (Static.IsPresent) result["static"] = Static.IsNull ? null : JsonValue.Create(Static.Value);
+        if (TypeParams.IsPresent) result["typeParams"] = TypeParams.IsNull ? null : new JsonArray(TypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (Params.IsPresent) result["params"] = Params.IsNull ? null : new JsonArray(Params.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
+        if (Body.IsPresent) result["body"] = Body.IsNull ? null : new JsonArray(Body.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (Lifted.IsPresent) result["lifted"] = Lifted.IsNull ? null : new JsonArray(Lifted.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
+        return result;
+    }
+}
+
 internal sealed record BirAttributeNamedArgument : BirGraphValue
 {
     public OptionalField<string> Kind { get; set; }
     public OptionalField<string> Name { get; set; }
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<IBirAttributeValue> Value { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
@@ -2226,6 +2346,7 @@ internal sealed record BirAttributeNamedArgument : BirGraphValue
         WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "value", Value, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -2235,6 +2356,7 @@ internal sealed record BirAttributeNamedArgument : BirGraphValue
         if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Value.IsPresent) result["value"] = Value.IsNull ? null : ((BirGraphValue)Value.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -2306,8 +2428,10 @@ internal sealed record BirParameter : BirGraphValue
     public OptionalField<int> CtxFnType { get; set; }
     public OptionalField<TypeNode> SharedCellType { get; set; }
     public OptionalField<BirAttribute[]> Attrs { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<TypeNode> FunctionSignatureType { get; set; }
     public OptionalField<TypeNode> KotlinType { get; set; }
+    public OptionalField<TypeNode> NullableGeneric { get; set; }
     public OptionalField<TypeNode> NominalParameterSignatureIdentity { get; set; }
     public OptionalField<TypeNode[]> GenericParameterSignatureBounds { get; set; }
     public OptionalField<int[]> NullableFlags { get; set; }
@@ -2345,8 +2469,10 @@ internal sealed record BirParameter : BirGraphValue
         WriteOptional(writer, "ctxFnType", CtxFnType, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "sharedCellType", SharedCellType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "attrs", Attrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "functionSignatureType", FunctionSignatureType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "kotlinType", KotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "nullableGeneric", NullableGeneric, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nominalParameterSignatureIdentity", NominalParameterSignatureIdentity, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "genericParameterSignatureBounds", GenericParameterSignatureBounds, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "nullableFlags", NullableFlags, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
@@ -2365,8 +2491,10 @@ internal sealed record BirParameter : BirGraphValue
         if (CtxFnType.IsPresent) result["ctxFnType"] = CtxFnType.IsNull ? null : JsonValue.Create(CtxFnType.Value);
         if (SharedCellType.IsPresent) result["sharedCellType"] = SharedCellType.IsNull ? null : TypeNode.Write(SharedCellType.Value);
         if (Attrs.IsPresent) result["attrs"] = Attrs.IsNull ? null : new JsonArray(Attrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (FunctionSignatureType.IsPresent) result["functionSignatureType"] = FunctionSignatureType.IsNull ? null : TypeNode.Write(FunctionSignatureType.Value);
         if (KotlinType.IsPresent) result["kotlinType"] = KotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(KotlinType.Value));
+        if (NullableGeneric.IsPresent) result["nullableGeneric"] = NullableGeneric.IsNull ? null : JsonValue.Create(TypeNode.ToJson(NullableGeneric.Value));
         if (NominalParameterSignatureIdentity.IsPresent) result["nominalParameterSignatureIdentity"] = NominalParameterSignatureIdentity.IsNull ? null : TypeNode.Write(NominalParameterSignatureIdentity.Value);
         if (GenericParameterSignatureBounds.IsPresent) result["genericParameterSignatureBounds"] = GenericParameterSignatureBounds.IsNull ? null : new JsonArray(GenericParameterSignatureBounds.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (NullableFlags.IsPresent) result["nullableFlags"] = NullableFlags.IsNull ? null : new JsonArray(NullableFlags.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
@@ -2562,10 +2690,14 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<bool> FakeOverride { get; set; }
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; set; }
     public OptionalField<TypeNode[]> _syntheticTypeArgs { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<bool> _physicalDeclarationSignature { get; set; }
     public OptionalField<TypeNode> RetKotlinType { get; set; }
+    public OptionalField<TypeNode> NullableGenericRet { get; set; }
+    public OptionalField<TypeNode> NullableGenericSuspendRet { get; set; }
     public OptionalField<string> DeclarationSourceName { get; set; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; set; }
+    public OptionalField<NullableRepresentationFrame> NullableRepresentationFrame { get; set; }
     public OptionalField<EventPropertySourceFacts> KotlinPropertyAccessorCarrier { get; set; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; set; }
     public OptionalField<BirAttribute[]> RetAttrs { get; set; }
@@ -2676,10 +2808,14 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "fakeOverride", FakeOverride, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "inheritedImplementation", InheritedImplementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "_syntheticTypeArgs", _syntheticTypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "_physicalDeclarationSignature", _physicalDeclarationSignature, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "retKotlinType", RetKotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "nullableGenericRet", NullableGenericRet, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "nullableGenericSuspendRet", NullableGenericSuspendRet, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "declarationSourceName", DeclarationSourceName, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
+        WriteOptional(writer, "nullableRepresentationFrame", NullableRepresentationFrame, (writer, value) => { DotKt.Bir.NullableRepresentationFrame.Write(writer, value); });
         WriteOptional(writer, "kotlinPropertyAccessorCarrier", KotlinPropertyAccessorCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "retAttrs", RetAttrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
@@ -2738,10 +2874,14 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (FakeOverride.IsPresent) result["fakeOverride"] = FakeOverride.IsNull ? null : JsonValue.Create(FakeOverride.Value);
         if (InheritedImplementation.IsPresent) result["inheritedImplementation"] = InheritedImplementation.IsNull ? null : ((BirGraphValue)InheritedImplementation.Value).ToDom();
         if (_syntheticTypeArgs.IsPresent) result["_syntheticTypeArgs"] = _syntheticTypeArgs.IsNull ? null : new JsonArray(_syntheticTypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (_physicalDeclarationSignature.IsPresent) result["_physicalDeclarationSignature"] = _physicalDeclarationSignature.IsNull ? null : JsonValue.Create(_physicalDeclarationSignature.Value);
         if (RetKotlinType.IsPresent) result["retKotlinType"] = RetKotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetKotlinType.Value));
+        if (NullableGenericRet.IsPresent) result["nullableGenericRet"] = NullableGenericRet.IsNull ? null : JsonValue.Create(TypeNode.ToJson(NullableGenericRet.Value));
+        if (NullableGenericSuspendRet.IsPresent) result["nullableGenericSuspendRet"] = NullableGenericSuspendRet.IsNull ? null : JsonValue.Create(TypeNode.ToJson(NullableGenericSuspendRet.Value));
         if (DeclarationSourceName.IsPresent) result["declarationSourceName"] = DeclarationSourceName.IsNull ? null : JsonValue.Create(DeclarationSourceName.Value);
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
+        if (NullableRepresentationFrame.IsPresent) result["nullableRepresentationFrame"] = NullableRepresentationFrame.IsNull ? null : DotKt.Bir.NullableRepresentationFrame.ToDom(NullableRepresentationFrame.Value);
         if (KotlinPropertyAccessorCarrier.IsPresent) result["kotlinPropertyAccessorCarrier"] = KotlinPropertyAccessorCarrier.IsNull ? null : ((BirGraphValue)KotlinPropertyAccessorCarrier.Value).ToDom();
         if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (RetAttrs.IsPresent) result["retAttrs"] = RetAttrs.IsNull ? null : new JsonArray(RetAttrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
@@ -2893,8 +3033,10 @@ internal sealed record BirFieldDeclaration : BirGraphValue
     public OptionalField<string> CompanionSetterExplicitClrName { get; set; }
     public OptionalField<string> CompanionGetterDeclarationId { get; set; }
     public OptionalField<string> CompanionSetterDeclarationId { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<BirLiteral> Constant { get; set; }
     public OptionalField<TypeNode> KotlinType { get; set; }
+    public OptionalField<TypeNode> NullableGeneric { get; set; }
     public OptionalField<int[]> NullableFlags { get; set; }
     public OptionalField<TypeNode> SuspendFnType { get; set; }
     public OptionalField<BirDeclarationPosition> Pos { get; set; }
@@ -2943,8 +3085,10 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         WriteOptional(writer, "companionSetterExplicitClrName", CompanionSetterExplicitClrName, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "companionGetterDeclarationId", CompanionGetterDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "companionSetterDeclarationId", CompanionSetterDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "constant", Constant, (writer, value) => { BirLiteral.WriteJson(writer, value); });
         WriteOptional(writer, "kotlinType", KotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "nullableGeneric", NullableGeneric, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nullableFlags", NullableFlags, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "suspendFnType", SuspendFnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "pos", Pos, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -2977,8 +3121,10 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         if (CompanionSetterExplicitClrName.IsPresent) result["companionSetterExplicitClrName"] = CompanionSetterExplicitClrName.IsNull ? null : JsonValue.Create(CompanionSetterExplicitClrName.Value);
         if (CompanionGetterDeclarationId.IsPresent) result["companionGetterDeclarationId"] = CompanionGetterDeclarationId.IsNull ? null : JsonValue.Create(CompanionGetterDeclarationId.Value);
         if (CompanionSetterDeclarationId.IsPresent) result["companionSetterDeclarationId"] = CompanionSetterDeclarationId.IsNull ? null : JsonValue.Create(CompanionSetterDeclarationId.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (Constant.IsPresent) result["constant"] = Constant.IsNull ? null : LiteralToDom(Constant.Value);
         if (KotlinType.IsPresent) result["kotlinType"] = KotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(KotlinType.Value));
+        if (NullableGeneric.IsPresent) result["nullableGeneric"] = NullableGeneric.IsNull ? null : JsonValue.Create(TypeNode.ToJson(NullableGeneric.Value));
         if (NullableFlags.IsPresent) result["nullableFlags"] = NullableFlags.IsNull ? null : new JsonArray(NullableFlags.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (SuspendFnType.IsPresent) result["suspendFnType"] = SuspendFnType.IsNull ? null : TypeNode.Write(SuspendFnType.Value);
         if (Pos.IsPresent) result["pos"] = Pos.IsNull ? null : ((BirGraphValue)Pos.Value).ToDom();
@@ -3032,7 +3178,9 @@ internal sealed record BirPropertyDeclaration : BirGraphValue
     public OptionalField<string> PropertyAssociation { get; set; }
     public OptionalField<bool> KotlinStatic { get; set; }
     public OptionalField<BirOverride[]> Overrides { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<TypeNode> KotlinType { get; set; }
+    public OptionalField<TypeNode> NullableGeneric { get; set; }
     public OptionalField<string> Get { get; set; }
     public OptionalField<TypeNode[]> GetSig { get; set; }
     public OptionalField<TypeNode> GetRet { get; set; }
@@ -3078,7 +3226,9 @@ internal sealed record BirPropertyDeclaration : BirGraphValue
         WriteOptional(writer, "propertyAssociation", PropertyAssociation, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "kotlinStatic", KotlinStatic, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "overrides", Overrides, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "kotlinType", KotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "nullableGeneric", NullableGeneric, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "get", Get, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "getSig", GetSig, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "getRet", GetRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
@@ -3105,7 +3255,9 @@ internal sealed record BirPropertyDeclaration : BirGraphValue
         if (PropertyAssociation.IsPresent) result["propertyAssociation"] = PropertyAssociation.IsNull ? null : JsonValue.Create(PropertyAssociation.Value);
         if (KotlinStatic.IsPresent) result["kotlinStatic"] = KotlinStatic.IsNull ? null : JsonValue.Create(KotlinStatic.Value);
         if (Overrides.IsPresent) result["overrides"] = Overrides.IsNull ? null : new JsonArray(Overrides.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (KotlinType.IsPresent) result["kotlinType"] = KotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(KotlinType.Value));
+        if (NullableGeneric.IsPresent) result["nullableGeneric"] = NullableGeneric.IsNull ? null : JsonValue.Create(TypeNode.ToJson(NullableGeneric.Value));
         if (Get.IsPresent) result["get"] = Get.IsNull ? null : JsonValue.Create(Get.Value);
         if (GetSig.IsPresent) result["getSig"] = GetSig.IsNull ? null : new JsonArray(GetSig.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (GetRet.IsPresent) result["getRet"] = GetRet.IsNull ? null : TypeNode.Write(GetRet.Value);
@@ -3821,6 +3973,7 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
     public OptionalField<TypeNode> Ret { get; set; }
     public OptionalField<BirOverride[]> Overrides { get; set; }
     public OptionalField<BirInheritedImplementation> Implementation { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -3846,6 +3999,7 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
         WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "overrides", Overrides, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "implementation", Implementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
@@ -3858,6 +4012,7 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
         if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
         if (Overrides.IsPresent) result["overrides"] = Overrides.IsNull ? null : new JsonArray(Overrides.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (Implementation.IsPresent) result["implementation"] = Implementation.IsNull ? null : ((BirGraphValue)Implementation.Value).ToDom();
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         return result;
     }
@@ -3870,6 +4025,7 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
     public OptionalField<TypeNode> Ret { get; set; }
     public OptionalField<BirOverride[]> Overrides { get; set; }
     public OptionalField<BirInheritedImplementation> Implementation { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -3894,6 +4050,7 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
         WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "overrides", Overrides, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "implementation", Implementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
@@ -3905,6 +4062,7 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
         if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
         if (Overrides.IsPresent) result["overrides"] = Overrides.IsNull ? null : new JsonArray(Overrides.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (Implementation.IsPresent) result["implementation"] = Implementation.IsNull ? null : ((BirGraphValue)Implementation.Value).ToDom();
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         return result;
     }
@@ -3922,6 +4080,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
     public OptionalField<BirModifiers> Mods { get; set; }
     public OptionalField<BirOverride[]> Overrides { get; set; }
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; set; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -3961,6 +4120,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         WriteOptional(writer, "mods", Mods, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "overrides", Overrides, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "inheritedImplementation", InheritedImplementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         WriteOptional(writer, "signatureOverrideDeclarations", SignatureOverrideDeclarations, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteStringValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
@@ -3978,6 +4138,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         if (Mods.IsPresent) result["mods"] = Mods.IsNull ? null : ((BirGraphValue)Mods.Value).ToDom();
         if (Overrides.IsPresent) result["overrides"] = Overrides.IsNull ? null : new JsonArray(Overrides.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (InheritedImplementation.IsPresent) result["inheritedImplementation"] = InheritedImplementation.IsNull ? null : ((BirGraphValue)InheritedImplementation.Value).ToDom();
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         if (SignatureOverrideDeclarations.IsPresent) result["signatureOverrideDeclarations"] = SignatureOverrideDeclarations.IsNull ? null : new JsonArray(SignatureOverrideDeclarations.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         return result;
@@ -4154,6 +4315,7 @@ internal sealed record BirSamConversion : BirGraphNode, IBirExpression, IBirAttr
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<TypeNode> FuncType { get; set; }
     public OptionalField<IBirExpression> E { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (E.HasValue) { visit((BirGraphValue)E.Value); }
@@ -4173,6 +4335,7 @@ internal sealed record BirSamConversion : BirGraphNode, IBirExpression, IBirAttr
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "funcType", FuncType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "e", E, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -4182,6 +4345,7 @@ internal sealed record BirSamConversion : BirGraphNode, IBirExpression, IBirAttr
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (FuncType.IsPresent) result["funcType"] = FuncType.IsNull ? null : TypeNode.Write(FuncType.Value);
         if (E.IsPresent) result["e"] = E.IsNull ? null : ((BirGraphValue)E.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -4191,6 +4355,7 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
     public OptionalField<string> Name { get; set; }
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<bool> Outer { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<TypeNode> KotlinType { get; set; }
     public OptionalField<TypeNode> NullableGeneric { get; set; }
     public OptionalField<int[]> NullableFlags { get; set; }
@@ -4209,6 +4374,7 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
         WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "outer", Outer, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "kotlinType", KotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nullableGeneric", NullableGeneric, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nullableFlags", NullableFlags, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
@@ -4220,6 +4386,7 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
         if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Outer.IsPresent) result["outer"] = Outer.IsNull ? null : JsonValue.Create(Outer.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (KotlinType.IsPresent) result["kotlinType"] = KotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(KotlinType.Value));
         if (NullableGeneric.IsPresent) result["nullableGeneric"] = NullableGeneric.IsNull ? null : JsonValue.Create(TypeNode.ToJson(NullableGeneric.Value));
         if (NullableFlags.IsPresent) result["nullableFlags"] = NullableFlags.IsNull ? null : new JsonArray(NullableFlags.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
@@ -4236,7 +4403,10 @@ internal sealed record BirClosureDefinition : BirGraphValue
     public OptionalField<IBirStatement[]> Body { get; set; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; set; }
     public OptionalField<string> SemanticOwner { get; set; }
+    public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
+    public OptionalField<int> OuterTypeParamCount { get; set; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; set; }
+    public OptionalField<SourceTypeFacts> KotlinSupertypesPre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Fields.HasValue) { foreach (var item0 in Fields.Value) { visit((BirGraphValue)item0); } }
@@ -4271,7 +4441,10 @@ internal sealed record BirClosureDefinition : BirGraphValue
         WriteOptional(writer, "body", Body, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "typeParams", TypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "semanticOwner", SemanticOwner, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "outerTypeParamCount", OuterTypeParamCount, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
+        WriteOptional(writer, "kotlinSupertypesPre", KotlinSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -4284,7 +4457,10 @@ internal sealed record BirClosureDefinition : BirGraphValue
         if (Body.IsPresent) result["body"] = Body.IsNull ? null : new JsonArray(Body.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (TypeParams.IsPresent) result["typeParams"] = TypeParams.IsNull ? null : new JsonArray(TypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (SemanticOwner.IsPresent) result["semanticOwner"] = SemanticOwner.IsNull ? null : JsonValue.Create(SemanticOwner.Value);
+        if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
+        if (OuterTypeParamCount.IsPresent) result["outerTypeParamCount"] = OuterTypeParamCount.IsNull ? null : JsonValue.Create(OuterTypeParamCount.Value);
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
+        if (KotlinSupertypesPre.IsPresent) result["kotlinSupertypesPre"] = KotlinSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(KotlinSupertypesPre.Value);
         return result;
     }
 }
@@ -4522,6 +4698,7 @@ internal sealed record BirEventGet : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<string> MemberVisibility { get; set; }
     public OptionalField<BirOverride[]> Overrides { get; set; }
     public OptionalField<TypeNode> CompanionReceiver { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -4551,6 +4728,7 @@ internal sealed record BirEventGet : BirGraphNode, IBirExpression, IBirAttribute
         WriteOptional(writer, "memberVisibility", MemberVisibility, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "overrides", Overrides, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "companionReceiver", CompanionReceiver, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -4566,6 +4744,7 @@ internal sealed record BirEventGet : BirGraphNode, IBirExpression, IBirAttribute
         if (MemberVisibility.IsPresent) result["memberVisibility"] = MemberVisibility.IsNull ? null : JsonValue.Create(MemberVisibility.Value);
         if (Overrides.IsPresent) result["overrides"] = Overrides.IsNull ? null : new JsonArray(Overrides.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (CompanionReceiver.IsPresent) result["companionReceiver"] = CompanionReceiver.IsNull ? null : JsonValue.Create(TypeNode.ToJson(CompanionReceiver.Value));
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -4579,6 +4758,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<bool> Super { get; set; }
     public OptionalField<IBirExpression> Recv { get; set; }
     public OptionalField<IBirExpression[]> Args { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
@@ -4604,6 +4784,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "super", Super, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "recv", Recv, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "args", Args, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -4616,6 +4797,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Super.IsPresent) result["super"] = Super.IsNull ? null : JsonValue.Create(Super.Value);
         if (Recv.IsPresent) result["recv"] = Recv.IsNull ? null : ((BirGraphValue)Recv.Value).ToDom();
         if (Args.IsPresent) result["args"] = Args.IsNull ? null : new JsonArray(Args.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -4624,6 +4806,7 @@ internal sealed record BirLambdaParameter : BirGraphValue
 {
     public OptionalField<string> Name { get; set; }
     public OptionalField<TypeNode> Type { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<TypeNode> NominalParameterSignatureIdentity { get; set; }
     public OptionalField<TypeNode[]> GenericParameterSignatureBounds { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -4640,6 +4823,7 @@ internal sealed record BirLambdaParameter : BirGraphValue
         writer.WriteStartObject();
         WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nominalParameterSignatureIdentity", NominalParameterSignatureIdentity, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "genericParameterSignatureBounds", GenericParameterSignatureBounds, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
@@ -4649,6 +4833,7 @@ internal sealed record BirLambdaParameter : BirGraphValue
         var result = new JsonObject();
         if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (NominalParameterSignatureIdentity.IsPresent) result["nominalParameterSignatureIdentity"] = NominalParameterSignatureIdentity.IsNull ? null : TypeNode.Write(NominalParameterSignatureIdentity.Value);
         if (GenericParameterSignatureBounds.IsPresent) result["genericParameterSignatureBounds"] = GenericParameterSignatureBounds.IsNull ? null : new JsonArray(GenericParameterSignatureBounds.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         return result;
@@ -4663,6 +4848,7 @@ internal sealed record BirInlineCapture : BirGraphValue
     public OptionalField<IBirExpression> Value { get; set; }
     public OptionalField<TypeNode> SharedCellType { get; set; }
     public OptionalField<BirTypeParameter[]> SharedCellTypeParams { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Value.HasValue) { visit((BirGraphValue)Value.Value); }
@@ -4687,6 +4873,7 @@ internal sealed record BirInlineCapture : BirGraphValue
         WriteOptional(writer, "value", Value, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "sharedCellType", SharedCellType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "sharedCellTypeParams", SharedCellTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -4698,6 +4885,7 @@ internal sealed record BirInlineCapture : BirGraphValue
         if (Value.IsPresent) result["value"] = Value.IsNull ? null : ((BirGraphValue)Value.Value).ToDom();
         if (SharedCellType.IsPresent) result["sharedCellType"] = SharedCellType.IsNull ? null : TypeNode.Write(SharedCellType.Value);
         if (SharedCellTypeParams.IsPresent) result["sharedCellTypeParams"] = SharedCellTypeParams.IsNull ? null : new JsonArray(SharedCellTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -4937,6 +5125,7 @@ internal sealed record BirInlineReceivers : BirGraphValue
     public OptionalField<IBirExpression> Extension { get; set; }
     public OptionalField<IBirExpression> Dispatch { get; set; }
     public OptionalField<TypeNode[]> DispatchTypeArgs { get; set; }
+    public OptionalField<TypeNode[]> DispatchOwnerTypeArgs { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Extension.HasValue) { visit((BirGraphValue)Extension.Value); }
@@ -4958,6 +5147,7 @@ internal sealed record BirInlineReceivers : BirGraphValue
         WriteOptional(writer, "extension", Extension, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "dispatch", Dispatch, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "dispatchTypeArgs", DispatchTypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "dispatchOwnerTypeArgs", DispatchOwnerTypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -4966,6 +5156,7 @@ internal sealed record BirInlineReceivers : BirGraphValue
         if (Extension.IsPresent) result["extension"] = Extension.IsNull ? null : ((BirGraphValue)Extension.Value).ToDom();
         if (Dispatch.IsPresent) result["dispatch"] = Dispatch.IsNull ? null : ((BirGraphValue)Dispatch.Value).ToDom();
         if (DispatchTypeArgs.IsPresent) result["dispatchTypeArgs"] = DispatchTypeArgs.IsNull ? null : new JsonArray(DispatchTypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (DispatchOwnerTypeArgs.IsPresent) result["dispatchOwnerTypeArgs"] = DispatchOwnerTypeArgs.IsNull ? null : new JsonArray(DispatchOwnerTypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         return result;
     }
 }
@@ -4985,20 +5176,24 @@ internal sealed record BirCallInline : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<string> SemanticOwner { get; set; }
     public OptionalField<TypeNode> CompanionReceiver { get; set; }
     public OptionalField<string> DeclarationId { get; set; }
+    public OptionalField<IBirExpression?[]> PreparedDefaults { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Recvs.HasValue) { visit((BirGraphValue)Recvs.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { if (item0 is not null) { visit((BirGraphValue)item0); } } }
+        if (PreparedDefaults.HasValue) { foreach (var item0 in PreparedDefaults.Value) { if (item0 is not null) { visit((BirGraphValue)item0); } } }
     }
     public override void VisitChildSlots(Action<BirGraphSlot> visit)
     {
         if (Recvs.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Recvs.Value!, replacement => Recvs = OptionalField<BirInlineReceivers>.Of((BirInlineReceivers)replacement))); }
         if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; if (child0 is not null) { visit(new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } } }
+        if (PreparedDefaults.HasValue) { for (var index0 = 0; index0 < PreparedDefaults.Value.Length; index0++) { var at0 = index0; var child0 = PreparedDefaults.Value[at0]; if (child0 is not null) { visit(new BirGraphSlot(() => (BirGraphValue)PreparedDefaults.Value[at0]!, replacement => PreparedDefaults.Value[at0] = (IBirExpression)replacement)); } } }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recvs = Recvs.HasValue ? OptionalField<BirInlineReceivers>.Of((BirInlineReceivers)rewrite((BirGraphValue)Recvs.Value)) : Recvs,
         Args = Args.HasValue ? OptionalField<IBirExpression?[]>.Of(Args.Value.Select(item0 => item0 is null ? null : (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Args,
+        PreparedDefaults = PreparedDefaults.HasValue ? OptionalField<IBirExpression?[]>.Of(PreparedDefaults.Value.Select(item0 => item0 is null ? null : (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : PreparedDefaults,
     };
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -5016,6 +5211,7 @@ internal sealed record BirCallInline : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "semanticOwner", SemanticOwner, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "companionReceiver", CompanionReceiver, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "preparedDefaults", PreparedDefaults, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { if (item0 is null) writer.WriteNullValue(); else { ((BirGraphValue)item0).WriteJson(writer); } } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -5034,6 +5230,7 @@ internal sealed record BirCallInline : BirGraphNode, IBirExpression, IBirAttribu
         if (SemanticOwner.IsPresent) result["semanticOwner"] = SemanticOwner.IsNull ? null : JsonValue.Create(SemanticOwner.Value);
         if (CompanionReceiver.IsPresent) result["companionReceiver"] = CompanionReceiver.IsNull ? null : JsonValue.Create(TypeNode.ToJson(CompanionReceiver.Value));
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
+        if (PreparedDefaults.IsPresent) result["preparedDefaults"] = PreparedDefaults.IsNull ? null : new JsonArray(PreparedDefaults.Value.Select(item0 => (JsonNode?)(item0 is null ? null : ((BirGraphValue)item0).ToDom())).ToArray());
         return result;
     }
 }
@@ -5369,6 +5566,7 @@ internal sealed record BirConstant : BirGraphNode, IBirExpression, IBirAttribute
     public override string Tag => "const";
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<BirLiteral> Value { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
     }
@@ -5384,6 +5582,7 @@ internal sealed record BirConstant : BirGraphNode, IBirExpression, IBirAttribute
         writer.WriteString("k", "const");
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "value", Value, (writer, value) => { BirLiteral.WriteJson(writer, value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -5392,6 +5591,7 @@ internal sealed record BirConstant : BirGraphNode, IBirExpression, IBirAttribute
         result["k"] = "const";
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Value.IsPresent) result["value"] = Value.IsNull ? null : LiteralToDom(Value.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -5541,6 +5741,7 @@ internal sealed record BirConditional : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<IBirExpression> Cond { get; set; }
     public OptionalField<IBirExpression> Then { get; set; }
     public OptionalField<IBirExpression> Else { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Cond.HasValue) { visit((BirGraphValue)Cond.Value); }
@@ -5568,6 +5769,7 @@ internal sealed record BirConditional : BirGraphNode, IBirExpression, IBirAttrib
         WriteOptional(writer, "cond", Cond, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "then", Then, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "else", Else, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -5579,6 +5781,7 @@ internal sealed record BirConditional : BirGraphNode, IBirExpression, IBirAttrib
         if (Cond.IsPresent) result["cond"] = Cond.IsNull ? null : ((BirGraphValue)Cond.Value).ToDom();
         if (Then.IsPresent) result["then"] = Then.IsNull ? null : ((BirGraphValue)Then.Value).ToDom();
         if (Else.IsPresent) result["else"] = Else.IsNull ? null : ((BirGraphValue)Else.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -5674,6 +5877,7 @@ internal sealed record BirEnumValue : BirGraphNode, IBirExpression, IBirAttribut
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<string> Entry { get; set; }
     public OptionalField<int> Ordinal { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<string> Underlying { get; set; }
     public OptionalField<string> PhysicalValue { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -5692,6 +5896,7 @@ internal sealed record BirEnumValue : BirGraphNode, IBirExpression, IBirAttribut
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "entry", Entry, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "ordinal", Ordinal, (writer, value) => { writer.WriteNumberValue(value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "underlying", Underlying, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "physicalValue", PhysicalValue, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
@@ -5703,6 +5908,7 @@ internal sealed record BirEnumValue : BirGraphNode, IBirExpression, IBirAttribut
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Entry.IsPresent) result["entry"] = Entry.IsNull ? null : JsonValue.Create(Entry.Value);
         if (Ordinal.IsPresent) result["ordinal"] = Ordinal.IsNull ? null : JsonValue.Create(Ordinal.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (Underlying.IsPresent) result["underlying"] = Underlying.IsNull ? null : JsonValue.Create(Underlying.Value);
         if (PhysicalValue.IsPresent) result["physicalValue"] = PhysicalValue.IsNull ? null : JsonValue.Create(PhysicalValue.Value);
         return result;
@@ -5713,6 +5919,7 @@ internal sealed record BirEnumValues : BirGraphNode, IBirExpression, IBirAttribu
 {
     public override string Tag => "enumValues";
     public OptionalField<TypeNode> Type { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<BirPhysicalEnumValue[]> Values { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -5731,6 +5938,7 @@ internal sealed record BirEnumValues : BirGraphNode, IBirExpression, IBirAttribu
         writer.WriteStartObject();
         writer.WriteString("k", "enumValues");
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "values", Values, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
@@ -5739,6 +5947,7 @@ internal sealed record BirEnumValues : BirGraphNode, IBirExpression, IBirAttribu
         var result = new JsonObject();
         result["k"] = "enumValues";
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (Values.IsPresent) result["values"] = Values.IsNull ? null : new JsonArray(Values.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         return result;
     }
@@ -5783,6 +5992,7 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
 {
     public override string Tag => "classRef";
     public OptionalField<TypeNode> Type { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
     }
@@ -5797,6 +6007,7 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
         writer.WriteStartObject();
         writer.WriteString("k", "classRef");
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -5804,6 +6015,7 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
         var result = new JsonObject();
         result["k"] = "classRef";
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -5976,6 +6188,7 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<IBirStatement[]> Stmts { get; set; }
     public OptionalField<IBirExpression> Result { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<TypeNode> Sty { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault();
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -6001,6 +6214,7 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "stmts", Stmts, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "result", Result, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "sty", Sty, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
@@ -6012,6 +6226,7 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Stmts.IsPresent) result["stmts"] = Stmts.IsNull ? null : new JsonArray(Stmts.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (Result.IsPresent) result["result"] = Result.IsNull ? null : ((BirGraphValue)Result.Value).ToDom();
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (Sty.IsPresent) result["sty"] = Sty.IsNull ? null : TypeNode.Write(Sty.Value);
         return result;
     }
@@ -6031,6 +6246,7 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
     public OptionalField<BirTypeParameter[]> MemberMethodTypeParams { get; set; }
     public OptionalField<TypeNode[]> MemberSignature { get; set; }
     public OptionalField<TypeNode> MemberReturnType { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<int> NullableWitnessCount { get; set; }
     public OptionalField<int> LocalCtorIndex { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
@@ -6073,6 +6289,7 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         WriteOptional(writer, "memberMethodTypeParams", MemberMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nullableWitnessCount", NullableWitnessCount, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "localCtorIndex", LocalCtorIndex, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -6093,6 +6310,7 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         if (MemberMethodTypeParams.IsPresent) result["memberMethodTypeParams"] = MemberMethodTypeParams.IsNull ? null : new JsonArray(MemberMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (NullableWitnessCount.IsPresent) result["nullableWitnessCount"] = NullableWitnessCount.IsNull ? null : JsonValue.Create(NullableWitnessCount.Value);
         if (LocalCtorIndex.IsPresent) result["localCtorIndex"] = LocalCtorIndex.IsNull ? null : JsonValue.Create(LocalCtorIndex.Value);
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
@@ -6441,6 +6659,7 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
     public OptionalField<IBirStatement[]> Body { get; set; }
     public OptionalField<BirCatch[]> Catches { get; set; }
     public OptionalField<IBirStatement[]> Finally { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
         if (Body.HasValue) { foreach (var item0 in Body.Value) { visit((BirGraphValue)item0); } }
@@ -6467,6 +6686,7 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
         WriteOptional(writer, "body", Body, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "catches", Catches, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "finally", Finally, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -6477,6 +6697,7 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
         if (Body.IsPresent) result["body"] = Body.IsNull ? null : new JsonArray(Body.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (Catches.IsPresent) result["catches"] = Catches.IsNull ? null : new JsonArray(Catches.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (Finally.IsPresent) result["finally"] = Finally.IsNull ? null : new JsonArray(Finally.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         return result;
     }
 }
@@ -6595,6 +6816,7 @@ internal sealed record BirVariable : BirGraphNode, IBirStatement
     public OptionalField<IBirExpression> Init { get; set; }
     public OptionalField<bool> JoinNullBranch { get; set; }
     public OptionalField<bool> Outer { get; set; }
+    public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<bool> _callEvalTemporary { get; set; }
     public OptionalField<string> Role { get; set; }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -6618,6 +6840,7 @@ internal sealed record BirVariable : BirGraphNode, IBirStatement
         WriteOptional(writer, "init", Init, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "joinNullBranch", JoinNullBranch, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "outer", Outer, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "_callEvalTemporary", _callEvalTemporary, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "role", Role, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
@@ -6631,6 +6854,7 @@ internal sealed record BirVariable : BirGraphNode, IBirStatement
         if (Init.IsPresent) result["init"] = Init.IsNull ? null : ((BirGraphValue)Init.Value).ToDom();
         if (JoinNullBranch.IsPresent) result["joinNullBranch"] = JoinNullBranch.IsNull ? null : JsonValue.Create(JoinNullBranch.Value);
         if (Outer.IsPresent) result["outer"] = Outer.IsNull ? null : JsonValue.Create(Outer.Value);
+        if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (_callEvalTemporary.IsPresent) result["_callEvalTemporary"] = _callEvalTemporary.IsNull ? null : JsonValue.Create(_callEvalTemporary.Value);
         if (Role.IsPresent) result["role"] = Role.IsNull ? null : JsonValue.Create(Role.Value);
         return result;

@@ -347,6 +347,7 @@ for proj in "${PROJECTS[@]}"; do
 			"$ROOT/tests/roundtrip/upstream-stdlib-producer/obj/$CONFIGURATION/net10.0/cir/CharSequenceBoundaries.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/CharSequencePolymorphicInlineTests.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/CharSequencePolymorphicInlineTests.cir.json" \
+			"$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.charsequence-boundary-inline.log" 2>&1; then
 			echo "  spliced polymorphic CharSequence receivers adapt Strings and retain custom values"
 		else
@@ -445,6 +446,7 @@ for proj in "${PROJECTS[@]}"; do
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ArrayContent.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/ArrayContentTests.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/ArrayContentTests.cir.json" \
+			"$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.array-content-inline.log" 2>&1; then
 			echo "  array-content metadata survives actual cross-DLL inline splicing"
 		else
@@ -455,6 +457,7 @@ for proj in "${PROJECTS[@]}"; do
 			"$ROOT/tests/roundtrip/upstream-stdlib-producer/obj/$CONFIGURATION/net10.0/cir/CharSequenceBoundaries.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/CharSequenceBoundaryTests.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/CharSequenceBoundaryTests.cir.json" \
+			"$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.charsequence-boundary-inline.log" 2>&1; then
 			echo "  CharSequence inline metadata survives the actual DLL boundary"
 		else
@@ -663,6 +666,7 @@ for proj in "${PROJECTS[@]}"; do
 			"$dir/obj/$CONFIGURATION/net10.0/cir/InheritedInnerResultTests.cir.json" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/IterableIdentity.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/IterableIdentityTests.cir.json" \
+			"$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.source-result-identity.log" 2>&1; then
 			echo "  caller-frame results and source iterable identities survive physical projection"
 		else

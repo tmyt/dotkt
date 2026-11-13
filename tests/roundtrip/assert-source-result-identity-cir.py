@@ -3,6 +3,7 @@
 import base64
 import json
 import sys
+from carrier_inspection import executable_payload
 
 
 def nodes(value):
@@ -16,11 +17,12 @@ def nodes(value):
 
 
 def facts(declaration, name):
-    return [json.loads(base64.b64decode(attr["args"][1]["bytes"])) for attr in declaration.get("attrs", [])
+    return [executable_payload(attr, sys.argv[5]) if name == "KotlinInline"
+            else json.loads(base64.b64decode(attr["args"][1]["bytes"])) for attr in declaration.get("attrs", [])
             if attr.get("attr", {}).get("name") == "DotKt.Runtime.CompilerServices." + name + "Attribute"]
 
 
-producer, consumer, iterable_producer, iterable = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]
+producer, consumer, iterable_producer, iterable = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:5]]
 base_name = "roundtrip.innerresults.ResultOuter.Base"
 base = next(item for item in producer["types"] if item["name"] == base_name)
 carrier = next(item for item in producer["types"]

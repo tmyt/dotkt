@@ -2,6 +2,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
+using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace DotKt.Bir;
@@ -188,6 +191,57 @@ internal sealed class NullableRepresentationFrame
         return Enumerable.Range(0, SourceArity).Select(index => physicalArguments[SourcePosition(index)]).ToArray();
     }
 
+    public void WriteJson(Utf8JsonWriter writer)
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber("sourceArity", SourceArity);
+        void Indices(string name, IReadOnlyList<int> values)
+        {
+            writer.WriteStartArray(name);
+            foreach (var value in values) writer.WriteNumberValue(value);
+            writer.WriteEndArray();
+        }
+        Indices("nullable", NullableIndices);
+        Indices("storage", StorageIndices);
+        Indices("nullableStorage", NullableStorageIndices);
+        Indices("order", PhysicalOrder);
+        writer.WriteEndObject();
+    }
+
+    public static NullableRepresentationFrame ReadJson(ref Utf8JsonReader reader)
+    {
+        if (reader.TokenType != JsonTokenType.StartObject) throw new FormatException();
+        int? arity = null;
+        int[]? nullable = null, storage = null, nullableStorage = null, order = null;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        static int[] Indices(ref Utf8JsonReader input)
+        {
+            if (input.TokenType != JsonTokenType.StartArray) throw new FormatException();
+            var values = new List<int>();
+            while (input.Read() && input.TokenType != JsonTokenType.EndArray) values.Add(input.GetInt32());
+            if (input.TokenType != JsonTokenType.EndArray) throw new FormatException();
+            return values.ToArray();
+        }
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName) throw new FormatException();
+            var name = reader.GetString()!;
+            if (!seen.Add(name) || !reader.Read()) throw new FormatException();
+            switch (name)
+            {
+                case "sourceArity": arity = reader.GetInt32(); break;
+                case "nullable": nullable = Indices(ref reader); break;
+                case "storage": storage = Indices(ref reader); break;
+                case "nullableStorage": nullableStorage = Indices(ref reader); break;
+                case "order": order = Indices(ref reader); break;
+                default: throw new FormatException();
+            }
+        }
+        if (reader.TokenType != JsonTokenType.EndObject || arity == null || nullable == null
+            || storage == null || nullableStorage == null || order == null) throw new FormatException();
+        return new NullableRepresentationFrame(arity.Value, nullable, order, storage, nullableStorage);
+    }
+
     public JsonObject ToJson() => new()
     {
         ["sourceArity"] = SourceArity,
@@ -196,6 +250,29 @@ internal sealed class NullableRepresentationFrame
         ["nullableStorage"] = new JsonArray(NullableStorageIndices.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
         ["order"] = new JsonArray(PhysicalOrder.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
     };
+
+    public string FrozenText
+    {
+        get
+        {
+            using var content = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(content)) WriteJson(writer);
+            return Encoding.UTF8.GetString(content.ToArray());
+        }
+    }
+
+    public static NullableRepresentationFrame ReadFrozenText(string text)
+    {
+        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(text));
+        if (!reader.Read()) throw new FormatException();
+        var frame = ReadJson(ref reader);
+        if (reader.Read()) throw new FormatException();
+        return frame;
+    }
+
+    public static NullableRepresentationFrame Read(ref Utf8JsonReader reader) => ReadFrozenText(reader.GetString()!);
+    public static void Write(Utf8JsonWriter writer, NullableRepresentationFrame value) => writer.WriteStringValue(value.FrozenText);
+    public static JsonNode ToDom(NullableRepresentationFrame value) => JsonValue.Create(value.FrozenText)!;
 
     public static NullableRepresentationFrame Read(JsonNode node)
     {

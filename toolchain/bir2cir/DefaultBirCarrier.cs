@@ -31,15 +31,14 @@ static class DefaultBirCarrier
             new TypeNode.Array(new TypeNode.Fqn("System.Byte")) },
         Args = new IBirAttributeValue[] {
             new BirConstant { Type = new TypeNode.Fqn("System.Int32"), Value = new BirLiteral.IntegerLiteral(index) },
-            new BirConstant { Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral(BirCarrier.JsonV1) },
-            new BirOpaqueBytes { Bytes = BirCarrier.EncodeBody(BirCarrier.JsonV1, body,
-                (writer, value) => value.WriteJson(writer)) },
+            new BirConstant { Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral(ExecutableBirCodec.Codec) },
+            new BirOpaqueBytes { Bytes = ExecutableBirCodec.EncodeExpression(ExecutableBirCodec.Codec, (IBirExpression)body) },
         },
     };
 
     internal static bool IsCarrier(JsonObject node) => TypeJson.OwnerName(node["attr"]) == AttributeName;
 
-    internal static JsonNode Decode(JsonObject attribute) => BirCarrier.DecodeBody(
+    internal static JsonNode Decode(JsonObject attribute) => ExecutableBirCodec.ReadExpressionDom(
         attribute["args"][1]["value"].GetValue<string>(),
         Convert.FromBase64String(attribute["args"][2]["bytes"].GetValue<string>()));
 
@@ -48,7 +47,7 @@ static class DefaultBirCarrier
         var payload = Decode(attribute);
         rewrite(payload);
         var args = attribute["args"];
-        args[2]["bytes"] = Convert.ToBase64String(BirCarrier.EncodeBody(args[1]["value"].GetValue<string>(), payload));
+        args[2]["bytes"] = Convert.ToBase64String(ExecutableBirCodec.EncodeExpressionDom(args[1]["value"].GetValue<string>(), payload));
     }
 
     internal static JsonNode OfParameter(JsonObject parameter) => parameter["attrs"] is JsonArray attrs

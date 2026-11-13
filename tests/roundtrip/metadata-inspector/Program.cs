@@ -23,6 +23,14 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 3 && args[0] == "--decode-carrier")
+{
+    var content = Convert.FromBase64String(args[2]);
+    var json = DecodeCarrierContent(args[1], content);
+    using (json) Console.WriteLine(json.RootElement.GetRawText());
+    return;
+}
+
 if (args.Length == 2 && args[0] == "--external-awaiters")
 {
     ExternalAwaitMetadataInspector.Verify(args[1]);
@@ -2681,13 +2689,21 @@ static JsonDocument DecodeCarrierDocument(
     var blob = md.GetBlobReader(attributes[0].Value);
     Require(blob.ReadUInt16() == 1, $"invalid [{attributeName}] prolog");
     var version = blob.ReadSerializedString() ?? throw new InvalidDataException($"missing [{attributeName}] version");
+    if (attributeName == "DotKt.Runtime.CompilerServices.KotlinInlineAttribute")
+        Require(version == BirCarrier.MessagePackV1, "executable inline carrier is not MessagePack");
     var length = blob.ReadInt32();
     Require(length >= 0 && length <= blob.RemainingBytes - 2, $"invalid [{attributeName}] payload length");
     var payload = blob.ReadBytes(length);
     Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0,
         $"unexpected named arguments in [{attributeName}]");
-    return JsonDocument.Parse(BirCarrier.DecodeBody(version, payload).ToJsonString());
+    return DecodeCarrierContent(version, payload);
 }
+
+// Test-only inspection dump; production carrier readers use owning typed codecs.
+static JsonDocument DecodeCarrierContent(string version, byte[] payload) =>
+    JsonDocument.Parse(version == BirCarrier.MessagePackV1
+        ? MessagePack.MessagePackSerializer.ConvertToJson(payload)
+        : BirCarrier.DecodeBody(version, payload).ToJsonString());
 
 static void VerifyNestedTypeCarriers(string path)
 {

@@ -143,6 +143,9 @@ import roundtrip.tlval.counter
 import roundtrip.tlval.origin
 import roundtrip.inldelegate.applyViaNestedDelegate
 import roundtrip.inldelegate.applyViaGenericNestedDelegate
+import roundtrip.inldelegate.applyViaNullableResult
+import roundtrip.inldelegate.applyViaNullableArgument
+import roundtrip.inldelegate.applyViaNullableReference
 import roundtrip.inldelegate.applyViaTransitivelyNestedDelegate
 import roundtrip.inldelegate.NestedDelegateHost
 import roundtrip.extpropref.RefBox
@@ -360,6 +363,10 @@ class KotlinApiShapeRoundtripTests {
     fun crossModuleInlineNestedDelegate() {
         ClassicAssert.AreEqual(7, applyViaNestedDelegate(3) { it + 1 })
         ClassicAssert.AreEqual("ok!", applyViaGenericNestedDelegate("ok") { it + "!" })
+        check(applyViaNullableResult(7) { it.firstOrNull() } == 7)
+        check(applyViaNullableArgument(listOf("argument")) { it } == "argument")
+        check(applyViaNullableReference(11) { it.firstOrNull() } == 11)
+        check(applyViaNullableResult<String?>(null) { it.firstOrNull() } == null)
         ClassicAssert.AreEqual(10, applyViaTransitivelyNestedDelegate(3) { it + 1 })
         ClassicAssert.AreEqual(5, NestedDelegateHost().apply(3) { it + 1 })
         ClassicAssert.AreEqual(42, nestedDelegateNonLocalReturn())

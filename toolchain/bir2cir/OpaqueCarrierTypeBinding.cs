@@ -148,9 +148,9 @@ static class OpaqueCarrierTypeBinding
             if ((obj["inlineBir"] as JsonValue)?.TryGetValue<string>(out var encoded) == true
                 && !string.IsNullOrEmpty(encoded))
             {
-                var payload = BirCarrier.DecodeBody(BirCarrier.JsonV1, Convert.FromBase64String(encoded));
+                var payload = ExecutableBirCodec.ReadInlineDom(ExecutableBirCodec.Codec, Convert.FromBase64String(encoded));
                 BindPayload(payload, physicalBySemantic, preserveInlineParameterSignature: true);
-                obj["inlineBir"] = Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, payload));
+                obj["inlineBir"] = Convert.ToBase64String(ExecutableBirCodec.EncodeInlineDom(ExecutableBirCodec.Codec, payload));
             }
 
             if ((obj["suspendResult"] as JsonValue)?.TryGetValue<string>(out var suspendResult) == true

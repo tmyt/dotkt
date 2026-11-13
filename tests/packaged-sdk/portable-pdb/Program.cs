@@ -60,8 +60,8 @@ var inline = inlineMethod.GetCustomAttributes().Select(metadata.GetCustomAttribu
     && metadata.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).GetDeclaringType() is var parent
     && metadata.GetString(metadata.GetTypeDefinition(parent).Name) == "KotlinInlineAttribute");
 var carrier = metadata.GetBlobReader(inline.Value);
-Require(carrier.ReadUInt16() == 1 && carrier.ReadSerializedString() == "bir-json/1", "Unexpected inline carrier.");
-var payload = Encoding.UTF8.GetString(carrier.ReadBytes(carrier.ReadInt32()));
+Require(carrier.ReadUInt16() == 1 && carrier.ReadSerializedString() == DotKt.Bir.BirCarrier.MessagePackV1, "Unexpected inline carrier.");
+var payload = MessagePack.MessagePackSerializer.ConvertToJson(carrier.ReadBytes(carrier.ReadInt32()));
 Require(payload.Contains("\"k\":\"sourcePoint\"") && !payload.Contains("\"span\":"),
     "The executable DLL carrier must not contain the producer's source spans.");
 
@@ -85,14 +85,14 @@ Require(defaultSignature.ReadSignatureHeader().IsInstance && defaultSignature.Re
     && defaultSignature.RemainingBytes == 0, "Unexpected physical default carrier constructor.");
 Require(defaultCarrier.ReadUInt16() == 1 && defaultCarrier.ReadInt32() == 0, "Unexpected default carrier.");
 var defaultCodec = defaultCarrier.ReadSerializedString()!;
-Require(defaultCodec == DotKt.Bir.BirCarrier.JsonV1, "Unexpected default codec.");
+Require(defaultCodec == DotKt.Bir.BirCarrier.MessagePackV1, "Unexpected default codec.");
 var defaultBytes = defaultCarrier.ReadBytes(defaultCarrier.ReadInt32());
 var defaultFacts = new MetadataAttributes(metadata).Find(parameterHandle,
     "DotKt.Runtime.CompilerServices.KotlinDefaultAttribute");
 Require(defaultFacts is { Int32Value: 0 } && defaultFacts.StringValue == defaultCodec
     && defaultFacts.BytesValue!.SequenceEqual(defaultBytes),
     "The projection metadata reader did not preserve the indexed default carrier.");
-var defaultPayload = DotKt.Bir.BirCarrier.DecodeBody(defaultFacts.StringValue!, defaultFacts.BytesValue!).ToJsonString();
+var defaultPayload = MessagePack.MessagePackSerializer.ConvertToJson(defaultFacts.BytesValue!);
 Require(defaultPayload.Contains("\"k\":\"sourcePoint\"") && !defaultPayload.Contains("\"span\":"),
     "The default expression carrier must not contain the producer's source spans.");
 
