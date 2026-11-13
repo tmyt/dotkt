@@ -3,10 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // One binding-owned policy for both demand analysis and type materialization. Compiler-owned generic
 // applications use their declared frame; readonly aliases retain the same face in ordinary and nested slots.
-sealed class GenericRepresentationPolicy
+sealed partial class GenericRepresentationPolicy
 {
     internal const string NativeLocationKey = "_nativeLocation";
     internal const string FieldAddressKey = "_nativeFieldAddress";
@@ -14,15 +15,24 @@ sealed class GenericRepresentationPolicy
     readonly Dictionary<string, string> _aliases;
     readonly ReferenceMetadataIndex _references;
     readonly Dictionary<string, JsonObject> _localDeclarations = new(StringComparer.Ordinal);
+    readonly HashSet<string> _localOwners = new(StringComparer.Ordinal);
     readonly HashSet<string> _existentialOwners = new(StringComparer.Ordinal);
     readonly HashSet<JsonObject> _nativeFields = new();
     readonly HashSet<(string Owner, string Name, bool Static, string Receiver)> _nativeFieldNames = new();
+    bool _sourceAwaitingDom;
 
-    public GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases,
-        ReferenceMetadataIndex references = null, IEnumerable<JsonNode> roots = null)
+    GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases,
+        ReferenceMetadataIndex references, bool sourceOwned)
     {
         _aliases = new Dictionary<string, string>(aliases, StringComparer.Ordinal);
         _references = references;
+        _sourceAwaitingDom = sourceOwned;
+    }
+
+    public GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases,
+        ReferenceMetadataIndex references = null, IEnumerable<JsonNode> roots = null)
+        : this(aliases, references, sourceOwned: false)
+    {
         void Collect(JsonNode node)
         {
             if (node is not JsonObject declaration) return;
@@ -30,11 +40,16 @@ sealed class GenericRepresentationPolicy
                 && name.TryGetValue<string>(out var owner))
             {
                 _localDeclarations[owner] = declaration;
+                _localOwners.Add(owner);
                 if (FBoundStarProjectionErasure.IsSourceGeneric(declaration)) _existentialOwners.Add(owner);
             }
             foreach (var child in declaration["types"] as JsonArray ?? new JsonArray()) Collect(child);
             foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(cell["name"]) is string cellOwner) _localDeclarations[cellOwner] = cell;
+                if (Text(cell["name"]) is string cellOwner)
+                {
+                    _localDeclarations[cellOwner] = cell;
+                    _localOwners.Add(cellOwner);
+                }
         }
         var inputs = (roots ?? Array.Empty<JsonNode>()).ToArray();
         foreach (var root in inputs) Collect(root);
@@ -46,7 +61,11 @@ sealed class GenericRepresentationPolicy
     internal void RegisterLocalDefinitions(IReadOnlyDictionary<string, JsonObject> declarations,
         IReadOnlyDictionary<string, string> aliases)
     {
-        foreach (var (name, declaration) in declarations) _localDeclarations[name] = declaration;
+        foreach (var (name, declaration) in declarations)
+        {
+            _localDeclarations[name] = declaration;
+            _localOwners.Add(name);
+        }
         foreach (var (name, target) in aliases) _aliases[name] = target;
     }
 
@@ -113,7 +132,7 @@ sealed class GenericRepresentationPolicy
                             _nativeFields.Add(declaration);
                             _nativeFieldNames.Add(key);
                         }
-                        else if (_localDeclarations.ContainsKey(owner)
+                        else if (_localOwners.Contains(owner)
                             || _references?.HasReferencedFieldLocation(TypeJson.Read(location["ownerType"] ?? location["owner"]) as TypeNode.Fqn,
                                 name, key.Item3) != true) continue;
                         // An address use is not a value read. Keep this selected FieldDef through value projection;
@@ -139,13 +158,22 @@ sealed class GenericRepresentationPolicy
     // field's semantic identity. The same declaration object retains its location role after binding.
     static (string Owner, string Name, bool Static, string Receiver) FieldKey(
         string owner, string name, bool isStatic, JsonObject declarationOrUse) =>
-        (owner, name, isStatic, Text(declarationOrUse["companionReceiver"]) is string receiver
-            ? CompanionExtensionBinding.CanonicalReceiver(receiver) : null);
+        FieldKey(owner, name, isStatic, Text(declarationOrUse["companionReceiver"]) is string receiver
+            ? TypeNode.Parse(receiver) : null);
+
+    static (string Owner, string Name, bool Static, string Receiver) FieldKey(
+        string owner, string name, bool isStatic, TypeNode receiver)
+    {
+        if (receiver == null) return (owner, name, isStatic, null);
+        var classifier = CompanionExtensionBinding.ReceiverClassifier(receiver)
+            ?? throw new InvalidOperationException("companion extension receiver is not a classifier type: " + TypeNode.ToJson(receiver));
+        return (owner, name, isStatic, TypeNode.ToJson(new TypeNode.Fqn(classifier)));
+    }
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;
 
     internal bool OwnsValueSlots(string owner) => owner != null && !UsesNativeOwnerSlots(owner)
-        && (_localDeclarations.ContainsKey(owner) || _references?.HasDotKtOwner(owner) == true);
+        && (_localOwners.Contains(owner) || _references?.HasDotKtOwner(owner) == true);
 
     internal bool IsBindingAlias(string owner) => owner != null
         && BindingAlias(owner) != null;
@@ -155,7 +183,7 @@ sealed class GenericRepresentationPolicy
             || _references?.TryResolveClrOwner(owner, out _, out _) == true);
 
     internal bool HasNativeConstraint(TypeNode.Fqn bound) => UsesNativeOwnerSlots(bound.Name)
-        || !_localDeclarations.ContainsKey(bound.Name)
+        || !_localOwners.Contains(bound.Name)
             && _references?.ResolveNetType(bound.Name, bound.Args?.Length ?? 0) != null;
 
     internal TypeNode StorageConstraint(TypeNode.Fqn bound) => OwnsValueSlots(bound.Name)
@@ -172,11 +200,14 @@ sealed class GenericRepresentationPolicy
     // A Kotlin binding alias owns its own value projection; merely overriding that
     // semantic surface does not select an exact imported CLR method signature.
     internal bool HasNativeMethodSignature(JsonObject declaration) =>
-        declaration[PhysicalDeclarationSignatureKey]?.GetValue<bool>() == true
-        || (declaration["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-            .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic")
-        || (declaration["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-            .Any(edge => TypeJson.OwnerName(edge["owner"]) is string owner
+        HasNativeMethodSignature(declaration[PhysicalDeclarationSignatureKey]?.GetValue<bool>() == true,
+            (declaration["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic"),
+            (declaration["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Select(edge => TypeJson.Read(edge["owner"])));
+
+    internal bool HasNativeMethodSignature(bool physicalSignature, bool intrinsic, IEnumerable<TypeNode> overrideOwners) =>
+        physicalSignature || intrinsic || overrideOwners.Any(type => type is TypeNode.Fqn { Name: { } owner }
                 && !IsBindingAlias(owner)
                 && !OwnsValueSlots(owner));
 
@@ -192,13 +223,14 @@ sealed class GenericRepresentationPolicy
     // BirTypeLowering owns the eventual alias substitution for both positions.
     public TypeNode ProjectArgumentHead(TypeNode.Fqn source, bool storage, NullableRepresentationFrame frame) =>
         storage && OwnsValueSlots(source.Name) && source.Args is { Length: > 0 }
-            && (_localDeclarations.ContainsKey(source.Name) ? _existentialOwners.Contains(source.Name)
+            && (_localOwners.Contains(source.Name) ? _existentialOwners.Contains(source.Name)
                 : _references?.TryExistentialPhysicalOwner(source.Name, out _) == true)
             ? new TypeNode.Fqn(source.Name, source.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray())
             : source;
 
     public static void SelfTest()
     {
+        SourcePolicySelfTest();
         var heads = JsonNode.Parse("""
         {"types":[
           {"kind":"class","name":"SourceHead","typeParams":[{"name":"T"}]},

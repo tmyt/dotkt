@@ -899,9 +899,10 @@ static class CompanionExtensionBinding
 
     // A classifier imported from an ordinary C# assembly is commonly a platform type (`oblivious(fqn)`). The
     // companion association is the bare classifier and is independent of NRT flexibility/nullability.
-    static string ReceiverClassifier(JsonNode node)
+    static string ReceiverClassifier(JsonNode node) => ReceiverClassifier(TypeJson.Read(node));
+
+    internal static string ReceiverClassifier(TypeNode type)
     {
-        TypeNode type = TypeJson.Read(node);
         while (type is TypeNode.Oblivious oblivious) type = oblivious.Of;
         while (type is TypeNode.Nullable nullable) type = nullable.Of;
         return type is TypeNode.Fqn fqn ? fqn.Name : null;

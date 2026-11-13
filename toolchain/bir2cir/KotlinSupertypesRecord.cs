@@ -59,6 +59,12 @@ static class KotlinSupertypesRecord
         Read(declaration)?[NullableRepresentationFrame.MetadataKey] is JsonNode frame
             ? NullableRepresentationFrame.Read(frame) : null;
 
+    internal static IReadOnlyDictionary<int, TypeNode[]> ReadBounds(JsonObject declaration) =>
+        Read(declaration)?["bounds"] is JsonObject bounds
+            ? bounds.ToDictionary(pair => int.Parse(pair.Key), pair => pair.Value.AsArray()
+                .Select(TypeJson.Read).Where(type => type != null).ToArray())
+            : null;
+
     // Owner capture changes a synthesized declaration's source and physical
     // frames together. Rebase its recorded source facts through that exact map;
     // this is not an erasure or reconstruction of a missing frame.

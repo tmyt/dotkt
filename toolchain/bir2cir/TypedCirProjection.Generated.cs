@@ -403,7 +403,7 @@ sealed partial class TypedCirProjection
 
     internal CirField ProjectCirField(BirFieldDeclaration value)
     {
-        if (value.CompanionGetterDeclarationId.IsPresent || value.CompanionGetterExplicitClrName.IsPresent || value.CompanionMemberKind.IsPresent || value.CompanionPropertyMutable.IsPresent || value.CompanionReceiver.IsPresent || value.CompanionSetterDeclarationId.IsPresent || value.CompanionSetterExplicitClrName.IsPresent || value.CompanionSetterVisibility.IsPresent || value.CompanionSourceName.IsPresent || value.CompanionStorageReadOnly.IsPresent || value.KotlinStatic.IsPresent || value.KotlinType.IsPresent || value.LateinitDeclarationId.IsPresent || value.NullableGeneric.IsPresent || value.Outer.IsPresent || value.SuspendFnTypePre.IsPresent)
+        if (value._nativeLocation.IsPresent || value.CompanionGetterDeclarationId.IsPresent || value.CompanionGetterExplicitClrName.IsPresent || value.CompanionMemberKind.IsPresent || value.CompanionPropertyMutable.IsPresent || value.CompanionReceiver.IsPresent || value.CompanionSetterDeclarationId.IsPresent || value.CompanionSetterExplicitClrName.IsPresent || value.CompanionSetterVisibility.IsPresent || value.CompanionSourceName.IsPresent || value.CompanionStorageReadOnly.IsPresent || value.KotlinStatic.IsPresent || value.KotlinType.IsPresent || value.LateinitDeclarationId.IsPresent || value.NullableGeneric.IsPresent || value.Outer.IsPresent || value.SuspendFnTypePre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirFieldDeclaration");
         return new CirField
         {
@@ -1164,7 +1164,7 @@ sealed partial class TypedCirProjection
 
     internal CirStaticField ProjectCirStaticField(BirStaticFieldGet value)
     {
-        if (value.CompanionCall.IsPresent || value.CompanionReceiver.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberType.IsPresent || value.MemberVisibility.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.Sty.IsPresent)
+        if (value._nativeFieldAddress.IsPresent || value._nativeLocation.IsPresent || value.CompanionCall.IsPresent || value.CompanionReceiver.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberType.IsPresent || value.MemberVisibility.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.Sty.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirStaticFieldGet");
         return new CirStaticField
         {
@@ -1199,7 +1199,7 @@ sealed partial class TypedCirProjection
 
     internal CirFieldRead ProjectCirFieldRead(BirFieldGet value)
     {
-        if (value.CompanionCall.IsPresent || value.DataClassCopyDefault.IsPresent || value.GeneratedEqualsFieldRead.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberType.IsPresent || value.MemberVisibility.IsPresent || value.Outer.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.Sty.IsPresent)
+        if (value._nativeFieldAddress.IsPresent || value._nativeLocation.IsPresent || value.CompanionCall.IsPresent || value.DataClassCopyDefault.IsPresent || value.GeneratedEqualsFieldRead.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberType.IsPresent || value.MemberVisibility.IsPresent || value.Outer.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.Sty.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirFieldGet");
         return new CirFieldRead
         {

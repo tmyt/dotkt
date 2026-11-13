@@ -819,13 +819,17 @@ static partial class FBoundStarProjectionErasure
     }
 
     internal static bool IsSourceGeneric(JsonObject def)
+        => IsSourceGeneric(Str(def["name"]), Bool(def["generated"]), HasClrTypeAlias(def),
+            (def["typeParams"] as JsonArray)?.Count ?? 0);
+
+    internal static bool IsSourceGeneric(string name, bool generated, bool alias, int ownTypeParameterCount)
     {
         // Lifted/local compiler artifacts are not part of the Kotlin ABI and cannot be named by a
         // downstream star-projected use.  Attaching an existential interface to them also turns
         // their implementation-detail type variables into public CLR MethodImpl signatures.
-        if (Bool(def["generated"]) || HasClrTypeAlias(def)
-            || BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(Str(def["name"]))) return false;
-        return def["typeParams"] is JsonArray { Count: > 0 };
+        if (generated || alias
+            || BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(name)) return false;
+        return ownTypeParameterCount > 0;
     }
 
     static bool HasClrTypeAlias(JsonObject def)

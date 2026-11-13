@@ -8285,8 +8285,12 @@ sealed partial class ReferenceMetadataIndex
                 ["body"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = opaque },
                     new JsonObject { ["k"] = "exprStmt", ["expr"] = mixed }),
             }) };
-            KotlinGenericScalarSlots.ApplyAll(new[] { root }, new GenericRepresentationPolicy(
-                new Dictionary<string, string>(), roots: new[] { root }), carrierIndex);
+            var typedRoot = BirGraphDom.ReadBirFileDeclaration(root);
+            KotlinGenericScalarSlots.ApplyAll(new[] { typedRoot }, GenericRepresentationPolicy.CreateSource(
+                new[] { typedRoot }, new Dictionary<string, string>(), carrierIndex), carrierIndex);
+            var calls = typedRoot.Methods.Value[0].Body.Value.OfType<BirExpressionStatement>().Select(statement => statement.Expr.Value).ToArray();
+            opaque = ((BirCallInstance)calls[0]).ToDom();
+            mixed = ((BirCallInstance)calls[1]).ToDom();
             if (TypeJson.Read(opaque["sig"][0]) is not TypeNode.Fqn { Name: "object" }
                 || TypeJson.Read(opaque["sig"][1]) != function || TypeJson.Read(mixed["sig"][0]) != source)
                 throw new InvalidOperationException("Fake override projection guessed a parameter contract not shared by its declarations");
