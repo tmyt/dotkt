@@ -1635,13 +1635,22 @@ sealed class Pipeline
         // clean as one inside the loop.
         ForeignNullableGenericCrossing.CheckImplementedSlots(loweredRoots, refs);
 
+        var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
+            root["assemblyAttrs"] is JsonArray { Count: > 0 });
+        // Every remaining owner consumes typed occurrences. Enter once before
+        // physical value/storage edges; no pass below returns the graph to DOM.
+        var physicalRoots = loweredRoots.Select(file =>
+            (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
+        loweredRoots.Clear();
+        var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+
         // BirTypeLowering's mutable/read-only collection faces are sibling CLR interfaces. Materialize every cast
         // required by the final value-flow graph only now, after every synthetic declaration and exact memberRef is
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
         var physicalExistentialOwners = localExistentialOwners.Values.ToHashSet(StringComparer.Ordinal);
-        PhysicalValueCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList(),
-            ClrMemberResolution.UnitSingletonRead, isValueFqn, referenceBuild: _options.RefBuild,
+        TypedPhysicalValueCoercion.ApplyAll(physicalDocuments,
+            () => ClrMemberResolution.UnitSingletonRead(refs), isValueFqn, referenceBuild: _options.RefBuild,
             isReferenceOwner: owner => refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
                 is { IsClass: true, IsValueType: false } native
                 && native.FullName is not ("System.Object" or "System.ValueType" or "System.Enum"),
@@ -1651,29 +1660,21 @@ sealed class Pipeline
                 is { IsValueType: false },
             referencedCarrier: (target, source) => refs.TryExistentialPhysicalOwner(target.Name, out var carrier)
                 && carrier == source.Name, references: refs);
-        foreach (var (lowered, _) in loweredRoots) FunctionSignatureIdentity.Complete(lowered);
+        foreach (var root in physicalDocuments) FunctionSignatureIdentity.Complete(root);
 
         // Final executable CIR admission: every call/conversion and suspend state machine is now physical.
         // Ordered operands cross return, loop-transfer and protected-region boundaries only at an empty stack.
         // This must follow suspend lowering: a temporary CLR address must never become a state-machine field.
         if (!_options.RefBuild)
         {
-            var physicalResultType = PhysicalValueCoercion.ResultTypeOracle(loweredRoots.Select(file => file.Root).ToList());
-            foreach (var (lowered, _) in loweredRoots)
-                PhysicalOperandNormalization.Apply(lowered, isValueFqn, physicalResultType, refs);
+            var physicalResultType = TypedPhysicalValueCoercion.ResultTypeOracle(physicalDocuments);
+            foreach (var root in physicalDocuments)
+                TypedPhysicalOperandNormalization.Apply(root, isValueFqn, physicalResultType, refs);
         }
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
-        DeclarationIdentityBinding.ValidateFinalPhysicalNames(loweredRoots.Select(file => file.Root));
-        var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
-            root["assemblyAttrs"] is JsonArray { Count: > 0 });
-
-        // The final owning frontier is one-way. Control flow and physical CIR
-        // projection retain typed occurrences; no final graph returns to DOM.
-        var physicalRoots = loweredRoots.Select(file =>
-            (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
-        loweredRoots.Clear();
+        DeclarationIdentityBinding.ValidateFinalPhysicalNames(physicalDocuments);
         foreach (var (root, _) in physicalRoots) TypedProtectedRegions.Apply(root, refs);
 
         // Canonical runtime synthetics were useful as module-wide representation templates, but an application does

@@ -101,7 +101,7 @@ static partial class GenericArrayStorageLowering
             var second = File("SecondArrayFile", "$arrayStorage$1");
             var roots = new JsonNode[] { first, second };
             if (physical)
-                PhysicalValueCoercion.ApplyAll(roots,
+                PhysicalValueCoercion.ApplyFixtureForSelfTest(roots,
                     () => throw new InvalidOperationException("Unexpected array Unit conversion"),
                     type => type.Name == "System.Int32", references: refs);
             else
