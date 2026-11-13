@@ -8,7 +8,7 @@ using DotKt.Bir.Lowering;
 // Select the binding-owned Kotlin implementation while receiver arguments still denote source types.
 // The resulting ordinary declaration-bound call participates in demand analysis and frame materialization;
 // selecting it after erasure would require guessing source arguments from an invariant CLR storage type.
-static class CollectionHelperBinding
+static partial class CollectionHelperBinding
 {
     const string HelperOwner = "kotlin.collections.ClrMapDefaultsKt";
 
@@ -138,7 +138,7 @@ static class CollectionHelperBinding
             ["kotlin.collections.Map"] = "System.Collections.Generic.IDictionary",
             ["kotlin.collections.Set"] = "System.Collections.Generic.ISet",
         };
-        Apply(new[] { root }, null, aliases, CaptureFixture(root));
+        ApplyFixture(root, null, aliases, CaptureFixture(root));
         var call = root["methods"][1]["body"][0];
         if (Text(call[DeclarationIdentityBinding.Key]) != "map-keys" || Text(call["k"]) != "callStatic"
             || TypeJson.Read(call["typeArgs"][0]) != new TypeNode.Tv("method", 1))
@@ -152,6 +152,7 @@ static class CollectionHelperBinding
         Console.WriteLine("[map default binding] self-test OK (source selection, projected argument, canonical representation)");
         CollectionSelectionSelfTest();
         SemanticHelperSelfTest();
+        SourceContextSelfTest();
     }
 
     static void SemanticHelperSelfTest()
@@ -190,7 +191,7 @@ static class CollectionHelperBinding
                 ObjectSlotRename.Apply(root);
                 FaithfulHintRecognition.Apply(root, null, new HashSet<string>());
             });
-        Apply(new[] { root }, null, aliases, captured);
+        ApplyFixture(root, null, aliases, captured);
         if (typedRender.DeclarationId.Value != "render-collection"
             || !ReferenceEquals(typedRender.Args.Value, typedArguments)
             || typedRender.TypeArgs.Value.Single() != variable
@@ -348,7 +349,7 @@ static class CollectionHelperBinding
             ["capturedTypeParams"] = new JsonArray(new JsonObject { ["name"] = "A" }), ["outerTypeParamCount"] = 1,
             ["semanticOwner"] = "probe.Outer", ["mods"] = new JsonObject { ["inner"] = true },
         });
-        Apply(new[] { root }, null, aliases, CaptureFixture(root));
+        ApplyFixture(root, null, aliases, CaptureFixture(root));
         if (Text(body[0][DeclarationIdentityBinding.Key]) != "clrProjectedViewIsEmpty"
             || body[0]["args"][2]["value"].GetValue<int>() != 0
             || TypeJson.Read(body[0]["args"][1]["type"]) is not TypeNode.Fqn {
@@ -395,6 +396,9 @@ static class CollectionHelperBinding
     // Author their statement wrappers only in the owning capture fixture, before
     // the production pass or its callback mutates the original graph.
     static SourceCollectionInputs CaptureFixture(JsonObject root)
+        => new(new[] { ReadFixture(root) }, null);
+
+    static BirFileDeclaration ReadFixture(JsonObject root)
     {
         var source = root.DeepClone().AsObject();
         foreach (var method in (source["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
@@ -405,7 +409,24 @@ static class CollectionHelperBinding
                     body[index] = null;
                     body[index] = new JsonObject { ["k"] = "exprStmt", ["expr"] = expression };
                 }
-        return new SourceCollectionInputs(new[] { BirGraphDom.ReadBirFileDeclaration(source) }, null);
+        return BirGraphDom.ReadBirFileDeclaration(source);
+    }
+
+    // Only fixture input/output is adapted: production never sends executable
+    // bodies across a temporary DOM boundary to call this owning consumer.
+    static void ApplyFixture(JsonObject root, ReferenceMetadataIndex references,
+        IReadOnlyDictionary<string, string> aliases, SourceCollectionInputs captured)
+    {
+        var source = ReadFixture(root);
+        Apply(new[] { source }, references, aliases, captured);
+        var methods = root["methods"].AsArray();
+        for (var method = 0; method < source.Methods.Value.Length; method++)
+        {
+            if (methods[method]?["body"] is not JsonArray body) continue;
+            var statements = source.Methods.Value[method].Body.OrEmpty();
+            for (var index = 0; index < statements.Length; index++)
+                body[index] = ((BirGraphValue)((BirExpressionStatement)statements[index]).Expr.Value).ToDom();
+        }
     }
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;
