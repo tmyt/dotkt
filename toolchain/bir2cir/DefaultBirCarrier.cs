@@ -49,16 +49,19 @@ static class DefaultBirCarrier
         .Where(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: AttributeName })
         .Select(Decode).SingleOrDefault();
 
-    internal static JsonNode Decode(JsonObject attribute) => ExecutableBirCodec.ReadExpressionDom(
+    internal static IBirExpression DecodeTyped(JsonObject attribute) => ExecutableBirCodec.ReadExpression(
         attribute["args"][1]["value"].GetValue<string>(),
         Convert.FromBase64String(attribute["args"][2]["bytes"].GetValue<string>()));
 
-    internal static void Rewrite(JsonObject attribute, Action<JsonNode> rewrite)
+    // The surrounding attribute is still owned by a DOM declaration pass. Only
+    // its declared scalar codec/bytes cross this boundary: executable ownership
+    // starts at the real decoder, not a fabricated typed attribute header.
+    internal static void RewriteTyped(JsonObject attribute, Func<IBirExpression, IBirExpression> rewrite)
     {
-        var payload = Decode(attribute);
-        rewrite(payload);
         var args = attribute["args"];
-        args[2]["bytes"] = Convert.ToBase64String(ExecutableBirCodec.EncodeExpressionDom(args[1]["value"].GetValue<string>(), payload));
+        var codec = args[1]["value"].GetValue<string>();
+        var payload = rewrite(DecodeTyped(attribute));
+        args[2]["bytes"] = Convert.ToBase64String(ExecutableBirCodec.EncodeExpression(codec, payload));
     }
 
     internal static void Rewrite(BirAttribute attribute, Func<IBirExpression, IBirExpression> rewrite)
@@ -68,9 +71,6 @@ static class DefaultBirCarrier
         var payload = rewrite(Decode(attribute));
         ((BirOpaqueBytes)arguments[2]).Bytes = ExecutableBirCodec.EncodeExpression(codec, payload);
     }
-
-    internal static JsonNode OfParameter(JsonObject parameter) => parameter["attrs"] is JsonArray attrs
-        ? attrs.OfType<JsonObject>().Where(IsCarrier).Select(Decode).SingleOrDefault() : null;
 
     internal static void SelfTest()
     {
@@ -87,14 +87,17 @@ static class DefaultBirCarrier
                 Stmts.Value: [BirSourcePoint { Span.Value.L.Value: 7 }] })
             throw new InvalidOperationException("Typed default carrier decoding lost its expression or source facts");
         var frozen = frozenParameter.ToDom();
-        if (frozen["defaultBir"] != null || !JsonNode.DeepEquals(OfParameter(frozen), body.ToDom()) || !source.DefaultBir.HasValue)
+        if (frozen["defaultBir"] != null
+            || !((BirGraphValue)DecodeTyped((JsonObject)frozen["attrs"][0])).StructurallyEquals(body)
+            || !source.DefaultBir.HasValue)
             throw new InvalidOperationException("Default BIR source fact did not round-trip through the shared codec");
         var attribute = (JsonObject)frozen["attrs"][0];
         if (TypeJson.OwnerName(attribute["argTypes"][0]) != "System.Int32"
             || TypeJson.OwnerName(attribute["argTypes"][1]) != "System.String")
             throw new InvalidOperationException("Default carrier must name its exact physical constructor slots");
-        MaterializedBirPayload.HideSourceSpans(attribute);
-        if (Decode(attribute)["stmts"][0]["span"] != null || body.Stmts.Value[0] is not BirSourcePoint { Span.HasValue: true }
+        MaterializedBirPayload.HideDefaultSourceSpans(attribute);
+        if (DecodeTyped(attribute) is not BirValueBlock { Stmts.Value: [BirSourcePoint { Span.IsPresent: false }] }
+            || body.Stmts.Value[0] is not BirSourcePoint { Span.HasValue: true }
             || attribute["args"][0]["value"].GetValue<int>() != 2)
             throw new InvalidOperationException("Default carrier rewriting changed source ownership or argument position");
     }

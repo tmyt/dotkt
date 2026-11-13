@@ -18,7 +18,7 @@ sealed record SourceDeclarationSignature(IReadOnlyList<TypeNode> Parameters, Typ
     internal SourceDeclarationSignature Rewrite(Func<TypeNode.Fqn, TypeNode.Fqn> classifier) =>
         new(Parameters.Select(type => RewriteType(type, classifier)).ToArray(), RewriteType(Return, classifier));
 
-    static TypeNode RewriteType(TypeNode type, Func<TypeNode.Fqn, TypeNode.Fqn> classifier) => type switch {
+    internal static TypeNode RewriteType(TypeNode type, Func<TypeNode.Fqn, TypeNode.Fqn> classifier) => type switch {
         TypeNode.Fqn f => classifier(f with {
             Args = f.Args?.Select(argument => RewriteType(argument, classifier)).ToArray(),
             Classifier = f.Classifier is { } source ? source with { OwnerPath = source.OwnerPath.ToArray() } : null,

@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // Opaque executable BIR crosses an ownership boundary in KotlinInline/KotlinDefault carriers. The producer stores
 // frontend vocabulary intentionally; the consuming bir2cir instance must put that payload through the same
@@ -10,25 +11,13 @@ using DotKt.Bir;
 // sweep. Normal source BIR takes the same first step before Program's source helper recognition.
 static partial class MaterializedBirPayload
 {
-    // Before storing executable BIR in a DLL, turn producer-owned source positions into hidden boundaries.
-    // The local compilation retains its own graph and emits visible positions to its separate PDB.
-    public static void HideSourceSpans(JsonNode payload)
-    {
-        if (payload is JsonObject obj)
-        {
-            if (obj["k"] is JsonValue kind && kind.TryGetValue<string>(out var text) && text == "sourcePoint")
-                obj.Remove("span");
-            HideDefaultSourceSpans(obj);
-            foreach (var pair in obj) HideSourceSpans(pair.Value);
-        }
-        else if (payload is JsonArray array)
-            foreach (var item in array) HideSourceSpans(item);
-    }
-
     // Defaults nested on inline parameters use the same versioned byte-array carrier.
     public static void HideDefaultSourceSpans(JsonObject obj)
     {
-        if (DefaultBirCarrier.IsCarrier(obj)) DefaultBirCarrier.Rewrite(obj, HideSourceSpans);
+        if (DefaultBirCarrier.IsCarrier(obj)) DefaultBirCarrier.RewriteTyped(obj, expression => {
+            HideSourceSpans((BirGraphValue)expression);
+            return expression;
+        });
     }
 
     public static void Normalize(JsonNode payload)

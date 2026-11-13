@@ -9,7 +9,7 @@ using DotKt.Bir;
 // nestedIn representation, bind type identities inside those carriers to that exact producer metadata identity. This
 // is authored from current declarations/reference facts; a consumer never guesses an owner from a generated name and
 // there is intentionally no legacy-DLL fallback.
-static class OpaqueCarrierTypeBinding
+static partial class OpaqueCarrierTypeBinding
 {
 
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
@@ -148,9 +148,9 @@ static class OpaqueCarrierTypeBinding
             if ((obj["inlineBir"] as JsonValue)?.TryGetValue<string>(out var encoded) == true
                 && !string.IsNullOrEmpty(encoded))
             {
-                var payload = ExecutableBirCodec.ReadInlineDom(ExecutableBirCodec.Codec, Convert.FromBase64String(encoded));
-                BindPayload(payload, physicalBySemantic, preserveInlineParameterSignature: true);
-                obj["inlineBir"] = Convert.ToBase64String(ExecutableBirCodec.EncodeInlineDom(ExecutableBirCodec.Codec, payload));
+                var payload = ExecutableBirCodec.ReadInline(ExecutableBirCodec.Codec, Convert.FromBase64String(encoded));
+                BindExecutablePayload(payload, physicalBySemantic);
+                obj["inlineBir"] = Convert.ToBase64String(ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, payload));
             }
 
             if ((obj["suspendResult"] as JsonValue)?.TryGetValue<string>(out var suspendResult) == true
@@ -158,13 +158,15 @@ static class OpaqueCarrierTypeBinding
             {
                 var payload = JsonNode.Parse(suspendResult)
                     ?? throw new InvalidOperationException("suspend-result carrier decoded to null");
-                BindPayload(payload, physicalBySemantic, preserveInlineParameterSignature: false);
+                BindJsonMetadataPayload(payload, physicalBySemantic);
                 obj["suspendResult"] = payload.ToJsonString();
             }
 
             if (DefaultBirCarrier.IsCarrier(obj))
-                DefaultBirCarrier.Rewrite(obj,
-                    payload => BindPayload(payload, physicalBySemantic, preserveInlineParameterSignature: false));
+                DefaultBirCarrier.RewriteTyped(obj, payload => {
+                    BindExecutablePayload((DotKt.Bir.Lowering.BirGraphValue)payload, physicalBySemantic);
+                    return payload;
+                });
 
             foreach (var value in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
                 RewriteCarrierSlots(value, physicalBySemantic);
@@ -174,40 +176,19 @@ static class OpaqueCarrierTypeBinding
                 RewriteCarrierSlots(value, physicalBySemantic);
     }
 
-    static void BindPayload(JsonNode payload, IReadOnlyDictionary<string, string> physicalBySemantic,
-        bool preserveInlineParameterSignature)
+    // Suspend-result metadata is JSON, not an executable byte carrier. Keep its
+    // explicit metadata-leaf path separate from the owning executable traversal.
+    static void BindJsonMetadataPayload(JsonNode payload, IReadOnlyDictionary<string, string> physicalBySemantic)
     {
-        // A synthClass is a complete declaration carried into the consumer and gets a new consumer-side owner. Its own
-        // identity must remain semantic here; only references to producer-resident declarations become physical tokens.
-        var carried = new HashSet<string>(StringComparer.Ordinal);
-        void CollectCarried(JsonNode current)
-        {
-            if (current is JsonObject obj)
-            {
-                if (obj["synthClass"] is JsonObject synth && Str(synth["name"]) is string name)
-                    carried.Add(name);
-                foreach (var child in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
-                    CollectCarried(child);
-            }
-            else if (current is JsonArray array)
-                foreach (var child in array.Where(value => value != null).ToList()) CollectCarried(child);
-        }
-        CollectCarried(payload);
-
         void Rewrite(JsonNode current)
         {
             if (current is JsonObject obj)
             {
                 if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name
-                    && !carried.Contains(name) && physicalBySemantic.TryGetValue(name, out var physical))
+                    && physicalBySemantic.TryGetValue(name, out var physical))
                     obj["name"] = physical;
-                foreach (var (key, child) in obj.Select(kv => (kv.Key, kv.Value)).Where(entry => entry.Value != null).ToList())
+                foreach (var child in obj.Select(kv => kv.Value).Where(child => child != null).ToList())
                 {
-                    // The root inline declaration signature is Kotlin-semantic BIR and is the exact overload key a
-                    // consumer's callInline.paramSig matches before splicing. Only the opaque executable body needs
-                    // producer-physical nested identities; rewriting this header would make the current-format
-                    // producer disagree with an equally current consumer.
-                    if (preserveInlineParameterSignature && ReferenceEquals(obj, payload) && key == "params") continue;
                     Rewrite(child);
                 }
             }

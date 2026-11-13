@@ -194,10 +194,7 @@ static class InnerRepresentationFrameTests
             DeclarationId = "declaration", Params = new[] { new BirParameter { Type = source }, new BirParameter { Type = outer } },
             Ret = new TypeNode.Fqn("kotlin.Unit"),
         } } } });
-        var executable = new JsonObject {
-            ["params"] = new JsonArray(TypeJson.Write(source)),
-            ["body"] = new JsonArray(TypeJson.Write(source), TypeJson.Write(outer)),
-        };
+        var suspendShape = new TypeNode.Fn(true, source, new TypeNode[] { source, outer });
         var inlineBody = new BirInlinePayload {
             V = 1, Fqn = "Sample.File.inline", Owner = "Sample.File", FileClass = "Sample.File", Recv = "none", Static = true,
             TypeParams = new[] { new BirTypeParameter { Name = "O" }, new BirTypeParameter { Name = "I" } },
@@ -206,7 +203,7 @@ static class InnerRepresentationFrameTests
             Lifted = Array.Empty<BirFunctionDeclaration>(),
         };
         root["inlineBir"] = Convert.ToBase64String(ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, inlineBody));
-        root["suspendResult"] = executable.ToJsonString();
+        root["suspendResult"] = TypeNode.ToJson(suspendShape);
         var defaultBody = new BirValueBlock {
             Type = source,
             Stmts = new IBirStatement[] { new BirVariable { Name = "outer", Type = outer } },
@@ -223,17 +220,18 @@ static class InnerRepresentationFrameTests
             throw new InvalidOperationException("Source carriers lost nested identity or changed source argument order");
         if (signature.Parameters[1] != outer)
             throw new InvalidOperationException("Source carriers unnecessarily changed a top-level classifier");
-        var inline = ExecutableBirCodec.ReadInlineDom(ExecutableBirCodec.Codec,
+        var inline = ExecutableBirCodec.ReadInline(ExecutableBirCodec.Codec,
             Convert.FromBase64String(root["inlineBir"]!.GetValue<string>()));
-        var suspendPayload = JsonNode.Parse(root["suspendResult"]!.GetValue<string>());
-        if (TypeJson.Read(inline["body"]![0]!["type"]) != expected || TypeJson.Read(inline["body"]![1]!["type"]) != outer
-            || TypeJson.Read(suspendPayload!["body"]![0]) != expected || TypeJson.Read(suspendPayload["body"]![1]) != outer)
+        var suspendPayload = (TypeNode.Fn)TypeJson.Read(JsonNode.Parse(root["suspendResult"]!.GetValue<string>()));
+        if (((BirVariable)inline.Body.Value[0]).Type.Value != expected || ((BirVariable)inline.Body.Value[1]).Type.Value != outer
+            || suspendPayload.Ret != expected || suspendPayload.Params[0] != expected || suspendPayload.Params[1] != outer
+            || !suspendPayload.Suspend)
             throw new InvalidOperationException("Executable carriers must bind nested identities without retargeting their top-level owners");
-        var defaultPayload = DefaultBirCarrier.Decode(defaultAttribute);
-        if (TypeJson.Read(defaultPayload["type"]) != expected || TypeJson.Read(defaultPayload["result"]["type"]) != expected
-            || TypeJson.Read(defaultPayload["stmts"][0]["type"]) != outer)
+        var defaultPayload = (BirValueBlock)DefaultBirCarrier.DecodeTyped(defaultAttribute);
+        if (defaultPayload.Type.Value != expected || ((BirClassReference)defaultPayload.Result.Value).Type.Value != expected
+            || ((BirVariable)defaultPayload.Stmts.Value[0]).Type.Value != outer)
             throw new InvalidOperationException("Typed default carriers must bind nested identities without retargeting top-level owners");
-        if (TypeJson.Read(inline["params"]![0]!["type"]) != source)
+        if (inline.Params.Value[0].Type.Value != source)
             throw new InvalidOperationException("Inline overload signatures must remain semantic");
     }
 }
