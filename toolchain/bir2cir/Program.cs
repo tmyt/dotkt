@@ -64,6 +64,7 @@ static class Bir2Cir
                 PrimitiveOperatorLowering.SelfTest();
                 SourceGraphRewrite.SelfTest();
                 ForInLowering.SelfTestTypedRangePrefix();
+                ArrayConstructionLowering.SelfTestSource();
                 RoundtripMetadata.SourceSuspendResultSelfTest();
                 InheritedMemberOwnerBinding.SourceProjectionSelfTest();
                 TypedExecutableFrames.SelfTest();
@@ -413,6 +414,9 @@ sealed class Pipeline
             enumRuntimeLookup |= EnumValueLowering.Apply(source, refs, richEnumFields, basicEnums, explicitEnums, parseEnums);
         }
         var enums = new EnumPreparation(richEnums, basicEnums, enumRuntimeLookup);
+        // Enum values now state their array type. Derive array elements and
+        // realize constructors before any type erasure or suspend spill owner.
+        foreach (var source in captured) ArrayConstructionLowering.Apply(source, refs);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -555,14 +559,6 @@ sealed class Pipeline
             // inherited protected-property read may be correctly realigned to object[] while its store into a
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
             NullableTvErasureCallRealign.CollectNewSyntheticTypes(bir.Root, nullableTvDeclRets);
-            // ARRAY CONSTRUCTION + INTRINSIC ELEMENT (#73 Phase 2b-A): kotc emits the faithful `kotlin.IntArray`
-            // identity — the sized ctor as `new kotlin.IntArray(size, init)`, the arrayGet/arraySet/forArray
-            // intrinsics with NO `elem`. Derive the sized-array construction (newArrayInit/newArraySized) + stamp the
-            // intrinsic element off the array operand's static type — including a basic/generic-param `enumValues`
-            // array after the typed enum prefix has resolved its source operation.
-            // Runs EARLY (before FaithfulHintRecognition / SuspendColdLowering / BirTypeLowering) so every `elem`
-            // consumer sees the stamped element.
-            ArrayConstructionLowering.Apply(bir.Root, refs);
             // FAITHFUL-HINT RECOGNITION (#52 Phase 4b / #59): kotc emits the faithful op (`objMethod` toString/equals —
             // BCL-restored to ToString/Equals by ObjectSlotRename above, `concat`, `callStatic println/print`, Double/Float
             // `callInstance compareTo`) with NO type hint; bir2cir
