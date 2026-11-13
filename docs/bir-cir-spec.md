@@ -23,8 +23,13 @@ unaccounted alias-profile omissions. The current file/annotation input profiles
 deliberately exclude physical assembly attributes and resolved attribute identity;
 those are produced after the input frontier. No arbitrary field bag is part of the IR.
 
-Input construction, suspend declaration inventory, and source-default freezing
-own this graph. Remaining DOM-based passes currently receive a direct one-way
+Input construction, suspend declaration inventory, source-default freezing,
+source fact capture, and source-known inherited suspend forwarders own this
+graph. The source declaration index is captured before these physical-only
+forwarders are added. The remaining value-representation index retains the
+original declarations' live occurrences and exact membership, not a frozen
+signature snapshot or newly generated forwarding methods.
+Remaining DOM-based passes currently receive a direct one-way
 projection, including a numeric-token leaf adapter. This is an incremental
 migration seam, not completion of #1414; it must disappear as owning passes move
 to the typed graph. No enclosing graph is serialized and reparsed at that seam.

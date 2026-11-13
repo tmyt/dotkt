@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 using Def = SupertypeGraph.Def;
 
 // ERASURE PROPAGATES FROM THE OVERRIDDEN SLOT, NOT FROM SYNTAX (#86 D3).
@@ -2491,6 +2493,11 @@ static class KotlinOverrideSlotBridge
         => MethodTypeParameterShapeKey(slotTypeParams, slotOwnerArgs, constraintType)
             == MethodTypeParameterShapeKey(implementationTypeParams, implementationOwnerArgs, constraintType);
 
+    internal static bool SameSourceMethodTypeParameterShape(BirTypeParameter[] slotTypeParams,
+        BirTypeParameter[] implementationTypeParams, TypeNode[] slotOwnerArgs, TypeNode[] implementationOwnerArgs)
+        => SourceMethodTypeParameterShapeKey(slotTypeParams, slotOwnerArgs)
+            == SourceMethodTypeParameterShapeKey(implementationTypeParams, implementationOwnerArgs);
+
     static JsonArray SourceMethodTypeParameters(JsonObject method)
     {
         var parameters = SemanticMethodTypeParameters(method);
@@ -2534,23 +2541,32 @@ static class KotlinOverrideSlotBridge
 
     internal static string MethodTypeParameterShapeKey(JsonArray typeParams, TypeNode[] ownerArgs,
         Func<TypeNode, TypeNode> constraintType = null)
+        => ConstraintShapeKey(typeParams?.Select(parameter => (
+            Constraints: ((parameter as JsonObject)?["constraints"] as JsonArray)?.Select(TypeJson.Read)
+                .Where(constraint => constraint != null) ?? Enumerable.Empty<TypeNode>(),
+            Specials: ((parameter as JsonObject)?["specialConstraints"] as JsonArray)?.Select(Str)
+                .Where(value => value != null) ?? Enumerable.Empty<string>())), ownerArgs, constraintType);
+
+    internal static string SourceMethodTypeParameterShapeKey(BirTypeParameter[] typeParams, TypeNode[] ownerArgs)
+        => ConstraintShapeKey(typeParams?.Select(parameter => (
+            Constraints: (IEnumerable<TypeNode>)parameter.Constraints.OrEmpty(),
+            Specials: (IEnumerable<string>)parameter.SpecialConstraints.OrEmpty())), ownerArgs);
+
+    static string ConstraintShapeKey(IEnumerable<(IEnumerable<TypeNode> Constraints, IEnumerable<string> Specials)> parameters,
+        TypeNode[] ownerArgs, Func<TypeNode, TypeNode> constraintType = null)
     {
-        if (typeParams is not { Count: > 0 }) return "0";
+        if (parameters == null) return "0";
         var shapes = new List<string>();
-        foreach (var parameter in typeParams)
+        foreach (var parameter in parameters)
         {
-            var declaration = parameter as JsonObject;
-            var constraints = (declaration?["constraints"] as JsonArray)?.Select(TypeJson.Read)
-                .Where(constraint => constraint != null)
+            var constraints = parameter.Constraints
                 .Select(constraint => SupertypeGraph.SubstOwnerTvs(constraint, ownerArgs ?? Array.Empty<TypeNode>()))
                 .Select(constraint => SupertypeGraph.TypeKey(constraintType?.Invoke(constraint) ?? constraint))
-                .OrderBy(key => key, StringComparer.Ordinal) ?? Enumerable.Empty<string>();
-            var specials = (declaration?["specialConstraints"] as JsonArray)?.Select(Str)
-                .Where(value => value != null).OrderBy(value => value, StringComparer.Ordinal)
-                ?? Enumerable.Empty<string>();
+                .OrderBy(key => key, StringComparer.Ordinal);
+            var specials = parameter.Specials.OrderBy(value => value, StringComparer.Ordinal);
             shapes.Add("{" + string.Join(",", constraints) + "}|{" + string.Join(",", specials) + "}");
         }
-        return typeParams.Count + ":" + string.Join(";", shapes);
+        return shapes.Count == 0 ? "0" : shapes.Count + ":" + string.Join(";", shapes);
     }
 
     // True iff this method declares itself an override of `supName`'s member — directly, or of some owner that

@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // A BIR member call keeps the callee declaration's return type vocabulary. For `AtomicRef<Any>.value`, for example,
 // that is `tv{scope:type,0}` plus the constructed owner `AtomicRef<Any>`. Once bir2cir has resolved the exact declaring
@@ -35,6 +36,25 @@ static class ConstructedMemberReturnSubstitution
         if (changed) NodeType.DropStampIfStale(obj);
     }
 
+    internal static void ApplyCall(BirCallInstance call)
+    {
+        if (call.OwnerType.OrDefault() is not TypeNode.Fqn { Args: { } args }) return;
+        var stamp = call.Sty.OrDefault();
+        var changed = false;
+        if (call.Ret.HasValue && TryCloseResult(call.Ret.Value, stamp, args, out var result))
+        {
+            changed = true;
+            call.Ret = result;
+        }
+        if (call.DynRet.HasValue && TryCloseResult(call.DynRet.Value, stamp, args, out var dynamicResult))
+        {
+            changed = true;
+            call.DynRet = dynamicResult;
+        }
+        if (changed && stamp != null && (call.Ret.HasValue && !IrSanity.StampAgrees(stamp, call.Ret.Value)
+            || call.DynRet.HasValue && !IrSanity.StampAgrees(stamp, call.DynRet.Value))) call.Sty = default;
+    }
+
     static void Walk(JsonNode node)
     {
         switch (node)
@@ -52,7 +72,7 @@ static class ConstructedMemberReturnSubstitution
     // TRUE when the slot was actually rewritten — the caller owns the §2.7 `sty` consequence of that.
     static bool RewriteSlot(JsonObject obj, string key, TypeNode[] args)
     {
-        if (TypeJson.Read(obj[key]) is not TypeNode type || !ContainsOwnerTv(type)) return false;
+        if (TypeJson.Read(obj[key]) is not TypeNode type) return false;
         // kotc's `sty` is the frontend-resolved CALL-SITE result. When the result slot is exactly that shape, every
         // tv in it already belongs to the caller's frame; substituting it through the callee owner would apply the
         // construction twice (`Iterator<Entry<K,V>>.next()` -> `Entry<Entry<K,V>,V>`). A callee-relative result is
@@ -60,8 +80,16 @@ static class ConstructedMemberReturnSubstitution
         // (`AtomicRef<Any>.value`: ret=!0, sty=String), so only that form is substituted. A bir2cir producer that
         // authors an already-closed result must carry the same exact stamp; equality then keeps that call stable
         // across source admission and later construction-boundary normalization.
-        if (TypeJson.Read(obj["sty"]) is TypeNode stamp && type.Equals(stamp)) return false;
-        obj[key] = TypeJson.Write(Subst(type, args));
+        if (!TryCloseResult(type, TypeJson.Read(obj["sty"]), args, out var closed)) return false;
+        obj[key] = TypeJson.Write(closed);
+        return true;
+    }
+
+    static bool TryCloseResult(TypeNode type, TypeNode stamp, TypeNode[] args, out TypeNode closed)
+    {
+        closed = type;
+        if (type.Equals(stamp) || !ContainsOwnerTv(type)) return false;
+        closed = Subst(type, args);
         return true;
     }
 

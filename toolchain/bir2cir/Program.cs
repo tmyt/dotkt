@@ -45,6 +45,7 @@ static class Bir2Cir
                 BirNodeType.SelfTest();
                 CapturedGenericInvocation.SelfTestSourceFacts();
                 SourceModuleIndex.SelfTest();
+                InheritedClassInterfaceBridge.SourceSelfTest();
                 BirFileCodec.SelfTest();
                 ClrTypeVariance.SelfTest();
                 PhysicalValueCoercion.SelfTest();
@@ -212,6 +213,9 @@ sealed class Pipeline
         captured = ContinuationErasure.PreserveSourceSupertypes(captured, refs);
         captured = CapturedGenericInvocation.PreserveSourceFacts(captured, refs);
         var sourceIndex = new SourceModuleIndex(captured, refs.Aliases);
+        // New physical-only forwarders are not source declarations. Keep the
+        // original declaration membership while extending the owning prefix.
+        InheritedClassInterfaceBridge.MaterializeSuspendDeclarations(captured, refs);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -263,12 +267,10 @@ sealed class Pipeline
         var birFiles = module.Files;
         var birRoots = birFiles.Select(b => b.Root).ToList();
         var declarationSemanticSignatures = module.Signatures;
-        var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild, module.ValuePolicy);
+        var valueRepresentations = new ValueRepresentationLowering(birRoots, refs, _options.RefBuild, module.ValuePolicy,
+            module.SourceIndex.DeclarationIds);
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
         var localDeclarationIds = module.SourceIndex.DeclarationIds;
-        // These are new CLR slot bodies for frontend-selected inherited implementations, not source declarations.
-        // Materialize before downstream indexing/freezing so references and local bases use the same suspend ABI.
-        InheritedClassInterfaceBridge.MaterializeSuspendDeclarations(birRoots, refs);
         var representationAliases = module.SourceIndex.CollisionAliases;
         var localValueTypeFqns = module.SourceIndex.ValueTypes;
         ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);

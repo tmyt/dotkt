@@ -33,7 +33,7 @@ sealed class ValueRepresentationLowering
     static string Argument(JsonObject attribute, int index) => Text(attribute?["args"]?[index]?["value"]);
 
     internal ValueRepresentationLowering(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex references, bool refBuild,
-        ValueRepresentationSourcePolicy sourcePolicy)
+        ValueRepresentationSourcePolicy sourcePolicy, IReadOnlySet<string> indexedDeclarationIds = null)
     {
         refs = references;
         referenceBuild = refBuild;
@@ -61,7 +61,12 @@ sealed class ValueRepresentationLowering
             }
             var owner = Text(declaration["fileClass"]) ?? Text(declaration["name"]);
             foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(method[DeclarationIdentityBinding.Key]) is string id)
+                // The source index includes preexisting generated/lifted methods,
+                // but not physical-only forwarders materialized after its capture.
+                // Retain these actual DOM occurrences: later representation passes
+                // deliberately update their signatures before this index reads them.
+                if (Text(method[DeclarationIdentityBinding.Key]) is string id
+                    && (indexedDeclarationIds == null || indexedDeclarationIds.Contains(id)))
                 {
                     locals[id] = (owner, method);
                     if (Attribute(method, MemberAttribute) is { } marker)
@@ -577,6 +582,7 @@ sealed class ValueRepresentationLowering
 
     internal static void SelfTest()
     {
+        SourceMembershipSelfTest();
         var root = JsonNode.Parse("""
         {"fileClass":"Helpers","types":[{"name":"Union","kind":"class","attrs":[
           {"attr":{"t":"fqn","name":"kotlin.clr.ClrTypeAlias"},"args":[{"k":"const","value":"System.Object"}]},
@@ -757,4 +763,26 @@ sealed class ValueRepresentationLowering
     static ValueRepresentationLowering FixturePolicy(JsonNode root, bool referenceBuild) =>
         new(new[] { root }, null, referenceBuild,
             new ValueRepresentationSourcePolicy(new[] { ReadFixture(root) }, null, referenceBuild));
+
+    static void SourceMembershipSelfTest()
+    {
+        var source = new BirFileDeclaration { FileClass = "GeneratedOwner", Methods = new[] {
+            new BirFunctionDeclaration { Name = "lifted", DeclarationId = "existing-generated", Generated = true,
+                Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.String") },
+        } };
+        var membership = new SourceModuleIndex(new[] { source }, new Dictionary<string, string>()).DeclarationIds;
+        var policy = new ValueRepresentationSourcePolicy(new[] { source }, null, false);
+        var root = source.ToDom();
+        root["methods"].AsArray().Add(new BirFunctionDeclaration {
+            Name = "forwarder", DeclarationId = "new-physical-only", Generated = true,
+            Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.String"),
+        }.ToDom());
+        var indexed = new ValueRepresentationLowering(new[] { root }, null, false, policy, membership);
+        var method = root["methods"][0].AsObject();
+        method["ret"] = TypeJson.Fqn("kotlin.Int");
+        if (!indexed.locals.ContainsKey("existing-generated") || indexed.locals.ContainsKey("new-physical-only")
+            || !ReferenceEquals(indexed.locals["existing-generated"].Method, method)
+            || TypeJson.Read(indexed.locals["existing-generated"].Method["ret"]) is not TypeNode.Fqn { Name: "kotlin.Int" })
+            throw new InvalidOperationException("Source membership lost preexisting generated declarations or live representation signatures");
+    }
 }

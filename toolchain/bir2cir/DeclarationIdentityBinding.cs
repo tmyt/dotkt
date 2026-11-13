@@ -29,12 +29,17 @@ static class DeclarationIdentityBinding
 
     internal static void MarkInheritedProjection(JsonObject method, string owner, IEnumerable<string> sourceIds)
     {
+        method[Key] = InheritedProjectionId(owner, sourceIds);
+        method["declarationSourceName"] = method["name"]!.DeepClone();
+        method["generated"] = true;
+    }
+
+    internal static string InheritedProjectionId(string owner, IEnumerable<string> sourceIds)
+    {
         var identities = sourceIds.Distinct(StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal).ToArray();
         if (identities.Length == 0)
             throw new InvalidOperationException("Inherited physical projection has no selected declaration identity");
-        method[Key] = PhysicalOnlyId(string.Join("|", identities), "inherited-slot:" + owner);
-        method["declarationSourceName"] = method["name"]!.DeepClone();
-        method["generated"] = true;
+        return PhysicalOnlyId(string.Join("|", identities), "inherited-slot:" + owner);
     }
 
     public static HashSet<string> CollectDeclarationIds(IEnumerable<JsonNode> roots)
