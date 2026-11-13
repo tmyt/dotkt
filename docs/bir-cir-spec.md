@@ -148,7 +148,7 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   order; a newly introduced setter over a `val` has no inherited setter declaration and is not widened with its getter.
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
   codec identifier. `bir-json/1` represents structured UTF-8 JSON; `bir-msgpack/1` represents MessagePack maps
-  with the same logical keys and values. Source alias and executable inline/default carriers emit MessagePack;
+  with the same logical keys and values. Source alias and executable inline/default/constructor-adapter carriers emit MessagePack;
   remaining non-executable carriers emit JSON until their typed codecs migrate. Neither identifier is a
   compiler-compatibility promise.
 - `BirCarrier` entry points select the declared codec. Typed binary domains supply their JSON and MessagePack
@@ -167,7 +167,11 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   `{parameters,signature,statements,arguments,terminalSignature}` in BIR vocabulary. `statements` is the ordered
   evaluation prefix authored by constructor delegation; a consumer substitutes its materialized source arguments
   and executes that prefix before evaluating the terminal physical constructor argument vector.
-  `bir2cir` encodes the payloads in its round-trip metadata pass and `ilemit` emits the supplied
+  Constructor adapters use the owning `birConstructorAdapterPayload` profile, generated JSON/MessagePack codecs,
+  and independent materializations. Their complete attribute applications are attached when the source snapshot
+  is captured; executable bytes are opaque to subsequent representation passes. Producer source positions are
+  hidden only in the outgoing snapshot, including defaults nested inside it.
+  `bir2cir` encodes carriers at their owning capture/metadata boundary and `ilemit` emits the supplied
   attribute applications. The `bir2cir` cross-module splice and `dll2klib` decoders use the same codec.
 - A decoded `[KotlinInline]` content is the current payload object
   `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}`. The numeric `v` identifies the inline

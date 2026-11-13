@@ -184,7 +184,6 @@ static class CallEvalLowering
         for (var i = 0; i < n; i++) CountReads((bindings[i] as JsonObject)["expr"], reads);
 
         var drop = new bool[n];
-        var asVar = new bool[n];
         for (var i = 0; i < n; i++)
         {
             var expr = (bindings[i] as JsonObject)["expr"];
@@ -206,10 +205,25 @@ static class CallEvalLowering
             // outranks `stable` AND is asked whether or not the producer supplied an ordering. A stage-0 plan reaches it
             // through its own terminal rule: the operands left of a never-returning one lose their reader when the node
             // is truncated, and they must still be evaluated unless evaluating them is unobservable.
-            asVar[i] = !drop[i] && kinds[i] != "address"
-                && (count == 0
-                    || (!stable[i] && (force != null ? force[i] : count != 1 || deferred.Contains(ids[i]))));
         }
+        var asVar = DecideMaterialisation(ids, kinds, stable, drop, reads, pos, deferred,
+            index => LocationHasPinWork((bindings[index] as JsonObject)["expr"], isValue), force);
+
+        return EmitMaterialised(bindings, ids, kinds, roles, drop, asVar, isValue);
+    }
+
+    // The ordering/materialisation decision is independent of an IR storage
+    // representation. Both owning paths consume this single policy while their
+    // input frontiers migrate; no second set of evaluation-order rules exists.
+    internal static bool[] DecideMaterialisation(string[] ids, string[] kinds, bool[] stable, bool[] drop,
+        IReadOnlyDictionary<string, int> reads, Dictionary<string, int> pos, HashSet<string> deferred,
+        Func<int, bool> locationHasPinWork, bool[] force = null)
+    {
+        var n = ids.Length;
+        var asVar = new bool[n];
+        for (var i = 0; i < n; i++)
+            asVar[i] = !drop[i] && kinds[i] != "address" && (reads[ids[i]] == 0
+                || !stable[i] && (force != null ? force[i] : reads[ids[i]] != 1 || deferred.Contains(ids[i])));
         // ORDER, rule 1 — INVERSION. Skipped under `force` (see above). An inlined binding is evaluated at its reader's position, and a plan's order is
         // NOT the node's: an omitted default occupies a slot the callee declared, while Kotlin evaluates it after every
         // value the call SUPPLIES, whatever slot that value sits in. So `f(a: Int = d(), y: Int)` called `f(y = p())`
@@ -240,12 +254,19 @@ static class CallEvalLowering
             var work = new bool[n];
             for (var i = 0; i < n; i++)
                 work[i] = asVar[i] || (kinds[i] == "address" && !drop[i]
-                    && LocationHasPinWork((bindings[i] as JsonObject)["expr"], isValue));
+                    && locationHasPinWork(i));
             var last = Array.FindLastIndex(work, x => x);
             for (var i = 0; i < last; i++)
                 if (!stable[i] && !drop[i] && kinds[i] != "address") asVar[i] = true;
         }
 
+        return asVar;
+    }
+
+    static (JsonArray Stmts, Dictionary<string, JsonNode> Repl) EmitMaterialised(JsonArray bindings,
+        string[] ids, string[] kinds, string[] roles, bool[] drop, bool[] asVar, ValueTypeOracle isValue)
+    {
+        var n = bindings.Count;
         var stmts = new JsonArray();
         var repl = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
         // ONE ordered stream. Every binding is handled at its own plan position — a materialised value declares its
@@ -526,28 +547,30 @@ static class CallEvalLowering
     /// Deliberately says nothing about side effects. A `field` link can throw and a `staticField` link can run a type
     /// initializer; both stay when they are the actual storage link, and then happen at the location's own position,
     /// which is where Kotlin puts them.
-    static bool StaysWithoutPin(JsonObject node) => Str(node["k"]) switch
+    static bool StaysWithoutPin(JsonObject node) => StaysWithoutPin(Str(node["k"]));
+
+    internal static bool StaysWithoutPin(string kind) => kind switch
     {
         "const" or "this" or "local" or "bindRef" or "default" or "classRef" or "enumValue" => true,
         _ => false,
     };
 
-    static bool IsValueOwner(JsonObject location, ValueTypeOracle isValue)
+    static bool IsValueOwner(TypeNode owner, ValueTypeOracle isValue) => owner switch
     {
-        var ownerKey = Str(location["k"]) == "clrPropGet" ? "type" : "ownerType";
-        return TypeJson.Read(location[ownerKey]) switch
-        {
-            TypeNode.Fqn f => isValue(f),
-            TypeNode.Nullable => true,
-            TypeNode.Oblivious o => o.Of is TypeNode.Fqn f && isValue(f) || o.Of is TypeNode.Nullable,
-            _ => false,
-        };
-    }
+        TypeNode.Fqn f => isValue(f),
+        TypeNode.Nullable => true,
+        TypeNode.Oblivious o => o.Of is TypeNode.Fqn f && isValue(f) || o.Of is TypeNode.Nullable,
+        _ => false,
+    };
 
     static bool IsStoragePathOperand(JsonObject location, string key, JsonObject child,
-        ValueTypeOracle isValue) =>
-        key == "recv" && IsLvalueFormer(child) && IsValueOwner(location, isValue)
-        && Str(location["k"]) is "field" or "clrPropGet";
+        ValueTypeOracle isValue) => key == "recv" && IsLvalueFormer(child)
+        && IsStoragePathOperand(Str(location["k"]), true, true,
+            TypeJson.Read(location[Str(location["k"]) == "clrPropGet" ? "type" : "ownerType"]), isValue);
+
+    internal static bool IsStoragePathOperand(string kind, bool isReceiver, bool isLvalueFormer,
+        TypeNode owner, ValueTypeOracle isValue) => isReceiver && isLvalueFormer
+        && IsValueOwner(owner, isValue) && kind is "field" or "clrPropGet";
 
     static bool StaysInLocation(JsonObject location, string key, JsonObject child,
         ValueTypeOracle isValue) =>
@@ -674,7 +697,7 @@ static class CallEvalLowering
 
     // A type mentioning a positional type VARIABLE: it names a slot in the DECLARING generic's frame, so it cannot be
     // written into a local of this body without re-resolving it there.
-    static bool IsOpen(TypeNode t) => t switch
+    internal static bool IsOpen(TypeNode t) => t switch
     {
         TypeNode.Tv => true,
         TypeNode.ByRef b => IsOpen(b.Of),
@@ -741,6 +764,8 @@ static class CallEvalLowering
         "nullableWrap", "nullableValue", "nullableHasValue", "safeCastValue",
         "byrefOf", "byrefLoad", "stackGet", "enumName", "enumOrdinal", "lateinitGet", "exprStmt",
     };
+
+    internal static bool IsEagerKind(string kind) => EagerKinds.Contains(kind);
 
     static bool EagerSlot(JsonObject parent, string key) =>
         key != "synthClass" && Str(parent["k"]) is string k && EagerKinds.Contains(k);

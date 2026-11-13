@@ -6092,6 +6092,129 @@ internal static class BirGraphMessagePack
         }
     }
 
+    internal static BirConstructorAdapterPayload ReadBirConstructorAdapterPayload(ref MessagePackReader reader)
+    {
+        var count = ReadMap(ref reader);
+        ulong seen = 0;
+        OptionalField<string[]> field0 = default;
+        OptionalField<TypeNode[]> field1 = default;
+        OptionalField<IBirStatement[]> field2 = default;
+        OptionalField<IBirExpression[]> field3 = default;
+        OptionalField<TypeNode[]> field4 = default;
+        for (var index = 0; index < count; index++)
+        {
+            switch (IrMessagePack.ReadString(ref reader))
+            {
+                case "parameters":
+                    Seen(ref seen, 1UL << 0);
+                    field0 = reader.TryReadNil() ? OptionalField<string[]>.Null : OptionalField<string[]>.Of(ReadArray<string>(ref reader, (ref MessagePackReader reader) => IrMessagePack.ReadString(ref reader)));
+                    break;
+                case "signature":
+                    Seen(ref seen, 1UL << 1);
+                    field1 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "statements":
+                    Seen(ref seen, 1UL << 2);
+                    field2 = reader.TryReadNil() ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray<IBirStatement>(ref reader, (ref MessagePackReader reader) => ReadBirStatement(ref reader)));
+                    break;
+                case "arguments":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TryReadNil() ? OptionalField<IBirExpression[]>.Null : OptionalField<IBirExpression[]>.Of(ReadArray<IBirExpression>(ref reader, (ref MessagePackReader reader) => ReadBirExpression(ref reader)));
+                    break;
+                case "terminalSignature":
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        reader.Depth--;
+        return new BirConstructorAdapterPayload
+        {
+            Parameters = field0,
+            Signature = field1,
+            Statements = field2,
+            Arguments = field3,
+            TerminalSignature = field4,
+        };
+    }
+
+    internal static void WriteBirConstructorAdapterPayload(ref MessagePackWriter writer, BirConstructorAdapterPayload value, int depth)
+    {
+        CheckDepth(depth);
+        writer.WriteMapHeader(0 + (value.Parameters.IsPresent ? 1 : 0) + (value.Signature.IsPresent ? 1 : 0) + (value.Statements.IsPresent ? 1 : 0) + (value.Arguments.IsPresent ? 1 : 0) + (value.TerminalSignature.IsPresent ? 1 : 0));
+        if (value.Parameters.IsPresent)
+        {
+            writer.Write("parameters");
+            if (value.Parameters.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.Parameters.Value.Length);
+                foreach (var item0 in value.Parameters.Value)
+                {
+                    IrMessagePack.WriteString(ref writer, item0);
+                }
+            }
+        }
+        if (value.Signature.IsPresent)
+        {
+            writer.Write("signature");
+            if (value.Signature.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.Signature.Value.Length);
+                foreach (var item0 in value.Signature.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.Statements.IsPresent)
+        {
+            writer.Write("statements");
+            if (value.Statements.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.Statements.Value.Length);
+                foreach (var item0 in value.Statements.Value)
+                {
+                    WriteBirStatement(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.Arguments.IsPresent)
+        {
+            writer.Write("arguments");
+            if (value.Arguments.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.Arguments.Value.Length);
+                foreach (var item0 in value.Arguments.Value)
+                {
+                    WriteBirExpression(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.TerminalSignature.IsPresent)
+        {
+            writer.Write("terminalSignature");
+            if (value.TerminalSignature.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.TerminalSignature.Value.Length);
+                foreach (var item0 in value.TerminalSignature.Value)
+                {
+                    CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+    }
+
     internal static BirInlinePayload ReadBirInlinePayload(ref MessagePackReader reader)
     {
         var count = ReadMap(ref reader);

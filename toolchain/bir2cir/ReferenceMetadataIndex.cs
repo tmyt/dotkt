@@ -583,22 +583,20 @@ sealed partial class ReferenceMetadataIndex
     // ownerFqn -> declared parameter count -> the ctor declarations of that arity (#86 D1). A list, because a
     // same-arity overload set must be REFUSED rather than resolved by arity alone.
     readonly Dictionary<string, Dictionary<int, List<CtorBinding>>> _ctorsByOwner = new(StringComparer.Ordinal);
-    readonly Dictionary<string, List<AliasConstructorAdapter>> _aliasConstructorAdaptersByOwner =
+    readonly Dictionary<string, List<BirConstructorAdapterPayload>> _aliasConstructorAdaptersByOwner =
         new(StringComparer.Ordinal);
 
     public bool TryAliasConstructorAdapter(
-        string owner, TypeNode[] signature, TypeNode[] ownerArgs, out AliasConstructorAdapter adapter)
+        string owner, TypeNode[] signature, TypeNode[] ownerArgs, out BirConstructorAdapterPayload adapter)
     {
         adapter = null;
         owner = BareOwnerFqn(owner);
         if (!_aliasConstructorAdaptersByOwner.TryGetValue(owner, out var declared)) return false;
         var matches = declared
             .Select(candidate => AliasConstructorDelegationExpansion.Specialize(candidate, ownerArgs))
-            .Where(candidate => SameTypeSequence(candidate.Signature, signature))
-            .GroupBy(AliasAdapterKey, StringComparer.Ordinal)
-            .Select(group => group.First())
+            .Where(candidate => SameTypeSequence(candidate.Signature.Value, signature))
             .ToArray();
-        if (matches.Length > 1)
+        if (matches.Length > 1 && matches.Skip(1).Any(candidate => !ConstructorAdapterCarrier.Same(matches[0], candidate)))
             throw new InvalidOperationException(
                 $"conflicting constructor-adapter metadata for alias '{owner}' signature "
                 + $"({string.Join(", ", signature.Select(TypeNode.ToJson))})");
@@ -614,15 +612,6 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
-    static string AliasAdapterKey(AliasConstructorAdapter adapter) => new JsonObject
-    {
-        ["parameters"] = new JsonArray(adapter.Parameters
-            .Select(parameter => (JsonNode)JsonValue.Create(parameter)).ToArray()),
-        ["signature"] = new JsonArray(adapter.Signature.Select(TypeJson.Write).ToArray()),
-        ["statements"] = adapter.Statements.DeepClone(),
-        ["arguments"] = adapter.Arguments.DeepClone(),
-        ["terminalSignature"] = new JsonArray(adapter.TerminalSignature.Select(TypeJson.Write).ToArray()),
-    }.ToJsonString();
     // Reference-owner hierarchy in BIR's dotted Kotlin vocabulary.  Calls retain their Kotlin
     // receiver owner in BIR; inherited CLR MemberRefs are selected later by bir2cir, so that pass
     // needs the same constructed base/interface graph for referenced types as it has for local CIR
@@ -942,7 +931,7 @@ sealed partial class ReferenceMetadataIndex
             {
                 var owner = BareOwnerFqn(adapter.Owner);
                 if (!_aliasConstructorAdaptersByOwner.TryGetValue(owner, out var adapters))
-                    _aliasConstructorAdaptersByOwner[owner] = adapters = new List<AliasConstructorAdapter>();
+                    _aliasConstructorAdaptersByOwner[owner] = adapters = new List<BirConstructorAdapterPayload>();
                 adapters.Add(adapter.Adapter);
             }
             foreach (var kv in asm.DotKt.TypeShapes) _referenceTypeShapes.TryAdd(kv.Key, kv.Value);
@@ -6370,7 +6359,7 @@ sealed partial class ReferenceMetadataIndex
         return string.IsNullOrEmpty(type.Namespace) ? type.Name : type.Namespace + "." + type.Name;
     }
 
-    static AliasConstructorAdapter AliasConstructorAdapterOf(
+    static BirConstructorAdapterPayload AliasConstructorAdapterOf(
         IList<CustomAttributeData> attributes, Assembly declaringAssembly)
     {
         if (declaringAssembly == null) return null;
@@ -6385,24 +6374,7 @@ sealed partial class ReferenceMetadataIndex
                 throw new FormatException("constructor-adapter carrier does not have (version, bytes)");
             var version = carrier.ConstructorArguments[0].Value as string
                 ?? throw new FormatException("constructor-adapter carrier version is not a string");
-            var payload = BirCarrier.DecodeBody(
-                version, ReadByteArrayArg(carrier.ConstructorArguments[1])) as JsonObject
-                ?? throw new FormatException("constructor-adapter carrier body is not an object");
-            var parameters = (payload["parameters"] as JsonArray)?.Select(node =>
-                    (node as JsonValue)?.GetValue<string>()
-                    ?? throw new FormatException("constructor-adapter parameter is not a string"))
-                .ToArray() ?? throw new FormatException("constructor-adapter carrier has no parameters");
-            var signature = ReadCarrierTypes(payload, "signature");
-            var statements = payload["statements"] as JsonArray
-                ?? throw new FormatException("constructor-adapter carrier has no statements");
-            var arguments = payload["arguments"] as JsonArray
-                ?? throw new FormatException("constructor-adapter carrier has no arguments");
-            var terminal = ReadCarrierTypes(payload, "terminalSignature");
-            if (parameters.Length != signature.Length)
-                throw new FormatException("constructor-adapter parameter/signature lengths differ");
-            return new AliasConstructorAdapter(
-                parameters, signature, (JsonArray)statements.DeepClone(),
-                (JsonArray)arguments.DeepClone(), terminal);
+            return ConstructorAdapterCarrier.Decode(version, ReadByteArrayArg(carrier.ConstructorArguments[1]));
         }
         catch (Exception ex) when (ex is not InvalidDataException)
         {
@@ -6410,13 +6382,6 @@ sealed partial class ReferenceMetadataIndex
         }
     }
 
-    static TypeNode[] ReadCarrierTypes(JsonObject payload, string key)
-    {
-        if (payload[key] is not JsonArray values)
-            throw new FormatException($"constructor-adapter carrier has no {key}");
-        return values.Select(TypeJson.Read).Select(type => type
-            ?? throw new FormatException($"constructor-adapter {key} contains no structured type")).ToArray();
-    }
 
     // A reflected byte[] ctor argument materializes under MetadataLoadContext as an IReadOnlyList<CustomAttributeTypedArgument>
     // (each element's .Value a boxed byte), not a byte[] — reify it (mirrors ilemit Emitter.CompilerServices.ReadByteArrayArg).
@@ -8862,4 +8827,4 @@ sealed record ExactClrMemberBinding(string Intrinsic, int PropertyAccess, string
 sealed record CtorBinding(string Owner, string PhysicalOwner, int ParamCount, TypeNode[] ParamTypeNodes,
     TypeNode[] NullableGenericParams);
 
-sealed record ReferencedAliasConstructorAdapter(string Owner, AliasConstructorAdapter Adapter);
+sealed record ReferencedAliasConstructorAdapter(string Owner, BirConstructorAdapterPayload Adapter);

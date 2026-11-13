@@ -305,12 +305,6 @@ static class RoundtripMetadata
             foreach (var c in ctors) if (c is JsonObject co)
             {
                 StampConstructorIdentity(co);
-                if ((co["aliasCtorAdapter"] as JsonValue)?.GetValue<string>() is string adapter)
-                {
-                    Append(co, Marker(AKConstructorAdapter,
-                        StringArg(BirCarrier.JsonV1), BytesArg(adapter)));
-                    co.Remove("aliasCtorAdapter");
-                }
                 StampParams(co["params"]);
             }
         if (to["types"] is JsonArray nested)

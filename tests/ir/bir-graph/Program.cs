@@ -27,6 +27,10 @@ static void Same(string json, BirGraphValue graph, string? context = null)
     if (!LogicalBirValue.Equal(source,
         JsonNode.Parse(Write(graph), documentOptions: BirJson.DocOptions)))
         throw new Exception($"Owning BIR graph changed a logical value: {context ?? "inline sample"}");
+    var snapshot = graph.DeepClone();
+    if (ReferenceEquals(snapshot, graph) || !LogicalBirValue.Equal(source,
+        JsonNode.Parse(Write(snapshot), documentOptions: BirJson.DocOptions)))
+        throw new Exception($"Owning BIR snapshot changed a logical value: {context ?? "inline sample"}");
     // Exercise the actual production seam too, not only the debug JSON writer.
     if (graph is BirFileDeclaration file)
     {
@@ -115,10 +119,12 @@ if (original.Args.Value[0] is not null || rewritten.Args.Value[0] is not null
     || ((BirLocal)rewritten.Args.Value[1]!).Name.Value != "after"
     || rewritten.RetType.Value != frame || ReferenceEquals(original.Args.Value, rewritten.Args.Value))
     throw new Exception("A typed rewrite lost a null slot/frame or mutated the input graph");
-var independent = (BirCallInline)original.Rewrite(value => value);
-independent.Args.Value[1] = new BirLocal { Name = "independent" };
-if (((BirLocal)original.Args.Value[1]!).Name.Value != "before")
-    throw new Exception("Independent executable mutation leaked through a shared child array");
+var independent = (BirCallInline)original.DeepClone();
+((BirLocal)independent.Args.Value[1]!).Name = "independent";
+if (ReferenceEquals(original.Args.Value, independent.Args.Value)
+    || ReferenceEquals(original.Args.Value[1], independent.Args.Value[1])
+    || ((BirLocal)original.Args.Value[1]!).Name.Value != "before")
+    throw new Exception("Independent executable mutation leaked through a shared child occurrence");
 var childSlots = new List<BirGraphSlot>();
 independent.VisitChildSlots(childSlots.Add);
 childSlots.Single().Replace(new BirLocal { Name = "slot-replacement", Sty = frame });
@@ -176,6 +182,13 @@ var opaque = new BirAttribute {
 var seenBytes = 0;
 opaque.Rewrite(value => { if (value is BirOpaqueBytes) seenBytes++; return value; });
 if (seenBytes != 1) throw new Exception("Opaque metadata was traversed as executable children");
+var opaqueSnapshot = (BirAttribute)opaque.DeepClone();
+var snapshotBytes = (BirOpaqueBytes)opaqueSnapshot.Args.Value[0];
+snapshotBytes.Bytes.Value[0] = 71;
+if (ReferenceEquals(opaque.Args.Value, opaqueSnapshot.Args.Value)
+    || ReferenceEquals(opaque.Args.Value[0], snapshotBytes)
+    || ((BirOpaqueBytes)opaque.Args.Value[0]).Bytes.Value[0] != 0)
+    throw new Exception("Opaque carrier mutation leaked through a snapshot child or byte array");
 using (var stream = new MemoryStream(Write(opaque)))
 {
     var reader = new Utf8JsonReader(stream.ToArray());
@@ -191,6 +204,49 @@ using (var stream = new MemoryStream(Write(opaque)))
         || copy.Args.Value[2] is not BirAttributeLiteral { Value.HasValue: true, Value.Value: BirLiteral.NullLiteral })
         throw new Exception("Missing metadata value was conflated with a null literal");
 }
+
+// A snapshot owns scalar vectors as well as graph child vectors. Type records
+// contain mutable arrays too, including source classifiers ignored by CLR keys.
+var nestedArgument = new TypeNode.Fqn("probe.Element", new TypeNode[] { frame });
+var nestedFunction = new TypeNode.Fn(false, frame, new TypeNode[] { nestedArgument },
+    new TypeNode.Nullable(frame), Ctx: new TypeNode[] { frame });
+var nestedOwner = new TypeNode.Fqn("probe.Owner.Nested", new TypeNode[] { nestedFunction }) {
+    Classifier = new TypeNode.SourceClassifier("probe", new[] { "Owner" }, "Nested"),
+};
+var typeSnapshotSource = new BirFunctionDeclaration {
+    Ret = nestedOwner, _syntheticTypeArgs = new TypeNode[] { nestedOwner },
+    Params = new[] { new BirParameter { Name = "parameter", Type = nestedOwner } },
+    SignatureOverrideDeclarations = new[] { "first", "second" }, InlineBir = new byte[] { 0, 255, 17 },
+};
+var sourceBytes = Write(typeSnapshotSource);
+var typeSnapshot = (BirFunctionDeclaration)typeSnapshotSource.DeepClone();
+var copiedOwner = (TypeNode.Fqn)typeSnapshot.Ret.Value;
+var copiedFunction = (TypeNode.Fn)copiedOwner.Args![0];
+var copiedArgument = (TypeNode.Fqn)copiedFunction.Params[0];
+if (ReferenceEquals(typeSnapshotSource.Params.Value, typeSnapshot.Params.Value)
+    || ReferenceEquals(typeSnapshotSource.Params.Value[0], typeSnapshot.Params.Value[0])
+    || ReferenceEquals(typeSnapshotSource._syntheticTypeArgs.Value, typeSnapshot._syntheticTypeArgs.Value)
+    || ReferenceEquals(nestedOwner.Args, copiedOwner.Args)
+    || ReferenceEquals(nestedFunction.Params, copiedFunction.Params)
+    || ReferenceEquals(nestedFunction.Ctx, copiedFunction.Ctx)
+    || ReferenceEquals(nestedArgument.Args, copiedArgument.Args)
+    || ReferenceEquals(nestedOwner.Classifier.OwnerPath, copiedOwner.Classifier!.OwnerPath)
+    || ReferenceEquals(typeSnapshotSource.SignatureOverrideDeclarations.Value, typeSnapshot.SignatureOverrideDeclarations.Value)
+    || ReferenceEquals(typeSnapshotSource.InlineBir.Value, typeSnapshot.InlineBir.Value))
+    throw new Exception("Owning snapshot shared a graph, scalar, nested type or classifier vector");
+var differentFrame = new TypeNode.Tv("method", 7);
+copiedArgument.Args![0] = differentFrame;
+copiedFunction.Params[0] = differentFrame;
+copiedFunction.Ctx![0] = differentFrame;
+copiedOwner.Classifier!.OwnerPath[0] = "Changed";
+copiedOwner.Args![0] = differentFrame;
+((TypeNode.Fqn)typeSnapshot._syntheticTypeArgs.Value[0]).Args![0] = differentFrame;
+typeSnapshot._syntheticTypeArgs.Value[0] = differentFrame;
+typeSnapshot.Params.Value[0].Name = "changed";
+typeSnapshot.SignatureOverrideDeclarations.Value[0] = "changed";
+typeSnapshot.InlineBir.Value[0] = 71;
+if (!sourceBytes.AsSpan().SequenceEqual(Write(typeSnapshotSource)))
+    throw new Exception("Snapshot mutation changed the original nested frame, classifier, scalar vector or bytes");
 
 // A lambda's construction operands execute in the enclosing frame, but its body,
 // returns and labels do not. Reuse the same witness for every deferred body form.
@@ -268,7 +324,8 @@ Console.WriteLine("Typed execution frames: three deferred body forms retain priv
 
 var signatureSnapshot = SourceTypeVector.ReadFrozenText("[{\"t\":\"tv\",\"scope\":\"method\",\"i\":1}]");
 var phaseFacts = new BirFileDeclaration {
-    Methods = new[] { new BirFunctionDeclaration { Body = new IBirStatement[] {
+    Attrs = new[] { opaque },
+    Methods = new[] { new BirFunctionDeclaration { CompanionReceiver = frame, Body = new IBirStatement[] {
         new BirExpressionStatement { Expr = new BirNativeStatic {
             Sty = frame, SuspendCall = false, _capturedGenericResult = frame,
             _capturedGenericArgument = new[] { new CapturedGenericArgument { Argument = 0, Slots = new[] { 1 } } },
@@ -320,6 +377,23 @@ Same(phaseJson, BirGraphJson.ReadFile(Write(phaseFacts)), "current signature/eve
 Same(phaseJson, BirFileCodec.Decode(BirFileCodec.Encode(phaseFacts)), "current phase metadata binary");
 if (signatureSnapshot.Types[0] != frame)
     throw new Exception("Frozen foreign signature is not a typed declaration-frame vector");
+var directPhaseRewrite = (BirFileDeclaration)phaseFacts.RewriteTypeFields(_ => differentFrame);
+if (!ReferenceEquals(directPhaseRewrite.Methods.Value[0], phaseFacts.Methods.Value[0]))
+    throw new Exception("Node-local type-field rewriting descended into graph children");
+var rewrittenPhase = (BirFileDeclaration)phaseFacts.Rewrite(node => node.RewriteTypeFields(type =>
+    type == frame ? differentFrame : type));
+var rewrittenNative = (BirNativeStatic)((BirExpressionStatement)rewrittenPhase.Methods.Value[0].Body.Value[0]).Expr.Value;
+var rewrittenProperty = (BirPropertyGet)((BirExpressionStatement)rewrittenPhase.Methods.Value[0].Body.Value[3]).Expr.Value;
+if (rewrittenNative.Sty.Value != differentFrame || rewrittenNative.ResolvedMemberParams.Value[0] != differentFrame
+    || rewrittenNative._capturedGenericResult.Value != differentFrame
+    || rewrittenPhase.Methods.Value[0].CompanionReceiver.Value != frame
+    || rewrittenProperty._foreignDeclarationSignature.Value.FrozenText != signatureSnapshot.FrozenText
+    || rewrittenProperty._foreignDeclarationSignature.Value.Types[0] != frame
+    || !((BirOpaqueBytes)rewrittenPhase.Attrs.Value[0].Args.Value[0]).Bytes.Value.AsSpan()
+        .SequenceEqual(((BirOpaqueBytes)opaque.Args.Value[0]).Bytes.Value)
+    || !phaseJson.Equals(Encoding.UTF8.GetString(Write(phaseFacts)), StringComparison.Ordinal))
+    throw new Exception("Structured type-slot rewriting changed frozen facts/opaque bytes or missed a typed child/vector");
+Console.WriteLine("Owning snapshots/type slots: graph and nested scalar vectors are independent; structured rewrites preserve frozen facts and opaque bytes");
 
 var defaults = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
     Mods = new BirModifiers { Suspend = true },

@@ -298,6 +298,33 @@ def outputs(root, definitions):
             return f"{value}.Select({item} => {expr}).ToArray()"
         return f"({cs(field)})rewrite((BirGraphValue){value})"
 
+    def copy_graph(field, value, depth=0):
+        field = base(field)
+        if cs(field) == "byte[]": return f"{value}.ToArray()"
+        if field.get("type") == "array":
+            item = f"item{depth}"
+            expr = copy_graph(field["items"], item, depth + 1)
+            if is_nullable(field["items"]): expr = f"{item} is null ? null : {expr}"
+            return f"{value}.Select({item} => {expr}).ToArray()"
+        if cs(field) == "TypeNode": return f"CopyType({value})"
+        if is_child(field): return f"({cs(field)})((BirGraphValue){value}).DeepClone()"
+        return value
+
+    def is_type_slot(field):
+        field = base(field)
+        if field.get("x-dotkt-kotlin-json-type") or field.get("x-dotkt-csharp-codec"): return False
+        if field.get("type") == "array": return is_type_slot(field["items"])
+        return refkey(field) == "type"
+
+    def rewrite_type(field, value, depth=0):
+        field = base(field)
+        if field.get("type") == "array":
+            item = f"item{depth}"
+            expr = rewrite_type(field["items"], item, depth + 1)
+            if is_nullable(field["items"]): expr = f"{item} is null ? null : {expr}"
+            return f"{value}.Select({item} => {expr}).ToArray()"
+        return f"rewrite({value})"
+
     def visit(field, value, depth=0):
         field = base(field)
         if field.get("type") == "array":
@@ -364,6 +391,10 @@ def outputs(root, definitions):
                   if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
         if stamps:
             model += ["    public override TypeNode? ResultTypeStamp => " + " ?? ".join(stamps) + ";"]
+        binding_hints = [member(field) + ".OrDefault()" for field in ("sty", "type")
+                         if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
+        if binding_hints:
+            model += ["    public override TypeNode? CallBindingTypeHint => " + " ?? ".join(binding_hints) + ";"]
         model += ["    public override void VisitChildren(Action<BirGraphValue> visit)", "    {"]
         for field, value in fields:
             if is_child(value):
@@ -390,6 +421,16 @@ def outputs(root, definitions):
             if is_child(value):
                 prop = member(field)
                 model += [f"        {prop} = {prop}.HasValue ? OptionalField<{cs(value)}>.Of({rewrite(value, prop + '.Value')}) : {prop},"]
+        model += ["    };", "    public override BirGraphValue DeepClone() => this with", "    {"]
+        for field, value in fields:
+            if is_child(value) or base(value).get("type") == "array" or cs(value) in {"byte[]", "TypeNode"}:
+                prop = member(field)
+                model += [f"        {prop} = {prop}.HasValue ? OptionalField<{cs(value)}>.Of({copy_graph(value, prop + '.Value')}) : {prop},"]
+        model += ["    };", "    public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with", "    {"]
+        for field, value in fields:
+            if is_type_slot(value):
+                prop = member(field)
+                model += [f"        {prop} = {prop}.HasValue ? OptionalField<{cs(value)}>.Of({rewrite_type(value, prop + '.Value')}) : {prop},"]
         model += ["    };", "    public override void WriteJson(Utf8JsonWriter writer)", "    {", "        writer.WriteStartObject();"]
         if node: model += [f'        writer.WriteString("k", {json.dumps(tag)});']
         for field, value in fields:
