@@ -132,7 +132,7 @@ internal fun BirEmitter.bodyStatements(body: org.jetbrains.kotlin.ir.IrElement?)
  *  lambda arg (AXIS ①). Retires mechanism-1 (the old `inlineCall` splicer): instead of splicing the body HERE, kotc
  *  emits the SAME generic `callInline` node the cross-module emitters do (`inlineSpliceCall`/
  *  `inlineSpliceCallOwnerless`) and bir2cir's InlineSplice owns the splice — resolving the raw-BIR body from
- *  `InlineBirStash.Index` (keyed `owner|name|pc|ga` -> candidate list, disambiguated by structural `paramSig` match,
+ *  `InlineBirStash.Current.Candidates` (keyed `owner|name|pc|ga` -> candidate list, disambiguated by structural `paramSig` match,
  *  spanning ALL files of this run). The ONLY difference from the owner-less emitter is that kotc CAN name the owner from
  *  its OWN naming: the enclosing type name for a member inline fun (`typeName`), else the top-level fun's file-facade
  *  class (`fileClassOf` — a cross-FILE same-module call works, the stash spans all files). A member fn's DISPATCH
@@ -195,7 +195,7 @@ private fun BirEmitter.inlineArgument(
  *  `pc`, `ga`,
  *  `typeArgs`, `recvs` (dispatch/extension + F2A `dispatchTypeArgs`), the per-POSITIONAL-param `args`, `retType`, `paramSig`
  *  — is IDENTICAL for both callers, so bir2cir's InlineSplice consumes them the same whether the payload is same-module
- *  (`InlineBirStash.Index`) or cross-module (ref.dll `InlineCandidates`). */
+ *  (`InlineBirStash.Current.Candidates`) or cross-module (ref.dll `InlineValueCandidates`). */
 internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): BirCallInline {
 	// #87: an INHERITED inline member (declared on a superclass, called through a subclass receiver) resolves to a
 	// FAKE OVERRIDE whose `parent` is the subclass and whose `body` is null. The [KotlinInline] payload is stashed
@@ -236,7 +236,7 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): BirCallInline {
 	// top-level fun's file-facade class. Matches the stash key (a member is stashed under its type's `name`, a
 	// top-level fun under the file's `fileClass` = `fileClassName`, which `fileClassOf` reproduces cross-file); the
 	// cross-module member's `typeName(enclosingClass)` = the projected class's Kotlin FQN = the ref.dll's reflected
-	// `ownerFqn`, so `InlineCandidates` keys match.
+	// `ownerFqn`, so `InlineValueCandidates` keys match.
 	val owner = (callee.parent as? IrClass)?.let { typeName(it) }
 		?: clrExternalOwner(callee)
 		?: fileClassOf(callee)
@@ -433,7 +433,7 @@ internal fun callableIdentity(callee: IrSimpleFunction, name: String): String {
 
 /** paramSig (#95 §4.2, overload disambiguator): one TYPE NODE per callee DECLARED parameter in the SAME order the
  *  DECLARATION emits `params` — the extension receiver as element 0 (the leading `__self`), then the Regular+Context
- *  params. bir2cir keys `InlineBirStash.Index` by `owner|name|pc|ga` (a candidate LIST) and picks the unique candidate
+ *  params. bir2cir keys `InlineBirStash.Current.Candidates` by `owner|name|pc|ga` (a candidate LIST) and picks the unique candidate
  *  whose `params[i].type` DeepEquals this `paramSig[i]`. recv0 (first-param FQN) was insufficient — Kotlin inline
  *  overloads differ at ANY param position (Duration.toComponents ×4 by lambda arity; flatMap/maxOf by the lambda's
  *  return type). CRITICAL: each type is emitted in the callee's OWN type-parameter frame — `typeArgSubst` is BYPASSED

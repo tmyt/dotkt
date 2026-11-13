@@ -8,7 +8,7 @@ using DotKt.Bir;
 // Keep this chokepoint small and ordered. A new representation-entry invariant belongs here when it must hold for
 // both inline and default payloads; callers must not repair a materialized payload later with an idempotent file-wide
 // sweep. Normal source BIR takes the same first step before Program's source helper recognition.
-static class MaterializedBirPayload
+static partial class MaterializedBirPayload
 {
     // Before storing executable BIR in a DLL, turn producer-owned source positions into hidden boundaries.
     // The local compilation retains its own graph and emits visible positions to its separate PDB.

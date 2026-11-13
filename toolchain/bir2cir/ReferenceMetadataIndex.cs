@@ -1046,34 +1046,6 @@ sealed partial class ReferenceMetadataIndex
         }
     }
 
-    // The CANDIDATE raw-BIR [KotlinInline] payloads for an OWNER-FUL cross-module inline fn (owner|name|pc|ga), each decoded to
-    // its JSON object — the overloads sharing that key. Empty/null only when the referenced assembly carries no
-    // [KotlinInline] for that shape. Current-format DotKt carriers are internal ABI; malformed/older payloads are
-    // unsupported and must not fall back to a non-inline call. InlineSplice picks the UNIQUE paramSig match.
-    public List<JsonObject> InlineCandidates(string owner, string name, int pc, int ga)
-    {
-        if (owner == null || name == null) return null;
-        return ParseCandidates(_inlinePayloads.GetValueOrDefault($"{owner}|{name}|{pc}|{ga}"));
-    }
-
-    // The CANDIDATE payloads for an OWNER-LESS callInline (S3): every `kotlin.*` overload hosting name|pc|ga, across owners.
-    // InlineSplice selects the unique paramSig match; the winner's own `owner` field names the host file class.
-    public List<JsonObject> OwnerlessInlineCandidates(string name, int pc, int ga) =>
-        name == null ? null : ParseCandidates(_ownerlessInlineCandidates.GetValueOrDefault($"{name}|{pc}|{ga}"));
-
-    public JsonObject InlineByDeclarationIdentity(string id)
-    {
-        if (id != null && _conflictingInlineDeclarationIds.Contains(id))
-            throw new InvalidOperationException($"conflicting inline declaration identity '{id}'");
-        if (id == null || !_inlinePayloadByDeclarationId.TryGetValue(id, out var payload)) return null;
-        return payload.ToDom();
-    }
-
-    static List<JsonObject> ParseCandidates(List<BirInlinePayload> payloads)
-    {
-        return payloads == null || payloads.Count == 0 ? null : payloads.Select(payload => payload.ToDom()).ToList();
-    }
-
     // Name index used by MapVarianceRealign for calls without a declaration identity.
     // Collection construction itself requires TryDeclarationFactory's exact selected binding.
     public string CollectionFactoryKind(string funName) => _collectionFactories.GetValueOrDefault(funName);
@@ -7984,7 +7956,7 @@ sealed partial class ReferenceMetadataIndex
             // Building an index must not reject an unused collision or discard other metadata.
             var index = new ReferenceMetadataIndex(order, catalog);
             if (index.KotlinDefaultsForDeclarationIdentity("unique-default")?[0]?["value"]?.GetValue<string>() != "retained"
-                || index.InlineByDeclarationIdentity("unique-inline")?["body"]?.AsArray().Count != 0)
+                || index.InlineValueByDeclarationIdentity("unique-inline")?.Body.OrDefault()?.Length != 0)
                 throw new InvalidOperationException("Unused collisions discarded unrelated inline/default metadata");
             var typedDefaults = index.KotlinDefaultValuesForDeclarationIdentity("unique-default");
             ((BirConstant)typedDefaults[0]).Value = new BirLiteral.TextLiteral("mutated");
@@ -8017,7 +7989,7 @@ sealed partial class ReferenceMetadataIndex
                 }
             foreach (Action query in new Action[] {
                 () => index.KotlinDefaultsForDeclarationIdentity("default-conflict"),
-                () => index.InlineByDeclarationIdentity("inline-conflict"),
+                () => index.InlineValueByDeclarationIdentity("inline-conflict"),
             })
             {
                 var ambiguous = false;

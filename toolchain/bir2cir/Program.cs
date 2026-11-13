@@ -74,6 +74,7 @@ static class Bir2Cir
                 ClrEventImplBinding.SelfTestSourceFacts();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
+                InlineBirStashTests.SelfTest();
                 ObjectSlotRename.SelfTest();
                 DefaultBirCarrier.SelfTest();
                 ExecutableBirCodec.SelfTest();
@@ -321,6 +322,12 @@ sealed class Pipeline
         // retaining separate explicit-remapping and all-enum parsing inventories.
         var explicitEnums = ClrEnumLowering.Apply(captured, out var parseEnums);
         var enums = new EnumPreparation(richEnums, richEnumFields, basicEnums, explicitEnums, parseEnums);
+        // Publish representation-selected inline bodies before per-file rewrites.
+        // The local index retains source spans; only outgoing opaque DLL carriers
+        // hide them. Later declaration/body walks do not descend into these bytes;
+        // the explicit opaque-carrier binder still owns classifier binding.
+        InlineBirStash.Reset();
+        foreach (var source in captured) InlineBirStash.Stash(source);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -470,15 +477,6 @@ sealed class Pipeline
         var inlineDispatchHierarchy = InlineSplice.CollectDispatchHierarchy(birFiles.Select(f => f.Root));
         var genericDowncastHierarchy = GenericDowncastRealignment.Collect(birFiles.Select(f => f.Root));
         var iterableHierarchy = SupertypeGraph.Collect(birFiles.Select(f => f.Root));
-        // INLINE-BIR STASH (#71/#75 S1): after module-wide companion representation selection and before ordinary
-        // per-file lowering, capture every `mods.inline` method's representation-selected BIR body into an OPAQUE
-        // `inlineBir` base64 string (ilemit stamps it verbatim as the [KotlinInline] carrier) plus an in-memory
-        // `owner|name|pc|ga -> decl` index (dormant same-module infra).
-        // Runs across ALL files here so the index spans the compilation, and so every downstream walker sees the
-        // captured body already inert (a JsonValue string) — RefBodySquash then squashes only the executable `body`.
-        InlineBirStash.Reset();
-        foreach (var b in birFiles) InlineBirStash.Stash(b.Root);
-
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).

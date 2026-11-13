@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // INLINE/DEFAULT EXPANSION. Consumes kotc's `callInline` and delegates omitted arguments to DefaultArgSplice
 // in the same recursive traversal. Every newly materialized body completes both expansions before post-passes.
@@ -11,8 +12,8 @@ using DotKt.Bir;
 //      the GENERIC arm (#71/#75) — an inline fun taking a lambda, whose non-local `return` (or suspend) through the lambda
 //      strictly requires the body to live inline at the call site. kotc emits the bindings; we RESOLVE the callee's RAW BIR
 //      body by the overload key {owner|name|pc|ga}, disambiguating same-name overloads by a structural `paramSig` match
-//      (§4.2) — same-module candidates from InlineBirStash's index, cross-module from [KotlinInline] on the --ref'd assembly
-//      (ReferenceMetadataIndex.InlineCandidates / OwnerlessInlineCandidates) — and
+//      (§4.2) — same-module candidates from InlineBirStash.Current.Candidates, cross-module from [KotlinInline] on the --ref'd assembly
+//      (ReferenceMetadataIndex.InlineValueCandidates / OwnerlessInlineValueCandidates) — and
 //      SPLICE it at BIR level into a value-producing `valueBlock`. Because InlineSplice runs BEFORE all lowering
 //      (Program.cs, before ClosureSynthesis/MemberCallSubstitution/BirTypeLowering), the spliced RAW body re-lowers IN
 //      THIS app's context (@ClrIntrinsic binds against the app ref.dll, generics resolve with call-site type args,
@@ -698,7 +699,7 @@ static class InlineSplice
 
     // §4.2 (#75 S4b) — RESOLVE the callee's raw-BIR payload by the overload key owner|name|pc|ga, disambiguating same-name
     // inline OVERLOADS by a STRUCTURAL match of each candidate's declared param types against the call's `paramSig`
-    // (InlineBirIndex.SelectByParamSig — DeepEquals, exact because both sides are kotc-emitted decl type nodes). Same-module
+    // (InlinePayloadSelection compares the complete kotc-emitted declaration types). Same-module
     // candidates come from the in-run stash; cross-module from the ref.dll [KotlinInline]. Returns the (cloned) unique
     // payload + whether it is same-module, or (null, false, diag) with a fail-loud reason (no match / ambiguous overloads).
     internal static (JsonObject payload, bool sameModule, string diag) ResolvePayload(
@@ -708,31 +709,31 @@ static class InlineSplice
         var callee = TypeJson.OwnerName(call["callee"]);
         var name = callee?.Contains('.') == true ? callee[(callee.LastIndexOf('.') + 1)..] : callee;
         var result = SelectPayload(Str(call[DeclarationIdentityBinding.Key]), owner, name, Int(call["pc"]), Int(call["ga"]), call["paramSig"] as JsonArray, locals, refs);
-        return ((JsonObject)result.Payload?.DeepClone(), result.SameModule, result.Diagnostic);
+        return (result.Payload?.ToDom(), result.SameModule, result.Diagnostic);
     }
 
-    static (JsonObject Payload, bool SameModule, string Diagnostic) SelectPayload(string identity, string owner, string name,
+    static (BirInlinePayload Payload, bool SameModule, string Diagnostic) SelectPayload(string identity, string owner, string name,
         int pc, int ga, JsonArray signature, InlineBirIndex locals, ReferenceMetadataIndex refs)
-        => InlinePayloadSelection.Resolve<JsonObject>(identity, owner, name, pc, ga,
+        => InlinePayloadSelection.Resolve<BirInlinePayload>(identity, owner, name, pc, ga,
             signature?.Select(TypeJson.Read).ToArray(), locals.Declaration,
-            refs == null ? null : refs.InlineByDeclarationIdentity,
-            (o, n, p, a) => locals.Index.GetValueOrDefault($"{o}|{n}|{p}|{a}"),
-            refs == null ? null : refs.InlineCandidates, locals.OwnerlessCandidates,
-            refs == null ? null : refs.OwnerlessInlineCandidates,
-            payload => (payload["params"] as JsonArray)?.Select(parameter => TypeJson.Read(parameter?["type"])).ToArray());
+            refs == null ? null : refs.InlineValueByDeclarationIdentity,
+            locals.Candidates,
+            refs == null ? null : refs.InlineValueCandidates, locals.OwnerlessCandidates,
+            refs == null ? null : refs.OwnerlessInlineValueCandidates,
+            payload => payload.Params.OrDefault()?.Select(parameter => parameter.Type.OrDefault()).ToArray());
 
     static (JsonObject payload, bool sameModule, string diag) ResolveInlinePayload(string owner, string name, int pc, int ga,
         JsonArray signature, InlineBirIndex locals, ReferenceMetadataIndex refs)
     {
         var result = SelectPayload(null, owner, name, pc, ga, signature, locals, refs);
-        return ((JsonObject)result.Payload?.DeepClone(), result.SameModule, result.Diagnostic);
+        return (result.Payload?.ToDom(), result.SameModule, result.Diagnostic);
     }
 
     static (JsonObject hit, bool sameModule, string diag) ResolveOwnerless(string name, int pc, int ga,
         JsonArray signature, InlineBirIndex locals, ReferenceMetadataIndex refs)
     {
         var result = SelectPayload(null, null, name, pc, ga, signature, locals, refs);
-        return (result.Payload, result.SameModule, result.Diagnostic);
+        return (result.Payload?.ToDom(), result.SameModule, result.Diagnostic);
     }
     // §4.3 — rewrite a member-inline payload's own `{k:this}` to a bound dispatch-receiver temp. A `typeDef` is skipped
     // whole. A `newSuspendLambda`'s BODY is its own frame, but its positional `capValues` are construction expressions
