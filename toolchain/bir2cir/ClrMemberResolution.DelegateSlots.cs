@@ -19,7 +19,7 @@ using DotKt.Bir;
 //
 //   * SAME delegate                      -> nothing to state; the construction already builds it.
 //   * DIFFERENT, and both are bindable    -> RETARGET: the construction's `funcType` becomes the slot's delegate
-//                                           and its `delegateCtorRef`/`invokeRef` are re-resolved against it.
+//                                           and its `delegateCtorRef` is resolved against that delegate.
 //                                           ECMA-335 II.14.6 delegate compatibility covers the residual
 //                                           reference covariance/contravariance between the two.
 //   * DIFFERENT because the lambda is VOID-returning and the slot's `Invoke` returns a value -> ADAPT: no
@@ -38,7 +38,7 @@ using DotKt.Bir;
 // (`Constrained<T> where T : IMarker`) appearing INSIDE a parameter would then be spelled over an unconstrained
 // parameter of the adapter. The one attribute the position DOES owe is the byref-like ANTI-constraint: a delegate
 // parameter may be a `ref struct` (`Action<Span<int>>` is a legal delegate), and a parameter standing for it has
-// to admit that instantiation — see `AdapterClass`.
+// to admit that instantiation — see `TypedPhysicalDelegateAdapter.AdapterClass`.
 //
 // A SLOT is any declared position a construction fills: an argument's parameter, a delegate-typed property
 // setter's parameter, a public delegate field, an event's handler. All four take the one rule, because "which
@@ -167,11 +167,8 @@ static partial class ClrMemberResolution
 
     // ---- materialization -----------------------------------------------------------------------
 
-    static JsonObject _adapterHost;
-    static string _adapterScope = "File";
     static int _nextAdapter;
     static int _nextValueAdapter;
-    static readonly Dictionary<string, string> _adapters = new(StringComparer.Ordinal);
 
     // Both the earlier construction pass and the final typed value-flow owner
     // synthesize this family. Keep one allocator across their explicit boundary.
@@ -194,85 +191,6 @@ static partial class ClrMemberResolution
             ? new TypeNode.Fqn("void") : SubstOwnerParams(invoke.ReturnType, args);
         return new TypeNode.Fn(false, ret,
             invoke.GetParameters().Select(p => SubstOwnerParams(p.ParameterType, args)).ToArray(), null, family);
-    }
-
-    /// <summary>
-    /// Rewrite every marked delegate construction so it states the delegate it physically builds, authoring the
-    /// representation adapter classes that requires.
-    /// </summary>
-    /// <remarks>
-    /// Runs once per file, after every resolution pass: the mark is placed where the callee is known, and the
-    /// rewrite has to see the construction's final `funcType`.
-    /// </remarks>
-    public static void MaterializeDelegateSlots(JsonNode root, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTypes, IReadOnlyDictionary<string, string> localCarriers = null)
-    {
-        if (root is not JsonObject file) return;
-        _refs = refs;
-        _localCarriers = localCarriers;
-        _localTypes = localTypes ?? new HashSet<string>();
-        _adapterHost = file;
-        _adapterScope = string.Concat(((file["fileClass"] as JsonValue)?.GetValue<string>() ?? "File")
-            .Select(c => char.IsLetterOrDigit(c) ? c : '_'));
-        _adapters.Clear();
-        var pending = new List<JsonObject>();
-        Collect(file, pending);
-        foreach (var construction in pending) Materialize(construction);
-        _adapterHost = null;
-    }
-
-    // CHILDREN FIRST. Adapting a construction moves it under a new node, and a JSON value has one parent, so the
-    // move copies it; a nested construction still waiting to be rewritten would be rewritten in the detached copy
-    // and lost. Rewriting bottom-up means the copy is already final.
-    static void Collect(JsonNode node, List<JsonObject> into)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                foreach (var kv in obj.ToList()) if (kv.Value != null) Collect(kv.Value, into);
-                if (obj.ContainsKey(DelegateSlotKey) || obj["k"]?.GetValue<string>() == "samConvert") into.Add(obj);
-                break;
-            case JsonArray array:
-                foreach (var item in array.ToList()) if (item != null) Collect(item, into);
-                break;
-        }
-    }
-
-    static void Materialize(JsonObject construction)
-    {
-        // Explicit conversions retain their own type slot through ordinary physical type lowering. A concrete
-        // Kotlin type argument must not survive here merely because it was stored in an opaque internal marker.
-        var isValueConversion = construction["k"]?.GetValue<string>() == "samConvert";
-        var slot = TypeJson.Read(construction[isValueConversion ? "type" : DelegateSlotKey]) as TypeNode.Fqn;
-        construction.Remove(DelegateSlotKey);
-        if (slot == null) return;
-        var natural = TypeJson.Read(construction["funcType"]);
-        if (isValueConversion)
-        {
-            if (natural is not TypeNode.Fn function || PhysicalFunctionShape(slot, includeNominal: true) is not TypeNode.Fn signature)
-                throw new InvalidOperationException("CLR delegate SAM conversion has no physical Invoke signature");
-            var operand = (JsonObject)construction["e"].DeepClone();
-            construction.Clear();
-            // A function-bounded source TV is still a CLR generic value on the stack. Cross its declared
-            // function-view boundary explicitly so ordinary cast lowering boxes it before delegate storage.
-            construction["k"] = "cast";
-            construction["type"] = TypeJson.Write(function);
-            construction["e"] = operand;
-            AdaptBoxedSlots(construction, function, slot, signature);
-            return;
-        }
-        if (natural is not TypeNode.Fn naturalFn) return;   // already retargeted to a named delegate
-        var naturalDelegate = BirTypeLowering.DelegateFqnOf(naturalFn);
-        if (naturalDelegate == null || SameDelegate(naturalDelegate, slot)) return;
-        if (naturalFn.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }
-            && SlotInvokeReturn(slot) is TypeNode slotReturn
-            && slotReturn is not TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
-            AdaptVoidConstruction(construction, naturalFn, slot, slotReturn);
-        else if (PhysicalFunctionShape(slot, includeNominal: true) is TypeNode.Fn slotFn
-            && NeedsSlotAdapter(naturalFn, slotFn))
-            AdaptBoxedSlots(construction, naturalFn, slot, slotFn);
-        else
-            Retarget(construction, slot);
     }
 
     static bool HasRepresentationSlotSeam(TypeNode.Fn natural, TypeNode.Fn target)
@@ -317,7 +235,7 @@ static partial class ClrMemberResolution
         TypeNode[] Parameters, int? GenericArity, TypeNode[] Arguments);
 
     // This is representation policy over immutable TypeNodes, shared by the
-    // earlier DOM construction owner and the final owning typed value owner.
+    // owning construction and final value-flow consumers.
     static DelegateAdapterPlan BoxedDelegateAdapterPlan(TypeNode.Fn natural, TypeNode.Fn target)
     {
         var sourceParameters = natural.DelegateParams;
@@ -344,22 +262,6 @@ static partial class ClrMemberResolution
         var targetFrame = targetParameters.Select(Lift).ToArray();
         var targetReturn = producesUnit ? target.Ret : Lift(target.Ret);
         return new(sourceFrame, arity, targetReturn, targetFrame, arguments.Count, arguments.ToArray());
-    }
-
-    static void AdaptBoxedSlots(JsonObject construction, TypeNode.Fn natural, TypeNode.Fqn slot, TypeNode.Fn target)
-    {
-        var plan = BoxedDelegateAdapterPlan(natural, target);
-        var adapter = AdapterClass(plan.Frame, plan.Arity, plan.Return, plan.Parameters, plan.GenericArity);
-        var captured = (JsonObject)construction.DeepClone();
-        construction.Clear();
-        if (captured["pos"] is JsonNode position) construction["pos"] = position.DeepClone();
-        construction["k"] = "newClosure";
-        construction["closureType"] = TypeJson.Write(new TypeNode.Fqn(adapter));
-        construction["method"] = "invoke";
-        construction["captures"] = new JsonArray { captured };
-        construction["funcType"] = TypeJson.Write(slot);
-        construction["typeArgs"] = new JsonArray(plan.Arguments.Select(TypeJson.Write).ToArray());
-        ResolveDelegateCtor(construction, slot);
     }
 
     // ONE delegate, TWO vocabularies. The natural side is spelled as the document spells a type — an arity-free
@@ -399,16 +301,6 @@ static partial class ClrMemberResolution
             i--;
         }
         return text.ToString();
-    }
-
-    // Point a construction at the delegate its slot declares. The two carriers ilemit consumes are the
-    // constructor it runs and the `Invoke` its value is called through; both follow the type, so both are
-    // re-resolved rather than patched.
-    static void Retarget(JsonObject construction, TypeNode.Fqn slot)
-    {
-        construction["funcType"] = TypeJson.Write(slot);
-        construction.Remove("delegateCtorRef");
-        ResolveDelegateCtor(construction, slot);
     }
 
     // The declared return of a delegate's `Invoke`, in the instantiation the slot names. ECMA-335 II.14.6 gives a
@@ -453,145 +345,6 @@ static partial class ClrMemberResolution
         return new(frame, parameters.Length, slotReturn, null, null, parameters);
     }
 
-    static void AdaptVoidConstruction(JsonObject construction, TypeNode.Fn naturalFn,
-        TypeNode.Fqn slot, TypeNode slotReturn)
-    {
-        var plan = VoidDelegateAdapterPlan(naturalFn, slot, slotReturn);
-        var adapter = AdapterClass(plan.Frame, plan.Arity, plan.Return, plan.Parameters, plan.GenericArity);
-
-        var captured = new JsonObject();
-        foreach (var kv in construction.ToList()) { captured[kv.Key] = kv.Value?.DeepClone(); construction.Remove(kv.Key); }
-
-        // The adaptation happens AT the construction, so the diagnostic position stays on both halves.
-        if (captured["pos"] is JsonNode position) construction["pos"] = position.DeepClone();
-        construction["k"] = "newClosure";
-        construction["closureType"] = TypeJson.Write(new TypeNode.Fqn(adapter));
-        construction["method"] = "invoke";
-        construction["captures"] = new JsonArray { captured };
-        construction["funcType"] = TypeJson.Write(slot);
-        if (plan.Parameters != null || plan.Arguments.Length > 0)
-            construction["typeArgs"] = new JsonArray(plan.Arguments.Select(TypeJson.Write).ToArray());
-        ResolveDelegateCtor(construction, slot);
-    }
-
-    // One adapter class per (natural delegate family, arity, produced return) in a file — the shape depends on
-    // nothing else, because its parameters ARE the delegate's.
-    static string AdapterClass(TypeNode.Fn frame, int arity, TypeNode slotReturn,
-        TypeNode[] slotParameters = null, int? genericArity = null)
-    {
-        var key = DelegateAdapterKey(frame, arity, slotReturn, slotParameters, genericArity);
-        if (_adapters.TryGetValue(key, out var existing)) return existing;
-
-        var name = FreshDelegateAdapterName(_adapterScope);
-        var frameJson = TypeJson.Write(frame);
-        var self = new JsonObject { ["t"] = "fqn", ["name"] = name };
-
-        JsonArray invokeBody;
-        if (slotParameters == null) invokeBody = new JsonArray
-        {
-            new JsonObject
-            {
-                ["k"] = "exprStmt",
-                ["expr"] = DelegateInvokeCall(self, frameJson, arity),
-            },
-            new JsonObject
-            {
-                ["k"] = "return",
-                ["value"] = UnitSingletonRead(),
-            },
-        };
-        else
-        {
-            var call = DelegateInvokeCall(self, frameJson, arity);
-            var arguments = (JsonArray)call["args"];
-            for (var i = 0; i < arity; i++)
-                if (!frame.DelegateParams[i].Equals(slotParameters[i]))
-                arguments[i] = new JsonObject {
-                    ["k"] = "cast", ["type"] = TypeJson.Write(frame.DelegateParams[i]),
-                    ["e"] = arguments[i].DeepClone(),
-                };
-            if (slotReturn is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
-                invokeBody = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = call },
-                    new JsonObject { ["k"] = "return" });
-            else if (frame.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
-                invokeBody = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = call },
-                    new JsonObject { ["k"] = "return", ["value"] = UnitSingletonRead() });
-            else
-            {
-                var result = frame.Ret.Equals(slotReturn) ? (JsonNode)call : new JsonObject {
-                    ["k"] = "cast", ["type"] = TypeJson.Write(slotReturn), ["e"] = call,
-                };
-                invokeBody = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = result });
-            }
-        }
-        var invoke = new JsonObject
-        {
-            ["name"] = "invoke",
-            ["static"] = false,
-            ["override"] = false,
-            ["virtual"] = false,
-            ["params"] = new JsonArray(Enumerable.Range(0, arity).Select(i => (JsonNode)new JsonObject
-            {
-                ["name"] = "p" + i,
-                ["type"] = TypeJson.Write(slotParameters?[i] ?? new TypeNode.Tv("type", i)),
-            }).ToArray()),
-            ["ret"] = TypeJson.Write(slotReturn),
-            ["body"] = invokeBody,
-            // The body's last statement is the return; no fall-through terminator is needed or wanted.
-            ["bodyTerminates"] = true,
-        };
-
-        var field = new JsonObject { ["name"] = "d", ["type"] = frameJson.DeepClone() };
-        var ctor = new JsonObject
-        {
-            ["params"] = new JsonArray { field.DeepClone() },
-            ["baseArgs"] = null,
-            ["body"] = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["k"] = "setField",
-                    ["ownerType"] = self.DeepClone(),
-                    ["recv"] = new JsonObject { ["k"] = "this" },
-                    ["name"] = "d",
-                    ["value"] = new JsonObject { ["k"] = "local", ["name"] = "d" },
-                },
-            },
-        };
-
-        var declaration = new JsonObject
-        {
-            ["name"] = name,
-            ["kind"] = "class",
-            ["generated"] = true,
-        };
-        var typeArity = genericArity ?? arity;
-        if (typeArity > 0)
-            declaration["typeParams"] = new JsonArray(
-                Enumerable.Range(0, typeArity).Select(i => (JsonNode)new JsonObject
-                {
-                    ["name"] = "T" + i,
-                    // The adapter's parameter STANDS FOR the delegate's own parameter, so it must admit every
-                    // type that one admits — and a delegate family's parameters admit a byref-like type
-                    // (`Action<Span<int>>` is a legal .NET delegate). Without the anti-constraint the adapter
-                    // rejects the instantiation the natural delegate already made. This is the only generic
-                    // attribute the position needs: positive constraints belong to whatever type is substituted
-                    // in, which the frame that supplies it has already satisfied.
-                    ["specialConstraints"] = new JsonArray { "allowsRefStruct" },
-                }).ToArray());
-        declaration["base"] = null;
-        declaration["interfaces"] = new JsonArray();
-        declaration["fields"] = new JsonArray { field };
-        declaration["ctors"] = new JsonArray { ctor };
-        declaration["methods"] = new JsonArray { invoke };
-
-        var types = _adapterHost["types"] as JsonArray;
-        if (types == null) { types = new JsonArray(); _adapterHost["types"] = types; }
-        types.Add(declaration);
-        _adapters[key] = name;
-        return name;
-    }
-
     internal static string DelegateAdapterKey(DelegateAdapterPlan plan) =>
         DelegateAdapterKey(plan.Frame, plan.Arity, plan.Return, plan.Parameters, plan.GenericArity);
 
@@ -599,41 +352,4 @@ static partial class ClrMemberResolution
         TypeNode[] slotParameters, int? genericArity) =>
         $"{TypeNode.ToJson(frame)}|{arity}|{genericArity}|{TypeNode.ToJson(slotReturn)}|"
             + (slotParameters == null ? "unit" : string.Join(";", slotParameters.Select(TypeNode.ToJson)));
-
-    static JsonObject DelegateInvokeCall(JsonObject self, JsonNode frameJson, int arity)
-    {
-        var call = new JsonObject
-        {
-            ["k"] = "delegateInvoke",
-            ["funcType"] = frameJson.DeepClone(),
-            ["recv"] = new JsonObject
-            {
-                ["k"] = "field",
-                ["ownerType"] = self.DeepClone(),
-                ["recv"] = new JsonObject { ["k"] = "this" },
-                ["name"] = "d",
-            },
-            ["args"] = new JsonArray(Enumerable.Range(0, arity).Select(i => (JsonNode)new JsonObject
-            {
-                ["k"] = "local",
-                ["name"] = "p" + i,
-            }).ToArray()),
-        };
-        ResolveDelegateInvoke(call, "funcType");
-        return call;
-    }
-
-    // The `Unit` singleton, read exactly as any Kotlin `object` instance is. A build that is EMITTING
-    // `kotlin.Unit` has no reference to name and correctly carries none — the local axis.
-    internal static JsonObject UnitSingletonRead()
-    {
-        var read = new JsonObject
-        {
-            ["k"] = "staticField",
-            ["ownerType"] = new JsonObject { ["t"] = "fqn", ["name"] = UnitFqn },
-            ["name"] = UnitInstance,
-        };
-        ResolveStaticField(read);
-        return read;
-    }
 }
