@@ -581,7 +581,7 @@ static partial class KotlinCollectionSlotSynthesis
             bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
         // This newly generated body has not visited the value classifier binder. Bind its source-bound tests once,
         // rather than mistaking a classifier-backed physical Object slot for acceptance of every non-null value.
-        KotlinRuntimeTypeWitness.ValueRepresentations?.BindOperations(bridge);
+        KotlinRuntimeTypeWitness.ValueRepresentations?.BindMaterializedOperations(bridge);
         return MaterializedExecutable.Normalize(bridge);
     }
 

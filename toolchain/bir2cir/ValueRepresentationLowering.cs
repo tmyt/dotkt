@@ -18,8 +18,8 @@ sealed partial class ValueRepresentationLowering
     readonly ValueRepresentationSourcePolicy sourcePolicy;
     readonly Dictionary<string, IReadOnlyList<string>> localParameters = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> adapters = new(StringComparer.Ordinal);
-    readonly Dictionary<string, (string Owner, JsonObject Method, string Slot)> members = new(StringComparer.Ordinal);
-    readonly Dictionary<string, (string Owner, JsonObject Method)> locals = new(StringComparer.Ordinal);
+    readonly Dictionary<string, (string Owner, LiveMethod Method, string Slot)> members = new(StringComparer.Ordinal);
+    readonly Dictionary<string, (string Owner, LiveMethod Method)> locals = new(StringComparer.Ordinal);
     readonly IReadOnlyDictionary<string, SupertypeGraph.Def> sourceHierarchy;
     IReadOnlyDictionary<string, IReadOnlyList<string>> interfaceMarkers;
     readonly ReferenceMetadataIndex refs;
@@ -27,8 +27,8 @@ sealed partial class ValueRepresentationLowering
 
     static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
     static bool Bool(JsonNode node) => node is JsonValue value && value.TryGetValue<bool>(out var result) && result;
-    internal ValueRepresentationLowering(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex references, bool refBuild,
-        ValueRepresentationSourcePolicy sourcePolicy, SourceIndex sourceIndex)
+    ValueRepresentationLowering(ReferenceMetadataIndex references, bool refBuild,
+        ValueRepresentationSourcePolicy sourcePolicy)
     {
         refs = references;
         referenceBuild = refBuild;
@@ -38,17 +38,8 @@ sealed partial class ValueRepresentationLowering
         bindings = sourcePolicy.Bindings;
         foreach (var member in refs?.ValueMembers ?? Array.Empty<MemberBinding>())
         {
-            members[member.DeclarationId] = (member.Owner, new JsonObject {
-                ["name"] = member.SourcePropertyName ?? member.DeclarationSourceName ?? member.Name,
-                [KotlinPropertyAccessors.KindKey] = member.AccessorKind,
-                [DeclarationIdentityBinding.Key] = member.DeclarationId,
-                ["abstract"] = member.IsAbstract,
-                ["params"] = new JsonArray((member.DeclarationSemanticParams ?? member.ParamTypeNodes)
-                    .Select((type, index) => (JsonNode)new JsonObject { ["name"] = "p" + index, ["type"] = TypeJson.Write(type) }).ToArray()),
-                ["ret"] = TypeJson.Write(member.DeclarationSemanticReturn ?? member.ReturnTypeNode),
-            }, member.ValueSlot);
+            members[member.DeclarationId] = (member.Owner, new LiveMethod(member), member.ValueSlot);
         }
-        BindSource(roots, sourceIndex);
     }
 
     internal JsonNode Predicate(TypeNode type)
@@ -86,14 +77,17 @@ sealed partial class ValueRepresentationLowering
     }
 
     string SelectedAdapter(JsonObject operation)
+        => SelectedAdapter(Text(operation[DeclarationIdentityBinding.Key]),
+            (operation["overrides"] as JsonArray ?? new()).OfType<JsonObject>()
+                .Select(marker => Text(marker[DeclarationIdentityBinding.Key])));
+
+    string SelectedAdapter(string declarationId, IEnumerable<string> overrides)
     {
         string Adapter(string id) => id == null ? null : adapters.GetValueOrDefault(id) ?? refs?.ValueAdapter(id);
-        if (Text(operation[DeclarationIdentityBinding.Key]) is string selected) return Adapter(selected);
-        if (operation["overrides"] is not JsonArray contracts) return null;
+        if (declarationId != null) return Adapter(declarationId);
         // A fake override has no declaration of its own. The frontend states its exact inherited contracts;
         // use a unique adapter among those identities, never reconstruct a member from its owner/name.
-        var inherited = contracts.OfType<JsonObject>()
-            .Select(marker => Adapter(Text(marker[DeclarationIdentityBinding.Key])))
+        var inherited = overrides.Select(Adapter)
             .Where(target => target != null).Distinct(StringComparer.Ordinal).ToArray();
         return inherited.Length == 1 ? inherited[0] : null;
     }
@@ -121,45 +115,6 @@ sealed partial class ValueRepresentationLowering
             : null;
     }
 
-    static JsonObject GenericDeclaration(JsonObject operation, string scope)
-    {
-        for (JsonNode parent = operation.Parent; parent != null; parent = parent.Parent)
-            if (parent is JsonObject owner && (scope == "method"
-                ? owner["k"] == null && owner["params"] is JsonArray && owner["body"] is JsonArray
-                : Text(owner["kind"]) is "class" or "interface" or "enum" or "struct"))
-                return owner;
-        return null;
-    }
-
-    static NullableRepresentationFrame GenericFrame(JsonObject declaration, string scope) => declaration == null ? null
-        : scope == "method" ? NullableRepresentationTypes.DeclarationMethodFrame(declaration)
-            : KotlinSupertypesRecord.ReadNullableFrame(declaration);
-
-    TypeNode SemanticBound(JsonObject operation, TypeNode.Tv variable, HashSet<TypeNode.Tv> visited)
-    {
-        if (!visited.Add(variable)) return null;
-        var declaration = GenericDeclaration(operation, variable.Scope);
-        if (declaration == null) return null;
-        var frame = GenericFrame(declaration, variable.Scope);
-        var sourceIndex = frame?.PhysicalSlot(variable.I).SourceIndex ?? variable.I;
-        var sourceKey = variable.Scope == "method" ? NullableGenericErasure.MethodTypeParameterBoundsPre : KotlinSupertypesRecord.PreKey;
-        var bounds = Text(declaration[sourceKey]) is string encoded
-            ? JsonNode.Parse(encoded)?["bounds"]?[sourceIndex.ToString()] as JsonArray : null;
-        var parameter = (declaration["typeParams"] as JsonArray)?[variable.I] as JsonObject;
-        bounds ??= parameter?["constraints"] as JsonArray;
-        foreach (var bound in (bounds ?? new JsonArray()).Select(TypeJson.Read))
-        {
-            if (HasClassifier(bound)) return bound;
-            if (bound is TypeNode.Tv parent)
-            {
-                var parentFrame = GenericFrame(GenericDeclaration(operation, parent.Scope), parent.Scope);
-                var physical = parentFrame?.Variable(parent, NullableRepresentationFrame.Role.Ordinary) as TypeNode.Tv ?? parent;
-                if (SemanticBound(operation, physical, visited) is { } inherited) return inherited;
-            }
-        }
-        return null;
-    }
-
     (ValueRepresentationBinding Binding, string Shape) Classifier(TypeNode type) => sourcePolicy.Classifier(type);
 
     // One character per vector, outermost first: open System.Array storage or exact array storage.
@@ -170,14 +125,7 @@ sealed partial class ValueRepresentationLowering
         var split = target.LastIndexOf('.');
         var owner = target[..split];
         var name = target[(split + 1)..];
-        var local = locals.Where(entry => entry.Value.Owner == owner && Text(entry.Value.Method["name"]) == name)
-            .Where(entry => entry.Value.Method["params"] is JsonArray declared
-                && declared.Count == parameters.Count
-                && declared.OfType<JsonObject>().Select((parameter, index) =>
-                    ReferenceMetadataIndex.SourceDeclarationDescribesCall(TypeJson.Read(parameter["type"]), parameters[index])).All(match => match))
-            .Select(entry => entry.Key).ToArray();
-        var identity = local.Length == 1 ? local[0]
-            : refs.AuthoredKotlinHelper(owner, name, 0, parameters.ToArray()).DeclarationId;
+        var identity = HelperIdentity(owner, name, parameters);
         return new JsonObject {
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(owner), ["method"] = name,
             [DeclarationIdentityBinding.Key] = identity,
@@ -185,123 +133,6 @@ sealed partial class ValueRepresentationLowering
             ["args"] = new JsonArray(arguments.Select(argument => argument.DeepClone()).ToArray()),
             ["ret"] = TypeJson.Write(result), ["sty"] = TypeJson.Write(result),
         };
-    }
-
-    internal void BindOperations(JsonNode root)
-    {
-        if (referenceBuild || bindings.Count == 0) return;
-        var suffix = 0;
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        void Names(JsonNode current)
-        {
-            if (current is JsonObject obj)
-            {
-                if (Text(obj["name"]) is string name) names.Add(name);
-                if (Text(obj["var"]) is string variable) names.Add(variable);
-                foreach (var child in obj) Names(child.Value);
-            }
-            else if (current is JsonArray array) foreach (var child in array) Names(child);
-        }
-        Names(root);
-        void Walk(JsonNode node)
-        {
-            if (node is JsonArray array) { foreach (var child in array.ToArray()) Walk(child); return; }
-            if (node is not JsonObject operation) return;
-            foreach (var (key, child) in operation.ToArray())
-                if (key is not ("attrs" or "overrides" or DeclarationIdentityBinding.SemanticSignatureKey)) Walk(child);
-            var kind = Text(operation["k"]);
-            if (kind == "callInstance" && operation["super"]?.GetValue<bool>() == true
-                && Text(operation[DeclarationIdentityBinding.Key]) is string selected
-                && members.TryGetValue(selected, out var body) && !(body.Method["abstract"]?.GetValue<bool>() ?? false))
-            {
-                Replace(operation, DefaultCall(body.Owner, body.Method, operation["recv"], operation["args"] as JsonArray));
-                return;
-            }
-            if (kind == "callInstance" && operation["super"]?.GetValue<bool>() != true
-                && SelectedAdapter(operation) is string target)
-            {
-                var arguments = new[] { operation["recv"] }.Concat(operation["args"] as JsonArray ?? new JsonArray()).ToArray();
-                var signature = new[] { new TypeNode.Fqn("kotlin.Any") }.Concat(
-                    (operation["sig"] as JsonArray ?? new JsonArray()).Select(TypeJson.Read)).ToArray();
-                var memberResult = TypeJson.Read(operation["dynRet"] ?? operation["ret"] ?? operation["sty"])
-                    ?? throw new InvalidOperationException("Value member adapter has no selected return type");
-                Replace(operation, Helper(target, arguments, signature, memberResult));
-                return;
-            }
-            if (kind is not ("cast" or "isInst" or "isInstRef") || operation["e"] == null) return;
-            var source = TypeJson.Read(operation["type"]);
-            var scalar = source is TypeNode.Nullable n ? n.Of : source;
-            if (kind is "cast" or "isInstRef" && scalar is TypeNode.Tv variable
-                && !KotlinTypeWitness.NeedsWitness(operation)
-                && SemanticBound(operation, variable, new HashSet<TypeNode.Tv>()) is { } bound)
-            {
-                // An unchecked generic cast still checks its erased source bound. Keep that
-                // guard inside the operand so deferred Object-return/narrowing remains unchanged.
-                // Like an ordinary raw class-bound cast, this preguard admits null; the original
-                // generic cast and its eventual typed consumer retain ownership of null handling.
-                var guard = (JsonObject)operation.DeepClone();
-                guard["type"] = TypeJson.Write(bound is TypeNode.Nullable ? bound : new TypeNode.Nullable(bound));
-                Walk(guard);
-                operation["e"] = new JsonObject { ["k"] = "cast",
-                    ["type"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))), ["e"] = guard };
-                return;
-            }
-            var nullable = source is TypeNode.Nullable;
-            var (binding, shape) = Classifier(source);
-            if (binding == null) return;
-            // A logical variant alias has no single native interface that every admitted
-            // value implements. Its declaration-owned classifier is the entire scalar guard.
-            var opaque = OpaqueScalar(source);
-            var physical = ClassifierType(source);
-            string temp;
-            do temp = "$valueClassifier$" + suffix++; while (!names.Add(temp));
-            var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
-            JsonObject Local() => new() { ["k"] = "local", ["name"] = temp, ["sty"] = TypeJson.Write(any) };
-            JsonObject Null() => new() { ["k"] = "const", ["type"] = TypeJson.Write(any), ["value"] = null };
-            JsonObject Bool(bool value) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = value };
-            var matches = new JsonObject {
-                ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
-                ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Local(), ["rhs"] = Null() },
-                ["then"] = Bool(nullable),
-                ["else"] = new JsonObject {
-                    ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Boolean"),
-                    ["cond"] = Helper(binding.Classifier, new[] { Local(), Shape(shape) },
-                        new TypeNode[] { any, new TypeNode.Fqn("kotlin.String") }, new TypeNode.Fqn("kotlin.Boolean")),
-                    ["then"] = new JsonObject { ["k"] = "isInst", ["type"] = TypeJson.Write(physical), ["e"] = Local() },
-                    ["else"] = Bool(false),
-                },
-            };
-            var statements = new JsonArray(new JsonObject { ["k"] = "var", ["name"] = temp,
-                ["type"] = TypeJson.Write(any), ["init"] = operation["e"].DeepClone() });
-            JsonNode result;
-            if (kind == "cast")
-            {
-                if (!nullable)
-                    statements.Add(new JsonObject { ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
-                        ["cond"] = new JsonObject { ["k"] = "objEq", ["lhs"] = Local(), ["rhs"] = Null() },
-                        ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
-                            ["k"] = "new", ["type"] = TypeJson.Fqn("kotlin.NullPointerException"),
-                            ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
-                        } }),
-                    }) });
-                statements.Add(new JsonObject { ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
-                    ["cond"] = new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = matches },
-                    ["body"] = new JsonArray(new JsonObject { ["k"] = "throw", ["value"] = new JsonObject {
-                        ["k"] = "new", ["type"] = TypeJson.Fqn("kotlin.ClassCastException"),
-                        ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
-                    } }),
-                }) });
-                result = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(opaque ? any : source), ["e"] = Local() };
-            }
-            else if (kind == "isInst") result = matches;
-            else result = new JsonObject {
-                ["k"] = "cond", ["type"] = TypeJson.Write(source is TypeNode.Nullable ? source : new TypeNode.Nullable(source)),
-                ["cond"] = matches, ["then"] = new JsonObject { ["k"] = kind, ["type"] = TypeJson.Write(physical), ["e"] = Local() },
-                ["else"] = Null(),
-            };
-            Replace(operation, new JsonObject { ["k"] = "valueBlock", ["stmts"] = statements, ["result"] = result });
-        }
-        Walk(root);
     }
 
     TypeNode AliasFace(TypeNode type) => sourcePolicy.AliasFace(type);
@@ -435,7 +266,7 @@ sealed partial class ValueRepresentationLowering
                     }
                     if (inherited != null) break;
                 }
-                var declaration = source.Method;
+                var declaration = source.Method.Dom;
                 var parameters = declaration["params"] as JsonArray ?? new JsonArray();
                 var signature = new JsonArray(parameters.OfType<JsonObject>().Select(parameter => parameter["type"]?.DeepClone()).ToArray());
                 var arguments = new JsonArray(parameters.Select((parameter, index) => (JsonNode)new JsonObject {
@@ -527,16 +358,9 @@ sealed partial class ValueRepresentationLowering
         foreach (var cls in defs.Values) Apply(cls);
     }
 
-    static void Replace(JsonObject target, JsonObject replacement)
-    {
-        var position = target["pos"]?.DeepClone();
-        target.Clear();
-        foreach (var (key, value) in replacement.ToArray()) target[key] = value?.DeepClone();
-        if (position != null) target["pos"] = position;
-    }
-
     internal static void SelfTest()
     {
+        KClassMemberBinding.SelfTest();
         SourceMembershipSelfTest();
         var root = JsonNode.Parse("""
         {"fileClass":"Helpers","types":[{"name":"Union","kind":"class","attrs":[
@@ -582,35 +406,49 @@ sealed partial class ValueRepresentationLowering
         var sourcePolicy = new ValueRepresentationSourcePolicy(new[] { source }, null, false);
         source = sourcePolicy.EraseBounds(source);
         var sourceIndex = CaptureSource(new[] { source });
-        root = source.ToDom();
-        var policy = new ValueRepresentationLowering(new[] { root }, null, false, sourcePolicy, sourceIndex);
+        var policy = CreateSource(new[] { source }, null, false, sourcePolicy, sourceIndex, null);
         var inheritedCall = JsonNode.Parse("""
             {"k":"callInstance","overrides":[{"declarationId":"convert"}],
              "recv":{"k":"local","name":"value"},"args":[],"sig":[],"ret":{"t":"fqn","name":"kotlin.Int"}}
             """);
-        policy.BindOperations(inheritedCall);
+        inheritedCall = BindFixtureOperation(policy, inheritedCall);
         if (Text(inheritedCall[DeclarationIdentityBinding.Key]) != "helper-convert")
             throw new InvalidOperationException("A frontend-selected inherited contract lost its value adapter");
         var abstractCall = JsonNode.Parse("""
             {"k":"callInstance","declarationId":"abstract-convert","overrides":[{"declarationId":"convert"}],
              "recv":{"k":"local","name":"value"},"args":[],"sig":[],"ret":{"t":"fqn","name":"kotlin.Int"}}
             """);
-        policy.BindOperations(abstractCall);
+        abstractCall = BindFixtureOperation(policy, abstractCall);
         if (Text(abstractCall[DeclarationIdentityBinding.Key]) != "helper-convert")
             throw new InvalidOperationException("A retained abstract obligation lost its selected ancestor adapter");
         var nullCast = JsonNode.Parse("""
             {"k":"cast","type":{"t":"fqn","name":"Union"},
              "e":{"k":"const","type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}},"value":null}}
             """);
-        policy.BindOperations(nullCast);
+        nullCast = BindFixtureOperation(policy, nullCast);
         if (TypeJson.OwnerName(nullCast["stmts"]?[1]?["branches"]?[0]?["body"]?[0]?["value"]?["type"])
             != "kotlin.NullPointerException")
             throw new InvalidOperationException("A non-null classified cast lost its Kotlin null exception");
-        var scalar = policy.Predicate(new TypeNode.Fqn("Union"));
-        var vector = policy.Predicate(new TypeNode.Array(new TypeNode.Fqn("Union")));
-        var projected = policy.Predicate(new TypeNode.Array(new TypeNode.Array(
-            new TypeNode.Projection("out", new TypeNode.Fqn("Union")))));
-        policy.BindOperations(root);
+        var scalar = ((BirGraphValue)policy.PredicateValue(new TypeNode.Fqn("Union"))).ToDom();
+        var vector = ((BirGraphValue)policy.PredicateValue(new TypeNode.Array(new TypeNode.Fqn("Union")))).ToDom();
+        var projected = ((BirGraphValue)policy.PredicateValue(new TypeNode.Array(new TypeNode.Array(
+            new TypeNode.Projection("out", new TypeNode.Fqn("Union")))))).ToDom();
+        var boundMethod = new BirFunctionDeclaration { Name = "boundBridge", Params = Array.Empty<BirParameter>(),
+            TypeParams = new[] { new BirTypeParameter { Name = "T", Constraints = Array.Empty<TypeNode>() } },
+            MethodTypeParameterBoundsPre = new SourceBoundsSnapshot(new Dictionary<int, TypeNode[]> {
+                [0] = new TypeNode[] { new TypeNode.Fqn("Union") } }),
+            Body = new IBirStatement[] { new BirExpressionStatement { Expr = new BirCast {
+                Type = new TypeNode.Tv("method", 0), ReifiedTypeOperand = false,
+                E = new BirLocal { Name = "value", Sty = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) } } } } };
+        var materializedBound = boundMethod.ToDom();
+        policy.BindOperations(new BirFileDeclaration { Methods = new[] { boundMethod } });
+        policy.BindOperations(source);
+        root = source.ToDom();
+        policy.BindDomDeclarations(new[] { root });
+        policy.BindMaterializedOperations(materializedBound);
+        if (!JsonNode.DeepEquals(boundMethod.ToDom(), materializedBound)
+            || materializedBound["body"][0]["expr"]["e"]?["e"]?["k"]?.GetValue<string>() != "valueBlock")
+            throw new InvalidOperationException("Source and materialized value operations diverged on their shared saved-bound decision");
         var method = root["methods"][3];
         foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
             method[key] = JsonNode.Parse("""
@@ -720,8 +558,19 @@ sealed partial class ValueRepresentationLowering
     static ValueRepresentationLowering FixturePolicy(JsonNode root, bool referenceBuild)
     {
         var source = ReadFixture(root);
-        return new(new[] { root }, null, referenceBuild,
-            new ValueRepresentationSourcePolicy(new[] { source }, null, referenceBuild), CaptureSource(new[] { source }));
+        var result = CreateSource(new[] { source }, null, referenceBuild,
+            new ValueRepresentationSourcePolicy(new[] { source }, null, referenceBuild), CaptureSource(new[] { source }), null);
+        result.BindDomDeclarations(new[] { root });
+        return result;
+    }
+
+    static JsonNode BindFixtureOperation(ValueRepresentationLowering policy, JsonNode expression)
+    {
+        var source = ReadFixture(new JsonObject { ["fileClass"] = "OperationFixture", ["methods"] = new JsonArray(
+            new JsonObject { ["name"] = "use", ["params"] = new JsonArray(), ["body"] = new JsonArray(
+                new JsonObject { ["k"] = "exprStmt", ["expr"] = expression.DeepClone() }) }) });
+        policy.BindOperations(source);
+        return ((BirGraphValue)((BirExpressionStatement)source.Methods.Value[0].Body.Value[0]).Expr.Value).ToDom();
     }
 
     static void SourceMembershipSelfTest()
@@ -733,17 +582,18 @@ sealed partial class ValueRepresentationLowering
         var membership = new SourceModuleIndex(new[] { source }, new Dictionary<string, string>()).DeclarationIds;
         var policy = new ValueRepresentationSourcePolicy(new[] { source }, null, false);
         var index = CaptureSource(new[] { source }, membership);
+        var indexed = CreateSource(new[] { source }, null, false, policy, index, null);
         var root = source.ToDom();
         root["methods"].AsArray().Add(new BirFunctionDeclaration {
             Name = "forwarder", DeclarationId = "new-physical-only", Generated = true,
             Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.String"),
         }.ToDom());
-        var indexed = new ValueRepresentationLowering(new[] { root }, null, false, policy, index);
+        indexed.BindDomDeclarations(new[] { root });
         var method = root["methods"][0].AsObject();
         method["ret"] = TypeJson.Fqn("kotlin.Int");
         if (!indexed.locals.ContainsKey("existing-generated") || indexed.locals.ContainsKey("new-physical-only")
-            || !ReferenceEquals(indexed.locals["existing-generated"].Method, method)
-            || TypeJson.Read(indexed.locals["existing-generated"].Method["ret"]) is not TypeNode.Fqn { Name: "kotlin.Int" })
+            || !ReferenceEquals(indexed.locals["existing-generated"].Method.Dom, method)
+            || indexed.locals["existing-generated"].Method.Return is not TypeNode.Fqn { Name: "kotlin.Int" })
             throw new InvalidOperationException("Source membership lost preexisting generated declarations or live representation signatures");
         SourceIndexSelfTest();
     }

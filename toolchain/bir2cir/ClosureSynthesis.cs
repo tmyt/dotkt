@@ -33,53 +33,6 @@ static partial class ClosureSynthesis
     // The referenced-metadata `ref struct` oracle, for the capture legality check (see CheckCaptureLegality).
     static ReferenceMetadataIndex _refs;
 
-    // Inline substitution must never reinterpret a synthClass payload's lexical TVs after it has replaced the
-    // surrounding method application with a constructed caller type. Establish the synthetic class's own dense frame
-    // while the original direct outer-TV correspondence is still intact; InlineSplice then substitutes only the
-    // construction-side typeArgs. ClosureSynthesis later preserves this frame and records the post-substitution
-    // application for downstream synthetic-reference binding.
-    internal static void PrebindSplicedFrames(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            if ((Str(obj["k"]) is "newClosure" or "newSam")
-                && obj["synthClass"] is JsonObject synth
-                && obj["typeArgs"] is JsonArray typeArgs)
-            {
-                // Nested synthClasses own independent frames. Bind them first, then shield them from the outer walk.
-                foreach (var pair in synth.ToList())
-                    if (pair.Value != null) PrebindSplicedFrames(pair.Value);
-                if (HasPreboundFrame(synth)) return;
-                var rebound = RebindSyntheticTypeVariables(synth, typeArgs);
-                rebound[PreboundFrameKey] = true;
-                obj["synthClass"] = rebound;
-                return;
-            }
-            foreach (var pair in obj.ToList())
-                if (pair.Value != null) PrebindSplicedFrames(pair.Value);
-        }
-        else if (node is JsonArray array)
-            foreach (var child in array)
-                if (child != null) PrebindSplicedFrames(child);
-    }
-
-    // A generated non-capturing delegate target is a generic METHOD whose frame is already dense in its own
-    // typeParams. ReifiedNullabilityWitnessLowering turns that method into a synthetic CLASS; bind the target's own
-    // `!!i` frame to the class's `!i` frame before the construction-side typeArgs (which name the enclosing frame)
-    // are considered. Treating those two correspondences as the same map breaks when an enclosing `<A, B>` target
-    // retains only B and is therefore materialized as `[method#1]` at the construction site.
-    internal static JsonObject PrebindDenseMethodFrame(JsonObject source)
-    {
-        var arity = (source["typeParams"] as JsonArray)?.Count ?? 0;
-        if (arity == 0) return source;
-        var ownFrame = new JsonArray(Enumerable.Range(0, arity).Select(index => (JsonNode)new JsonObject {
-            ["t"] = "tv", ["scope"] = "method", ["i"] = index,
-        }).ToArray());
-        var rebound = RebindSyntheticTypeVariables(source, ownFrame);
-        rebound[PreboundFrameKey] = true;
-        return rebound;
-    }
-
     // A prebound payload owns a dense synthetic frame already.  Its construction-side typeArgs still name the
     // enclosing frame and may contain the same outer TV more than once after inline specialization, so consumers
     // must map payload `type#i` positions to typeArgs[i] rather than trying to recover the old outer-TV identity.

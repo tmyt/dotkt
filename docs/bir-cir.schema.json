@@ -171,17 +171,17 @@
       "required": ["k", "op", "lhs", "rhs"], "additionalProperties": false
     },
     "birCast": {
-      "type": "object", "x-dotkt-model": { "name": "BirCast", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "_physicalDeclarationSignature": { "type": "boolean" }, "_exactBridgeCast": { "type": "boolean" }, "functionValueRestoration": { "type": "boolean" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirCast", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "_physicalDeclarationSignature": { "type": "boolean" }, "_exactBridgeCast": { "type": "boolean" }, "functionValueRestoration": { "type": "boolean" }, "kotlinTypeWitness": { "$ref": "#/$defs/birExpressionNode" }, "kotlinRuntimeTypeWitness": { "$ref": "#/$defs/birExpressionNode" }, "kotlinClassifierPredicate": { "$ref": "#/$defs/birExpressionNode" } } },
       "properties": { "k": { "const": "cast" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" }, "reifiedTypeOperand": { "type": "boolean" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "type", "e"], "additionalProperties": false
     },
     "birIsInstance": {
-      "type": "object", "x-dotkt-model": { "name": "BirIsInstance", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true } } },
+      "type": "object", "x-dotkt-model": { "name": "BirIsInstance", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinTypeWitness": { "$ref": "#/$defs/birExpressionNode" }, "kotlinRuntimeTypeWitness": { "$ref": "#/$defs/birExpressionNode" }, "kotlinClassifierPredicate": { "$ref": "#/$defs/birExpressionNode" } } },
       "properties": { "k": { "const": "isInst" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "type", "e"], "additionalProperties": false
     },
     "birInstanceOrNull": {
-      "type": "object", "x-dotkt-model": { "name": "BirInstanceOrNull", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true } } },
+      "type": "object", "x-dotkt-model": { "name": "BirInstanceOrNull", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinTypeWitness": { "$ref": "#/$defs/birExpressionNode" }, "kotlinRuntimeTypeWitness": { "$ref": "#/$defs/birExpressionNode" }, "kotlinClassifierPredicate": { "$ref": "#/$defs/birExpressionNode" } } },
       "properties": { "k": { "const": "isInstRef" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" }, "reifiedTypeOperand": { "type": "boolean" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "type", "e"], "additionalProperties": false
     },
@@ -299,7 +299,9 @@
     "birCallStatic": {
       "type": "object", "x-dotkt-model": { "name": "BirCallStatic", "domain": "birCore", "role": "expression", "loweringProperties": { "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "dotktKotlinSigId": { "type": "integer" },
+        "projectedHelperReceiver": { "type": "integer" },
         "nullableWitnessCount": { "type": "integer" },
+        "nullablePendingWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
         "dotktDeclarationIdentityBound": { "type": "boolean" },
         "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" },
         "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
@@ -325,6 +327,7 @@
     "birCallInstance": {
       "type": "object", "x-dotkt-model": { "name": "BirCallInstance", "domain": "birCore", "role": "expression", "loweringProperties": { "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "nullableWitnessCount": { "type": "integer" },
+        "nullablePendingWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
         "dotktDeclarationIdentityBound": { "type": "boolean" },
         "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" },
         "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
@@ -354,7 +357,7 @@
       "required": ["k", "id", "args"], "additionalProperties": false
     },
     "birFieldGet": {
-      "type": "object", "x-dotkt-model": { "name": "BirFieldGet", "domain": "birCore", "role": "expression", "loweringProperties": { "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "_nativeLocation": { "type": "boolean" }, "_nativeFieldAddress": { "type": "boolean" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirFieldGet", "domain": "birCore", "role": "expression", "loweringProperties": { "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "_nativeLocation": { "type": "boolean" }, "_nativeFieldAddress": { "type": "boolean" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" } } },
       "properties": {
         "companionCall": { "type": "boolean" },
         "k": { "const": "field" }, "ownerType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/birExpressionNode" }, "name": { "type": "string" },
@@ -509,6 +512,8 @@
     },
     "birFunctionDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": { "lexicalOwnerTypeParamCount": { "type": "integer" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "semanticReifiedIndices": { "type": "array", "items": { "type": "integer" } },
+        "nullableWitnessIndices": { "type": "array", "items": { "type": "integer" } },
         "suspendResult": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "suspendTaskResult": { "x-dotkt-representation-role": "Return", "$ref": "#/$defs/type" },
         "dotktValueReturn": { "type": "boolean" },
@@ -1013,7 +1018,7 @@
       "required": ["k", "ownerType", "companionType", "name"], "additionalProperties": false
     },
     "birClassReference": {
-      "type": "object", "x-dotkt-model": { "name": "BirClassReference", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true } } },
+      "type": "object", "x-dotkt-model": { "name": "BirClassReference", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinClassifierRef": { "type": "boolean" } } },
       "properties": { "k": { "const": "classRef" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" } },
       "required": ["k", "type"], "additionalProperties": false
     },
@@ -1053,7 +1058,7 @@
       "required": ["k", "stmts", "result"], "additionalProperties": false
     },
     "birNew": {
-      "type": "object", "x-dotkt-model": { "name": "BirNew", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "nullableWitnessCount": { "type": "integer" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirNew", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "nullableWitnessCount": { "type": "integer" }, "nullablePendingWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } } } },
       "properties": {
         "k": { "const": "new" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" },
         "argTypes": { "x-dotkt-ownership-role": "Lexical", "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "Construction parameter types at this application belong to its lexical frame. Unlike call descriptor vectors, owner permutation rewrites these types; memberSignature remains in the target constructor's declaration frame." },
@@ -2069,6 +2074,7 @@
     },
     "cirConstrainedCallNode": {
       "type": "object", "x-dotkt-model": { "name": "CirConstrainedCall", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["virtual", "argTypes"], "loweringProperties": {
+        "nullablePendingWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
         "dotktDeclarationIdentityBound": { "type": "boolean" }, "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "nullableWitnessCount": { "type": "integer" }, "resolvedMemberParams": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } },
         "sty": { "x-dotkt-representation-role": "ResultStamp", "$ref": "#/$defs/type" }, "suspendCall": { "type": "boolean" },

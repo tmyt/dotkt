@@ -339,7 +339,7 @@ sealed partial class TypedCirProjection
 
     internal CirMethod ProjectCirMethod(BirFunctionDeclaration value)
     {
-        if (value._ownerConstraintOverrideBounds.IsPresent || value._physicalDeclarationSignature.IsPresent || value._preparedDelegateReturnArgument.IsPresent || value._syntheticTypeArgs.IsPresent || value.CompanionMemberKind.IsPresent || value.CompanionReceiver.IsPresent || value.CompanionSourceName.IsPresent || value.DeclarationId.IsPresent || value.DeclarationSourceName.IsPresent || value.DotktValueReturn.IsPresent || value.EventProperty.IsPresent || value.ExplicitClrName.IsPresent || value.ExtensionCoreDeclarationId.IsPresent || value.FakeOverride.IsPresent || value.InheritedImplementation.IsPresent || value.KotlinPropertyAccessorCarrier.IsPresent || value.KotlinStatic.IsPresent || value.Lateinit.IsPresent || value.LexicalOwnerTypeParamCount.IsPresent || value.MethodTypeParameterBoundsPre.IsPresent || value.NullableGenericRet.IsPresent || value.NullableGenericSuspendRet.IsPresent || value.NullableRepresentationFrame.IsPresent || value.Overrides.IsPresent || value.PropertyAccessor.IsPresent || value.PropertyAssociation.IsPresent || value.PropertyName.IsPresent || value.RetKotlinType.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.SemanticOwner.IsPresent || value.SignatureOverrideDeclarations.IsPresent || value.SourceName.IsPresent || value.SuspendResult.IsPresent || value.SuspendTaskResult.IsPresent)
+        if (value._ownerConstraintOverrideBounds.IsPresent || value._physicalDeclarationSignature.IsPresent || value._preparedDelegateReturnArgument.IsPresent || value._syntheticTypeArgs.IsPresent || value.CompanionMemberKind.IsPresent || value.CompanionReceiver.IsPresent || value.CompanionSourceName.IsPresent || value.DeclarationId.IsPresent || value.DeclarationSourceName.IsPresent || value.DotktValueReturn.IsPresent || value.EventProperty.IsPresent || value.ExplicitClrName.IsPresent || value.ExtensionCoreDeclarationId.IsPresent || value.FakeOverride.IsPresent || value.InheritedImplementation.IsPresent || value.KotlinPropertyAccessorCarrier.IsPresent || value.KotlinStatic.IsPresent || value.Lateinit.IsPresent || value.LexicalOwnerTypeParamCount.IsPresent || value.MethodTypeParameterBoundsPre.IsPresent || value.NullableGenericRet.IsPresent || value.NullableGenericSuspendRet.IsPresent || value.NullableRepresentationFrame.IsPresent || value.NullableWitnessIndices.IsPresent || value.Overrides.IsPresent || value.PropertyAccessor.IsPresent || value.PropertyAssociation.IsPresent || value.PropertyName.IsPresent || value.RetKotlinType.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.SemanticOwner.IsPresent || value.SemanticReifiedIndices.IsPresent || value.SignatureOverrideDeclarations.IsPresent || value.SourceName.IsPresent || value.SuspendResult.IsPresent || value.SuspendTaskResult.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirFunctionDeclaration");
         return new CirMethod
         {
@@ -786,7 +786,7 @@ sealed partial class TypedCirProjection
 
     internal CirCast ProjectCirCast(BirCast value)
     {
-        if (value._exactBridgeCast.IsPresent || value._physicalDeclarationSignature.IsPresent || value.FunctionValueRestoration.IsPresent || value.ReifiedTypeOperand.IsPresent || value.SuspendFnTypePre.IsPresent)
+        if (value._exactBridgeCast.IsPresent || value._physicalDeclarationSignature.IsPresent || value.FunctionValueRestoration.IsPresent || value.KotlinClassifierPredicate.IsPresent || value.KotlinRuntimeTypeWitness.IsPresent || value.KotlinTypeWitness.IsPresent || value.ReifiedTypeOperand.IsPresent || value.SuspendFnTypePre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirCast");
         return new CirCast
         {
@@ -971,7 +971,7 @@ sealed partial class TypedCirProjection
 
     internal CirIsInstance ProjectCirIsInstance(BirIsInstance value)
     {
-        if (value.SuspendFnTypePre.IsPresent)
+        if (value.KotlinClassifierPredicate.IsPresent || value.KotlinRuntimeTypeWitness.IsPresent || value.KotlinTypeWitness.IsPresent || value.SuspendFnTypePre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirIsInstance");
         return new CirIsInstance
         {
@@ -984,7 +984,7 @@ sealed partial class TypedCirProjection
 
     internal CirIsInstanceReference ProjectCirIsInstanceReference(BirInstanceOrNull value)
     {
-        if (value.ReifiedTypeOperand.IsPresent || value.SuspendFnTypePre.IsPresent)
+        if (value.KotlinClassifierPredicate.IsPresent || value.KotlinRuntimeTypeWitness.IsPresent || value.KotlinTypeWitness.IsPresent || value.ReifiedTypeOperand.IsPresent || value.SuspendFnTypePre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirInstanceOrNull");
         return new CirIsInstanceReference
         {
@@ -995,7 +995,7 @@ sealed partial class TypedCirProjection
 
     internal CirClassReference ProjectCirClassReference(BirClassReference value)
     {
-        if (value.SuspendFnTypePre.IsPresent)
+        if (value.KotlinClassifierRef.IsPresent || value.SuspendFnTypePre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirClassReference");
         return new CirClassReference
         {
@@ -1045,7 +1045,7 @@ sealed partial class TypedCirProjection
 
     internal CirNew ProjectCirNew(BirNew value)
     {
-        if (value.CompanionCaptureOwner.IsPresent || value.ConstructorDeclarationId.IsPresent || value.MemberMethodTypeParams.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberReturnType.IsPresent || value.MemberSignature.IsPresent || value.MemberVisibility.IsPresent || value.NullableWitnessCount.IsPresent || value.PropertyFunction.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.SuspendFnTypePre.IsPresent)
+        if (value.CompanionCaptureOwner.IsPresent || value.ConstructorDeclarationId.IsPresent || value.MemberMethodTypeParams.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberReturnType.IsPresent || value.MemberSignature.IsPresent || value.MemberVisibility.IsPresent || value.NullablePendingWitnesses.IsPresent || value.NullableWitnessCount.IsPresent || value.PropertyFunction.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.SuspendFnTypePre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirNew");
         return new CirNew
         {
@@ -1071,7 +1071,7 @@ sealed partial class TypedCirProjection
 
     internal CirCallStatic ProjectCirCallStatic(BirCallStatic value)
     {
-        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._capturedGenericTarget.IsPresent || value.AnySlot.IsPresent || value.AwaitResult.IsPresent || value.ClrAwaitBridge.IsPresent || value.ClrFlagsOperation.IsPresent || value.CompanionCall.IsPresent || value.CompanionReceiver.IsPresent || value.DefaultDeclarationId.IsPresent || value.DefaultOwnerType.IsPresent || value.DotktDeclarationIdentityBound.IsPresent || value.DotktFrontendDeclarationConsumed.IsPresent || value.DotktKotlinSigId.IsPresent || value.FunctionCallSignature.IsPresent || value.MemberMethodTypeParams.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberReturnType.IsPresent || value.MemberSignature.IsPresent || value.MemberVisibility.IsPresent || value.NullableWitnessCount.IsPresent || value.Prop.IsPresent || value.PropertyAccessor.IsPresent || value.PropertyName.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.ShapeTypes.IsPresent || value.Sty.IsPresent || value.SuspendCall.IsPresent)
+        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._capturedGenericTarget.IsPresent || value.AnySlot.IsPresent || value.AwaitResult.IsPresent || value.ClrAwaitBridge.IsPresent || value.ClrFlagsOperation.IsPresent || value.CompanionCall.IsPresent || value.CompanionReceiver.IsPresent || value.DefaultDeclarationId.IsPresent || value.DefaultOwnerType.IsPresent || value.DotktDeclarationIdentityBound.IsPresent || value.DotktFrontendDeclarationConsumed.IsPresent || value.DotktKotlinSigId.IsPresent || value.FunctionCallSignature.IsPresent || value.MemberMethodTypeParams.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberReturnType.IsPresent || value.MemberSignature.IsPresent || value.MemberVisibility.IsPresent || value.NullablePendingWitnesses.IsPresent || value.NullableWitnessCount.IsPresent || value.ProjectedHelperReceiver.IsPresent || value.Prop.IsPresent || value.PropertyAccessor.IsPresent || value.PropertyName.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.ShapeTypes.IsPresent || value.Sty.IsPresent || value.SuspendCall.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirCallStatic");
         return new CirCallStatic
         {
@@ -1090,7 +1090,7 @@ sealed partial class TypedCirProjection
 
     internal CirCallInstance ProjectCirCallInstance(BirCallInstance value)
     {
-        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._capturedGenericTarget.IsPresent || value._erasedConstraintDispatch.IsPresent || value._exactExistentialBridgeOwnerCall.IsPresent || value.AnySlot.IsPresent || value.ArgTypes.IsPresent || value.AwaitResult.IsPresent || value.ClrAwaitBridge.IsPresent || value.ClrFlagsOperation.IsPresent || value.CompanionCall.IsPresent || value.CompanionReceiver.IsPresent || value.DeclarationId.IsPresent || value.DefaultDeclarationId.IsPresent || value.DefaultOwnerType.IsPresent || value.DotktDeclarationIdentityBound.IsPresent || value.DotktFrontendDeclarationConsumed.IsPresent || value.FunctionCallSignature.IsPresent || value.MemberMethodTypeParams.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberReturnType.IsPresent || value.MemberSignature.IsPresent || value.MemberVisibility.IsPresent || value.NullableWitnessCount.IsPresent || value.Overrides.IsPresent || value.PropertyAccessor.IsPresent || value.PropertyName.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.ShapeTypes.IsPresent || value.SuspendCall.IsPresent)
+        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._capturedGenericTarget.IsPresent || value._erasedConstraintDispatch.IsPresent || value._exactExistentialBridgeOwnerCall.IsPresent || value.AnySlot.IsPresent || value.ArgTypes.IsPresent || value.AwaitResult.IsPresent || value.ClrAwaitBridge.IsPresent || value.ClrFlagsOperation.IsPresent || value.CompanionCall.IsPresent || value.CompanionReceiver.IsPresent || value.DeclarationId.IsPresent || value.DefaultDeclarationId.IsPresent || value.DefaultOwnerType.IsPresent || value.DotktDeclarationIdentityBound.IsPresent || value.DotktFrontendDeclarationConsumed.IsPresent || value.FunctionCallSignature.IsPresent || value.MemberMethodTypeParams.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberReturnType.IsPresent || value.MemberSignature.IsPresent || value.MemberVisibility.IsPresent || value.NullablePendingWitnesses.IsPresent || value.NullableWitnessCount.IsPresent || value.Overrides.IsPresent || value.PropertyAccessor.IsPresent || value.PropertyName.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.ShapeTypes.IsPresent || value.SuspendCall.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirCallInstance");
         CheckSourceStamp(value.Sty, value.Ret);
         CheckSourceStamp(value.Sty, value.DynRet);
@@ -1113,7 +1113,7 @@ sealed partial class TypedCirProjection
 
     internal CirConstrainedCall ProjectCirConstrainedCall(BirConstrainedCall value)
     {
-        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._foreignDeclarationSignature.IsPresent || value._resolvedMethodTypeParams.IsPresent || value.DeclarationId.IsPresent || value.DotktDeclarationIdentityBound.IsPresent || value.FunctionCallSignature.IsPresent || value.NullableWitnessCount.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.Sty.IsPresent || value.SuspendCall.IsPresent)
+        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._foreignDeclarationSignature.IsPresent || value._resolvedMethodTypeParams.IsPresent || value.DeclarationId.IsPresent || value.DotktDeclarationIdentityBound.IsPresent || value.FunctionCallSignature.IsPresent || value.NullablePendingWitnesses.IsPresent || value.NullableWitnessCount.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.Sty.IsPresent || value.SuspendCall.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirConstrainedCall");
         return new CirConstrainedCall
         {

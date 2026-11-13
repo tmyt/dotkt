@@ -80,6 +80,38 @@ static partial class UncheckedGenericCastReturnErasure
             && ReferenceEquals(detachedIndex.ByIdentity["detached"].Method, bound),
             "detached occurrence was mutated or its replacement was chased by identity");
 
+        // Witness synthesis explicitly retires actual generated targets. Only
+        // those reports may shift a later captured declaration's owning slot.
+        var prefix = new BirFunctionDeclaration { Name = "prefix", DeclarationId = "survivor", Generated = true,
+            Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.Unit"), Body = Array.Empty<IBirStatement>() };
+        var retiredTarget = Method("retired-target");
+        retiredTarget.Generated = true;
+        var survivor = Method("survivor");
+        var retirementSource = new[] { new BirFileDeclaration { FileClass = "Retirement",
+            Methods = new[] { prefix, retiredTarget, survivor } } };
+        var retirementPending = CaptureSource(retirementSource);
+        retirementSource[0].Methods = new[] { survivor, new BirFunctionDeclaration { Name = "appended-helper" } };
+        var retirementRoots = Project(retirementSource);
+        var retiredProjection = retiredTarget.ToDom();
+        var retirements = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance) {
+            [prefix] = prefix.ToDom(), [retiredTarget] = retiredProjection,
+        };
+        var retirementIndex = BindDomDeclarations(retirementPending, retirementRoots, retirements);
+        Assert(ReferenceEquals(retirementIndex.ByIdentity["survivor"].Method, retirementRoots[0]["methods"][0])
+            && ReferenceEquals(retirementIndex.ByIdentity["retired-target"].Method, retiredProjection)
+            && retiredProjection.Parent == null, "reported retirement lost its shared detached projection or shifted by scalar identity");
+        Apply(retirementRoots[0], retirementIndex);
+        Assert(TypeJson.Read(retirementRoots[0]["methods"][0]["ret"]) == new TypeNode.Fqn("object")
+            && TypeJson.Read(retiredProjection["ret"]) == Tv(),
+            "explicit retired declaration was mutated despite lacking continuing root ownership");
+
+        var unreportedSource = new[] { new BirFileDeclaration { FileClass = "Unreported",
+            Methods = new[] { prefix, Method("still-exact") } } };
+        var unreportedPending = CaptureSource(unreportedSource);
+        unreportedSource[0].Methods = new[] { unreportedSource[0].Methods.Value[1] };
+        Refuses(() => BindDomDeclarations(unreportedPending, Project(unreportedSource)),
+            "an unreported preceding deletion silently shifted the selected occurrence");
+
         var pair = new[] { Root("A", "a"), Root("B", "b") };
         var wrongOrder = CaptureSource(pair);
         Refuses(() => BindDomDeclarations(wrongOrder, Project(pair).Reverse().ToArray()), "file order silently rebound");
