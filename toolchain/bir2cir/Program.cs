@@ -308,7 +308,7 @@ sealed class Pipeline
         var sourceTopLevelFns = birRoots.OfType<JsonObject>()
             .SelectMany(root => (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
             .Select(method => method["name"]?.GetValue<string>()).Where(name => name != null).ToHashSet(StringComparer.Ordinal);
-        CollectionHelperBinding.Apply(birRoots, refs, representationAliases, module.CollectionInputs, (bind, bindTyped) =>
+        CollectionHelperBinding.Apply(birRoots, refs, representationAliases, module.CollectionInputs, bindTyped =>
             FaithfulHints.WithHelperBinding(bindTyped, () =>
             {
                 foreach (var root in birRoots)

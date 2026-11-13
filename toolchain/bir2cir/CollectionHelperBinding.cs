@@ -14,7 +14,7 @@ static class CollectionHelperBinding
 
     public static void Apply(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references,
         IReadOnlyDictionary<string, string> aliases, SourceCollectionInputs captured,
-        Action<Action<JsonObject>, Func<BirCallStatic, BirCallStatic>> prepareHelpers = null)
+        Action<Func<BirCallStatic, BirCallStatic>> prepareHelpers = null)
     {
         var inputs = roots.ToArray();
         var applicationOrder = captured.Applications;
@@ -23,7 +23,7 @@ static class CollectionHelperBinding
         var iteratorTypeDefinitions = captured.Definitions;
         bool IsInterface(string owner) => captured.Kinds.TryGetValue(owner, out var kind) ? kind == "interface"
             : references != null && references.TryResolveClrOwner(owner, out _, out var referencedKind) && referencedKind == "interface";
-        prepareHelpers?.Invoke(call => FaithfulHints.BindHelper(call, captured.Helpers.Bind), captured.Helpers.Bind);
+        prepareHelpers?.Invoke(captured.Helpers.Bind);
 
         JsonNode Walk(JsonNode node, MemberCallSubstitution.SubstCtx context)
         {
@@ -179,7 +179,7 @@ static class CollectionHelperBinding
         JsonObject Operand() => new JsonObject { ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(collection) };
         var typedArguments = new IBirExpression[] { new BirLocal { Name = "value" } };
         BirCallStatic typedRender = null;
-        Apply(new[] { root }, null, aliases, CaptureFixture(root), (_, bind) =>
+        Apply(new[] { root }, null, aliases, CaptureFixture(root), bind =>
             FaithfulHints.WithHelperBinding(bind, () => {
                 typedRender = bind(new BirCallStatic {
                     Owner = new TypeNode.Fqn("kotlin.collections.ClrCollectionDefaultsKt"), Method = "clrCollToString",
