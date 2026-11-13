@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
@@ -13,7 +10,7 @@ using DotKt.Bir.Lowering;
 // the creation would allocate an `int32[]` under an `object[]` slot — a `stelem` of a boxed element into a 4-byte slot,
 // which is memory corruption rather than a type error.
 //
-// So the creation's element FOLLOWS THE SLOT IT FILLS: a `var`/`field` whose declared type is `Array<E?>` with a
+// So the creation's element FOLLOWS THE SLOT IT FILLS: a local `var` whose declared type is `Array<E?>` with a
 // possibly-value `E` makes its initializing creation `object[]`. A reference `E` is untouched — `Array<String?>` is
 // `string[]` and its creation already says `kotlin.String`.
 //
@@ -43,34 +40,5 @@ static partial class ArrayNullableElemCanonicalization
             }
             node.VisitChildren(Walk);
         }
-    }
-
-    public static void Apply(JsonNode root, ValueTypeOracle isValue) => Walk(root, isValue);
-
-    static void Walk(JsonNode node, ValueTypeOracle isValue)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                Canonicalize(obj, isValue);
-                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, isValue);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) if (it != null) Walk(it, isValue);
-                break;
-        }
-    }
-
-    static readonly string[] ArrayCreationKinds = { "newArray", "newArraySized", "newArrayInit" };
-
-    static void Canonicalize(JsonObject obj, ValueTypeOracle isValue)
-    {
-        if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) != true || (k != "var" && k != "field")) return;
-        // The declared slot must be an `Array<E?>` whose `E` may be a value type — the shape D2 canonicalizes.
-        if (TypeJson.Read(obj["type"]) is not TypeNode.Array arrT
-            || !NullableGenericErasure.IsNullableMaybeValue(arrT.Elem, isValue)) return;
-        if (obj["init"] is not JsonObject init) return;
-        if ((init["k"] as JsonValue)?.TryGetValue<string>(out var ik) != true || Array.IndexOf(ArrayCreationKinds, ik) < 0) return;
-        init["elem"] = TypeJson.Fqn("object");
     }
 }

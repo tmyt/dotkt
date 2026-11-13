@@ -440,14 +440,23 @@ sealed class Pipeline
         var localStatics = LocalStaticOwnerBinding.Collect(captured);
         var moduleBindings = new ModuleBindingSnapshots(
             AnySlotRebind.CollectLocalTypes(captured),
-            GenericDowncastRealignment.Collect(captured),
-            SupertypeGraph.CollectSource(captured));
+            GenericDowncastRealignment.Collect(captured));
+        var iterableHierarchy = SupertypeGraph.CollectSource(captured);
         var syntheticTypes = captured.Select(source =>
             NullableTvErasureCallRealign.CaptureNewSyntheticTypes(source, nullableDeclarations)).ToArray();
         foreach (var source in captured)
         {
             PropertyReferenceFunctionLowering.Apply(source, propertyFunctionFields);
             LocalStaticOwnerBinding.Apply(source, localStatics);
+            // Resolve physical value slots before erasure, retaining the
+            // original native-slot/iterable/array/nullable-test dependency order.
+            if (!referenceBuild)
+            {
+                ValueSlotNullableWrite.Apply(source, refs, isValueFqn);
+                ValueElementIterableCoercion.Apply(source, isValueFqn, iterableHierarchy, refs);
+            }
+            ArrayNullableElemCanonicalization.Apply(source, isValueFqn);
+            NullableIsInstMatch.Apply(source);
         }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
@@ -567,7 +576,6 @@ sealed class Pipeline
         // may live in a different .bir.json than the type declaration, while ilemit's emitted-type table is assembly-wide.
         var localRefTypes = module.Preparation.Bindings.LocalReferenceTypes;
         var genericDowncastHierarchy = module.Preparation.Bindings.GenericDowncastHierarchy;
-        var iterableHierarchy = module.Preparation.Bindings.IterableHierarchy;
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
@@ -583,36 +591,6 @@ sealed class Pipeline
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
             NullableTvErasureCallRealign.ApplyNewSyntheticTypes(bir.SyntheticTypes, nullableTvDeclRets);
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
-            // #11/#501 — VALUE-TYPE PLATFORM SLOT ACCESS COERCION: reconcile reflected bare/Nullable<V> property or
-            // field slots with the Kotlin platform view on both writes and reads. Writes receive explicit wrap/unwrap;
-            // reads carry the reflected physical result so the receiving local cannot reinterpret Nullable<V> as V.
-            // Runs after source/native binding and before BirTypeLowering. Non-ref only.
-            if (!_options.RefBuild) ValueSlotNullableWrite.Apply(bir.Root, refs, isValueFqn);
-            // W1-S1 (#46/#44): the `clrGeneric*` overload-matcher is now the STRUCTURED `resolvedMemberParams` descriptor
-            // NetInteropBinding carries (the callee's declared param TypeNodes) — BirTypeLowering lowers it and ilemit
-            // exact-matches it. The retired ShapeSynthesis pass (lossy `shapes` string derived off the @ClrTypeAlias
-            // index) is DELETED; ilemit no longer re-resolves the overload by name/arity/shape-string.
-            // KOTLIN COVARIANCE OVER A VALUE ELEMENT at an object-erased `Iterable<T?>` slot: `List<Int>` IS an
-            // `Iterable<Int?>` in Kotlin, while an `IReadOnlyList<int32>` is not an `IEnumerable<object>` on the CLR
-            // (a reified argument is invariant for a value type), so the callee's `GetEnumerator` is not found. Wrap
-            // that argument in `Enumerable.Cast<object>`, which boxes each element into a real object-enumerable.
-            // Only an `Iterable<T?>` slot, per position — that is the one slot the wrap's own `IEnumerable<object>`
-            // inhabits. Read the materialized method frame's argument at the slot's exact index, rather than
-            // expecting the source Nullable(Tv) spelling to survive physical frame allocation.
-            if (!_options.RefBuild) ValueElementIterableCoercion.Apply(bir.Root, isValueFqn, iterableHierarchy, refs);
-            // ARRAY-ELEMENT CANONICALIZATION (#86 D2): an `Array<X?>` with a possibly-value `X` is `object[]`, so an
-            // array CREATION filling such a slot allocates `object[]` too. kotc writes the source's own element there
-            // (`arrayOf(1,2,3)` into an `Array<Int?>` says `kotlin.Int`), which is not a `Nullable(...)` the erasure
-            // sweep below could see — leaving it allocates an `int32[]` under an `object[]` slot, and the boxed
-            // element stores then corrupt memory rather than failing to type-check. Runs BEFORE type lowering (elem
-            // tokens are still `kotlin.*`) and before the erasure, which then finds the two already agreeing.
-            ArrayNullableElemCanonicalization.Apply(bir.Root, isValueFqn);
-            // NULLABLE IS-TEST (`x is T?`): null IS a member of a nullable type in Kotlin, and the frontend's
-            // else-branch smart-cast to a NON-null `x` depends on it. `isinst` never matches null, so mark the node
-            // and let ilemit add the null-accepting branch. Runs BEFORE type lowering, which erases the `?` on the
-            // type operand (every CLR reference is nullable, so the lowered type cannot carry the signal), and AFTER
-            // InlineSplice so a spliced inline body's own is-tests are marked too.
-            NullableIsInstMatch.Apply(bir.Root);
             // Bind Enum members before alias/helper substitution. In particular an Any.toString slot selected
             // through Enum<T> must dispatch on the actual native or rich enum receiver.
             if (!_options.RefBuild) EnumMemberBinding.Apply(bir.Root, localBasicEnums);
@@ -1771,8 +1749,7 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
     IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings);
 sealed record ModuleBindingSnapshots(Dictionary<string, AnySlotRebind.TypeInfo> LocalReferenceTypes,
-    Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy,
-    Dictionary<string, SupertypeGraph.Def> IterableHierarchy);
+    Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties);

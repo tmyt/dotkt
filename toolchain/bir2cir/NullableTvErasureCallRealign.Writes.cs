@@ -561,27 +561,27 @@ static partial class NullableTvErasureCallRealign
     // the value-type oracle must classify it as a struct; reference nullability remains annotation-only.
     static JsonNode CoerceForTarget(JsonNode value, TypeNode src, TypeNode target,
         bool exactPropertyTarget = false) =>
-        CoerceForTarget(value, src, target, exactPropertyTarget, _isValue);
+        CoerceForTarget(value, src, target, exactPropertyTarget, _isValue, _refs);
 
     // A late bir2cir pass that obtains a reflected fixed slot after this walk may apply the same complete concrete
     // slot rule without depending on Apply's per-run oracle state.
     internal static JsonNode CoerceForFixedSlot(
-        JsonNode value, TypeNode src, TypeNode target, ValueTypeOracle isValue) =>
-        CoerceForTarget(value, src, target, exactPropertyTarget: false, isValue);
+        JsonNode value, TypeNode src, TypeNode target, ValueTypeOracle isValue, ReferenceMetadataIndex refs) =>
+        CoerceForTarget(value, src, target, exactPropertyTarget: false, isValue, refs);
 
     static JsonNode CoerceForTarget(JsonNode value, TypeNode src, TypeNode target,
-        bool exactPropertyTarget, ValueTypeOracle isValue)
+        bool exactPropertyTarget, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
     {
         if (value is not JsonObject vo) return null;
         return BuildSlotCoercion(vo, SelectFixedSlotCoercion(
             Str(vo["k"]), Str(vo["k"]) == "cast" ? TypeJson.Read(vo["type"]) : null,
-            src, target, exactPropertyTarget, isValue));
+            src, target, exactPropertyTarget, isValue, refs));
     }
 
     // The graph representation only builds the selected conversion. Both the
     // owning typed producer and remaining DOM consumers use this same policy.
     static SlotCoercion SelectFixedSlotCoercion(string kind, TypeNode existingCast,
-        TypeNode src, TypeNode target, bool exactPropertyTarget, ValueTypeOracle isValue)
+        TypeNode src, TypeNode target, bool exactPropertyTarget, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
     {
         if (src == null || target == null) return default;
         // Oblivious is an NRT/platform annotation, not a CLR container. BirTypeLowering erases the OUTER wrapper to
@@ -595,10 +595,10 @@ static partial class NullableTvErasureCallRealign
             || (IsSemanticObject(src) && (IsBareObject(target) || IsSemanticObject(target)))) return default;
         if (kind is "throwExpr" or "throw") return default;
         if (target is TypeNode.Nullable { Of: TypeNode.Fqn targetElem }
-            && SameNominalSlot(src, targetElem) && isValue(targetElem))
+            && SameNominalSlot(src, targetElem, refs) && isValue(targetElem))
             return new(SlotCoercionKind.NullableWrap, targetElem);
         if (src is TypeNode.Nullable { Of: TypeNode.Fqn sourceElem }
-            && SameNominalSlot(target, sourceElem) && isValue(sourceElem))
+            && SameNominalSlot(target, sourceElem, refs) && isValue(sourceElem))
             return new(SlotCoercionKind.NullableValue, sourceElem);
         // The nullable-generic declaration `Array<T?>` is physically `object[]`. At a concrete REFERENCE
         // instantiation, compiler-produced values retain their reified runtime array (`String[]`, `Slot[]`) and CLR
@@ -606,7 +606,7 @@ static partial class NullableTvErasureCallRealign
         // use requires the inverse checked projection. ApplyDerivedRet handles the call boundary when its semantic
         // result stamp is still present; this fixed-slot twin handles a value first flowed through an object[] local,
         // Ref field, return, or other consumer before the concrete target is encountered.
-        if (CanNarrowReferenceArrayProjection(src, target))
+        if (CanNarrowReferenceArrayProjection(src, target, isValue))
             return new(SlotCoercionKind.Cast, target);
         return SelectObjectSlotCoercion(kind, existingCast, src, target, exactPropertyTarget, isValue);
     }
@@ -633,13 +633,13 @@ static partial class NullableTvErasureCallRealign
 
     // Exact imported TypeDef names and declaration carrier names can denote the same constructed value slot.
     // Use reference-backed classifier identity, not spelling or assignability, before adding/removing Nullable<V>.
-    static bool SameNominalSlot(TypeNode left, TypeNode right)
+    static bool SameNominalSlot(TypeNode left, TypeNode right, ReferenceMetadataIndex refs)
     {
         if (left.Equals(right)) return true;
-        if (left is not TypeNode.Fqn l || right is not TypeNode.Fqn r || !SameClassifier(l, r)) return false;
+        if (left is not TypeNode.Fqn l || right is not TypeNode.Fqn r || !SameClassifier(l, r, refs)) return false;
         var la = l.Args ?? Array.Empty<TypeNode>();
         var ra = r.Args ?? Array.Empty<TypeNode>();
-        return la.Length == ra.Length && la.Zip(ra, SameNominalSlot).All(equal => equal);
+        return la.Length == ra.Length && la.Zip(ra, (a, b) => SameNominalSlot(a, b, refs)).All(equal => equal);
     }
 
     // The object-erasure conversion a value needs to inhabit `target`, or null when it needs none / none is

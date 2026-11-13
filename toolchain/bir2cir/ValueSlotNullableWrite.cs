@@ -1,6 +1,4 @@
 using System;
-using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // VALUE-TYPE PLATFORM SLOT ACCESS COERCION (#11/#501): a reference-KLIB-projected property/field
@@ -19,114 +17,11 @@ using DotKt.Bir;
 // null). Runs after native interop binding
 // (so the `clrPropSet` nodes exist) and BEFORE
 // BirTypeLowering (owner args + the `nullableValue` elem are still pure-Kotlin `kotlin.*`, lowered downstream exactly
-// as PrimitiveOperatorLowering's `nullableValue` is). A BirScope-tracking walk ensures a
+// as PrimitiveOperatorLowering's `nullableValue` is). A lexical source walk ensures a
 // `{local q}` source resolves its declared static type. Non-ref build only (clrPropSet is a NetInteropBinding product).
 static partial class ValueSlotNullableWrite
 {
-    static ReferenceMetadataIndex _refs;
-    static ValueTypeOracle _isValue;
-
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
-    {
-        _refs = refs;
-        _isValue = isValue;
-        switch (root)
-        {
-            case JsonObject o: WalkObject(o, BirScope.Empty); break;
-            case JsonArray a: WalkArray(a, BirScope.Empty); break;
-        }
-    }
-
-    static void WalkArray(JsonArray arr, BirScope scope)
-    {
-        // A statement sequence: a `var` enters scope for the SUBSEQUENT siblings only (lexical block scoping), so a
-        // `var q` preceding the `clrPropSet` exprStmt is in scope when the setter is visited.
-        var cur = scope;
-        for (var i = 0; i < arr.Count; i++)
-        {
-            switch (arr[i])
-            {
-                case JsonObject co: WalkObject(co, cur); break;
-                case JsonArray ca: WalkArray(ca, cur); break;
-            }
-            if (arr[i] is JsonObject vo && (vo["k"] as JsonValue)?.GetValue<string>() == "var")
-            {
-                if (ReferenceEquals(cur, scope)) cur = scope.Child();
-                cur.Declare(vo);
-            }
-        }
-    }
-
-    static void WalkObject(JsonObject obj, BirScope scope)
-    {
-        var child = scope.Extend(obj);
-        foreach (var key in obj.Select(kv => kv.Key).ToList())
-            switch (obj[key])
-            {
-                case JsonObject co: WalkObject(co, child); break;
-                case JsonArray ca: WalkArray(ca, child); break;
-            }
-        switch ((obj["k"] as JsonValue)?.GetValue<string>())
-        {
-            case "clrPropSet": CoerceWrite(obj, child); break;
-            case "clrPropGet": StampRead(obj, child); break;
-        }
-    }
-
-    static void CoerceWrite(JsonObject node, BirScope scope)
-    {
-        var value = node["value"];
-        if (value == null) return;
-        // Resolve the owner .NET type + the setter slot's instantiated shape. Only a BARE value slot needs coercion.
-        // Peel a Nullable/Oblivious/ByRef wrapper off the owner (a safe-call assignment `tl?.Value = q` spells the owner
-        // `nullable(ThreadLocal<Int>)`) to reach the underlying Fqn — its `Args` drive the generic-param slot mapping.
-        var ownerFqn = UnwrapOwnerFqn(node["type"]);
-        if (ownerFqn == null) return;
-        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0);
-        if (netType == null) return;
-        var name = (node["name"] as JsonValue)?.GetValue<string>();
-        if (name == null) return;
-        var src = StaticType.Surface(value, scope);
-        var slotType = ClrMemberResolution.PropertySlotType(netType, name, write: true,
-            isStatic: node["static"]?.GetValue<bool>() == true);
-        // Literal null carries no concrete value Fqn from which ConcreteValueSlot can recover a reflected bare
-        // slot's Kotlin spelling. Classify that physical CLR shape directly, before target inference: a concrete
-        // value type (or a generic parameter closed by the owner to a bare value type) has no null representation.
-        // A genuine Nullable<V> slot remains null-capable and is deliberately excluded.
-        if (IsNullSource(value, src) && IsBareValueSlot(slotType, ownerFqn.Args, _isValue))
-            throw new InvalidOperationException(
-                $"bir2cir: cannot assign `null` to the value-type platform slot `{ownerFqn.Name}.{name}` — a CLR "
-                + "value type has no null representation. Use an explicit Kotlin `Int?`-typed property for nullable value storage.");
-        var target = ConcreteValueSlot(slotType, ownerFqn.Args, src, _isValue);
-        if (target == null) return;
-        if (NullableTvErasureCallRealign.CoerceForFixedSlot(value, src, target, _isValue) is JsonNode coerced)
-            node["value"] = coerced;
-    }
-
-    static void StampRead(JsonObject node, BirScope scope)
-    {
-        var ownerFqn = UnwrapOwnerFqn(node["type"]);
-        if (ownerFqn == null) return;
-        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0);
-        var name = (node["name"] as JsonValue)?.GetValue<string>();
-        if (netType == null || name == null) return;
-        var surface = StaticType.Surface(node, scope);
-        var slotType = ClrMemberResolution.PropertySlotType(netType, name, write: false,
-            isStatic: node["static"]?.GetValue<bool>() == true);
-        var target = ConcreteValueSlot(slotType, ownerFqn.Args, surface, _isValue);
-        if (target == null) return;
-        node["ret"] = TypeJson.Write(target);
-        if (node["sty"] != null) node["sty"] = TypeJson.Write(target);
-    }
-
-    // Peel Nullable/Oblivious/ByRef wrappers off the clrPropSet owner slot to reach the underlying .NET Fqn (name +
-    // type-args preserved) — mirrors NetInteropBinding.UnwrapFqn. null when there is no Fqn underneath.
-    static TypeNode.Fqn UnwrapOwnerFqn(JsonNode ownerJson)
-    {
-        if (ownerJson == null) return null;
-        return UnwrapOwnerFqn(TypeJson.Read(ownerJson));
-    }
-
+    // Preserve complete owner arguments while peeling platform/nullability/reference wrappers.
     static TypeNode.Fqn UnwrapOwnerFqn(TypeNode t)
     {
         while (true)
@@ -208,16 +103,6 @@ static partial class ValueSlotNullableWrite
         if (slotType.IsGenericType && slotType.GetGenericTypeDefinition().FullName == "System.Nullable`1")
             return false;
         return slotType.IsValueType;
-    }
-
-    // A literal-null source: the frontend types `= null` as `nullable(kotlin.Nothing)`, and the value node is a `const`
-    // carrying a JSON-null `value`. Either signal identifies it (the type is the robust primary; the const is a backup).
-    static bool IsNullSource(JsonNode value, TypeNode src)
-    {
-        if (src is TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Nothing" } }) return true;
-        return value is JsonObject o
-            && (o["k"] as JsonValue)?.GetValue<string>() == "const"
-            && o.ContainsKey("value") && o["value"] == null;
     }
 
 }

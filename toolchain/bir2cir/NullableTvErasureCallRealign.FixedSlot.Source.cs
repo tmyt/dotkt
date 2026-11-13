@@ -7,12 +7,12 @@ static partial class NullableTvErasureCallRealign
     // Selection stays shared with the live DOM consumers. Materialization uses
     // owning typed values directly, never a JSON projection of the operand.
     internal static IBirExpression CoerceForFixedSlot(
-        IBirExpression value, TypeNode src, TypeNode target, ValueTypeOracle isValue)
+        IBirExpression value, TypeNode src, TypeNode target, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
     {
         if (value is not BirGraphNode graph) return null;
         var selection = SelectFixedSlotCoercion(graph.Tag,
             value is BirCast cast ? cast.Type.OrDefault() : null,
-            src, target, exactPropertyTarget: false, isValue);
+            src, target, exactPropertyTarget: false, isValue, refs);
         if (selection.Kind == SlotCoercionKind.None) return null;
         var operand = OptionalField<IBirExpression>.Of((IBirExpression)graph.DeepClone());
         var type = BirGraphValue.CopyType(selection.Type);
@@ -34,7 +34,7 @@ static partial class NullableTvErasureCallRealign
         var value = new BirLocal { Name = "value", Sty = integer };
         bool IsValue(TypeNode.Fqn type) => type.Name is "kotlin.Int" or "Value";
         IBirExpression Coerce(TypeNode source, TypeNode target, IBirExpression operand = null)
-            => CoerceForFixedSlot(operand ?? value, source, target, IsValue);
+            => CoerceForFixedSlot(operand ?? value, source, target, IsValue, refs: null);
         void Require(bool condition, string reason)
         {
             if (!condition) throw new InvalidOperationException("Typed fixed-slot coercion: " + reason);
@@ -73,6 +73,18 @@ static partial class NullableTvErasureCallRealign
         Require(Coerce(new TypeNode.Fqn("Holder", new TypeNode[] { erased }),
             new TypeNode.Fqn("Holder", new TypeNode[] { text })) == null,
             "an invariant nested generic difference was treated as an object seam");
-        Console.WriteLine("[typed fixed slots] self-test OK (nullable, object and array seams, storage, termination and ownership)");
+        var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        var nestedSource = new TypeNode.Fqn("System.Environment.SpecialFolder");
+        var nestedPhysical = new TypeNode.Fqn("System.Environment+SpecialFolder");
+        var nullableNested = new TypeNode.Nullable(nestedPhysical);
+        bool NestedValue(TypeNode.Fqn type) => type.Name is "System.Environment.SpecialFolder" or "System.Environment+SpecialFolder";
+        Require(CoerceForFixedSlot(value, nestedSource, nullableNested, NestedValue, references) is BirNullableWrap
+            && CoerceForFixedSlot(value, nestedSource, nullableNested, NestedValue, refs: null) == null,
+            "fixed-slot classifier identity must come from the explicitly supplied reference universe");
+        var values = new TypeNode.Array(new TypeNode.Fqn("Value"));
+        Require(CoerceForFixedSlot(value, new TypeNode.Array(erased), values, IsValue, references) == null
+            && CoerceForFixedSlot(value, new TypeNode.Array(erased), values, _ => false, references) is BirCast,
+            "array projection must use the supplied value oracle rather than the previous nullable pass's state");
+        Console.WriteLine("[typed fixed slots] self-test OK (nullable, object and array seams, storage, termination, ownership and explicit reference/value authorities)");
     }
 }

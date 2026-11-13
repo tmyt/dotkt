@@ -20,7 +20,7 @@ static partial class ValueSlotNullableWrite
                         $"bir2cir: cannot assign `null` to the value-type platform slot `{owner.Name}.{write.Name.Value}` — a CLR "
                         + "value type has no null representation. Use an explicit Kotlin `Int?`-typed property for nullable value storage.");
                 var target = ConcreteValueSlot(slot, owner.Args, source, isValue);
-                if (target != null && NullableTvErasureCallRealign.CoerceForFixedSlot(write.Value.Value, source, target, isValue) is { } coerced)
+                if (target != null && NullableTvErasureCallRealign.CoerceForFixedSlot(write.Value.Value, source, target, isValue, refs) is { } coerced)
                     write.Value = OptionalField<IBirExpression>.Of(coerced);
             }
             else if (node is BirPropertyGet read)

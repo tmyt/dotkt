@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
@@ -17,7 +16,7 @@ using DotKt.Bir.Lowering;
 // operand is still evaluated exactly ONCE (an `x == null || x is T` rewrite would need a temp and would change the
 // evaluation shape), and a NON-nullable type operand is untouched.
 //
-// Runs in BIR-space BEFORE BirTypeLowering, which is where the `nullable:` wrapper on the type operand is erased
+// Runs in BIR-space BEFORE BirTypeLowering, which is where the Nullable wrapper on the type operand is erased
 // (every CLR reference is nullable, so the lowered type cannot carry the signal). `!is T?` needs nothing extra: kotc
 // emits it as `unaryOp !` over this same `isInst`.
 static partial class NullableIsInstMatch
@@ -31,28 +30,5 @@ static partial class NullableIsInstMatch
             if (node is BirIsInstance { Type.HasValue: true, Type.Value: TypeNode.Nullable } test) test.NullMatches = true;
             node.VisitChildren(Walk);
         }
-    }
-
-    public static void Apply(JsonNode root) => Walk(root);
-
-    static void Walk(JsonNode node)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                Mark(obj);
-                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) if (it != null) Walk(it);
-                break;
-        }
-    }
-
-    static void Mark(JsonObject obj)
-    {
-        if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) != true || k != "isInst") return;
-        if (TypeJson.Read(obj["type"]) is not TypeNode.Nullable) return;
-        obj["nullMatches"] = true;
     }
 }

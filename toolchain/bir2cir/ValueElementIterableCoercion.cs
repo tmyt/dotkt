@@ -30,12 +30,6 @@ using DotKt.Bir;
 // reference element needs nothing: CLR covariance already works there. An open element may be a value at runtime.
 static partial class ValueElementIterableCoercion
 {
-    // The struct-ness ORACLE (ReferenceMetadataIndex.IsValueType + the local enum/struct types), not a hardcoded
-    // primitive list: a Kotlin `value class` over a struct, a projected .NET struct and a local enum are value
-    // elements for exactly the same CLR reason as `Int`, and a list that names only the primitives answers "no" for
-    // them and silently drops the conversion.
-    static ValueTypeOracle _isValue = _ => false;
-
     // The one Kotlin collection head whose CLR form is `IEnumerable<E>` — the type the wrap produces.
     const string IterableFqn = "kotlin.collections.Iterable";
 
@@ -44,53 +38,6 @@ static partial class ValueElementIterableCoercion
     // `System.Collections.IEnumerable` the same way); BirTypeLowering passes a resolved BCL FQN through unchanged.
     static readonly TypeNode CastResultTn =
         new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new TypeNode[] { new TypeNode.Fqn("object") });
-
-    public static void Apply(JsonNode root, ValueTypeOracle isValue,
-        Dictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex refs)
-    {
-        _isValue = isValue ?? (_ => false);
-        // Include classes materialized by inlining and closure synthesis after the module-wide collection.
-        foreach (var entry in SupertypeGraph.Collect(new[] { root })) definitions[entry.Key] = entry.Value;
-        Walk(root, definitions, refs);
-    }
-
-    static void Walk(JsonNode node, IReadOnlyDictionary<string, SupertypeGraph.Def> definitions,
-        ReferenceMetadataIndex refs)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                MaybeWrap(obj, definitions, refs);
-                foreach (var kv in obj) Walk(kv.Value, definitions, refs);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) Walk(it, definitions, refs);
-                break;
-        }
-    }
-
-    static void MaybeWrap(JsonObject call, IReadOnlyDictionary<string, SupertypeGraph.Def> definitions,
-        ReferenceMetadataIndex refs)
-    {
-        if ((call["k"] as JsonValue)?.TryGetValue<string>(out var k) != true || k != "callStatic") return;
-        // Local calls carry sig; imported Kotlin calls carry the same selected declaration facts in shapeTypes
-        // until reference binding. Both have already been translated into the declaration's companion frame.
-        var sig = call["sig"] as JsonArray ?? call["shapeTypes"] as JsonArray;
-        if (sig == null || call["args"] is not JsonArray args) return;
-        if (sig.Count != args.Count) return;
-        for (var i = 0; i < sig.Count; i++)
-        {
-            if (args[i] is not JsonObject argument
-                || NodeType.Of(argument) is not TypeNode.Fqn source) continue;
-            var target = CastTarget(TypeJson.Read(sig[i]),
-                (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray(), source, definitions, refs, _isValue);
-            if (target == null) continue;
-            // Idempotence: never re-wrap an already-cast argument.
-            if (args[i] is JsonObject ro && (ro["k"] as JsonValue)?.GetValue<string>() == "clrGenericStatic"
-                && (ro["method"] as JsonValue)?.GetValue<string>() == "Cast") continue;
-            args[i] = CastElements(args[i], target);
-        }
-    }
 
     // A fully stated Enumerable.Cast<T> physical adapter. Besides this pass's nullable-value Iterable seam,
     // spread normalization uses it to expose the exact IEnumerable<TTarget> element contract.
