@@ -22,42 +22,65 @@ static partial class PrimitiveOperatorLowering
                 OwnerType = new TypeNode.Fqn(owner), Method = member, Recv = new BirLocal { Name = "value" },
                 Args = new IBirExpression[] { distance },
             };
-            var expected = Lower(call.ToDom(), BirScope.Empty);
+            var before = call.DeepClone();
             var actual = (BirGraphValue)TypedOperator(call, locals);
-            if (!System.Text.Json.Nodes.JsonNode.DeepEquals(expected, actual.ToDom())
-                || !ReferenceEquals(call.Args.Value[0], distance))
+            var mask = owner is "kotlin.Long" or "kotlin.ULong" ? 63 : 31;
+            var symbol = member == "shl" ? "<<" : member == "ushr" || owner is "kotlin.UInt" or "kotlin.ULong" ? ">>>" : ">>";
+            if (actual is not BirBinaryOperation shifted || shifted.Op.Value != symbol
+                || !((BirGraphValue)shifted.Lhs.Value).StructurallyEquals((BirGraphValue)call.Recv.Value)
+                || shifted.Rhs.Value is not BirBinaryOperation { Op.Value: "&" } masked
+                || !((BirGraphValue)masked.Lhs.Value).StructurallyEquals(distance)
+                || masked.Rhs.Value is not BirConstant { Type.Value: TypeNode.Fqn { Name: "kotlin.Int" }, Value.Value: BirLiteral.IntegerLiteral literal }
+                || literal.Value != mask || ReferenceEquals(masked.Lhs.Value, distance)
+                || !call.StructurallyEquals(before) || !ReferenceEquals(call.Args.Value[0], distance))
                 throw new InvalidOperationException("Typed primitive shift changed masking, evaluation count, or source ownership");
+            var distances = 0;
+            actual.Visit(node => { if (node is BirCallStatic { Method.Value: "distance" }) distances++; });
+            if (distances != 1) throw new InvalidOperationException("Typed primitive shift evaluates its distance more than once");
         }
         var integer = new TypeNode.Fqn("kotlin.Int");
         var floating = new TypeNode.Fqn("kotlin.Double");
-        foreach (var call in new BirGraphValue[] {
-            new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.String"), Method = "plus",
-                Recv = new BirLocal { Name = "text" }, Args = new IBirExpression[] { Integer(1) } },
-            new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.Byte"), Method = "unaryMinus",
-                Recv = new BirLocal { Name = "byte" }, DynRet = integer },
-            new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.Byte"), Method = "inc",
-                Recv = new BirLocal { Name = "byte" }, DynRet = new TypeNode.Fqn("kotlin.Byte") },
-            Intrinsic("less", Local("nullable", new TypeNode.Nullable(integer)), Integer(1)),
-            Intrinsic("less", Local("boxed", new TypeNode.Fqn("kotlin.Any")), Integer(1)),
-            Intrinsic("EQEQ", Local("left", integer), Local("right", integer)),
-            Intrinsic("EQEQ", Local("left", floating), Local("right", floating)),
-            Intrinsic("EQEQ", Local("left", new TypeNode.Fqn("kotlin.Any")), Local("right", integer)),
-            Intrinsic("ieee754equals", Local("left", floating), Local("right", floating)),
-        })
+        void Check(BirGraphValue call, Func<BirGraphValue, bool> expected, string context)
         {
-            var expected = Lower(call.ToDom(), BirScope.Empty);
+            var before = call.DeepClone();
             var actual = (BirGraphValue)TypedOperator(call, locals);
-            if (actual == null || !System.Text.Json.Nodes.JsonNode.DeepEquals(expected, actual.ToDom()))
-                throw new InvalidOperationException("Typed primitive recognition changed a current DOM consumer's operation policy");
+            if (actual == null || !expected(actual) || !call.StructurallyEquals(before))
+                throw new InvalidOperationException("Typed primitive recognition changed " + context);
         }
+        Check(new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.String"), Method = "plus",
+                Recv = new BirLocal { Name = "text" }, Args = new IBirExpression[] { Integer(1) } },
+            node => node is BirConcat { Parts.Value: [BirLocal { Name.Value: "text" }, BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 1 } }] },
+            "string concatenation");
+        Check(new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.Byte"), Method = "unaryMinus", Recv = new BirLocal { Name = "byte" }, DynRet = integer },
+            node => node is BirConvert { To.Value: TypeNode.Fqn { Name: "kotlin.Int" }, E.Value: BirUnaryOperation { Op.Value: "-", E.Value: BirLocal { Name.Value: "byte" } } },
+            "narrow unary return conversion");
+        Check(new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.Byte"), Method = "inc", Recv = new BirLocal { Name = "byte" }, DynRet = new TypeNode.Fqn("kotlin.Byte") },
+            node => node is BirConvert { To.Value: TypeNode.Fqn { Name: "kotlin.Byte" }, E.Value: BirBinaryOperation { Op.Value: "+", Lhs.Value: BirLocal { Name.Value: "byte" },
+                Rhs.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 1 } } } }, "narrow increment conversion");
+        Check(Intrinsic("less", Local("nullable", new TypeNode.Nullable(integer)), Integer(1)),
+            node => node is BirBinaryOperation { Op.Value: "<", Lhs.Value: BirNullableValue { Elem.Value: TypeNode.Fqn { Name: "kotlin.Int" }, E.Value: BirLocal { Name.Value: "nullable" } } },
+            "nullable comparison operand");
+        Check(Intrinsic("less", Local("boxed", new TypeNode.Fqn("kotlin.Any")), Integer(1)),
+            node => node is BirBinaryOperation { Op.Value: "<", Lhs.Value: BirCast { Type.Value: TypeNode.Fqn { Name: "kotlin.Int" }, E.Value: BirLocal { Name.Value: "boxed" } } },
+            "boxed comparison operand");
+        Check(Intrinsic("EQEQ", Local("left", integer), Local("right", integer)),
+            node => node is BirBinaryOperation { Op.Value: "==", Lhs.Value: BirCast { Type.Value: TypeNode.Fqn { Name: "kotlin.Int" }, E.Value: BirLocal { Name.Value: "left" } },
+                Rhs.Value: BirCast { Type.Value: TypeNode.Fqn { Name: "kotlin.Int" }, E.Value: BirLocal { Name.Value: "right" } } }, "primitive equality boundaries");
+        Check(Intrinsic("EQEQ", Local("left", floating), Local("right", floating)),
+            node => node is BirCallStatic { Method.Value: "clrDoubleEquals", Args.Value: [BirLocal { Name.Value: "left" }, BirLocal { Name.Value: "right" }] }, "floating structural equality");
+        Check(Intrinsic("EQEQ", Local("left", new TypeNode.Fqn("kotlin.Any")), Local("right", integer)),
+            node => node is BirCallStatic { Method.Value: "kotlinEquals", Args.Value: [BirLocal { Name.Value: "left" }, BirLocal { Name.Value: "right" }] }, "null-safe object equality");
+        Check(Intrinsic("ieee754equals", Local("left", floating), Local("right", floating)),
+            node => node is BirBinaryOperation { Op.Value: "==", Lhs.Value: BirLocal { Name.Value: "left" }, Rhs.Value: BirLocal { Name.Value: "right" } }, "direct IEEE equality");
         foreach (var right in new TypeNode[] { new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1),
                      new TypeNode.Tv("type", 0), new TypeNode.Nullable(new TypeNode.Tv("method", 0)) })
         {
             var left = new BirCallStatic { Method = "value", Sty = new TypeNode.Tv("method", 0), Ret = new TypeNode.Fqn("object") };
             var identity = Intrinsic("EQEQEQ", left, Local("other", right));
             if (TypedOperator(identity, locals) is not BirBinaryOperation { Op.Value: "===" } lowered
-                || !System.Text.Json.Nodes.JsonNode.DeepEquals(((BirGraphValue)lowered.Lhs.Value).ToDom(), left.ToDom())
-                || !System.Text.Json.Nodes.JsonNode.DeepEquals(((BirGraphValue)lowered.Rhs.Value).ToDom(), ((BirGraphValue)identity.Args.Value[1]).ToDom()))
+                || !((BirGraphValue)lowered.Lhs.Value).StructurallyEquals(left)
+                || !((BirGraphValue)lowered.Rhs.Value).StructurallyEquals((BirGraphValue)identity.Args.Value[1])
+                || ReferenceEquals(lowered.Lhs.Value, left) || ReferenceEquals(lowered.Rhs.Value, identity.Args.Value[1]))
                 throw new InvalidOperationException("Typed identity lowering inferred an early physical generic slot");
         }
         foreach (var name in new[] { "kotlin.Double", "kotlin.Float" })
@@ -98,6 +121,6 @@ static partial class PrimitiveOperatorLowering
         var rewritten = (BirBlock)Apply(body);
         if (((BirExpressionStatement)rewritten.Body.Value[1]).Expr.Value is not BirBinaryOperation { Op.Value: "==" })
             throw new InvalidOperationException("Typed primitive traversal did not receive the preceding local's lexical type");
-        Console.WriteLine("[typed primitive operators] self-test OK (shift parity, identity slots, nullable IEEE/total-order, lexical surface)");
+        Console.WriteLine("[typed primitive operators] self-test OK (shift masking, identity slots, primitive shapes, nullable IEEE/total-order, lexical surface)");
     }
 }
