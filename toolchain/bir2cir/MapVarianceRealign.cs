@@ -1,6 +1,8 @@
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Variance -> invariance type-argument REALIGNMENT for invariant @ClrTypeAlias collection generics.
 //
@@ -28,36 +30,30 @@ static class MapVarianceRealign
 
     // The frontend-selected declaration owns this vector. A physical generic
     // arity is not an overload identity and does not state companion roles.
-    public static Dictionary<string, TypeNode[]> CollectCalleeTypeParams(IEnumerable<JsonNode> roots)
+    public static Dictionary<string, TypeNode[]> CollectCalleeTypeParams(IEnumerable<BirFileDeclaration> roots)
     {
         var map = new Dictionary<string, TypeNode[]>(StringComparer.Ordinal);
-        foreach (var root in roots) CollectFrom(root, map);
-        return map;
-    }
-
-    static void CollectFrom(JsonNode root, Dictionary<string, TypeNode[]> map)
-    {
-        if (root is not JsonObject o) return;
-        CollectMethods(o["methods"], map);
-        if (o["types"] is JsonArray types)
-            foreach (var t in types)
-                if (t != null) CollectFrom(t, map);
-    }
-
-    static void CollectMethods(JsonNode methods, Dictionary<string, TypeNode[]> map)
-    {
-        if (methods is not JsonArray arr) return;
-        foreach (var m in arr)
+        void Methods(IEnumerable<BirFunctionDeclaration> methods)
         {
-            if (m is not JsonObject mo) continue;
-            if (Str(mo[DeclarationIdentityBinding.Key]) is not string id) continue;
-            if (mo["typeParams"] is not JsonArray tps || tps.Count == 0) continue;
-            var paramTypes = (mo["params"] as JsonArray ?? new JsonArray())
-                .Select(p => (p as JsonObject) is JsonObject po ? TypeJson.Read(po["type"]) : null).ToArray();
-            if (map.TryGetValue(id, out var previous) && !previous.SequenceEqual(paramTypes))
-                throw new InvalidOperationException("Collection realignment has conflicting selected declaration signatures");
-            map[id] = paramTypes;
+            foreach (var method in methods)
+            {
+                if (!method.DeclarationId.HasValue || method.TypeParams.OrEmpty().Length == 0) continue;
+                var id = method.DeclarationId.Value;
+                var paramTypes = method.Params.OrEmpty().Select(parameter => parameter.Type.HasValue
+                    ? BirGraphValue.CopyType(parameter.Type.Value) : null).ToArray();
+                // This is the existing physical-signature conflict policy, also
+                // used by the DOM call realigner consuming this detached index.
+                if (map.TryGetValue(id, out var previous) && !previous.SequenceEqual(paramTypes))
+                    throw new InvalidOperationException("Collection realignment has conflicting selected declaration signatures");
+                map[id] = paramTypes;
+            }
         }
+        foreach (var root in roots)
+        {
+            Methods(root.Methods.OrEmpty());
+            foreach (var type in root.Types.OrEmpty()) Methods(type.Methods.OrEmpty());
+        }
+        return map;
     }
 
     public static void Apply(JsonNode root, IReadOnlyDictionary<string, TypeNode[]> calleeTypeParams, ReferenceMetadataIndex refs)
@@ -395,19 +391,18 @@ static class MapVarianceRealign
             ["kotlin.collections.Map"] = mapFrame,
             ["kotlin.collections.MutableMap"] = mutableFrame,
         };
-        JsonObject Declaration(string id, TypeNode parameter) => new()
+        BirFunctionDeclaration Declaration(string id, TypeNode parameter) => new()
         {
-            ["name"] = "sameName", [DeclarationIdentityBinding.Key] = id,
-            ["typeParams"] = new JsonArray(Enumerable.Range(0, 4)
-                .Select(index => (JsonNode)new TypeParameterDeclaration("T" + index).ToDom()).ToArray()),
-            ["params"] = new JsonArray(new JsonObject { ["name"] = "map", ["type"] = TypeJson.Write(parameter) }),
+            Name = "sameName", DeclarationId = id,
+            TypeParams = Enumerable.Range(0, 4).Select(index => new BirTypeParameter { Name = "T" + index }).ToArray(),
+            Params = new[] { new BirParameter { Name = "map", Type = parameter } },
         };
         var formals = new TypeNode[] { M(0), M(1), M(2), M(3) };
         var selected = new TypeNode.Fqn("kotlin.collections.Map", formals);
         var unrelated = new TypeNode.Fqn("kotlin.collections.Map", new TypeNode[] { M(3), M(2), M(1), M(0) });
-        var declarations = CollectCalleeTypeParams(new[] { new JsonObject
+        var declarations = CollectCalleeTypeParams(new[] { new BirFileDeclaration
         {
-            ["methods"] = new JsonArray(Declaration("unrelated", unrelated), Declaration("selected", selected)),
+            Methods = new[] { Declaration("unrelated", unrelated), Declaration("selected", selected) },
         } });
         JsonObject Call() => new()
         {

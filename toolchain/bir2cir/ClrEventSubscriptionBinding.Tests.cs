@@ -38,7 +38,7 @@ static partial class ClrEventSubscriptionBinding
         var references = ReferenceMetadataIndex.Build(Array.Empty<string>());
         void Check(JsonNode source)
         {
-            Apply(source, references, new Dictionary<(string Owner, string Event), JsonNode>(), out var handles);
+            Apply(source, references, new Dictionary<(string Owner, string Event), TypeNode>(), out var handles);
             var callbacks = handles.SelectMany(handle => handle["result"]["args"].AsArray()).ToArray();
             if (callbacks.Length != 4) throw new InvalidOperationException("Event frame fixture did not exercise both source locations");
             foreach (var callback in callbacks)
@@ -77,6 +77,7 @@ static partial class ClrEventSubscriptionBinding
         eventRead["type"]["args"][1]["i"] = 0;
         lambda["captures"][0]["type"]["args"][1]["i"] = 0;
         Check(input);
+        ForwardedOwnersSelfTest();
         references.DisposeNet();
         Console.WriteLine("[event callback frames] self-test OK (dense, lexical and prebound class frames; caller construction remains separate)");
     }

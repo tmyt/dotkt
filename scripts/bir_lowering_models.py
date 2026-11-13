@@ -560,6 +560,22 @@ def outputs(root, definitions):
             else:
                 body = f"{prop} = OptionalField<{cs(value)}>.Of({rewrite_type(value, prop + '.Value', callback='type', prefix=prefix)});"
             model += [f"        if ({prop}.HasValue) {{ {body} }}"]
+        model += ["    }", "    public override void RewriteOwnershipInPlace(",
+                  "        Func<BirOwnershipRole, TypeNode, TypeNode> type,",
+                  "        Action<BirOwnershipRole, BirGraphValue> child)", "    {"]
+        ownership_roles = {"Lexical", "ForeignVector", "MemberDescriptor", "SyntheticDeclaration", "FrozenFact"}
+        for field, value in fields:
+            type_slot = is_type_slot(value) or cs(value) == "TypeNode"
+            if not is_child(value) and not type_slot: continue
+            role = value.get("x-dotkt-ownership-role", "FrozenFact" if not is_type_slot(value) and type_slot else "Lexical")
+            if role not in ownership_roles:
+                raise ValueError(f"Unknown ownership traversal role: {name}.{field}: {role}")
+            prop, prefix = member(field), f"BirOwnershipRole.{role}, "
+            if is_child(value):
+                body = visit(value, prop + ".Value", callback="child", prefix=prefix)
+            else:
+                body = f"{prop} = OptionalField<{cs(value)}>.Of({rewrite_type(value, prop + '.Value', callback='type', prefix=prefix)});"
+            model += [f"        if ({prop}.HasValue) {{ {body} }}"]
         model += ["    }"]
         parameter_vectors = [(field, value) for field, value in fields if "x-dotkt-representation-parameters" in value]
         if parameter_vectors:

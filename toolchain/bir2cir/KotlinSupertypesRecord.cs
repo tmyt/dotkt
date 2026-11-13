@@ -71,35 +71,10 @@ static class KotlinSupertypesRecord
     internal static void RebaseCapturedFrame(JsonObject declaration, NullableRepresentationFrame frame,
         int[] sourceMap, JsonObject owner)
     {
-        var facts = Read(declaration) ?? new JsonObject();
-        void RemapTypes(JsonNode node)
-        {
-            if (node is JsonObject obj)
-            {
-                if (TypeJson.Read(obj) is TypeNode.Tv { Scope: "type" } variable)
-                {
-                    obj["i"] = sourceMap[variable.I];
-                    return;
-                }
-                foreach (var (key, child) in obj)
-                    if (key != NullableRepresentationFrame.MetadataKey) RemapTypes(child);
-            }
-            else if (node is JsonArray array)
-                foreach (var child in array) RemapTypes(child);
-        }
-        RemapTypes(facts);
-        foreach (var key in new[] { "bounds", "variances" })
-            if (facts[key] is JsonObject indexed)
-                facts[key] = new JsonObject(indexed.Select(pair => KeyValuePair.Create(
-                    sourceMap[int.Parse(pair.Key)].ToString(), pair.Value?.DeepClone())));
-        if (Read(owner)?["bounds"] is JsonObject ownerBounds)
-        {
-            var bounds = facts["bounds"] as JsonObject ?? new JsonObject();
-            foreach (var (key, value) in ownerBounds) bounds[key] = value?.DeepClone();
-            if (facts["bounds"] == null) facts["bounds"] = bounds;
-        }
-        facts[NullableRepresentationFrame.MetadataKey] = frame.ToJson();
-        declaration[PreKey] = facts.ToJsonString();
+        var source = (declaration[PreKey] as JsonValue)?.GetValue<string>();
+        var ownerSource = (owner[PreKey] as JsonValue)?.GetValue<string>();
+        declaration[PreKey] = SourceTypeFacts.ToDom((source == null ? SourceTypeFacts.Empty : SourceTypeFacts.ReadFrozenText(source))
+            .RebaseCapturedFrame(frame, sourceMap, ownerSource == null ? null : SourceTypeFacts.ReadFrozenText(ownerSource)));
     }
 
     static JsonObject Read(JsonObject declaration)

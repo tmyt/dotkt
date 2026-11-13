@@ -48,6 +48,11 @@ internal sealed record EventPropertySourceFacts : BirGraphValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is EventPropertySourceFacts value
             && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -118,6 +123,11 @@ internal sealed record CapturedGenericArgument : BirGraphValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is CapturedGenericArgument value
             && EqualField(Argument, value.Argument, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
@@ -175,6 +185,11 @@ internal sealed record BirOpaqueBytes : BirGraphValue, IBirAttributeValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirOpaqueBytes value
             && EqualField(Bytes, value.Bytes, (left, right) => left.AsSpan().SequenceEqual(right));
@@ -228,6 +243,11 @@ internal sealed record BirStaticCarrier : BirGraphValue
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -289,6 +309,11 @@ internal sealed record BirCompanionCarrier : BirGraphValue
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -370,6 +395,13 @@ internal sealed record BirAttributeLiteral : BirGraphValue, IBirAttributeValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirAttributeLiteral value
@@ -498,6 +530,19 @@ internal sealed record BirFileDeclaration : BirGraphValue
         if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Attributes, (BirGraphValue)item0); } }
         if (Pos.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Pos.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Fields.HasValue) { foreach (var item0 in Fields.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Methods.HasValue) { foreach (var item0 in Methods.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Properties.HasValue) { foreach (var item0 in Properties.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Types.HasValue) { foreach (var item0 in Types.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (RefTypes.HasValue) { foreach (var item0 in RefTypes.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (AssemblyAttrs.HasValue) { foreach (var item0 in AssemblyAttrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Pos.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pos.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirFileDeclaration value
             && EqualField(FileClass, value.FileClass, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -601,6 +646,13 @@ internal sealed record BirBinaryOperation : BirGraphNode, IBirExpression, IBirAt
         if (Lhs.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Lhs.Value); }
         if (Rhs.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Rhs.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Lhs.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Lhs.Value); }
+        if (Rhs.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Rhs.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirBinaryOperation value
             && EqualField(Op, value.Op, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -694,6 +746,15 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirCast value
@@ -801,6 +862,15 @@ internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttribu
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
         if (NullWitness.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)NullWitness.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (NullWitness.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)NullWitness.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirIsInstance value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -890,6 +960,14 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirInstanceOrNull value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -977,6 +1055,14 @@ internal sealed record BirSafeValueCast : BirGraphNode, IBirExpression, IBirAttr
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
         if (CtorRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)CtorRef.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
+        if (CtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CtorRef.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirSafeValueCast value
             && EqualField(Elem, value.Elem, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -1046,6 +1132,12 @@ internal sealed record BirConcat : BirGraphNode, IBirExpression, IBirAttributeVa
     {
         if (Parts.HasValue) { foreach (var item0 in Parts.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Parts.HasValue) { foreach (var item0 in Parts.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirConcat value
             && EqualField(Parts, value.Parts, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
@@ -1108,6 +1200,12 @@ internal sealed record BirRuntimeClass : BirGraphNode, IBirExpression, IBirAttri
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirRuntimeClass value
@@ -1187,6 +1285,14 @@ internal sealed record BirNullableWrap : BirGraphNode, IBirExpression, IBirAttri
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
         if (CtorRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)CtorRef.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
+        if (CtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CtorRef.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNullableWrap value
@@ -1274,6 +1380,14 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
         if (Array.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Array.Value); }
         if (Index.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Index.Value); }
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Array.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Array.Value); }
+        if (Index.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Index.Value); }
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirArrayGet value
@@ -1367,6 +1481,15 @@ internal sealed record BirArraySet : BirGraphNode, IBirExpression, IBirAttribute
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Value.Value); }
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Array.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Array.Value); }
+        if (Index.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Index.Value); }
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirArraySet value
             && EqualField(Array, value.Array, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -1439,6 +1562,12 @@ internal sealed record BirArrayLength : BirGraphNode, IBirExpression, IBirAttrib
     {
         if (Array.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Array.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Array.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Array.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirArrayLength value
             && EqualField(Array, value.Array, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
@@ -1508,6 +1637,13 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
         if (Elems.HasValue) { foreach (var item0 in Elems.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (Elems.HasValue) { foreach (var item0 in Elems.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNewArray value
@@ -1581,6 +1717,13 @@ internal sealed record BirNewArraySized : BirGraphNode, IBirExpression, IBirAttr
     {
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
         if (Size.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Size.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (Size.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Size.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNewArraySized value
@@ -1678,6 +1821,16 @@ internal sealed record BirNewArrayInit : BirGraphNode, IBirExpression, IBirAttri
         if (InvokeRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)InvokeRef.Value); }
         if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, FuncType.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (Size.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Size.Value); }
+        if (Init.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Init.Value); }
+        if (InvokeRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)InvokeRef.Value); }
+        if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FuncType.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNewArrayInit value
             && EqualField(Elem, value.Elem, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -1752,6 +1905,12 @@ internal sealed record BirSpreadPart : BirGraphValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirSpreadPart value
@@ -1856,6 +2015,17 @@ internal sealed record BirSpreadConcat : BirGraphNode, IBirExpression, IBirAttri
         if (AddRangeRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)AddRangeRef.Value); }
         if (ToArrayRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)ToArrayRef.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (Parts.HasValue) { foreach (var item0 in Parts.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (CtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CtorRef.Value); }
+        if (AddRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)AddRef.Value); }
+        if (AddRangeRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)AddRangeRef.Value); }
+        if (ToArrayRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)ToArrayRef.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirSpreadConcat value
             && EqualField(Elem, value.Elem, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -1939,6 +2109,13 @@ internal sealed record BirDefaultValue : BirGraphNode, IBirExpression, IBirAttri
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirDefaultValue value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -2017,6 +2194,14 @@ internal sealed record BirEnumName : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEnumName value
@@ -2108,6 +2293,15 @@ internal sealed record BirEnumOrdinal : BirGraphNode, IBirExpression, IBirAttrib
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (Values.HasValue) { foreach (var item0 in Values.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (Values.HasValue) { foreach (var item0 in Values.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEnumOrdinal value
             && EqualField(E, value.E, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -2192,6 +2386,14 @@ internal sealed record BirEnumParse : BirGraphNode, IBirExpression, IBirAttribut
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (Arg.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Arg.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Arg.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Arg.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEnumParse value
@@ -2280,6 +2482,14 @@ internal sealed record BirObjectMethod : BirGraphNode, IBirExpression, IBirAttri
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Arg.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Arg.Value); }
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Arg.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Arg.Value); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirObjectMethod value
@@ -2371,6 +2581,14 @@ internal sealed record BirCallBinding : BirGraphValue
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (Expr.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Expr.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Expr.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Expr.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirCallBinding value
@@ -2476,6 +2694,15 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
         if (Bindings.HasValue) { foreach (var item0 in Bindings.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Expr.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Expr.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Bindings.HasValue) { foreach (var item0 in Bindings.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Expr.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Expr.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirCallEvaluation value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -2543,6 +2770,11 @@ internal sealed record BirDefaultArgument : BirGraphNode, IBirExpression, IBirAt
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirDefaultArgument value;
     public override void WriteJson(Utf8JsonWriter writer)
@@ -2605,6 +2837,12 @@ internal sealed record BirOverride : BirGraphValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Owner.HasValue) { Owner = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, Owner.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Owner.HasValue) { Owner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Owner.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirOverride value
@@ -2881,6 +3119,38 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (DynRet.HasValue) { DynRet = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, DynRet.Value)); }
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Owner.HasValue) { Owner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Owner.Value)); }
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (ShapeTypes.HasValue) { ShapeTypes = OptionalField<TypeNode[]>.Of(ShapeTypes.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ArgTypes.HasValue) { ArgTypes = OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (AwaitResult.HasValue) { AwaitResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AwaitResult.Value)); }
+        if (CalleeOwner.HasValue) { CalleeOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CalleeOwner.Value)); }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (DefaultOwnerType.HasValue) { DefaultOwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DefaultOwnerType.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberMethodTypeParams.HasValue) { foreach (var item0 in MemberMethodTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberSignature.HasValue) { MemberSignature = OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirOwnershipRole.MemberDescriptor, item0)).ToArray()); }
+        if (MemberReturnType.HasValue) { MemberReturnType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberReturnType.Value)); }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+        if (FunctionCallSignature.HasValue) { FunctionCallSignature = OptionalField<TypeNode[]>.Of(FunctionCallSignature.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (_capturedGenericResult.HasValue) { _capturedGenericResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _capturedGenericResult.Value)); }
+        if (CalleeRet.HasValue) { CalleeRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CalleeRet.Value)); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (DynRet.HasValue) { DynRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DynRet.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
     }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
@@ -3293,6 +3563,38 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (ShapeTypes.HasValue) { ShapeTypes = OptionalField<TypeNode[]>.Of(ShapeTypes.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ArgTypes.HasValue) { ArgTypes = OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (DynRet.HasValue) { DynRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DynRet.Value)); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (AwaitResult.HasValue) { AwaitResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AwaitResult.Value)); }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (DefaultOwnerType.HasValue) { DefaultOwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DefaultOwnerType.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberMethodTypeParams.HasValue) { foreach (var item0 in MemberMethodTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberSignature.HasValue) { MemberSignature = OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirOwnershipRole.MemberDescriptor, item0)).ToArray()); }
+        if (MemberReturnType.HasValue) { MemberReturnType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberReturnType.Value)); }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+        if (FunctionCallSignature.HasValue) { FunctionCallSignature = OptionalField<TypeNode[]>.Of(FunctionCallSignature.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (_capturedGenericResult.HasValue) { _capturedGenericResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _capturedGenericResult.Value)); }
+        if (CalleeRet.HasValue) { CalleeRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CalleeRet.Value)); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+    }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
     {
@@ -3547,6 +3849,17 @@ internal sealed record BirCallLocal : BirGraphNode, IBirExpression, IBirAttribut
         if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Return, Ret.Value)); }
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirCallLocal value
             && EqualField(Id, value.Id, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -3736,6 +4049,25 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberType.Value)); }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
     }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
@@ -3935,6 +4267,19 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
         if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.TypeParameterDeclarations, (BirGraphValue)item0); } }
         if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.DeclaredMemberType, MemberType.Value)); }
         if (FieldRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)FieldRef.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberType.Value)); }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+        if (FieldRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)FieldRef.Value); }
     }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
@@ -4141,6 +4486,24 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberType.Value)); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+    }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
     {
@@ -4310,6 +4673,17 @@ internal sealed record BirStaticFieldSet : BirGraphNode, IBirExpression, IBirAtt
         if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.DeclaredMemberType, MemberType.Value)); }
         if (FieldRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)FieldRef.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberType.Value)); }
+        if (FieldRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)FieldRef.Value); }
+    }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
     {
@@ -4469,6 +4843,20 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (Exception.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Exception.Value); }
         if (FieldRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)FieldRef.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberType.Value)); }
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+        if (Exception.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Exception.Value); }
+        if (FieldRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)FieldRef.Value); }
+    }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
     {
@@ -4584,6 +4972,13 @@ internal sealed record BirLateinitIsInitialized : BirGraphNode, IBirExpression, 
         if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, OwnerType.Value)); }
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Recv.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirLateinitIsInitialized value
             && EqualField(LateinitDeclarationId, value.LateinitDeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -4668,6 +5063,11 @@ internal sealed record BirModifiers : BirGraphValue
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -4806,6 +5206,12 @@ internal sealed record BirDefaultBody : BirGraphValue
     {
         if (Body.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Body.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Body.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Body.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirDefaultBody value
             && EqualField(Index, value.Index, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
@@ -4897,6 +5303,15 @@ internal sealed record BirConstructorAdapterPayload : BirGraphValue, IBirExecuta
         if (Statements.HasValue) { foreach (var item0 in Statements.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Arguments.HasValue) { foreach (var item0 in Arguments.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (TerminalSignature.HasValue) { TerminalSignature = OptionalField<TypeNode[]>.Of(TerminalSignature.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Signature.HasValue) { Signature = OptionalField<TypeNode[]>.Of(Signature.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Statements.HasValue) { foreach (var item0 in Statements.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Arguments.HasValue) { foreach (var item0 in Arguments.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (TerminalSignature.HasValue) { TerminalSignature = OptionalField<TypeNode[]>.Of(TerminalSignature.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirConstructorAdapterPayload value
@@ -5026,6 +5441,17 @@ internal sealed record BirInlinePayload : BirGraphValue, IBirExecutablePayload
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Lifted.HasValue) { foreach (var item0 in Lifted.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Lifted.HasValue) { foreach (var item0 in Lifted.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirInlinePayload value
             && EqualField(V, value.V, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
@@ -5136,6 +5562,14 @@ internal sealed record BirAttributeNamedArgument : BirGraphValue
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Value.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirAttributeNamedArgument value
             && EqualField(Kind, value.Kind, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -5240,6 +5674,16 @@ internal sealed record BirAttribute : BirGraphValue
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (NamedArgs.HasValue) { foreach (var item0 in NamedArgs.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (MemberRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)MemberRef.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Attr.HasValue) { Attr = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Attr.Value)); }
+        if (ArgTypes.HasValue) { ArgTypes = OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (NamedArgs.HasValue) { foreach (var item0 in NamedArgs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirAttribute value
@@ -5406,6 +5850,24 @@ internal sealed record BirParameter : BirGraphValue
         if (GenericParameterSignatureBounds.HasValue) { GenericParameterSignatureBounds = OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
         if (SuspendFnType.HasValue) { SuspendFnType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, SuspendFnType.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Mods.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Mods.Value); }
+        if (Default.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Default.Value); }
+        if (DefaultBir.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)DefaultBir.Value); }
+        if (SharedCellType.HasValue) { SharedCellType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SharedCellType.Value)); }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (FunctionSignatureType.HasValue) { FunctionSignatureType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FunctionSignatureType.Value)); }
+        if (KotlinType.HasValue) { KotlinType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, KotlinType.Value)); }
+        if (NullableGeneric.HasValue) { NullableGeneric = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGeneric.Value)); }
+        if (NominalParameterSignatureIdentity.HasValue) { NominalParameterSignatureIdentity = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, NominalParameterSignatureIdentity.Value)); }
+        if (GenericParameterSignatureBounds.HasValue) { GenericParameterSignatureBounds = OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (SuspendFnType.HasValue) { SuspendFnType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SuspendFnType.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirParameter value
             && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -5523,6 +5985,13 @@ internal sealed record BirDefaultCarrier : BirGraphNode, IBirExpression, IBirAtt
         if (Expr.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Expr.Value); }
         if (Lifted.HasValue) { foreach (var item0 in Lifted.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Expr.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Expr.Value); }
+        if (Lifted.HasValue) { foreach (var item0 in Lifted.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirDefaultCarrier value
             && EqualField(Expr, value.Expr, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -5589,6 +6058,12 @@ internal sealed record BirLocalFunction : BirGraphNode, IBirStatement
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Decl.HasValue) { child(BirGenericFrameRole.LocalDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)Decl.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Decl.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Decl.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirLocalFunction value
@@ -5674,6 +6149,14 @@ internal sealed record BirInheritedImplementation : BirGraphValue
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Declaration, item0)).ToArray()); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Owner.HasValue) { Owner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Owner.Value)); }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirInheritedImplementation value
             && EqualField(Owner, value.Owner, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -5748,6 +6231,11 @@ internal sealed record BirDeclarationPosition : BirGraphValue
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -6042,6 +6530,35 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrBaseImpls.HasValue) { foreach (var item0 in ClrBaseImpls.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Pinvoke.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Pinvoke.Value); }
         if (RetSuspendFnType.HasValue) { RetSuspendFnType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, RetSuspendFnType.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Mods.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Mods.Value); }
+        if (SuspendRet.HasValue) { SuspendRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SuspendRet.Value)); }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Pos.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pos.Value); }
+        if (InheritedImplementation.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)InheritedImplementation.Value); }
+        if (_syntheticTypeArgs.HasValue) { _syntheticTypeArgs = OptionalField<TypeNode[]>.Of(_syntheticTypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+        if (SuspendResult.HasValue) { SuspendResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendResult.Value)); }
+        if (RetKotlinType.HasValue) { RetKotlinType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetKotlinType.Value)); }
+        if (NullableGenericRet.HasValue) { NullableGenericRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGenericRet.Value)); }
+        if (NullableGenericSuspendRet.HasValue) { NullableGenericSuspendRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGenericSuspendRet.Value)); }
+        if (KotlinPropertyAccessorCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)KotlinPropertyAccessorCarrier.Value); }
+        if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (ClrOverrideRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)ClrOverrideRef.Value); }
+        if (ClrInterfaceImpls.HasValue) { foreach (var item0 in ClrInterfaceImpls.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (ClrBaseImpls.HasValue) { foreach (var item0 in ClrBaseImpls.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Pinvoke.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pinvoke.Value); }
+        if (RetSuspendFnType.HasValue) { RetSuspendFnType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, RetSuspendFnType.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirFunctionDeclaration value
@@ -6393,6 +6910,21 @@ internal sealed record BirConstructor : BirGraphValue
         if (PreStmts.HasValue) { foreach (var item0 in PreStmts.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Pos.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Pos.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (BaseArgs.HasValue) { foreach (var item0 in BaseArgs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (DelegationSig.HasValue) { DelegationSig = OptionalField<TypeNode[]>.Of(DelegationSig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ThisArgs.HasValue) { foreach (var item0 in ThisArgs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (DelegationBindings.HasValue) { foreach (var item0 in DelegationBindings.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (BaseCtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)BaseCtorRef.Value); }
+        if (PreStmts.HasValue) { foreach (var item0 in PreStmts.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Pos.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pos.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirConstructor value
             && EqualField(Params, value.Params, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
@@ -6569,6 +7101,20 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         if (SuspendFnType.HasValue) { SuspendFnType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, SuspendFnType.Value)); }
         if (Pos.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Pos.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Init.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Init.Value); }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (KotlinType.HasValue) { KotlinType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, KotlinType.Value)); }
+        if (NullableGeneric.HasValue) { NullableGeneric = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGeneric.Value)); }
+        if (SuspendFnType.HasValue) { SuspendFnType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SuspendFnType.Value)); }
+        if (Pos.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pos.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirFieldDeclaration value
             && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -6732,6 +7278,13 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
     {
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirRefTypeDeclaration value
@@ -6905,6 +7458,25 @@ internal sealed record BirPropertyDeclaration : BirGraphValue
         if (Mods.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Mods.Value); }
         if (Recv.HasValue) { Recv = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, Recv.Value)); }
         if (Pos.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Pos.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (KotlinType.HasValue) { KotlinType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, KotlinType.Value)); }
+        if (NullableGeneric.HasValue) { NullableGeneric = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGeneric.Value)); }
+        if (GetSig.HasValue) { GetSig = OptionalField<TypeNode[]>.Of(GetSig.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (GetRet.HasValue) { GetRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, GetRet.Value)); }
+        if (SetSig.HasValue) { SetSig = OptionalField<TypeNode[]>.Of(SetSig.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (SetRet.HasValue) { SetRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SetRet.Value)); }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (SuspendFnType.HasValue) { SuspendFnType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SuspendFnType.Value)); }
+        if (Mods.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Mods.Value); }
+        if (Recv.HasValue) { Recv = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Recv.Value)); }
+        if (Pos.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pos.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirPropertyDeclaration value
@@ -7203,6 +7775,32 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Return, Ret.Value)); }
         if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Mods.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Mods.Value); }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Base.HasValue) { Base = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Base.Value)); }
+        if (Interfaces.HasValue) { Interfaces = OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Fields.HasValue) { foreach (var item0 in Fields.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Ctors.HasValue) { foreach (var item0 in Ctors.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Methods.HasValue) { foreach (var item0 in Methods.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Properties.HasValue) { foreach (var item0 in Properties.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (KotlinType.HasValue) { KotlinType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, KotlinType.Value)); }
+        if (StaticCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)StaticCarrier.Value); }
+        if (CompanionCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CompanionCarrier.Value); }
+        if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Pos.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pos.Value); }
+        if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (ClrEvents.HasValue) { foreach (var item0 in ClrEvents.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Underlying.HasValue) { Underlying = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Underlying.Value)); }
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirInterfaceDefinition value
             && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -7361,6 +7959,12 @@ internal sealed record BirEnumEntryDeclaration : BirGraphValue
     {
         if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Attributes, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEnumEntryDeclaration value
             && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -7434,6 +8038,12 @@ internal sealed record BirClrEnumDeclaration : BirGraphValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Underlying.HasValue) { Underlying = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, Underlying.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Underlying.HasValue) { Underlying = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Underlying.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirClrEnumDeclaration value
@@ -7666,6 +8276,32 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Return, Ret.Value)); }
         if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (ClrEnum.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)ClrEnum.Value); }
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Pos.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pos.Value); }
+        if (StaticCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)StaticCarrier.Value); }
+        if (CompanionCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CompanionCarrier.Value); }
+        if (Base.HasValue) { Base = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Base.Value)); }
+        if (Interfaces.HasValue) { Interfaces = OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Fields.HasValue) { foreach (var item0 in Fields.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Ctors.HasValue) { foreach (var item0 in Ctors.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Methods.HasValue) { foreach (var item0 in Methods.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Properties.HasValue) { foreach (var item0 in Properties.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Mods.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Mods.Value); }
+        if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (ClrEvents.HasValue) { foreach (var item0 in ClrEvents.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Underlying.HasValue) { Underlying = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Underlying.Value)); }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEnumDefinition value
@@ -8038,6 +8674,37 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Return, Ret.Value)); }
         if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Base.HasValue) { Base = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Base.Value)); }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Interfaces.HasValue) { Interfaces = OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Fields.HasValue) { foreach (var item0 in Fields.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Ctors.HasValue) { foreach (var item0 in Ctors.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Methods.HasValue) { foreach (var item0 in Methods.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Mods.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Mods.Value); }
+        if (Properties.HasValue) { foreach (var item0 in Properties.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Pos.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pos.Value); }
+        if (KotlinCompanion.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)KotlinCompanion.Value); }
+        if (InheritedDefaultAccessors.HasValue) { foreach (var item0 in InheritedDefaultAccessors.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (InheritedDefaultMethods.HasValue) { foreach (var item0 in InheritedDefaultMethods.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (InheritedClassMethods.HasValue) { foreach (var item0 in InheritedClassMethods.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (ClrEvents.HasValue) { foreach (var item0 in ClrEvents.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (ClrEventForwarders.HasValue) { foreach (var item0 in ClrEventForwarders.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (RichEnum.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)RichEnum.Value); }
+        if (StaticCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)StaticCarrier.Value); }
+        if (CompanionCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CompanionCarrier.Value); }
+        if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Underlying.HasValue) { Underlying = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Underlying.Value)); }
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (RetAttrs.HasValue) { foreach (var item0 in RetAttrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirClassDefinition value
             && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -8219,6 +8886,11 @@ internal sealed record BirKotlinCompanion : BirGraphValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirKotlinCompanion value
             && EqualField(Owner, value.Owner, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -8277,6 +8949,11 @@ internal sealed record BirRichEnumEntry : BirGraphValue
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -8345,6 +9022,12 @@ internal sealed record BirRichEnumDeclaration : BirGraphValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Entries.HasValue) { foreach (var item0 in Entries.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirRichEnumDeclaration value
@@ -8452,6 +9135,17 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
         if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Return, Ret.Value)); }
         if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirGenericFrameRole.OverrideDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Implementation.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Implementation.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Params.HasValue) { Params = OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Implementation.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Implementation.Value); }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+        if (NullableGenericRet.HasValue) { NullableGenericRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGenericRet.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirInheritedDefaultAccessor value
@@ -8570,6 +9264,17 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
         if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Return, Ret.Value)); }
         if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirGenericFrameRole.OverrideDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Implementation.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Implementation.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Params.HasValue) { Params = OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Implementation.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Implementation.Value); }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+        if (NullableGenericRet.HasValue) { NullableGenericRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGenericRet.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirInheritedDefaultMethod value
@@ -8716,6 +9421,20 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirGenericFrameRole.OverrideDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (InheritedImplementation.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.InheritedImplementation, (BirGraphValue)InheritedImplementation.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Mods.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Mods.Value); }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (InheritedImplementation.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)InheritedImplementation.Value); }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+        if (NullableGenericRet.HasValue) { NullableGenericRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGenericRet.Value)); }
+        if (RetKotlinType.HasValue) { RetKotlinType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetKotlinType.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirInheritedClassMethod value
             && EqualField(Member, value.Member, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -8837,6 +9556,14 @@ internal sealed record BirClrEventBacking : BirGraphValue
         if (ClassOverrideOwner.HasValue) { ClassOverrideOwner = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, ClassOverrideOwner.Value)); }
         if (DelegateType.HasValue) { DelegateType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, DelegateType.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (HandlerType.HasValue) { HandlerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, HandlerType.Value)); }
+        if (ClassOverrideOwner.HasValue) { ClassOverrideOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ClassOverrideOwner.Value)); }
+        if (DelegateType.HasValue) { DelegateType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DelegateType.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirClrEventBacking value
             && EqualField(K, value.K, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -8930,6 +9657,13 @@ internal sealed record BirClrEventForwarder : BirGraphValue
         if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, OwnerType.Value)); }
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Recv.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirClrEventForwarder value
             && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -8992,6 +9726,11 @@ internal sealed record BirClrEventAccessor : BirGraphNode, IBirStatement
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -9082,6 +9821,15 @@ internal sealed record BirNewSam : BirGraphNode, IBirExpression, IBirAttributeVa
         if (Captures.HasValue) { foreach (var item0 in Captures.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.TypeArguments, item0)).ToArray()); }
         if (SynthClass.HasValue) { child(BirGenericFrameRole.SyntheticDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)SynthClass.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (SamType.HasValue) { SamType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SamType.Value)); }
+        if (Captures.HasValue) { foreach (var item0 in Captures.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (SynthClass.HasValue) { child(BirOwnershipRole.SyntheticDeclaration, (BirGraphValue)SynthClass.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNewSam value
@@ -9175,6 +9923,15 @@ internal sealed record BirSamConversion : BirGraphNode, IBirExpression, IBirAttr
         if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, FuncType.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FuncType.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirSamConversion value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -9261,6 +10018,15 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (KotlinType.HasValue) { KotlinType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, KotlinType.Value)); }
+        if (NullableGeneric.HasValue) { NullableGeneric = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGeneric.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirCaptureDescriptor value
@@ -9403,6 +10169,18 @@ internal sealed record BirClosureDefinition : BirGraphValue
         if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Return, Ret.Value)); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Fields.HasValue) { foreach (var item0 in Fields.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (RetSuspendFnTypePre.HasValue) { RetSuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetSuspendFnTypePre.Value)); }
+        if (NullableGenericRet.HasValue) { NullableGenericRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGenericRet.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirClosureDefinition value
@@ -9559,6 +10337,19 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
         if (DotktDelegateSlot.HasValue) { DotktDelegateSlot = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, DotktDelegateSlot.Value)); }
         if (DelegateCtorRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)DelegateCtorRef.Value); }
         if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (ClosureType.HasValue) { ClosureType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ClosureType.Value)); }
+        if (Captures.HasValue) { foreach (var item0 in Captures.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FuncType.Value)); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (SynthClass.HasValue) { child(BirOwnershipRole.SyntheticDeclaration, (BirGraphValue)SynthClass.Value); }
+        if (DotktDelegateSlot.HasValue) { DotktDelegateSlot = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DotktDelegateSlot.Value)); }
+        if (DelegateCtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)DelegateCtorRef.Value); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNewClosure value
@@ -9726,6 +10517,23 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FuncType.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (CalleeOwner.HasValue) { CalleeOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CalleeOwner.Value)); }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (DotktDelegateSlot.HasValue) { DotktDelegateSlot = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DotktDelegateSlot.Value)); }
+        if (DelegateCtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)DelegateCtorRef.Value); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (CalleeRet.HasValue) { CalleeRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CalleeRet.Value)); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNewDelegate value
@@ -9925,6 +10733,21 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
         if (_suspendDeclarationTypeArgs.HasValue) { _suspendDeclarationTypeArgs = OptionalField<TypeNode[]>.Of(_suspendDeclarationTypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Captures.HasValue) { foreach (var item0 in Captures.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (CapValues.HasValue) { foreach (var item0 in CapValues.Value) { if (item0 is not null) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } } }
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (SuspendRet.HasValue) { SuspendRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SuspendRet.Value)); }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FuncType.Value)); }
+        if (_suspendDeclarationTypeArgs.HasValue) { _suspendDeclarationTypeArgs = OptionalField<TypeNode[]>.Of(_suspendDeclarationTypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNewSuspendLambda value
             && EqualField(Arity, value.Arity, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
@@ -10067,6 +10890,17 @@ internal sealed record BirEventGet : BirGraphNode, IBirExpression, IBirAttribute
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
         if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirGenericFrameRole.OverrideDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEventGet value
             && EqualField(CompanionCall, value.CompanionCall, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
@@ -10180,6 +11014,15 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEventRaise value
@@ -10338,6 +11181,23 @@ internal sealed record BirLambdaParameter : BirGraphValue
         if (NominalParameterSignatureIdentity.HasValue) { NominalParameterSignatureIdentity = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, NominalParameterSignatureIdentity.Value)); }
         if (GenericParameterSignatureBounds.HasValue) { GenericParameterSignatureBounds = OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (Mods.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Mods.Value); }
+        if (Default.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Default.Value); }
+        if (DefaultBir.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)DefaultBir.Value); }
+        if (SharedCellType.HasValue) { SharedCellType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SharedCellType.Value)); }
+        if (Attrs.HasValue) { foreach (var item0 in Attrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (FunctionSignatureType.HasValue) { FunctionSignatureType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FunctionSignatureType.Value)); }
+        if (KotlinType.HasValue) { KotlinType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, KotlinType.Value)); }
+        if (NullableGeneric.HasValue) { NullableGeneric = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGeneric.Value)); }
+        if (NominalParameterSignatureIdentity.HasValue) { NominalParameterSignatureIdentity = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, NominalParameterSignatureIdentity.Value)); }
+        if (GenericParameterSignatureBounds.HasValue) { GenericParameterSignatureBounds = OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirLambdaParameter value
             && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -10472,6 +11332,16 @@ internal sealed record BirInlineCapture : BirGraphValue
         if (SharedCellType.HasValue) { SharedCellType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, SharedCellType.Value)); }
         if (SharedCellTypeParams.HasValue) { foreach (var item0 in SharedCellTypeParams.Value) { child(BirGenericFrameRole.SharedCaptureDeclaration, BirRepresentationRole.TypeParameterDeclarations, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+        if (SharedCellType.HasValue) { SharedCellType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SharedCellType.Value)); }
+        if (SharedCellTypeParams.HasValue) { foreach (var item0 in SharedCellTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
     {
@@ -10596,6 +11466,15 @@ internal sealed record BirInlineLambda : BirGraphNode, IBirExpression, IBirAttri
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Result.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Result.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Params.HasValue) { foreach (var item0 in Params.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Captures.HasValue) { foreach (var item0 in Captures.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Result.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Result.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirInlineLambda value
             && EqualField(Params, value.Params, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
@@ -10674,6 +11553,13 @@ internal sealed record BirStackAllocation : BirGraphNode, IBirExpression, IBirAt
     {
         if (Count.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Count.Value); }
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Count.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Count.Value); }
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirStackAllocation value
@@ -10763,6 +11649,15 @@ internal sealed record BirStackGet : BirGraphNode, IBirExpression, IBirAttribute
         if (Len.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Len.Value); }
         if (Index.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Index.Value); }
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Ptr.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Ptr.Value); }
+        if (Len.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Len.Value); }
+        if (Index.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Index.Value); }
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirStackGet value
@@ -10867,6 +11762,16 @@ internal sealed record BirStackSet : BirGraphNode, IBirExpression, IBirAttribute
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Value.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Ptr.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Ptr.Value); }
+        if (Len.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Len.Value); }
+        if (Index.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Index.Value); }
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirStackSet value
             && EqualField(Ptr, value.Ptr, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -10957,6 +11862,14 @@ internal sealed record BirStackAsSpan : BirGraphNode, IBirExpression, IBirAttrib
         if (Len.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Len.Value); }
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Ptr.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Ptr.Value); }
+        if (Len.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Len.Value); }
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirStackAsSpan value
             && EqualField(Ptr, value.Ptr, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -11046,6 +11959,15 @@ internal sealed record BirInlineReceivers : BirGraphValue
         if (Dispatch.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Dispatch.Value); }
         if (DispatchTypeArgs.HasValue) { DispatchTypeArgs = OptionalField<TypeNode[]>.Of(DispatchTypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
         if (DispatchOwnerTypeArgs.HasValue) { DispatchOwnerTypeArgs = OptionalField<TypeNode[]>.Of(DispatchOwnerTypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Extension.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Extension.Value); }
+        if (Dispatch.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Dispatch.Value); }
+        if (DispatchTypeArgs.HasValue) { DispatchTypeArgs = OptionalField<TypeNode[]>.Of(DispatchTypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (DispatchOwnerTypeArgs.HasValue) { DispatchOwnerTypeArgs = OptionalField<TypeNode[]>.Of(DispatchOwnerTypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirInlineReceivers value
@@ -11177,6 +12099,20 @@ internal sealed record BirCallInline : BirGraphNode, IBirExpression, IBirAttribu
         if (RetType.HasValue) { RetType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Declaration, RetType.Value)); }
         if (ParamSig.HasValue) { ParamSig = OptionalField<TypeNode[]>.Of(ParamSig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Declaration, item0)).ToArray()); }
         if (PreparedDefaults.HasValue) { foreach (var item0 in PreparedDefaults.Value) { if (item0 is not null) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Callee.HasValue) { Callee = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Callee.Value)); }
+        if (Owner.HasValue) { Owner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Owner.Value)); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Recvs.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recvs.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { if (item0 is not null) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } } }
+        if (RetType.HasValue) { RetType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, RetType.Value)); }
+        if (ParamSig.HasValue) { ParamSig = OptionalField<TypeNode[]>.Of(ParamSig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (PreparedDefaults.HasValue) { foreach (var item0 in PreparedDefaults.Value) { if (item0 is not null) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirCallInline value
@@ -11421,6 +12357,31 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (ArgTypes.HasValue) { ArgTypes = OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FuncType.Value)); }
+        if (CalleeOwner.HasValue) { CalleeOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CalleeOwner.Value)); }
+        if (CompanionReceiver.HasValue) { CompanionReceiver = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CompanionReceiver.Value)); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberMethodTypeParams.HasValue) { foreach (var item0 in MemberMethodTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberSignature.HasValue) { MemberSignature = OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirOwnershipRole.MemberDescriptor, item0)).ToArray()); }
+        if (MemberReturnType.HasValue) { MemberReturnType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberReturnType.Value)); }
+        if (DotktDelegateSlot.HasValue) { DotktDelegateSlot = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DotktDelegateSlot.Value)); }
+        if (DelegateCtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)DelegateCtorRef.Value); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (CalleeRet.HasValue) { CalleeRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CalleeRet.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (InvokeRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)InvokeRef.Value); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+    }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
     {
@@ -11568,6 +12529,12 @@ internal sealed record BirByRefOf : BirGraphNode, IBirExpression, IBirAttributeV
     {
         if (Inner.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Inner.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Inner.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Inner.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirByRefOf value
             && EqualField(Inner, value.Inner, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
@@ -11639,6 +12606,13 @@ internal sealed record BirByRefLoad : BirGraphNode, IBirExpression, IBirAttribut
     {
         if (Ptr.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Ptr.Value); }
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Ptr.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Ptr.Value); }
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirByRefLoad value
@@ -11729,6 +12703,14 @@ internal sealed record BirByRefStore : BirGraphNode, IBirExpression, IBirAttribu
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Value.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Ptr.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Ptr.Value); }
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirByRefStore value
             && EqualField(Ptr, value.Ptr, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -11804,6 +12786,12 @@ internal sealed record BirReturnExpression : BirGraphNode, IBirExpression, IBirA
     {
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Value.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirReturnExpression value
             && EqualField(Value, value.Value, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
@@ -11858,6 +12846,11 @@ internal sealed record BirUnsupportedExpression : BirGraphNode, IBirExpression, 
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -11920,6 +12913,12 @@ internal sealed record BirPropertyFunction : BirGraphValue
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Iface.HasValue) { Iface = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, Iface.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Iface.HasValue) { Iface = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Iface.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirPropertyFunction value
@@ -11987,6 +12986,13 @@ internal sealed record BirConstant : BirGraphNode, IBirExpression, IBirAttribute
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirConstant value
@@ -12065,6 +13071,13 @@ internal sealed record BirObjectEquals : BirGraphNode, IBirExpression, IBirAttri
         if (Lhs.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Lhs.Value); }
         if (Rhs.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Rhs.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Lhs.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Lhs.Value); }
+        if (Rhs.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Rhs.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirObjectEquals value
             && EqualField(Lhs, value.Lhs, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -12131,6 +13144,12 @@ internal sealed record BirExpressionStatement : BirGraphNode, IBirStatement
     {
         if (Expr.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Expr.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Expr.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Expr.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirExpressionStatement value
             && EqualField(Expr, value.Expr, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
@@ -12193,6 +13212,12 @@ internal sealed record BirThrowExpression : BirGraphNode, IBirExpression, IBirAt
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Value.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirThrowExpression value
@@ -12257,6 +13282,12 @@ internal sealed record BirUnaryOperation : BirGraphNode, IBirExpression, IBirAtt
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirUnaryOperation value
@@ -12354,6 +13385,16 @@ internal sealed record BirConditional : BirGraphNode, IBirExpression, IBirAttrib
         if (Then.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Then.Value); }
         if (Else.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Else.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Cond.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Cond.Value); }
+        if (Then.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Then.Value); }
+        if (Else.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Else.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirConditional value
             && EqualField(JoinNullBranch, value.JoinNullBranch, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
@@ -12447,6 +13488,14 @@ internal sealed record BirNullableHasValue : BirGraphNode, IBirExpression, IBirA
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
         if (HasValueRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)HasValueRef.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
+        if (HasValueRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)HasValueRef.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNullableHasValue value
             && EqualField(Elem, value.Elem, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -12532,6 +13581,14 @@ internal sealed record BirNullableValue : BirGraphNode, IBirExpression, IBirAttr
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
         if (ValueRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)ValueRef.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
+        if (ValueRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)ValueRef.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNullableValue value
             && EqualField(Elem, value.Elem, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -12612,6 +13669,13 @@ internal sealed record BirEnumValue : BirGraphNode, IBirExpression, IBirAttribut
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEnumValue value
@@ -12704,6 +13768,14 @@ internal sealed record BirEnumValues : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (Values.HasValue) { foreach (var item0 in Values.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (Values.HasValue) { foreach (var item0 in Values.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEnumValues value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -12780,6 +13852,13 @@ internal sealed record BirCompanionValue : BirGraphNode, IBirExpression, IBirAtt
         if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, OwnerType.Value)); }
         if (CompanionType.HasValue) { CompanionType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, CompanionType.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (CompanionType.HasValue) { CompanionType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CompanionType.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirCompanionValue value
             && EqualField(OwnerType, value.OwnerType, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -12854,6 +13933,13 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirClassReference value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -12927,6 +14013,13 @@ internal sealed record BirNullableNull : BirGraphNode, IBirExpression, IBirAttri
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
         if (CtorRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)CtorRef.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (CtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CtorRef.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNullableNull value
             && EqualField(Elem, value.Elem, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -12986,6 +14079,11 @@ internal sealed record BirDefaultParameter : BirGraphNode, IBirExpression, IBirA
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirDefaultParameter value
             && EqualField(Idx, value.Idx, (left, right) => EqualityComparer<int>.Default.Equals(left, right));
@@ -13040,6 +14138,11 @@ internal sealed record BirDefaultReceiver : BirGraphNode, IBirExpression, IBirAt
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -13106,6 +14209,12 @@ internal sealed record BirBindingReference : BirGraphNode, IBirExpression, IBirA
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirBindingReference value
@@ -13180,6 +14289,13 @@ internal sealed record BirLocalFunctionReference : BirGraphNode, IBirExpression,
     {
         if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, FuncType.Value)); }
         if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.TypeArguments, item0)).ToArray()); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FuncType.Value)); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirLocalFunctionReference value
@@ -13284,6 +14400,16 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
         if (Stmts.HasValue) { foreach (var item0 in Stmts.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Result.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Result.Value); }
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Stmts.HasValue) { foreach (var item0 in Stmts.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Result.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Result.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirValueBlock value
@@ -13448,6 +14574,23 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (ArgTypes.HasValue) { ArgTypes = OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (PropertyFunction.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)PropertyFunction.Value); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberMethodTypeParams.HasValue) { foreach (var item0 in MemberMethodTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberSignature.HasValue) { MemberSignature = OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirOwnershipRole.MemberDescriptor, item0)).ToArray()); }
+        if (MemberReturnType.HasValue) { MemberReturnType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberReturnType.Value)); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+    }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
     {
@@ -13565,6 +14708,12 @@ internal sealed record BirThrow : BirGraphNode, IBirStatement
     {
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Value.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirThrow value
             && EqualField(Value, value.Value, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
@@ -13627,6 +14776,12 @@ internal sealed record BirIf : BirGraphNode, IBirStatement
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Branches.HasValue) { foreach (var item0 in Branches.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Branches.HasValue) { foreach (var item0 in Branches.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirIf value
@@ -13691,6 +14846,12 @@ internal sealed record BirReturn : BirGraphNode, IBirStatement
     {
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Value.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirReturn value
             && EqualField(Value, value.Value, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
@@ -13754,6 +14915,12 @@ internal sealed record BirSetLocal : BirGraphNode, IBirStatement
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Value.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirSetLocal value
@@ -13911,6 +15078,23 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+        if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
+        if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberType.Value)); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+    }
     public override void RewriteRepresentationParametersInPlace(
         Func<BirRepresentationParameterRole, BirTypeParameter[], BirTypeParameter[]> rewrite)
     {
@@ -14043,6 +15227,12 @@ internal sealed record BirBlock : BirGraphNode, IBirStatement
     {
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirBlock value
             && EqualField(Body, value.Body, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
@@ -14108,6 +15298,12 @@ internal sealed record BirBranchIf : BirGraphNode, IBirStatement
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Cond.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Cond.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Cond.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Cond.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirBranchIf value
@@ -14191,6 +15387,13 @@ internal sealed record BirCatch : BirGraphValue
     {
         if (ExcType.HasValue) { ExcType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, ExcType.Value)); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (ExcType.HasValue) { ExcType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ExcType.Value)); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirCatch value
@@ -14294,6 +15497,16 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
         if (Catches.HasValue) { foreach (var item0 in Catches.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Finally.HasValue) { foreach (var item0 in Finally.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Catches.HasValue) { foreach (var item0 in Catches.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Finally.HasValue) { foreach (var item0 in Finally.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirTry value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -14391,6 +15604,14 @@ internal sealed record BirForArray : BirGraphNode, IBirStatement
         if (Array.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Array.Value); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Array.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Array.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirForArray value
@@ -14508,6 +15729,16 @@ internal sealed record BirForIn : BirGraphNode, IBirStatement
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Fallback.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Fallback.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (Src.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Src.Value); }
+        if (SrcType.HasValue) { SrcType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SrcType.Value)); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Fallback.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Fallback.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirForIn value
             && EqualField(Label, value.Label, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -14607,6 +15838,14 @@ internal sealed record BirVariable : BirGraphNode, IBirStatement
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (Init.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Init.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Init.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Init.Value); }
+        if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirVariable value
             && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -14694,6 +15933,12 @@ internal sealed record BirLocal : BirGraphNode, IBirExpression, IBirAttributeVal
     {
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirLocal value
             && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -14765,6 +16010,12 @@ internal sealed record BirThis : BirGraphNode, IBirExpression, IBirAttributeValu
     {
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirThis value
             && EqualField(Sty, value.Sty, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -14831,6 +16082,12 @@ internal sealed record BirSourcePoint : BirGraphNode, IBirStatement
     {
         if (Span.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Span.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Span.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Span.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirSourcePoint value
             && EqualField(Span, value.Span, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
@@ -14887,6 +16144,11 @@ internal sealed record BirBreak : BirGraphNode, IBirStatement
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -14953,6 +16215,11 @@ internal sealed record BirContinue : BirGraphNode, IBirStatement
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirContinue value
             && EqualField(Label, value.Label, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -15016,6 +16283,11 @@ internal sealed record BirGoto : BirGraphNode, IBirStatement
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirGoto value
             && EqualField(Id, value.Id, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
@@ -15075,6 +16347,11 @@ internal sealed record BirLabel : BirGraphNode, IBirStatement
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirLabel value
             && EqualField(Id, value.Id, (left, right) => EqualityComparer<int>.Default.Equals(left, right));
@@ -15132,6 +16409,11 @@ internal sealed record BirSourceSpan : BirGraphValue
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -15221,6 +16503,13 @@ internal sealed record BirWhile : BirGraphNode, IBirStatement
     {
         if (Cond.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Cond.Value); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Cond.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Cond.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirWhile value
@@ -15320,6 +16609,14 @@ internal sealed record BirFor : BirGraphNode, IBirStatement
         if (From.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)From.Value); }
         if (To.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)To.Value); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (From.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)From.Value); }
+        if (To.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)To.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirFor value
@@ -15431,6 +16728,14 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         if (AccessOwner.HasValue) { AccessOwner = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, AccessOwner.Value)); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Range.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Range.Value); }
+        if (AccessOwner.HasValue) { AccessOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessOwner.Value)); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirForRange value
             && EqualField(Var, value.Var, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -15524,6 +16829,13 @@ internal sealed record BirConvert : BirGraphNode, IBirExpression, IBirAttributeV
     {
         if (To.HasValue) { To = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, To.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (To.HasValue) { To = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, To.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirConvert value
@@ -15622,6 +16934,16 @@ internal sealed record BirNewList : BirGraphNode, IBirExpression, IBirAttributeV
         if (CtorRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)CtorRef.Value); }
         if (AddRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)AddRef.Value); }
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (Elems.HasValue) { foreach (var item0 in Elems.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (CtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CtorRef.Value); }
+        if (AddRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)AddRef.Value); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNewList value
@@ -15741,6 +17063,18 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         if (MemberSignature.HasValue) { MemberSignature = OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Declaration, item0)).ToArray()); }
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (ArgTypes.HasValue) { ArgTypes = OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (MemberSignature.HasValue) { MemberSignature = OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => type(BirOwnershipRole.MemberDescriptor, item0)).ToArray()); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNewClr value
@@ -15957,6 +17291,29 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Iface.HasValue) { Iface = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Iface.Value)); }
+        if (RecvType.HasValue) { RecvType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, RecvType.Value)); }
+        if (CalleeRet.HasValue) { CalleeRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CalleeRet.Value)); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (ArgTypes.HasValue) { ArgTypes = OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (FunctionCallSignature.HasValue) { FunctionCallSignature = OptionalField<TypeNode[]>.Of(FunctionCallSignature.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (_capturedGenericResult.HasValue) { _capturedGenericResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _capturedGenericResult.Value)); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+        if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirConstrainedCall value
             && EqualField(Method, value.Method, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -16170,6 +17527,22 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (_capturedGenericResult.HasValue) { _capturedGenericResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _capturedGenericResult.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+        if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirGenericStatic value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -16360,6 +17733,23 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (_capturedGenericResult.HasValue) { _capturedGenericResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _capturedGenericResult.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+        if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirGenericInstance value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -16477,6 +17867,12 @@ internal sealed record BirClrStaticField : BirGraphNode, IBirExpression, IBirAtt
     {
         if (FieldRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)FieldRef.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (FieldRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)FieldRef.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirClrStaticField value
             && EqualField(FieldRef, value.FieldRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
@@ -16573,6 +17969,16 @@ internal sealed record BirEventAccessorBody : BirGraphNode, IBirStatement
         if (CombineRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)CombineRef.Value); }
         if (RemoveRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)RemoveRef.Value); }
         if (CompareExchangeRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)CompareExchangeRef.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (DelegateType.HasValue) { DelegateType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DelegateType.Value)); }
+        if (InvokeRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)InvokeRef.Value); }
+        if (CombineRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CombineRef.Value); }
+        if (RemoveRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)RemoveRef.Value); }
+        if (CompareExchangeRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CompareExchangeRef.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEventAccessorBody value
@@ -16733,6 +18139,21 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
         if (DelegateType.HasValue) { DelegateType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, DelegateType.Value)); }
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Handler.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Handler.Value); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (DelegateType.HasValue) { DelegateType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DelegateType.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEventAdd value
@@ -16926,6 +18347,21 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
         if (DelegateType.HasValue) { DelegateType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, DelegateType.Value)); }
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Handler.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Handler.Value); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (DelegateType.HasValue) { DelegateType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DelegateType.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEventRemove value
@@ -17163,6 +18599,27 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (ArgTypes.HasValue) { ArgTypes = OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (_capturedGenericResult.HasValue) { _capturedGenericResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _capturedGenericResult.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+        if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNativeInstance value
@@ -17413,6 +18870,27 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (ArgTypes.HasValue) { ArgTypes = OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (_capturedGenericResult.HasValue) { _capturedGenericResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _capturedGenericResult.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+        if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNativeStatic value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -17631,6 +19109,23 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         if (_capturedGenericResult.HasValue) { _capturedGenericResult = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, _capturedGenericResult.Value)); }
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (_capturedGenericResult.HasValue) { _capturedGenericResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _capturedGenericResult.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirPropertyGet value
@@ -17867,6 +19362,23 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
+        if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (_capturedGenericResult.HasValue) { _capturedGenericResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _capturedGenericResult.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirPropertySet value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -18028,6 +19540,15 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (InvokeRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)InvokeRef.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FuncType.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (InvokeRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)InvokeRef.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirDelegateInvoke value
             && EqualField(FuncType, value.FuncType, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -18114,6 +19635,14 @@ internal sealed record BirEnumBits : BirGraphNode, IBirExpression, IBirAttribute
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (Underlying.HasValue) { Underlying = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, Underlying.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Underlying.HasValue) { Underlying = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Underlying.Value)); }
+        if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirEnumBits value
@@ -18251,6 +19780,19 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
         if (CurrentRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)CurrentRef.Value); }
         if (CurrentErasedRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)CurrentErasedRef.Value); }
         if (MoveNextRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)MoveNextRef.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
+        if (Src.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Src.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (EnumerableGetRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)EnumerableGetRef.Value); }
+        if (EnumerableGetErasedRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)EnumerableGetErasedRef.Value); }
+        if (CurrentRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CurrentRef.Value); }
+        if (CurrentErasedRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CurrentErasedRef.Value); }
+        if (MoveNextRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MoveNextRef.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirForEach value
@@ -18436,6 +19978,24 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         if (DotktDelegateSlot.HasValue) { DotktDelegateSlot = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, DotktDelegateSlot.Value)); }
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FuncType.Value)); }
+        if (ClrType.HasValue) { ClrType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ClrType.Value)); }
+        if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (DelegateCtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)DelegateCtorRef.Value); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (DotktDelegateSlot.HasValue) { DotktDelegateSlot = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DotktDelegateSlot.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirBoundClrDelegate value
@@ -18630,6 +20190,23 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (FuncType.HasValue) { FuncType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, FuncType.Value)); }
+        if (ClrType.HasValue) { ClrType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ClrType.Value)); }
+        if (TypeArgs.HasValue) { TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (DelegateCtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)DelegateCtorRef.Value); }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+        if (AccessorOwner.HasValue) { AccessorOwner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, AccessorOwner.Value)); }
+        if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (CalleeParams.HasValue) { CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (DotktDelegateSlot.HasValue) { DotktDelegateSlot = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DotktDelegateSlot.Value)); }
+        if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
+        if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirClrStaticDelegate value
             && EqualField(FuncType, value.FuncType, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -18747,6 +20324,13 @@ internal sealed record BirRepeat : BirGraphNode, IBirStatement, IBirExpression, 
         if (Count.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Count.Value); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Count.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Count.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirRepeat value
             && EqualField(Var, value.Var, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -18842,6 +20426,14 @@ internal sealed record BirPInvoke : BirGraphValue
         if (CallingConventionType.HasValue) { CallingConventionType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, CallingConventionType.Value)); }
         if (CharSetType.HasValue) { CharSetType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, CharSetType.Value)); }
         if (AttributeCtorRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)AttributeCtorRef.Value); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (CallingConventionType.HasValue) { CallingConventionType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CallingConventionType.Value)); }
+        if (CharSetType.HasValue) { CharSetType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, CharSetType.Value)); }
+        if (AttributeCtorRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)AttributeCtorRef.Value); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirPInvoke value
@@ -18971,6 +20563,16 @@ internal sealed record BirMethodImpl : BirGraphValue
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (MemberRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)MemberRef.Value); }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Owner.HasValue) { Owner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Owner.Value)); }
+        if (Params.HasValue) { Params = OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
+        if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (MemberRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)MemberRef.Value); }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirMethodImpl value
             && EqualField(Owner, value.Owner, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -19060,6 +20662,13 @@ internal sealed record BirInterfaceSlotSet : BirGraphValue
         if (Owner.HasValue) { Owner = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, Owner.Value)); }
         if (Slots.HasValue) { foreach (var item0 in Slots.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Owner.HasValue) { Owner = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Owner.Value)); }
+        if (Slots.HasValue) { foreach (var item0 in Slots.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirInterfaceSlotSet value
             && EqualField(Owner, value.Owner, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -19140,6 +20749,13 @@ internal sealed record BirBranch : BirGraphValue
         if (Cond.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Cond.Value); }
         if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Cond.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Cond.Value); }
+        if (Body.HasValue) { foreach (var item0 in Body.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirBranch value
             && EqualField(Cond, value.Cond, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -19199,6 +20815,11 @@ internal sealed record BirPhysicalEnumValue : BirGraphValue
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
     {
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -19277,6 +20898,13 @@ internal sealed record BirTypeParameter : BirGraphValue
     {
         if (Constraints.HasValue) { Constraints = OptionalField<TypeNode[]>.Of(Constraints.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Constraint, item0)).ToArray()); }
         if (ErasedInnerConstraints.HasValue) { ErasedInnerConstraints = OptionalField<TypeNode[]>.Of(ErasedInnerConstraints.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Constraints.HasValue) { Constraints = OptionalField<TypeNode[]>.Of(Constraints.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (ErasedInnerConstraints.HasValue) { ErasedInnerConstraints = OptionalField<TypeNode[]>.Of(ErasedInnerConstraints.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirTypeParameter value
@@ -19382,6 +21010,14 @@ internal sealed record BirMemberReference : BirGraphValue
         if (DeclaringType.HasValue) { DeclaringType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, DeclaringType.Value)); }
         if (ParameterTypes.HasValue) { ParameterTypes = OptionalField<TypeNode[]>.Of(ParameterTypes.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
         if (ReturnType.HasValue) { ReturnType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, ReturnType.Value)); }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (DeclaringType.HasValue) { DeclaringType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, DeclaringType.Value)); }
+        if (ParameterTypes.HasValue) { ParameterTypes = OptionalField<TypeNode[]>.Of(ParameterTypes.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (ReturnType.HasValue) { ReturnType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ReturnType.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirMemberReference value

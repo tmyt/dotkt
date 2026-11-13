@@ -81,6 +81,29 @@ internal static class BirGraphMutationTests
         Require(genericCall.TypeArgs.Value[0] == target && genericCall.Sig.Value[0] == source,
             "generic frame lexical versus referenced declaration");
 
+        var ownershipCall = new BirCallStatic {
+            TypeArgs = new[] { source }, Sig = new[] { source },
+            MemberSignature = new[] { source }, MemberReturnType = source,
+            ResolvedMemberReturn = source, ResolvedMemberParams = new[] { source },
+        };
+        ownershipCall.RewriteOwnershipInPlace(
+            (role, type) => role == BirOwnershipRole.ForeignVector ? type : target, (_, _) => { });
+        Require(ownershipCall.TypeArgs.Value[0] == target && ownershipCall.Sig.Value[0] == source
+            && ownershipCall.ResolvedMemberParams.Value[0] == source
+            && ownershipCall.MemberSignature.Value[0] == target && ownershipCall.MemberReturnType.Value == target
+            && ownershipCall.ResolvedMemberReturn.Value == target,
+            "owner permutation distinguishes foreign vectors from member descriptors and resolved returns");
+        var ownershipNew = new BirNew { ArgTypes = new[] { source }, MemberSignature = new[] { source } };
+        ownershipNew.RewriteOwnershipInPlace(
+            (role, type) => role == BirOwnershipRole.Lexical ? target : type, (_, _) => { });
+        Require(ownershipNew.ArgTypes.Value[0] == target && ownershipNew.MemberSignature.Value[0] == source,
+            "construction argument types belong to the application rather than the member declaration");
+        var frozen = new BirFieldDeclaration { Type = source, KotlinType = source };
+        frozen.RewriteOwnershipInPlace(
+            (role, type) => role == BirOwnershipRole.FrozenFact ? type : target, (_, _) => { });
+        Require(frozen.Type.Value == target && frozen.KotlinType.Value == source,
+            "ownership traversal leaves encoded source type facts opaque");
+
         var declarations = new[] { new BirTypeParameter { Name = "T" } };
         var slots = new BirCallStatic { MemberOwnerTypeParams = declarations, MemberMethodTypeParams = declarations };
         var capture = new BirInlineCapture { SharedCellTypeParams = declarations };

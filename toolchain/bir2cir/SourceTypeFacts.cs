@@ -50,6 +50,33 @@ sealed class SourceTypeFacts
             NullableFrame == null ? order.Append(Part.NullableFrame).ToArray() : order, frame);
     }
 
+    // Capturing an owner changes the source-index correspondence itself. Unlike
+    // Merge, this deliberately rebases existing facts and replaces their frame.
+    internal SourceTypeFacts RebaseCapturedFrame(NullableRepresentationFrame frame, int[] sourceMap, SourceTypeFacts owner)
+    {
+        TypeNode Remap(TypeNode type) => type switch {
+            TypeNode.Tv { Scope: "type" } variable => new TypeNode.Tv("type", sourceMap[variable.I]),
+            TypeNode.Fqn value => value with { Args = value.Args?.Select(Remap).ToArray() },
+            TypeNode.Nullable value => value with { Of = Remap(value.Of) },
+            TypeNode.Oblivious value => value with { Of = Remap(value.Of) },
+            TypeNode.Projection value => value with { Of = Remap(value.Of) },
+            TypeNode.Array value => value with { Elem = Remap(value.Elem) },
+            TypeNode.ByRef value => value with { Of = Remap(value.Of) },
+            TypeNode.Ptr value => value with { Of = Remap(value.Of) },
+            TypeNode.Mod value => value with { M = Remap(value.M), Of = Remap(value.Of) },
+            TypeNode.Fn value => value with { Ret = Remap(value.Ret), Params = value.Params.Select(Remap).ToArray(),
+                Recv = value.Recv == null ? null : Remap(value.Recv), Ctx = value.Ctx?.Select(Remap).ToArray() },
+            TypeNode.FnPtr value => value with { Ret = Remap(value.Ret), Params = value.Params.Select(Remap).ToArray() },
+            _ => type,
+        };
+        var bounds = Bounds.ToDictionary(pair => sourceMap[pair.Key], pair => pair.Value.Select(Remap).ToArray());
+        var parts = order.ToList();
+        if (owner != null && order.Contains(Part.Bounds) == false && owner.order.Contains(Part.Bounds)) parts.Add(Part.Bounds);
+        if (owner != null) foreach (var pair in owner.Bounds) bounds[pair.Key] = pair.Value;
+        if (!parts.Contains(Part.NullableFrame)) parts.Add(Part.NullableFrame);
+        return new SourceTypeFacts(Base == null ? null : Remap(Base), Interfaces?.Select(Remap).ToArray(), bounds, parts, frame);
+    }
+
     internal SourceTypeFacts Merge(TypeNode baseType, IReadOnlyList<TypeNode> interfaces,
         IReadOnlyDictionary<int, TypeNode[]> bounds)
     {
