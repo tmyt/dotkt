@@ -55,6 +55,7 @@ static class Bir2Cir
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
                 SourceGraphRewrite.SelfTest();
+                FaithfulHintRecognition.TypedSelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
                 LexicalDeclarationIds.SelfTest();
                 ClrEventSubscriptionBinding.SelfTest();
@@ -230,10 +231,12 @@ sealed class Pipeline
             captured, refs, sourceIsValue, carryForReference: referenceBuild);
         if (!referenceBuild)
             foreach (var source in captured) aliasConstructorDelegations.Apply(source);
-        // Snapshot collection-selection facts before helper producers change
-        // expressions, exactly as the remaining collection pass's callback did.
+        // Snapshot collection-selection facts before any semantic helper producer
+        // rewrites source expressions.
         // Only declaration/scalar facts survive this owning-to-DOM frontier.
         var collectionInputs = new SourceCollectionInputs(captured, refs);
+        var sourceTopLevelFns = captured.SelectMany(source => source.Methods.OrEmpty())
+            .Select(method => method.Name.OrDefault()).Where(name => name != null).ToHashSet(StringComparer.Ordinal);
         FaithfulHints.WithHelperBinding(collectionInputs.Helpers.Bind, () => {
             for (var index = 0; index < captured.Length; index++)
             {
@@ -243,6 +246,7 @@ sealed class Pipeline
                     captured[index], refs, collectionInputs.Helpers.Bind);
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)ObjectSlotRename.Apply(captured[index]);
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)PrimitiveOperatorLowering.Apply(captured[index], refs);
+                captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)FaithfulHintRecognition.Apply(captured[index], sourceTopLevelFns);
             }
         });
         var files = new List<BirFile>();
@@ -303,19 +307,7 @@ sealed class Pipeline
         var representationAliases = module.SourceIndex.CollisionAliases;
         var localValueTypeFqns = module.SourceIndex.ValueTypes;
         ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
-        // Semantic operations can require generic stdlib helpers. Author those calls while their operand types
-        // are still source vocabulary, before helper demands and physical argument frames are fixed.
-        var sourceTopLevelFns = birRoots.OfType<JsonObject>()
-            .SelectMany(root => (root["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-            .Select(method => method["name"]?.GetValue<string>()).Where(name => name != null).ToHashSet(StringComparer.Ordinal);
-        CollectionHelperBinding.Apply(birRoots, refs, representationAliases, module.CollectionInputs, bindTyped =>
-            FaithfulHints.WithHelperBinding(bindTyped, () =>
-            {
-                foreach (var root in birRoots)
-                {
-                    FaithfulHintRecognition.Apply(root, refs, sourceTopLevelFns);
-                }
-            }));
+        CollectionHelperBinding.Apply(birRoots, refs, representationAliases, module.CollectionInputs);
         // Kotlin `reified` is a declaration fact; the hidden nullable-instantiation Boolean is a distinct CLR ABI
         // demand. Derive the latter from nullable-sensitive operations and exact call/lift correspondences as one
         // module-wide fixed point before per-file materialization starts.

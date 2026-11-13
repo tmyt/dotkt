@@ -13,8 +13,7 @@ static class CollectionHelperBinding
     const string HelperOwner = "kotlin.collections.ClrMapDefaultsKt";
 
     public static void Apply(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references,
-        IReadOnlyDictionary<string, string> aliases, SourceCollectionInputs captured,
-        Action<Func<BirCallStatic, BirCallStatic>> prepareHelpers = null)
+        IReadOnlyDictionary<string, string> aliases, SourceCollectionInputs captured)
     {
         var inputs = roots.ToArray();
         var applicationOrder = captured.Applications;
@@ -23,7 +22,6 @@ static class CollectionHelperBinding
         var iteratorTypeDefinitions = captured.Definitions;
         bool IsInterface(string owner) => captured.Kinds.TryGetValue(owner, out var kind) ? kind == "interface"
             : references != null && references.TryResolveClrOwner(owner, out _, out var referencedKind) && referencedKind == "interface";
-        prepareHelpers?.Invoke(captured.Helpers.Bind);
 
         JsonNode Walk(JsonNode node, MemberCallSubstitution.SubstCtx context)
         {
@@ -179,8 +177,9 @@ static class CollectionHelperBinding
         JsonObject Operand() => new JsonObject { ["k"] = "local", ["name"] = "value", ["sty"] = TypeJson.Write(collection) };
         var typedArguments = new IBirExpression[] { new BirLocal { Name = "value" } };
         BirCallStatic typedRender = null;
-        Apply(new[] { root }, null, aliases, CaptureFixture(root), bind =>
-            FaithfulHints.WithHelperBinding(bind, () => {
+        var captured = CaptureFixture(root);
+        var bind = captured.Helpers.Bind;
+        FaithfulHints.WithHelperBinding(bind, () => {
                 typedRender = bind(new BirCallStatic {
                     Owner = new TypeNode.Fqn("kotlin.collections.ClrCollectionDefaultsKt"), Method = "clrCollToString",
                     Sig = new TypeNode[] { collection }, TypeArgs = new TypeNode[] { variable }, Args = typedArguments,
@@ -190,7 +189,8 @@ static class CollectionHelperBinding
                 body.Add(new JsonObject { ["k"] = "objMethod", ["method"] = "toString", ["recv"] = Operand() });
                 ObjectSlotRename.Apply(root);
                 FaithfulHintRecognition.Apply(root, null, new HashSet<string>());
-            }));
+            });
+        Apply(new[] { root }, null, aliases, captured);
         if (typedRender.DeclarationId.Value != "render-collection"
             || !ReferenceEquals(typedRender.Args.Value, typedArguments)
             || typedRender.TypeArgs.Value.Single() != variable
@@ -393,7 +393,7 @@ static class CollectionHelperBinding
 
     // These DOM-consumer fixtures keep direct expression handles for assertions.
     // Author their statement wrappers only in the owning capture fixture, before
-    // the production pass or its callback mutates the original graph.
+    // helper preparation or collection binding mutates the original graph.
     static SourceCollectionInputs CaptureFixture(JsonObject root)
     {
         var source = root.DeepClone().AsObject();
