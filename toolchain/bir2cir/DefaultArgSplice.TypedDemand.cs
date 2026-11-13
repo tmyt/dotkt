@@ -67,7 +67,7 @@ static partial class DefaultArgSplice
         }
         void Fill(List<IBirExpression> arguments, BirCallBinding[] bindings, int count, Dictionary<int, IBirExpression> defaults,
             IBirExpression dispatch, IBirExpression extension, IBirExpression enclosing, string semantic,
-            TypeNode[] methods, TypeNode[] owners)
+            TypeNode[] methods, TypeNode[] owners, string label)
         {
             BirCallBinding Binding(IBirExpression argument) => argument is BirBindingReference { Id.HasValue: true } read
                 ? bindings.FirstOrDefault(binding => binding.Id.OrDefault() == read.Id.Value) : null;
@@ -75,16 +75,16 @@ static partial class DefaultArgSplice
             {
                 var binding = Binding(arguments[index]);
                 if (binding?.Expr.OrDefault() is not BirDefaultArgument || !defaults.TryGetValue(index, out var expression)) continue;
-                var fill = SpliceOne(expression, dispatch, extension, enclosing, arguments, hoist, owner, semantic, methods, owners);
+                var fill = SpliceOne(expression, dispatch, extension, enclosing, arguments, hoist, owner, semantic, methods, owners, label, index);
                 if (fill == null) continue;
                 binding.Expr = OptionalField<IBirExpression>.Of(fill);
                 binding.Stable = ValueStability.IsReReadable(((BirGraphNode)fill).Tag,
-                    fill is BirEnumValue { PhysicalValue.HasValue: true });
+                    fill is BirEnumValue { PhysicalValue.HasValue: true, Underlying.HasValue: true });
             }
             for (var index = arguments.Count; index < count; index++)
             {
                 if (!defaults.TryGetValue(index, out var expression)) break;
-                var fill = SpliceOne(expression, dispatch, extension, enclosing, arguments, hoist, owner, semantic, methods, owners);
+                var fill = SpliceOne(expression, dispatch, extension, enclosing, arguments, hoist, owner, semantic, methods, owners, label, index);
                 if (fill == null) break;
                 arguments.Add(fill);
             }
@@ -104,25 +104,25 @@ static partial class DefaultArgSplice
             var method = constructor == null ? facts.Method : ReferenceMetadataIndex.CtorKeyName;
             if (signature == null || method == null || constructor != null && calledOwner is not TypeNode.Fqn) return;
             if (constructor != null && arguments.Length != signature.Length)
-                throw new InvalidOperationException("Constructor default argument positions do not match its selected signature");
+                throw new InvalidOperationException(ConstructorDefaultPosition(((TypeNode.Fqn)calledOwner).Name, arguments.Length, signature.Length));
+            var label = constructor == null ? method : ((TypeNode.Fqn)calledOwner).Name + " constructor";
             var defaults = constructor == null ? DefaultValuesForCall(facts, refs, out _)
                 : refs.KotlinDefaultValuesFor(((TypeNode.Fqn)calledOwner).Name, method, signature.Length,
                     ReferenceMetadataIndex.SignatureKeyOf(signature), ReferenceMetadataIndex.SignatureKeyOf(signature, relaxed: true));
             if (defaults == null)
             {
                 if (refs.KotlinDefaultsAmbiguous((calledOwner as TypeNode.Fqn)?.Name, method, signature.Length))
-                    throw new InvalidOperationException("Selected default arguments are ambiguous");
+                    throw new InvalidOperationException(AmbiguousDefault(label, signature.Length));
                 return;
             }
             var methodArguments = call switch {
                 BirCallStatic value => value.TypeArgs.OrDefault(), BirCallInstance value => value.TypeArgs.OrDefault(), _ => null,
             };
-            var ownerApplication = facts.DefaultOwner ?? (constructor?.Type.OrDefault()
-                ?? (call is BirCallInstance instance ? instance.OwnerType.OrDefault() : null));
+            var ownerApplication = facts.DefaultOwner ?? (constructor?.Type.OrDefault() ?? facts.Owner);
             var values = arguments.ToList();
             Fill(values, bindings, signature.Length, defaults, (call as BirCallInstance)?.Recv.OrDefault(),
                 arguments.FirstOrDefault(), constructor == null ? null : arguments.FirstOrDefault(), semantic, methodArguments,
-                refs.SourceDeclarationArguments(ownerApplication));
+                refs.SourceDeclarationArguments(ownerApplication), label);
             switch (call)
             {
                 case BirNew value: value.Args = values.ToArray(); break;
@@ -139,10 +139,11 @@ static partial class DefaultArgSplice
             if (defaults == null)
             {
                 if (refs.KotlinDefaultsAmbiguous(calledOwner, ReferenceMetadataIndex.CtorKeyName, arguments.Length))
-                    throw new InvalidOperationException("Selected constructor delegation defaults are ambiguous");
+                    throw new InvalidOperationException(AmbiguousDefault(calledOwner, arguments.Length, constructorDelegation: true));
                 return;
             }
-            Fill(arguments.ToList(), bindings, arguments.Length, defaults, null, null, arguments.FirstOrDefault(), semantic, null, application);
+            Fill(arguments.ToList(), bindings, arguments.Length, defaults, null, null, arguments.FirstOrDefault(), semantic, null, application,
+                calledOwner + " constructor");
         }
         void ExpandTrailing(BirGraphValue node)
         {
@@ -150,17 +151,19 @@ static partial class DefaultArgSplice
             var arguments = node switch { BirCallStatic call => call.Args.OrDefault(), BirCallInstance call => call.Args.OrDefault(), _ => null };
             if (arguments == null || facts.Signature == null || arguments.Length >= facts.Signature.Length
                 || facts.Owner is not TypeNode.Fqn || facts.Method == null) return;
-            var defaults = DefaultValuesForCall(facts, refs, out _);
+            var defaults = DefaultValuesForCall(facts, refs, out var parameterNames);
+            var label = ((TypeNode.Fqn)facts.Owner).Name + "." + facts.Method;
             var values = arguments.ToList();
             for (var index = arguments.Length; index < facts.Signature.Length; index++)
             {
                 if (defaults?.TryGetValue(index, out var expression) != true)
-                    throw new InvalidOperationException("Cannot fill an omitted default from the selected referenced declaration");
+                    throw new InvalidOperationException(UnrepresentableDefault("nullable-witness demand", label, index, parameterNames));
                 var fill = (IBirExpression)ObjectSlotRename.Apply((BirGraphValue)Clone(expression));
                 var methodArguments = node is BirCallStatic staticCall ? staticCall.TypeArgs.OrEmpty() : ((BirCallInstance)node).TypeArgs.OrEmpty();
                 fill = (IBirExpression)TypedExecutableFrames.Substitute((BirGraphValue)fill, methodArguments, methodArguments.Length,
                     refs.SourceDeclarationArguments(facts.DefaultOwner ?? facts.Owner));
-                if (!IsMetadataConstant(fill)) throw new InvalidOperationException("An unplanned trailing default is not a metadata constant");
+                if (!IsMetadataConstant(fill))
+                    throw new InvalidOperationException(UnrepresentableDefault("nullable-witness demand", label, index, parameterNames));
                 values.Add(fill);
             }
             if (node is BirCallStatic target) target.Args = values.ToArray();
@@ -182,7 +185,7 @@ static partial class DefaultArgSplice
                     var parameter = payload.Params.Value[parameterIndex];
                     var expression = parameter.Default.HasValue ? Clone(parameter.Default.Value)
                         : ParameterDefault(parameter) is { } carrier ? MaterializeDefault(carrier, hoist, owner)
-                        : throw new InvalidOperationException("An omitted inline argument has no default carrier");
+                        : throw new InvalidOperationException("bir2cir: omitted inline argument has no default carrier");
                     expression = (IBirExpression)TypedExecutableFrames.Prebind((BirGraphValue)expression);
                     expression = (IBirExpression)TypedExecutableFrames.Substitute((BirGraphValue)expression, call.TypeArgs.OrEmpty(),
                         payload.TypeParams.OrEmpty().Length, call.Recvs.OrDefault()?.DispatchTypeArgs.OrDefault());
