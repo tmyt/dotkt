@@ -394,7 +394,10 @@ static partial class FBoundStarProjectionErasure
                     new TypeNode.Fqn("System.Collections.Generic.IComparer`1", new TypeNode[] { new TypeNode.Tv("type", 0) }))) }) };
             var overrideBound = new TypeNode.Fqn("System.IO.Stream");
             var overridingMethod = new JsonObject { [OwnerConstrainedMethodLowering.OverrideBoundsKey] =
-                new JsonArray(new JsonObject { ["index"] = 0, ["bound"] = TypeJson.Write(overrideBound) }).ToJsonString() };
+                OwnerConstraintOverrideBounds.ToDom(new OwnerConstraintOverrideBounds(new[] {
+                    new OwnerConstraintOverrideBounds.Row(0, overrideBound, new TypeNode.Tv("type", 0),
+                        Array.Empty<TypeNode>(), new TypeNode[] { overrideBound }),
+                })) };
             var lateLocal = JsonNode.Parse("""
               {"kind":"class","name":"LateLocal","typeParams":[{"name":"Tag"},
                 {"name":"T","constraints":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable`1",

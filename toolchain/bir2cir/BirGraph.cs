@@ -14,6 +14,7 @@ internal abstract record BirGraphValue
 {
     public virtual TypeNode? ResultTypeStamp => null;
     public virtual TypeNode? CallBindingTypeHint => null;
+    public virtual TypeNode? ExplicitSourceType => null;
     public virtual OptionalField<string> DeclarationIdentityFact => default;
     public virtual OptionalField<TypeNode[]> ApplicationTypeArguments
     {

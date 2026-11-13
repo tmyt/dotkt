@@ -339,7 +339,7 @@ sealed partial class TypedCirProjection
 
     internal CirMethod ProjectCirMethod(BirFunctionDeclaration value)
     {
-        if (value._physicalDeclarationSignature.IsPresent || value._preparedDelegateReturnArgument.IsPresent || value._syntheticTypeArgs.IsPresent || value.CompanionMemberKind.IsPresent || value.CompanionReceiver.IsPresent || value.CompanionSourceName.IsPresent || value.DeclarationId.IsPresent || value.DeclarationSourceName.IsPresent || value.EventProperty.IsPresent || value.ExplicitClrName.IsPresent || value.ExtensionCoreDeclarationId.IsPresent || value.FakeOverride.IsPresent || value.InheritedImplementation.IsPresent || value.KotlinPropertyAccessorCarrier.IsPresent || value.KotlinStatic.IsPresent || value.Lateinit.IsPresent || value.MethodTypeParameterBoundsPre.IsPresent || value.NullableGenericRet.IsPresent || value.NullableGenericSuspendRet.IsPresent || value.NullableRepresentationFrame.IsPresent || value.Overrides.IsPresent || value.PropertyAccessor.IsPresent || value.PropertyAssociation.IsPresent || value.PropertyName.IsPresent || value.RetKotlinType.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.SemanticOwner.IsPresent || value.SignatureOverrideDeclarations.IsPresent || value.SourceName.IsPresent || value.SuspendResult.IsPresent)
+        if (value._ownerConstraintOverrideBounds.IsPresent || value._physicalDeclarationSignature.IsPresent || value._preparedDelegateReturnArgument.IsPresent || value._syntheticTypeArgs.IsPresent || value.CompanionMemberKind.IsPresent || value.CompanionReceiver.IsPresent || value.CompanionSourceName.IsPresent || value.DeclarationId.IsPresent || value.DeclarationSourceName.IsPresent || value.DotktValueReturn.IsPresent || value.EventProperty.IsPresent || value.ExplicitClrName.IsPresent || value.ExtensionCoreDeclarationId.IsPresent || value.FakeOverride.IsPresent || value.InheritedImplementation.IsPresent || value.KotlinPropertyAccessorCarrier.IsPresent || value.KotlinStatic.IsPresent || value.Lateinit.IsPresent || value.MethodTypeParameterBoundsPre.IsPresent || value.NullableGenericRet.IsPresent || value.NullableGenericSuspendRet.IsPresent || value.NullableRepresentationFrame.IsPresent || value.Overrides.IsPresent || value.PropertyAccessor.IsPresent || value.PropertyAssociation.IsPresent || value.PropertyName.IsPresent || value.RetKotlinType.IsPresent || value.RetSuspendFnTypePre.IsPresent || value.SemanticOwner.IsPresent || value.SignatureOverrideDeclarations.IsPresent || value.SourceName.IsPresent || value.SuspendResult.IsPresent || value.SuspendTaskResult.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirFunctionDeclaration");
         return new CirMethod
         {
@@ -467,7 +467,7 @@ sealed partial class TypedCirProjection
 
     internal CirMethodImpl ProjectCirMethodImpl(BirMethodImpl value)
     {
-        if (value.MethodTypeParameterBoundsPre.IsPresent)
+        if (value.DotktValueReturn.IsPresent || value.MethodTypeParameterBoundsPre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirMethodImpl");
         return new CirMethodImpl
         {

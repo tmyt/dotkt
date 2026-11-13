@@ -41,9 +41,7 @@ static partial class OwnerConstrainedMethodLowering
         Func<TypeNode, bool> dependsOnOwner = null) =>
         (dependsOnOwner ?? FBoundStarProjectionErasure.ContainsOwnerTv)(bound)
         || HasConstructedDependency(bound, "method", index, ReadMethodFrame(method))
-        || method[OverrideBoundsKey] is JsonValue encoded
-            && JsonNode.Parse(encoded.GetValue<string>()).AsArray().OfType<JsonObject>().Any(row =>
-                row["index"].GetValue<int>() == index && TypeJson.Read(row["bound"]).Equals(bound));
+        || ReadOverrideBounds(method)?.Rows.Any(row => row.Index == index && row.Bound.Equals(bound)) == true;
 
     static bool SameSourceParameter(int first, int second, NullableRepresentationFrame frame) =>
         frame == null ? first == second
@@ -85,6 +83,7 @@ static partial class OwnerConstrainedMethodLowering
     internal static void SelfTest()
     {
         BodyOwnerViewSelfTest();
+        OverrideRowsSelfTest();
         var invariantReferences = References;
         try
         {
@@ -332,53 +331,15 @@ static partial class OwnerConstrainedMethodLowering
         Func<TypeNode.Fqn, TypeNode> storageConstraint = null, bool sourceParameters = false)
     {
         if (slotParameters == null) return;
-        var rows = implementation[OverrideBoundsKey] is JsonValue encoded
-            ? JsonNode.Parse(encoded.GetValue<string>()).AsArray() : new JsonArray();
-        for (var index = 0; index < slotParameters.Count; index++)
-            if (slotParameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints)
-                foreach (var constraint in constraints)
-                    if (TypeJson.Read(constraint) is TypeNode bound
-                        && FBoundStarProjectionErasure.ContainsOwnerTv(bound))
-                    {
-                        var frame = ReadMethodFrame(implementation);
-                        var physicalIndex = sourceParameters && frame != null ? frame.SourcePosition(index) : index;
-                        var template = sourceParameters && frame != null
-                            ? MapVariables(bound, tv => tv.Scope == "method"
-                                ? frame.Variable(tv, NullableRepresentationFrame.Role.Ordinary) : tv)
-                            : bound;
-                        var closedBound = SupertypeGraph.SubstOwnerTvs(template, ownerArgs);
-                        // Materialization may have published a classifier constraint obtained by
-                        // following this owner-dependent bound in the implementing owner. That
-                        // consequence belongs to the same selected slot's weakening plan, not to
-                        // an independently stronger CLR method declaration.
-                        var physicalBounds = new[] { closedBound }.Concat(
-                            IndependentBounds(closedBound, implementationOwnerParameters)
-                                .OfType<TypeNode.Fqn>()
-                                .Select(type => storageConstraint == null ? type : storageConstraint(type))
-                                .Where(type => type != null)).Distinct().ToArray();
-                        var positions = frame == null ? new[] { physicalIndex } : Enumerable.Range(0, frame.PhysicalArity)
-                            .Where(position => position == physicalIndex
-                                || frame.PhysicalSlot(position).SourceIndex == frame.PhysicalSlot(physicalIndex).SourceIndex
-                                    && implementation["typeParams"][position] is JsonObject companion
-                                    && companion["constraints"] is JsonArray companionBounds
-                                    && companionBounds.Select(TypeJson.Read).Any(physicalBounds.Contains));
-                        foreach (var position in positions)
-                        foreach (var physicalBound in physicalBounds.Where(candidate =>
-                            position == physicalIndex && candidate.Equals(closedBound)
-                            || implementation["typeParams"][position] is JsonObject physicalParameter
-                                && physicalParameter["constraints"] is JsonArray physicalConstraints
-                                && physicalConstraints.Select(TypeJson.Read).Contains(candidate)))
-                            rows.Add(new JsonObject {
-                                ["index"] = position,
-                                ["bound"] = TypeJson.Write(physicalBound),
-                                ["template"] = TypeJson.Write(template),
-                                ["consequences"] = new JsonArray(IndependentBounds(template, ownerParameters)
-                                    .Select(TypeJson.Write).ToArray()),
-                                ["ownerArgs"] = new JsonArray(ownerArgs.Select(TypeJson.Write).ToArray())
-                            });
-                    }
-        if (rows.Count > 0) implementation[OverrideBoundsKey] = rows.ToJsonString();
+        var rows = (ReadOverrideBounds(implementation) ?? new OwnerConstraintOverrideBounds(Array.Empty<OwnerConstraintOverrideBounds.Row>()))
+            .Append(BuildOverrideRows(ReadMethodFrame(implementation),
+                ConstraintVectors(implementation["typeParams"] as JsonArray), ConstraintVectors(slotParameters), ownerArgs,
+                ConstraintVectors(ownerParameters), ConstraintVectors(implementationOwnerParameters), storageConstraint, sourceParameters));
+        if (rows.Rows.Count > 0) implementation[OverrideBoundsKey] = OwnerConstraintOverrideBounds.ToDom(rows);
     }
+
+    static OwnerConstraintOverrideBounds ReadOverrideBounds(JsonObject method) => method[OverrideBoundsKey] is JsonValue encoded
+        ? OwnerConstraintOverrideBounds.ReadFrozenText(encoded.GetValue<string>()) : null;
 
     internal static void Record(JsonObject method, JsonObject owner)
     {
@@ -600,8 +561,7 @@ static partial class OwnerConstrainedMethodLowering
         Func<TypeNode, TypeNode> projectedBound)
     {
         var frame = ReadMethodFrame(method);
-        var inherited = method[OverrideBoundsKey] is JsonValue encoded
-            ? JsonNode.Parse(encoded.GetValue<string>()).AsArray() : new JsonArray();
+        var inherited = ReadOverrideBounds(method)?.Rows ?? Array.Empty<OwnerConstraintOverrideBounds.Row>();
         for (var index = 0; index < parameters.Count; index++)
         {
             if (parameters[index] is not JsonObject parameter) continue;
@@ -611,18 +571,16 @@ static partial class OwnerConstrainedMethodLowering
             foreach (var constraint in constraints)
             {
                 var bound = TypeJson.Read(constraint);
-                var slot = inherited.OfType<JsonObject>().FirstOrDefault(row =>
-                    row["index"].GetValue<int>() == index && TypeJson.Read(row["bound"]).Equals(bound));
+                var slot = inherited.FirstOrDefault(row => row.Index == index && row.Bound.Equals(bound));
                 if (slot != null)
                 {
                     removed.Add(TypeJson.Write(SupertypeGraph.SubstOwnerTvs(
-                        projectedBound(TypeJson.Read(slot["template"])),
-                        slot["ownerArgs"].AsArray().Select(TypeJson.Read).ToArray())));
+                        projectedBound(slot.Template), slot.OwnerArgs)));
                     if (PhysicalClassifier(bound) is TypeNode classifier)
                         retained.Add(TypeJson.Write(classifier));
-                    foreach (var consequence in slot["consequences"].AsArray())
+                    foreach (var consequence in slot.Consequences.Select(TypeJson.Write))
                         if (!retained.Any(row => JsonNode.DeepEquals(row, consequence)))
-                            retained.Add(consequence.DeepClone());
+                            retained.Add(consequence);
                 }
                 else if (ProjectsBound(method, index, bound, dependsOnOwner))
                 {

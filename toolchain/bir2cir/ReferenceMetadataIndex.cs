@@ -3615,13 +3615,14 @@ sealed partial class ReferenceMetadataIndex
 
     internal bool TrySelectedSourceOverrideDeclaration(string ownerFqn, string sourceMember, int methodArity,
         IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments, BirTypeParameter[] selectedTypeParams,
-        TypeNode[] implementationOwnerTypeArguments, bool selectedSuspend, out ReferencedMethodDeclaration declaration)
-        => TrySelectedOverrideDeclarationByShape(ownerFqn, sourceMember, null, methodArity, signature,
+        TypeNode[] implementationOwnerTypeArguments, bool selectedSuspend, out ReferencedMethodDeclaration declaration,
+        string accessorKind = null, string selectedDeclarationId = null)
+        => TrySelectedOverrideDeclarationByShape(ownerFqn, sourceMember, accessorKind, methodArity, signature,
             ownerTypeArguments, KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(selectedTypeParams,
                 implementationOwnerTypeArguments), selectedSuspend, out declaration, semanticConstraints: true,
-            selectedDeclarationId: null);
+            selectedDeclarationId: selectedDeclarationId);
 
-    bool TrySelectedOverrideDeclarationByShape(string ownerFqn, string sourceMember, string accessorKind,
+    internal bool TrySelectedOverrideDeclarationByShape(string ownerFqn, string sourceMember, string accessorKind,
         int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments, string selectedShape,
         bool selectedSuspend, out ReferencedMethodDeclaration declaration, bool semanticConstraints,
         string selectedDeclarationId)
@@ -4392,6 +4393,41 @@ sealed partial class ReferenceMetadataIndex
         out string physicalMember, out JsonArray declarationTypeParams, out bool returnsValue,
         out TypeNode[] signatureParameters,
         bool semanticConstraints = false, string selectedPhysicalMember = null, string selectedDeclarationId = null)
+        => TrySelectedNullableGenericSlotCore(ownerFqn, name, isStatic, argCount, methodArity,
+            resolvedSignature, resolvedReturn, ownerTypeArguments,
+            selectedTypeParams == null ? null : KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(selectedTypeParams,
+                selectedOwnerTypeArguments, semanticConstraints ? null : PhysicalConstraintType),
+            out declaredRet, out declaredParams, out paramsRefused, out physicalMember, out declarationTypeParams,
+            out returnsValue, out signatureParameters, semanticConstraints, selectedPhysicalMember, selectedDeclarationId);
+
+    internal bool TrySelectedNullableGenericSlotByShape(string ownerFqn, string name, bool isStatic, int argCount,
+        int methodArity, IReadOnlyList<TypeNode> resolvedSignature, TypeNode resolvedReturn,
+        TypeNode[] ownerTypeArguments, string selectedShape,
+        out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused,
+        out string physicalMember, out BirTypeParameter[] declarationTypeParams, out bool returnsValue,
+        out TypeNode[] signatureParameters,
+        bool semanticConstraints = false, string selectedPhysicalMember = null, string selectedDeclarationId = null)
+    {
+        var found = TrySelectedNullableGenericSlotCore(ownerFqn, name, isStatic, argCount, methodArity,
+            resolvedSignature, resolvedReturn, ownerTypeArguments, selectedShape,
+            out declaredRet, out declaredParams, out paramsRefused, out physicalMember, out var parameters,
+            out returnsValue, out signatureParameters, semanticConstraints, selectedPhysicalMember, selectedDeclarationId);
+        declarationTypeParams = ReadReferencedTypeParameters(parameters);
+        return found;
+    }
+
+    // The input is the already selected referenced MethodDef's metadata leaf,
+    // never a source declaration graph reconstructed for a DOM-only selector.
+    internal static BirTypeParameter[] ReadReferencedTypeParameters(JsonArray parameters) => parameters?.Select(parameter =>
+        BirGraphDom.ReadBirTypeParameter(parameter)).ToArray();
+
+    bool TrySelectedNullableGenericSlotCore(string ownerFqn, string name, bool isStatic, int argCount,
+        int methodArity, IReadOnlyList<TypeNode> resolvedSignature, TypeNode resolvedReturn,
+        TypeNode[] ownerTypeArguments, string selectedShape,
+        out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused,
+        out string physicalMember, out JsonArray declarationTypeParams, out bool returnsValue,
+        out TypeNode[] signatureParameters,
+        bool semanticConstraints, string selectedPhysicalMember, string selectedDeclarationId)
     {
         declaredRet = null;
         declaredParams = null;
@@ -4407,8 +4443,7 @@ sealed partial class ReferenceMetadataIndex
                 out var ret, out var parameters, out var declaration,
                 ownerTypeArguments: ownerTypeArguments, includeUnchangedMethod: true,
                 methodSignature: resolvedSignature, methodReturn: resolvedReturn,
-                selectedTypeParams: selectedTypeParams,
-                selectedOwnerTypeArguments: selectedOwnerTypeArguments,
+                selectedShape: selectedShape,
                 semanticConstraints: semanticConstraints,
                 selectedPhysicalMember: selectedPhysicalMember,
                 selectedDeclarationId: selectedDeclarationId) != SlotLookup.Declared
@@ -4446,7 +4481,7 @@ sealed partial class ReferenceMetadataIndex
         TypeNode methodReturn = null, JsonArray selectedTypeParams = null,
         TypeNode[] selectedOwnerTypeArguments = null, bool semanticConstraints = false,
         string selectedPhysicalMember = null, string selectedDeclarationId = null,
-        bool includeUnchangedMethodReturn = true)
+        bool includeUnchangedMethodReturn = true, string selectedShape = null)
     {
         declaredRet = default;
         declaredParams = null;
@@ -4467,11 +4502,12 @@ sealed partial class ReferenceMetadataIndex
                     && m.MethodArity == methodArity
                     && m.ParamTypeNodes != null
                     && m.ParamTypeNodes.Length == argCount
-                    && (propertyName != null || selectedTypeParams == null
-                        || KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                            semanticConstraints ? m.SemanticMethodTypeParams ?? m.MethodTypeParams : m.MethodTypeParams, selectedTypeParams,
-                            ownerTypeArguments, selectedOwnerTypeArguments,
-                            semanticConstraints ? null : PhysicalConstraintType)))
+                    && (propertyName != null || selectedTypeParams == null && selectedShape == null
+                        || KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
+                            semanticConstraints ? m.SemanticMethodTypeParams ?? m.MethodTypeParams : m.MethodTypeParams,
+                            ownerTypeArguments, semanticConstraints ? null : PhysicalConstraintType)
+                            == (selectedShape ?? KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(selectedTypeParams,
+                                selectedOwnerTypeArguments, semanticConstraints ? null : PhysicalConstraintType))))
                 .ToArray();
             var shapeMatches = declaredHere.Where(m =>
                     propertyName == null
@@ -4569,7 +4605,7 @@ sealed partial class ReferenceMetadataIndex
                 out var sret, out var sps, out var smethod, propertyName, accessorKind, accessorSignature,
                 superTypeArguments, includeClosedPropertyReturn, includeUnchangedMethod,
                 methodSignature, methodReturn, selectedTypeParams, selectedOwnerTypeArguments, semanticConstraints,
-                selectedPhysicalMember, selectedDeclarationId, includeUnchangedMethodReturn);
+                selectedPhysicalMember, selectedDeclarationId, includeUnchangedMethodReturn, selectedShape);
             path.Remove(key);
             if (found == SlotLookup.Refused) return SlotLookup.Refused;
             if (found != SlotLookup.Declared) continue;
@@ -7997,6 +8033,7 @@ sealed partial class ReferenceMetadataIndex
 
     internal static void SelfTest()
     {
+        SelectedSourceConstraintShapeSelfTest();
         SelfTestPhysicalTypeNameSnapshots();
         SelfTestRichEnumSelection();
         var nativeDescriptors = Build(new[] { typeof(object).Assembly.Location });

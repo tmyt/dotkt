@@ -160,23 +160,7 @@ sealed partial class ValueRepresentationLowering
         return null;
     }
 
-    (ValueRepresentationBinding Binding, string Shape) Classifier(TypeNode type)
-    {
-        var shape = "";
-        for (;;)
-            switch (type)
-            {
-                case TypeNode.Nullable nullable: type = nullable.Of; break;
-                case TypeNode.Oblivious oblivious: type = oblivious.Of; break;
-                case TypeNode.Projection { Variance: "out" } projection: type = projection.Of; break;
-                case TypeNode.Array { SzArray: true, Rank: 1 } array:
-                    shape += GenericArrayStorageLowering.NeedsStorage(array) ? "o" : "a";
-                    type = array.Elem;
-                    break;
-                case TypeNode.Fqn f when bindings.TryGetValue(f.Name, out var binding): return (binding, shape);
-                default: return (null, "");
-            }
-    }
+    (ValueRepresentationBinding Binding, string Shape) Classifier(TypeNode type) => sourcePolicy.Classifier(type);
 
     // One character per vector, outermost first: open System.Array storage or exact array storage.
     static JsonObject Shape(string shape) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.String"), ["value"] = shape };

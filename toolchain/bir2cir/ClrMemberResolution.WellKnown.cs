@@ -124,6 +124,18 @@ static partial class ClrMemberResolution
         out TypeNode.Fqn declarationOwner, out string declarationMember,
         out TypeNode[] declarationParams, out TypeNode declarationReturn,
         TypeNode[] selectionOwnerArgs = null, TypeNode wantedReturn = null)
+        => TryResolveAliasedInterfaceSlotByShape(refs, physicalOwner, member, methodArity, wantedParams,
+            wantedTypeParams == null ? null : KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
+                wantedTypeParams, wantedOwnerArgs ?? Array.Empty<TypeNode>()),
+            out declarationOwner, out declarationMember, out declarationParams, out declarationReturn,
+            selectionOwnerArgs, wantedReturn);
+
+    internal static bool TryResolveAliasedInterfaceSlotByShape(ReferenceMetadataIndex refs,
+        TypeNode.Fqn physicalOwner, string member, int methodArity, TypeNode[] wantedParams,
+        string wantedShape,
+        out TypeNode.Fqn declarationOwner, out string declarationMember,
+        out TypeNode[] declarationParams, out TypeNode declarationReturn,
+        TypeNode[] selectionOwnerArgs = null, TypeNode wantedReturn = null)
     {
         declarationOwner = null;
         declarationMember = null;
@@ -165,13 +177,12 @@ static partial class ClrMemberResolution
             var selectionParameters = reference.ParameterTypes
                 .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, selectionArgs)).ToArray();
             if (!selectionParameters.SequenceEqual(wantedParams, InterfaceSlotTypeComparer.Instance)) continue;
-            if (wantedTypeParams != null)
+            if (wantedShape != null)
             {
                 var declaredTypeParams = new JsonArray(method.GetGenericArguments()
                     .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
-                if (!KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                        declaredTypeParams, wantedTypeParams, selectionArgs,
-                        wantedOwnerArgs ?? Array.Empty<TypeNode>()))
+                if (KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declaredTypeParams, selectionArgs)
+                    != wantedShape)
                     continue;
             }
             candidates.Add((method, reference, parameters, returnType, declaringArgs));
