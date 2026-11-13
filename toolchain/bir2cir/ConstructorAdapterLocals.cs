@@ -41,7 +41,17 @@ static class ConstructorAdapterLocals
         Func<string, string> freshName)
     {
         if (node is BirLocal read && read.Name.HasValue && replacements.TryGetValue(read.Name.Value, out var replacement))
+        {
+            // Alpha-conversion changes the declaration edge, not the value's
+            // exact type/frame facts. Parameter substitution below instead
+            // replaces the entire read with the consumer-owned expression.
+            if (freshName != null && replacement is BirLocal renamed)
+            {
+                read.Name = renamed.Name;
+                return read;
+            }
             return ((BirGraphValue)replacement).DeepClone();
+        }
         if (node is BirSetLocal write && write.Name.HasValue
             && replacements.TryGetValue(write.Name.Value, out var target) && target is BirLocal local)
             write.Name = local.Name;

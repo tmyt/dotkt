@@ -219,6 +219,14 @@ sealed class Pipeline
         // New physical-only forwarders are not source declarations. Keep the
         // original declaration membership while extending the owning prefix.
         InheritedClassInterfaceBridge.MaterializeSuspendDeclarations(captured, refs);
+        // Resolve alias constructor expressions while source bodies are still
+        // owning values. Signatures and declaration membership were captured
+        // above; these rewrites change uses/bodies, not that source inventory.
+        ValueTypeOracle sourceIsValue = type => refs.IsValueType(type) || sourceIndex.ValueTypes.Contains(type.Name);
+        var aliasConstructorDelegations = AliasConstructorDelegationExpansion.Collect(
+            captured, refs, sourceIsValue, carryForReference: referenceBuild);
+        if (!referenceBuild)
+            foreach (var source in captured) aliasConstructorDelegations.Apply(source);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -277,12 +285,6 @@ sealed class Pipeline
         var representationAliases = module.SourceIndex.CollisionAliases;
         var localValueTypeFqns = module.SourceIndex.ValueTypes;
         ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
-        // Constructor adapters carry Kotlin expressions and signatures. Expand them before collecting
-        // representation demands, and preserve that source vocabulary in the reference carrier as well.
-        var aliasConstructorDelegations = AliasConstructorDelegationExpansion.Collect(
-            birRoots, refs, isValueFqn, carryForReference: _options.RefBuild);
-        if (!_options.RefBuild)
-            foreach (var root in birRoots) aliasConstructorDelegations.Apply(root);
         // Semantic operations can require generic stdlib helpers. Author those calls while their operand types
         // are still source vocabulary, before helper demands and physical argument frames are fixed.
         var sourceTopLevelFns = birRoots.OfType<JsonObject>()

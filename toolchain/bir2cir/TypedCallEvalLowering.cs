@@ -182,12 +182,7 @@ static class TypedCallEvalLowering
         return statements.Length == 0 ? result : new BirValueBlock { Stmts = statements, Result = Field(result) };
     }
 
-    internal static bool IsLvalueFormer(IBirExpression value) => value switch {
-        BirLocal or BirThis or BirStaticFieldGet or BirArrayGet or BirStackGet or BirByRefLoad => true,
-        BirFieldGet field => field.Member.OrDefault() != "accessor",
-        BirPropertyGet field => field.Member.OrDefault() == "field",
-        _ => false,
-    };
+    internal static bool IsLvalueFormer(IBirExpression value) => CallEvalLowering.IsLvalueFormer(Graph(value));
 
     static bool StaysWithoutPin(IBirExpression value) => value is BirConstant or BirThis or BirLocal
         or BirBindingReference or BirDefaultValue or BirClassReference or BirEnumValue;

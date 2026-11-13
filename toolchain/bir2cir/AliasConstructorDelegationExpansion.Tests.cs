@@ -52,6 +52,16 @@ sealed partial class AliasConstructorDelegationExpansion
             || ((BirLocal)loop.Range.Value).Name.Value != "consumer")
             throw new InvalidOperationException("Alias adapter alpha-conversion changed its lexical ownership");
 
+        var exactSlot = new TypeNode.Fqn("System.Int32");
+        var typedRead = Payload(Array.Empty<string>(), Array.Empty<TypeNode>(), new IBirStatement[] {
+            new BirVariable { Name = "typed", Type = exactSlot,
+                Init = new BirConstant { Type = exactSlot, Value = new BirLiteral.IntegerLiteral(7) } },
+        }, new IBirExpression[] { new BirLocal { Name = "typed", Sty = exactSlot } }, new TypeNode[] { exactSlot });
+        FreshenLocals(typedRead, Read("typed"));
+        if (typedRead.Arguments.Value[0] is not BirLocal { Name.Value: "typed$1", Sty.Value: TypeNode.Fqn { Name: "System.Int32" } }
+            || ((BirVariable)typedRead.Statements.Value[0]).Type.Value != exactSlot)
+            throw new InvalidOperationException("Alias alpha-conversion discarded an exact known local slot type");
+
         var nestedName = $"cir$alias${localCounter + 1}";
         var argument = new BirValueBlock { Stmts = new IBirStatement[] {
             new BirVariable { Name = nestedName, Type = new TypeNode.Fqn("System.Object"), Init = Constant(null) },
