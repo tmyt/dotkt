@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Materialize a CLR interface slot when Kotlin satisfies it with a NON-VIRTUAL method inherited from a base class.
 //
@@ -14,7 +16,7 @@ using DotKt.Bir;
 //
 // Exact formal signature, generic arity and return equality are mandatory. Ambiguity is skipped, never guessed. This is
 // hierarchy-driven and contains no library/type/member special cases.
-static class InheritedClassInterfaceBridge
+static partial class InheritedClassInterfaceBridge
 {
     sealed class Def
     {
@@ -29,86 +31,110 @@ static class InheritedClassInterfaceBridge
 
     readonly record struct MethodMatch(Def Owner, TypeNode.Fqn ConstructedOwner, JsonObject Method);
 
-    public static void MaterializeSuspendDeclarations(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    public static void MaterializeSuspendDeclarations(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         // Source-known suspend forwarders must exist before inline carriers, signature ownership and hot/cold
         // lowering snapshot declarations. The later exact bridge pass also handles types materialized afterwards.
-        var defs = SupertypeGraph.Collect(roots);
+        var defs = SupertypeGraph.CollectSource(roots);
+        var declarations = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
+        foreach (var declaration in roots.SelectMany(root => root.Types.OrEmpty()))
+            if (Name(declaration) is { } name) declarations[name] = declaration;
+        static string Name(IBirTypeDeclaration declaration) => declaration switch {
+            BirClassDefinition owner => owner.Name.OrDefault(),
+            BirInterfaceDefinition owner => owner.Name.OrDefault(),
+            BirEnumDefinition owner => owner.Name.OrDefault(),
+            _ => throw new InvalidOperationException("Unaccounted inherited source owner"),
+        };
+        static BirFunctionDeclaration[] Methods(IBirTypeDeclaration declaration) => declaration switch {
+            BirClassDefinition owner => owner.Methods.OrEmpty(),
+            BirInterfaceDefinition owner => owner.Methods.OrEmpty(),
+            BirEnumDefinition owner => owner.Methods.OrEmpty(),
+            _ => throw new InvalidOperationException("Unaccounted inherited source methods"),
+        };
         foreach (var cls in defs.Values.Where(d => d.Kind == "class"))
         {
-            if (cls.Node["inheritedClassMethods"] is not JsonArray facts) continue;
-            foreach (var fact in facts.OfType<JsonObject>())
+            if (declarations[cls.Name] is not BirClassDefinition { InheritedClassMethods.HasValue: true } owner) continue;
+            foreach (var fact in owner.InheritedClassMethods.Value)
             {
-                if (fact["mods"] is not JsonObject mods || !Bool(mods["suspend"])) continue;
-                if (fact["inheritedImplementation"] is not JsonObject selected
-                    || TypeJson.OwnerName(selected["owner"]) is not string ownerName
-                    || Str(selected["member"]) is not string member
-                    || fact["params"] is not JsonArray parameters
-                    || fact["overrides"] is not JsonArray overrides) continue;
+                if (fact.Mods.OrDefault()?.Suspend.OrDefault() != true) continue;
+                if (fact.InheritedImplementation.OrDefault() is not { } selected
+                    || selected.Owner.OrDefault() is not TypeNode.Fqn selectedOwner
+                    || selected.Member.OrDefault() is not { } member
+                    || !fact.Params.HasValue || !fact.Overrides.HasValue) continue;
+                var ownerName = selectedOwner.Name;
+                var parameters = fact.Params.Value;
+                var overrides = fact.Overrides.Value;
                 var owners = SupertypeGraph.Reachable(cls, defs, refs)
                     .Where(edge => !edge.isInterface && edge.spec.Name == ownerName)
                     .Select(edge => edge.spec).Distinct().ToList();
                 if (owners.Count != 1) continue;
-                var interfaceEdges = overrides.OfType<JsonObject>().Where(edge =>
-                    TypeJson.OwnerName(edge["owner"]) is string name
-                    && (defs.TryGetValue(name, out var owner) ? owner.Kind == "interface" : refs.IsInterfaceType(new TypeNode.Fqn(name))))
+                var interfaceEdges = overrides.Where(edge =>
+                    edge.Owner.OrDefault() is TypeNode.Fqn type
+                    && (defs.TryGetValue(type.Name, out var definition) ? definition.Kind == "interface"
+                        : refs.IsInterfaceType(new TypeNode.Fqn(type.Name))))
                     .ToList();
                 if (interfaceEdges.Count == 0) continue;
-                var selectedEdge = overrides.OfType<JsonObject>().FirstOrDefault(edge =>
-                    TypeJson.OwnerName(edge["owner"]) == ownerName && Str(edge["member"]) == member);
-                var declarationId = Str(selectedEdge?[DeclarationIdentityBinding.Key]);
-                var selectedSignature = (selected["sig"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+                var selectedEdge = overrides.FirstOrDefault(edge =>
+                    edge.Owner.OrDefault() is TypeNode.Fqn type && type.Name == ownerName && edge.Member.OrDefault() == member);
+                var declarationId = selectedEdge?.DeclarationId.OrDefault();
+                var selectedSignature = selected.Sig.OrDefault()
                     ?? throw new InvalidOperationException("selected inherited suspend implementation has no signature");
-                var methodArity = (selected["typeParams"] as JsonArray)?.Count ?? 0;
-                var targetIsVirtual = defs.TryGetValue(ownerName, out var localOwner)
-                    ? localOwner.Methods.OfType<JsonObject>().Where(method =>
-                            !Bool(method["static"]) && Str(method["name"]) == member
-                            && ((method["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
-                            && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(method["typeParams"] as JsonArray,
-                                selected["typeParams"] as JsonArray, owners[0].Args ?? Array.Empty<TypeNode>(),
+                var methodArity = selected.TypeParams.OrEmpty().Length;
+                var targetIsVirtual = declarations.TryGetValue(ownerName, out var localOwner)
+                    ? Methods(localOwner).Where(method =>
+                            !method.Static.OrDefault() && method.Name.OrDefault() == member
+                            && method.TypeParams.OrEmpty().Length == methodArity
+                            && KotlinOverrideSlotBridge.SameSourceMethodTypeParameterShape(method.TypeParams.OrDefault(),
+                                selected.TypeParams.OrDefault(), owners[0].Args ?? Array.Empty<TypeNode>(),
                                 owners[0].Args ?? Array.Empty<TypeNode>())
-                            && (method["params"] as JsonArray)?.OfType<JsonObject>()
-                                .Select(p => TypeJson.Read(p["type"])).SequenceEqual(selectedSignature) == true)
-                        .Select(method => Bool(method["virtual"]) || Bool(method["override"])).Single()
-                    : refs.TrySelectedOverrideDeclaration(ownerName, member, null, methodArity,
-                        parameters.OfType<JsonObject>().Select(p => TypeJson.Read(p["type"])).ToArray(),
-                        owners[0].Args ?? Array.Empty<TypeNode>(), selected["typeParams"] as JsonArray,
-                        owners[0].Args ?? Array.Empty<TypeNode>(), true, out var target, semanticConstraints: true)
+                            && method.Params.HasValue
+                            && method.Params.Value.Select(p => p.Type.OrDefault()).SequenceEqual(selectedSignature))
+                        .Select(method => method.Virtual.OrDefault() || method.Override.OrDefault()).Single()
+                    : refs.TrySelectedSourceOverrideDeclaration(ownerName, member, methodArity,
+                        parameters.Select(p => p.Type.OrDefault()).ToArray(),
+                        owners[0].Args ?? Array.Empty<TypeNode>(), selected.TypeParams.OrDefault(),
+                        owners[0].Args ?? Array.Empty<TypeNode>(), true, out var target)
                         ? target.IsVirtual
                         : throw new InvalidOperationException($"selected inherited suspend declaration '{ownerName}.{member}' is unresolved");
                 if (targetIsVirtual) continue;
-                var call = new JsonObject
+                var call = new BirCallInstance
                 {
-                    ["k"] = "callInstance", ["ownerType"] = TypeJson.Write(owners[0]),
-                    ["virtual"] = true, ["clrOwnerResolved"] = true, ["suspendCall"] = true,
-                    ["recv"] = new JsonObject { ["k"] = "this" }, ["method"] = member,
-                    ["sig"] = selected["sig"]?.DeepClone()
-                        ?? throw new InvalidOperationException("selected inherited suspend implementation has no signature"),
-                    ["args"] = new JsonArray(parameters.OfType<JsonObject>().Select(p => (JsonNode)new JsonObject
-                        { ["k"] = "local", ["name"] = Str(p["name"]) }).ToArray()),
-                    ["ret"] = fact["ret"]!.DeepClone(), ["dynRet"] = fact["ret"]!.DeepClone(),
-                    ["sty"] = fact["ret"]!.DeepClone(),
+                    OwnerType = owners[0], Virtual = true, ClrOwnerResolved = true, SuspendCall = true,
+                    Recv = new BirThis(), Method = member, Sig = selectedSignature.ToArray(),
+                    Args = parameters.Select(p => (IBirExpression)new BirLocal {
+                        Name = p.Name.HasValue ? p.Name : OptionalField<string>.Null,
+                    }).ToArray(),
+                    Ret = fact.Ret, DynRet = fact.Ret, Sty = fact.Ret,
                 };
-                if (declarationId != null) call[DeclarationIdentityBinding.Key] = declarationId;
-                if (fact["typeParams"] is JsonArray typeParams && typeParams.Count > 0)
-                    call["typeArgs"] = new JsonArray(Enumerable.Range(0, typeParams.Count)
-                        .Select(i => TypeJson.Write(new TypeNode.Tv("method", i))).ToArray());
-                var bridge = (JsonObject)fact.DeepClone();
-                bridge.Remove("member");
-                bridge.Remove("inheritedImplementation");
-                bridge["name"] = Str(fact["member"]);
+                if (declarationId != null) call.DeclarationId = declarationId;
+                if (fact.TypeParams.OrEmpty().Length > 0)
+                    call.TypeArgs = Enumerable.Range(0, fact.TypeParams.Value.Length)
+                        .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+                // An independent declaration occurrence retains every source fact
+                // owned by the inherited-method profile; its implementation edge
+                // is consumed rather than copied onto the generated declaration.
+                var copy = (BirInheritedClassMethod)fact.Rewrite(node => node);
+                var bridge = new BirFunctionDeclaration {
+                    Name = fact.Member, Params = copy.Params, Ret = copy.Ret, Mods = copy.Mods,
+                    PropertyName = copy.PropertyName, PropertyAccessor = copy.PropertyAccessor,
+                    PropertyAssociation = copy.PropertyAssociation, TypeParams = copy.TypeParams,
+                    RetSuspendFnTypePre = copy.RetSuspendFnTypePre,
+                    MethodTypeParameterBoundsPre = copy.MethodTypeParameterBoundsPre,
+                    SignatureOverrideDeclarations = copy.SignatureOverrideDeclarations,
+                    Static = false, Override = false, Abstract = false, Virtual = true, Vis = "public",
+                    SuspendRet = copy.Ret, Attrs = Array.Empty<BirAttribute>(),
+                    Overrides = interfaceEdges.Select(edge => (BirOverride)edge.Rewrite(node => node)).ToArray(),
+                    Body = new IBirStatement[] { new BirReturn {
+                        Value = OptionalField<IBirExpression>.Of(MaterializedExecutable.ReturnedCall(call)),
+                    } },
+                };
                 if (declarationId != null)
-                    DeclarationIdentityBinding.MarkInheritedProjection(bridge, cls.Name, new[] { declarationId });
-                bridge["static"] = false;
-                bridge["override"] = false;
-                bridge["abstract"] = false;
-                bridge["virtual"] = true;
-                bridge["vis"] = "public";
-                bridge["suspendRet"] = fact["ret"]!.DeepClone();
-                bridge["overrides"] = new JsonArray(interfaceEdges.Select(edge => edge.DeepClone()).ToArray());
-                bridge["attrs"] = new JsonArray();
-                bridge["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = call });
-                cls.Methods.Add(MaterializedExecutable.Normalize(bridge));
+                {
+                    bridge.DeclarationId = DeclarationIdentityBinding.InheritedProjectionId(cls.Name, new[] { declarationId });
+                    bridge.DeclarationSourceName = bridge.Name;
+                    bridge.Generated = true;
+                }
+                owner.Methods = owner.Methods.OrEmpty().Append(bridge).ToArray();
             }
         }
     }
