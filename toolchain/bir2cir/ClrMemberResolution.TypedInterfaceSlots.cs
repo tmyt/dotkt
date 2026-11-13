@@ -6,6 +6,12 @@ using DotKt.Toolchain;
 
 static partial class ClrMemberResolution
 {
+    /// <summary>The exact external operands of the resolved interface MethodImpl tables.</summary>
+    /// <remarks>
+    /// Exact name/signature implementations bind under ordinary CLR rules. Each explicit obligation already names
+    /// its body and declaration shape in clrInterfaceImpls. Resolve only those rows; ilemit consumes the resulting
+    /// owner-scoped table without enumerating interfaces or searching the implementing type's overload set.
+    /// </remarks>
     // Final physical declarations are indexed module-wide before any owner is stamped.
     // This inventory retains the actual mutable MethodDefs, not reconstructed source declarations.
     public static void ResolveInterfaceSlots(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
@@ -54,6 +60,8 @@ static partial class ClrMemberResolution
         foreach (var group in descriptors.GroupBy(entry => SupertypeGraph.TypeKey(entry.Owner), StringComparer.Ordinal))
         {
             var iface = group.First().Owner;
+            // An application's canonical runtime template is not an emitted local
+            // declaration when the reference set owns its actual CLR identity.
             if (definitions.TryGetValue(iface.Name, out var local)
                 && (!local.Generated.OrDefault() || !ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(iface.Name)
                     || refs.PhysicalTypeNamed(iface.Name, TypeParameterFrame.Count(local)) == null))
@@ -136,6 +144,8 @@ static partial class ClrMemberResolution
                     set.Slots = set.Slots.Value.Append(slot).ToArray();
             }
         }
+        // Normalize to exact declarations before deduplication: mixed Kotlin/CLR
+        // spellings such as int/System.Int32 must not be guessed equivalent early.
         DeduplicateResolvedInterfaceDescriptors(methods);
         if (slotSets.Count != 0) SetInterfaceSlotSets(type, slotSets.Values.ToArray());
     }
@@ -159,6 +169,8 @@ static partial class ClrMemberResolution
         foreach (var descriptor in descriptors)
         {
             var (member, arity, parameters, result) = ReadInterfaceDescriptor(iface, descriptor, local: true);
+            // Physical property/accessor names have already been allocated. Match
+            // that final MethodDef name, never a reconstructed Kotlin spelling.
             var candidates = definition.Methods.OrEmpty().Where(method => {
                 if (method.Static.OrDefault() || method.PhysicalSlotBridge.OrDefault() || !method.Name.HasValue
                     || method.TypeParams.OrEmpty().Length != arity || !method.Params.HasValue

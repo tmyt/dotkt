@@ -207,15 +207,6 @@ static partial class ClrMemberResolution
     }
 
     /// <summary>
-    /// The exact external declaration operands of this type's resolved interface MethodImpl table.
-    /// </summary>
-    /// <remarks>
-    /// Exact name/signature implementations need no MethodImpl and bind under ordinary CLR rules. Every non-implicit
-    /// obligation already names its body and declaration shape in `clrInterfaceImpls`; resolve precisely those rows
-    /// to scalar member references here. ilemit consumes the resulting owner-scoped table and never enumerates an
-    /// interface or searches the implementing type's overload set.
-    /// </remarks>
-    /// <summary>
     /// Name an external declaration reached through a type emitted by this compilation.
     /// </summary>
     /// <remarks>
