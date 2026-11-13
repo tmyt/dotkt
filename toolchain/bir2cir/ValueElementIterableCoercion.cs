@@ -28,7 +28,7 @@ using DotKt.Bir;
 // Runs after nullable-frame materialization and before type lowering. Read the selected slot through its physical
 // method arguments, including nullable companions, and compare it with the operand's own element type. A concrete
 // reference element needs nothing: CLR covariance already works there. An open element may be a value at runtime.
-static class ValueElementIterableCoercion
+static partial class ValueElementIterableCoercion
 {
     // The struct-ness ORACLE (ReferenceMetadataIndex.IsValueType + the local enum/struct types), not a hardcoded
     // primitive list: a Kotlin `value class` over a struct, a projected .NET struct and a local enum are value
@@ -80,31 +80,11 @@ static class ValueElementIterableCoercion
         if (sig.Count != args.Count) return;
         for (var i = 0; i < sig.Count; i++)
         {
-            // Only Iterable produces precisely the interface implemented by Enumerable.Cast<TResult>.
-            if (TypeJson.Read(sig[i]) is not TypeNode.Fqn { Name: IterableFqn, Args: { Length: 1 } sa }) continue;
-            var target = sa[0];
-            if (target is TypeNode.Tv { Scope: "method" } tv)
-            {
-                if (call["typeArgs"] is not JsonArray ta || tv.I < 0 || tv.I >= ta.Count) continue;
-                target = TypeJson.Read(ta[tv.I]);
-            }
-            target = NullableGenericErasure.EraseArgument(target, _isValue);
             if (args[i] is not JsonObject argument
                 || NodeType.Of(argument) is not TypeNode.Fqn source) continue;
-            // The iterable element belongs to the reached interface, not to an arbitrary first type argument
-            // on the operand. This also covers non-generic ranges and inherited user-defined implementations.
-            var application = new SupertypeGraph.Def { Base = source };
-            var elements = SupertypeGraph.Reachable(application, definitions, refs)
-                .Select(edge => edge.spec)
-                .Where(spec => spec.Name is IterableFqn or "System.Collections.Generic.IEnumerable"
-                        or "System.Collections.Generic.IEnumerable`1"
-                    && spec.Args is { Length: 1 })
-                .Select(spec => NullableGenericErasure.EraseArgument(spec.Args[0], _isValue))
-                .Distinct().ToArray();
-            if (elements.Length != 1) continue;
-            var sourceElement = elements[0];
-            if (sourceElement == target
-                || !(sourceElement is TypeNode.Tv || sourceElement is TypeNode.Fqn value && _isValue(value))) continue;
+            var target = CastTarget(TypeJson.Read(sig[i]),
+                (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray(), source, definitions, refs, _isValue);
+            if (target == null) continue;
             // Idempotence: never re-wrap an already-cast argument.
             if (args[i] is JsonObject ro && (ro["k"] as JsonValue)?.GetValue<string>() == "clrGenericStatic"
                 && (ro["method"] as JsonValue)?.GetValue<string>() == "Cast") continue;
@@ -117,9 +97,7 @@ static class ValueElementIterableCoercion
     // The non-generic source slot is what makes value arrays legal: enumeration boxes each value before Cast<T>.
     internal static JsonObject CastElements(JsonNode source, TypeNode target)
     {
-        var result = target is TypeNode.Fqn { Args: null, Name: "object" }
-            ? CastResultTn
-            : new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new[] { target });
+        var result = CastResultType(target);
         return new JsonObject
         {
             ["k"] = "clrGenericStatic",
@@ -134,6 +112,33 @@ static class ValueElementIterableCoercion
             // and every later structural consumer see IEnumerable<TTarget>, not the input array.
             ["sty"] = TypeJson.Write(result),
         };
+    }
+
+    static TypeNode CastResultType(TypeNode target) => target is TypeNode.Fqn { Args: null, Name: "object" }
+        ? CastResultTn : new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new[] { target });
+
+    // Shared selected-slot decision, independent of the owning executable representation.
+    static TypeNode CastTarget(TypeNode signature, TypeNode[] methodArguments, TypeNode.Fqn source,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
+    {
+        if (signature is not TypeNode.Fqn { Name: IterableFqn, Args: { Length: 1 } arguments }) return null;
+        var target = arguments[0];
+        if (target is TypeNode.Tv { Scope: "method" } variable)
+        {
+            if (methodArguments == null || variable.I < 0 || variable.I >= methodArguments.Length) return null;
+            target = methodArguments[variable.I];
+        }
+        target = NullableGenericErasure.EraseArgument(target, isValue);
+        var application = new SupertypeGraph.Def { Base = source };
+        var elements = SupertypeGraph.Reachable(application, definitions, refs)
+            .Select(edge => edge.spec)
+            .Where(spec => spec.Name is IterableFqn or "System.Collections.Generic.IEnumerable"
+                    or "System.Collections.Generic.IEnumerable`1" && spec.Args is { Length: 1 })
+            .Select(spec => NullableGenericErasure.EraseArgument(spec.Args[0], isValue)).Distinct().ToArray();
+        if (elements.Length != 1) return null;
+        var element = elements[0];
+        return element != target && (element is TypeNode.Tv || element is TypeNode.Fqn value && isValue(value))
+            ? target : null;
     }
 
 }

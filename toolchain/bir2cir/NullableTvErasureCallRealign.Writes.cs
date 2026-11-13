@@ -572,33 +572,34 @@ static partial class NullableTvErasureCallRealign
     static JsonNode CoerceForTarget(JsonNode value, TypeNode src, TypeNode target,
         bool exactPropertyTarget, ValueTypeOracle isValue)
     {
-        if (value is not JsonObject vo || src == null || target == null) return null;
+        if (value is not JsonObject vo) return null;
+        return BuildSlotCoercion(vo, SelectFixedSlotCoercion(
+            Str(vo["k"]), Str(vo["k"]) == "cast" ? TypeJson.Read(vo["type"]) : null,
+            src, target, exactPropertyTarget, isValue));
+    }
+
+    // The graph representation only builds the selected conversion. Both the
+    // owning typed producer and remaining DOM consumers use this same policy.
+    static SlotCoercion SelectFixedSlotCoercion(string kind, TypeNode existingCast,
+        TypeNode src, TypeNode target, bool exactPropertyTarget, ValueTypeOracle isValue)
+    {
+        if (src == null || target == null) return default;
         // Oblivious is an NRT/platform annotation, not a CLR container. BirTypeLowering erases the OUTER wrapper to
         // its inner physical slot, so compare that physical spelling here as well: V! -> Nullable<V> still needs a
         // constructor, and Nullable<V> -> V! still needs extraction. A platform local that must retain the reflected
         // initializer representation is retyped by EvalVar before it reaches this fixed-slot rule.
         src = PhysicalTopLevel(src);
         target = PhysicalTopLevel(target);
-        if (src.Equals(target)) return null;
+        if (src.Equals(target)) return default;
         if ((IsBareObject(src) && IsSemanticObject(target))
-            || (IsSemanticObject(src) && (IsBareObject(target) || IsSemanticObject(target)))) return null;
-        if (Str(vo["k"]) is "throwExpr" or "throw") return null;
+            || (IsSemanticObject(src) && (IsBareObject(target) || IsSemanticObject(target)))) return default;
+        if (kind is "throwExpr" or "throw") return default;
         if (target is TypeNode.Nullable { Of: TypeNode.Fqn targetElem }
             && SameNominalSlot(src, targetElem) && isValue(targetElem))
-            return new JsonObject
-            {
-                ["k"] = "nullableWrap",
-                ["elem"] = TypeJson.Write(targetElem),
-                ["e"] = vo.DeepClone(),
-            };
+            return new(SlotCoercionKind.NullableWrap, targetElem);
         if (src is TypeNode.Nullable { Of: TypeNode.Fqn sourceElem }
             && SameNominalSlot(target, sourceElem) && isValue(sourceElem))
-            return new JsonObject
-            {
-                ["k"] = "nullableValue",
-                ["elem"] = TypeJson.Write(sourceElem),
-                ["e"] = vo.DeepClone(),
-            };
+            return new(SlotCoercionKind.NullableValue, sourceElem);
         // The nullable-generic declaration `Array<T?>` is physically `object[]`. At a concrete REFERENCE
         // instantiation, compiler-produced values retain their reified runtime array (`String[]`, `Slot[]`) and CLR
         // covariance lets that value inhabit the open object[] declaration slot. Reading it into a concrete Kotlin
@@ -606,13 +607,26 @@ static partial class NullableTvErasureCallRealign
         // result stamp is still present; this fixed-slot twin handles a value first flowed through an object[] local,
         // Ref field, return, or other consumer before the concrete target is encountered.
         if (CanNarrowReferenceArrayProjection(src, target))
-            return new JsonObject
-            {
-                ["k"] = "cast",
-                ["type"] = TypeJson.Write(target),
-                ["e"] = vo.DeepClone(),
-            };
-        return CastForTarget(value, src, target, exactPropertyTarget, isValue);
+            return new(SlotCoercionKind.Cast, target);
+        return SelectObjectSlotCoercion(kind, existingCast, src, target, exactPropertyTarget, isValue);
+    }
+
+    enum SlotCoercionKind { None, NullableWrap, NullableValue, Cast }
+    readonly record struct SlotCoercion(SlotCoercionKind Kind, TypeNode Type);
+
+    static JsonNode BuildSlotCoercion(JsonObject value, SlotCoercion coercion)
+    {
+        if (coercion.Kind == SlotCoercionKind.None) return null;
+        var cast = coercion.Kind == SlotCoercionKind.Cast;
+        return new JsonObject {
+            ["k"] = coercion.Kind switch {
+                SlotCoercionKind.NullableWrap => "nullableWrap",
+                SlotCoercionKind.NullableValue => "nullableValue",
+                _ => "cast",
+            },
+            [cast ? "type" : "elem"] = TypeJson.Write(coercion.Type),
+            ["e"] = value.DeepClone(),
+        };
     }
 
     static TypeNode PhysicalTopLevel(TypeNode type) => type is TypeNode.Oblivious o ? o.Of : type;
@@ -653,30 +667,34 @@ static partial class NullableTvErasureCallRealign
     static JsonNode CastForTarget(JsonNode value, TypeNode src, TypeNode target,
         bool exactPropertyTarget, ValueTypeOracle isValue)
     {
-        if (value is not JsonObject vo || src == null || target == null || src.Equals(target)) return null;
+        if (value is not JsonObject vo) return null;
+        return BuildSlotCoercion(vo, SelectObjectSlotCoercion(
+            Str(vo["k"]), Str(vo["k"]) == "cast" ? TypeJson.Read(vo["type"]) : null,
+            src, target, exactPropertyTarget, isValue));
+    }
+
+    static SlotCoercion SelectObjectSlotCoercion(string kind, TypeNode existingCast,
+        TypeNode src, TypeNode target, bool exactPropertyTarget, ValueTypeOracle isValue)
+    {
+        if (src == null || target == null || src.Equals(target)) return default;
         // A managed-reference argument names storage. Preserve its lvalue for
         // the native-local allocator; an object-to-pointer value cast cannot
         // supply the selected declaration's exact managed-reference location.
-        if (SignatureValueTypes.Of(target) is TypeNode.ByRef) return null;
+        if (SignatureValueTypes.Of(target) is TypeNode.ByRef) return default;
         // A compiler-generated mutable-property-reference adapter can expose `value: kotlin.Any` even though its
         // explicitly resolved generic accessor closes to `String` (or another narrower CLR slot). The exact source
         // property/role/MethodSemantics/signature lookup above makes that target authoritative, so this is an ordinary
         // runtime narrowing conversion, not an inference from `get_`/`set_` or from a physical object signature.
         var srcObj = IsBareObject(src) || exactPropertyTarget && IsSemanticObject(src);
         var tgtObj = IsBareObject(target);
-        if (srcObj == tgtObj) return null;                                   // neither side is the erased form
-        if (srcObj ? IsVoidish(target) : !NeedsObjectSeam(src, isValue)) return null;
+        if (srcObj == tgtObj) return default;                                // neither side is the erased form
+        if (srcObj ? IsVoidish(target) : !NeedsObjectSeam(src, isValue)) return default;
         // A node that never yields a value (a `throw` in value position, which is TERMINATED where it stands) has
         // nothing to convert, and wrapping it would state a stack value the emitter must then produce.
-        if (Str(vo["k"]) is "throwExpr" or "throw") return null;
+        if (kind is "throwExpr" or "throw") return default;
         // Idempotence: never re-wrap a cast that already states the target.
-        if (Str(vo["k"]) == "cast" && TypeJson.Read(vo["type"]) is TypeNode ct && ct.Equals(target)) return null;
-        return new JsonObject
-        {
-            ["k"] = "cast",
-            ["type"] = TypeJson.Write(target),
-            ["e"] = vo.DeepClone(),
-        };
+        if (kind == "cast" && existingCast is TypeNode ct && ct.Equals(target)) return default;
+        return new(SlotCoercionKind.Cast, target);
     }
 
     static bool IsBareObject(TypeNode t) => t is TypeNode.Fqn { Name: "object", Args: null };

@@ -21,7 +21,7 @@ using DotKt.Bir;
 // BirTypeLowering (owner args + the `nullableValue` elem are still pure-Kotlin `kotlin.*`, lowered downstream exactly
 // as PrimitiveOperatorLowering's `nullableValue` is). A BirScope-tracking walk ensures a
 // `{local q}` source resolves its declared static type. Non-ref build only (clrPropSet is a NetInteropBinding product).
-static class ValueSlotNullableWrite
+static partial class ValueSlotNullableWrite
 {
     static ReferenceMetadataIndex _refs;
     static ValueTypeOracle _isValue;
@@ -93,11 +93,11 @@ static class ValueSlotNullableWrite
         // slot's Kotlin spelling. Classify that physical CLR shape directly, before target inference: a concrete
         // value type (or a generic parameter closed by the owner to a bare value type) has no null representation.
         // A genuine Nullable<V> slot remains null-capable and is deliberately excluded.
-        if (IsNullSource(value, src) && IsBareValueSlot(slotType, ownerFqn.Args))
+        if (IsNullSource(value, src) && IsBareValueSlot(slotType, ownerFqn.Args, _isValue))
             throw new InvalidOperationException(
                 $"bir2cir: cannot assign `null` to the value-type platform slot `{ownerFqn.Name}.{name}` — a CLR "
                 + "value type has no null representation. Use an explicit Kotlin `Int?`-typed property for nullable value storage.");
-        var target = ConcreteValueSlot(slotType, ownerFqn.Args, src);
+        var target = ConcreteValueSlot(slotType, ownerFqn.Args, src, _isValue);
         if (target == null) return;
         if (NullableTvErasureCallRealign.CoerceForFixedSlot(value, src, target, _isValue) is JsonNode coerced)
             node["value"] = coerced;
@@ -113,7 +113,7 @@ static class ValueSlotNullableWrite
         var surface = StaticType.Surface(node, scope);
         var slotType = ClrMemberResolution.PropertySlotType(netType, name, write: false,
             isStatic: node["static"]?.GetValue<bool>() == true);
-        var target = ConcreteValueSlot(slotType, ownerFqn.Args, surface);
+        var target = ConcreteValueSlot(slotType, ownerFqn.Args, surface, _isValue);
         if (target == null) return;
         node["ret"] = TypeJson.Write(target);
         if (node["sty"] != null) node["sty"] = TypeJson.Write(target);
@@ -124,7 +124,11 @@ static class ValueSlotNullableWrite
     static TypeNode.Fqn UnwrapOwnerFqn(JsonNode ownerJson)
     {
         if (ownerJson == null) return null;
-        var t = TypeJson.Read(ownerJson);
+        return UnwrapOwnerFqn(TypeJson.Read(ownerJson));
+    }
+
+    static TypeNode.Fqn UnwrapOwnerFqn(TypeNode t)
+    {
         while (true)
             switch (t)
             {
@@ -140,7 +144,7 @@ static class ValueSlotNullableWrite
     // BIR's owner args supply local/emitted types Reflection cannot load yet. For a concrete reflected Nullable<V>,
     // Kotlin has already type-checked the assignment; the source's exact value Fqn is therefore the authoritative
     // pre-lowering spelling of V (including nested/generic identity).
-    static TypeNode ConcreteValueSlot(Type slotType, TypeNode[] ownerArgs, TypeNode src)
+    static TypeNode ConcreteValueSlot(Type slotType, TypeNode[] ownerArgs, TypeNode src, ValueTypeOracle isValue)
     {
         if (slotType == null) return null;
         if (slotType.IsGenericParameter)
@@ -149,9 +153,9 @@ static class ValueSlotNullableWrite
             if (ownerArgs == null || pos < 0 || pos >= ownerArgs.Length) return null;
             return ownerArgs[pos] switch
             {
-                TypeNode.Fqn direct when _isValue(direct) => direct,
+                TypeNode.Fqn direct when isValue(direct) => direct,
                 TypeNode.Nullable { Of: TypeNode.Fqn nullableElem } nullable
-                    when _isValue(nullableElem) => nullable,
+                    when isValue(nullableElem) => nullable,
                 _ => null,
             };
         }
@@ -166,13 +170,13 @@ static class ValueSlotNullableWrite
                     elem = ownerArgs[pos] is TypeNode.Nullable n ? n.Of : ownerArgs[pos];
             }
             elem ??= UnwrapSurface(src);
-            return elem is TypeNode.Fqn concreteElem && _isValue(concreteElem)
+            return elem is TypeNode.Fqn concreteElem && isValue(concreteElem)
                 ? new TypeNode.Nullable(concreteElem) : null;
         }
         // For a bare reflected value slot, the source/surface supplies the exact pre-lowering V spelling. Platform
         // (`oblivious`) and nullable wrappers annotate the Kotlin view but do not change this physical bare slot.
         var bareSurface = UnwrapSurface(src);
-        if (slotType.IsValueType && bareSurface is TypeNode.Fqn bareElem && _isValue(bareElem)) return bareElem;
+        if (slotType.IsValueType && bareSurface is TypeNode.Fqn bareElem && isValue(bareElem)) return bareElem;
         return null;
     }
 
@@ -190,7 +194,7 @@ static class ValueSlotNullableWrite
     // Whether the reflected member's instantiated CLR slot is a non-Nullable value type. Reflection exposes a
     // concrete/open struct directly through IsValueType; a type-generic slot needs owner-argument substitution.
     // Oblivious annotates a platform view only and does not add a physical Nullable<V> wrapper.
-    static bool IsBareValueSlot(Type slotType, TypeNode[] ownerArgs)
+    static bool IsBareValueSlot(Type slotType, TypeNode[] ownerArgs, ValueTypeOracle isValue)
     {
         if (slotType == null) return false;
         if (slotType.IsGenericParameter)
@@ -199,7 +203,7 @@ static class ValueSlotNullableWrite
             if (ownerArgs == null || pos < 0 || pos >= ownerArgs.Length) return false;
             var arg = ownerArgs[pos];
             while (arg is TypeNode.Oblivious oblivious) arg = oblivious.Of;
-            return arg is TypeNode.Fqn fqn && _isValue(fqn);
+            return arg is TypeNode.Fqn fqn && isValue(fqn);
         }
         if (slotType.IsGenericType && slotType.GetGenericTypeDefinition().FullName == "System.Nullable`1")
             return false;

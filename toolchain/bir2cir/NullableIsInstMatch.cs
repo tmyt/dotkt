@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // NULLABLE IS-TEST (`x is T?`) — null IS a member of a nullable type.
 //
@@ -19,8 +20,19 @@ using DotKt.Bir;
 // Runs in BIR-space BEFORE BirTypeLowering, which is where the `nullable:` wrapper on the type operand is erased
 // (every CLR reference is nullable, so the lowered type cannot carry the signal). `!is T?` needs nothing extra: kotc
 // emits it as `unaryOp !` over this same `isInst`.
-static class NullableIsInstMatch
+static partial class NullableIsInstMatch
 {
+    internal static void Apply(BirFileDeclaration root)
+    {
+        Walk(root);
+        void Walk(BirGraphValue node)
+        {
+            if (node is IBirExecutablePayload) return;
+            if (node is BirIsInstance { Type.HasValue: true, Type.Value: TypeNode.Nullable } test) test.NullMatches = true;
+            node.VisitChildren(Walk);
+        }
+    }
+
     public static void Apply(JsonNode root) => Walk(root);
 
     static void Walk(JsonNode node)

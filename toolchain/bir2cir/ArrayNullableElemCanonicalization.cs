@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // THE ARRAY-CREATION HALF OF `Array<X?>` IS `object[]` (#86 D2).
 //
@@ -18,8 +19,32 @@ using DotKt.Bir;
 //
 // Runs in BIR-space BEFORE type lowering (elem tokens are still the `kotlin.*` FQN form) and BEFORE the erasure sweep,
 // which then finds slot and creation already agreeing.
-static class ArrayNullableElemCanonicalization
+static partial class ArrayNullableElemCanonicalization
 {
+    internal static void Apply(BirFileDeclaration root, ValueTypeOracle isValue)
+    {
+        Walk(root);
+        void Walk(BirGraphValue node)
+        {
+            if (node is IBirExecutablePayload) return;
+            var (type, init) = node switch {
+                BirVariable value => (value.Type.OrDefault(), value.Init.OrDefault()),
+                _ => ((TypeNode)null, (IBirExpression)null),
+            };
+            if (type is TypeNode.Array array && NullableGenericErasure.IsNullableMaybeValue(array.Elem, isValue))
+            {
+                var element = new TypeNode.Fqn("object");
+                switch (init)
+                {
+                    case BirNewArray value: value.Elem = element; break;
+                    case BirNewArraySized value: value.Elem = element; break;
+                    case BirNewArrayInit value: value.Elem = element; break;
+                }
+            }
+            node.VisitChildren(Walk);
+        }
+    }
+
     public static void Apply(JsonNode root, ValueTypeOracle isValue) => Walk(root, isValue);
 
     static void Walk(JsonNode node, ValueTypeOracle isValue)
