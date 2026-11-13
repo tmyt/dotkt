@@ -406,8 +406,8 @@ static partial class ClosureSynthesis
         var invokeBody = (sc["body"] as JsonArray)?.DeepClone() ?? new JsonArray();
         // #122: an INLINE-MATERIALIZED closure's body is bir2cir-synthesized (InlineSplice), so its capture-field reads
         // never passed through kotc's expr() `sty` stamp. Stamp each `{k:field}` read of one of THIS closure's capture
-        // fields with that field's declared type, so a downstream StaticType consumer (e.g. ArrayConstructionLowering
-        // deriving `arrayGet.elem` off a captured array field) recovers the type WITHOUT re-resolving it from a decl.
+        // fields with that field's declared type, so remaining node-local value-typing consumers recover the
+        // authored capture slot WITHOUT re-resolving it from a declaration.
         StampCaptureFieldSty(invokeBody, fields);
         var invoke = new JsonObject
         {

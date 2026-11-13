@@ -135,11 +135,10 @@ static class StaticType
         }
     }
 
-    // The two SPELLINGS of an array type. The shared deriver answers structurally (`{t:"array"}`), which is what a
-    // spill slot's declared type has to be; this reader's consumers (FaithfulHints' collection classification,
-    // ArrayConstructionLowering's element recovery) are name-keyed and match `kotlin.Array<E>`. Converting once,
-    // here, on the arms that CONSTRUCT an array type is the whole of the difference between them — the alternative
-    // was one deriver arm in each file that silently disagreed.
+    // This surface view keeps Kotlin's kotlin.Array<E> spelling for the remaining
+    // source recognizers. The shared node-local deriver returns the structural
+    // array type used by physical slots; normalize only its array-producing arms
+    // here rather than duplicate their derivation rules.
     static TypeNode ArrayAsFqn(TypeNode t) => t is TypeNode.Array a ? new TypeNode.Fqn("kotlin.Array", new[] { a.Elem }) : t;
 
     // The specialized-array element table the shared deriver deliberately does not restate (`kotlin.IntArray` ->
