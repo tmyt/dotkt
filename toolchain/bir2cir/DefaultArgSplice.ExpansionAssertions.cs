@@ -77,7 +77,7 @@ static partial class DefaultArgSplice
         if (call is BirNew construction) return ((construction.Type.OrDefault() as TypeNode.Fqn)?.Name ?? "unknown") + " constructor";
         var (owner, member) = call switch {
             BirCallInstance instance => (instance.OwnerType.OrDefault(), instance.Method.OrDefault()),
-            BirCallStatic value => (value.CalleeOwner.OrDefault() ?? value.Owner.OrDefault(), value.Method.OrDefault()),
+            BirCallStatic value => (value.OwnerType.OrDefault() ?? value.CalleeOwner.OrDefault() ?? value.Owner.OrDefault(), value.Method.OrDefault()),
             BirCallInline inline => (inline.Owner.OrDefault(), (string)null),
             _ => ((TypeNode)null, (string)null),
         };
