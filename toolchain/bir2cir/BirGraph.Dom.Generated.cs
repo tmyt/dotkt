@@ -1566,6 +1566,7 @@ internal static class BirGraphDom
                 case "fakeOverride": break;
                 case "inheritedImplementation": break;
                 case "_syntheticTypeArgs": break;
+                case "lexicalOwnerTypeParamCount": break;
                 case "retSuspendFnTypePre": break;
                 case "suspendResult": break;
                 case "suspendTaskResult": break;
@@ -1638,6 +1639,7 @@ internal static class BirGraphDom
             FakeOverride = Field<bool>(fields, "fakeOverride", value => value!.GetValue<bool>()),
             InheritedImplementation = Field<BirInheritedImplementation>(fields, "inheritedImplementation", value => ReadBirInheritedImplementation(value!)),
             _syntheticTypeArgs = Field<TypeNode[]>(fields, "_syntheticTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            LexicalOwnerTypeParamCount = Field<int>(fields, "lexicalOwnerTypeParamCount", value => value!.GetValue<int>()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             SuspendResult = Field<TypeNode>(fields, "suspendResult", value => TypeNode.Parse(value!.GetValue<string>())),
             SuspendTaskResult = Field<TypeNode>(fields, "suspendTaskResult", value => TypeNode.Read(value) ?? throw new FormatException()),
@@ -2969,6 +2971,7 @@ internal static class BirGraphDom
                 case "memberMethodTypeParams": break;
                 case "memberSignature": break;
                 case "memberReturnType": break;
+                case "companionCall": break;
                 case "dotktDeclarationIdentityBound": break;
                 case "dotktDelegateSlot": break;
                 case "delegateCtorRef": break;
@@ -3000,6 +3003,7 @@ internal static class BirGraphDom
             MemberMethodTypeParams = Field<BirTypeParameter[]>(fields, "memberMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             MemberSignature = Field<TypeNode[]>(fields, "memberSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
+            CompanionCall = Field<bool>(fields, "companionCall", value => value!.GetValue<bool>()),
             DotktDeclarationIdentityBound = Field<bool>(fields, "dotktDeclarationIdentityBound", value => value!.GetValue<bool>()),
             DotktDelegateSlot = Field<TypeNode>(fields, "dotktDelegateSlot", value => TypeNode.Read(value) ?? throw new FormatException()),
             DelegateCtorRef = Field<BirMemberReference>(fields, "delegateCtorRef", value => ReadBirMemberReference(value!)),

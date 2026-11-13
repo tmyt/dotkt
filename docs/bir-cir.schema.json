@@ -508,7 +508,7 @@
       "required": ["f"], "additionalProperties": false
     },
     "birFunctionDeclaration": {
-      "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": { "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+      "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": { "lexicalOwnerTypeParamCount": { "type": "integer" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "suspendResult": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "suspendTaskResult": { "x-dotkt-representation-role": "Return", "$ref": "#/$defs/type" },
         "dotktValueReturn": { "type": "boolean" },
@@ -895,7 +895,7 @@
       "required": ["k", "callee", "owner", "pc", "ga", "typeArgs", "recvs", "args", "retType", "paramSig"], "additionalProperties": false
     },
     "birNewBoundDelegate": {
-      "type": "object", "x-dotkt-model": { "name": "BirNewBoundDelegate", "domain": "birCore", "role": "expression", "loweringProperties": { "dotktDeclarationIdentityBound": { "type": "boolean" }, "dotktDelegateSlot": { "$ref": "#/$defs/type" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirNewBoundDelegate", "domain": "birCore", "role": "expression", "loweringProperties": { "companionCall": { "type": "boolean" }, "dotktDeclarationIdentityBound": { "type": "boolean" }, "dotktDelegateSlot": { "$ref": "#/$defs/type" } } },
       "properties": {
         "k": { "const": "newBoundDelegate" }, "ownerType": { "$ref": "#/$defs/type" }, "method": { "type": "string" }, "typeArgs": { "x-dotkt-representation-role": "TypeArguments", "type": "array", "items": { "$ref": "#/$defs/type" } },
         "argTypes": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "virtual": { "type": "boolean" }, "recv": { "$ref": "#/$defs/birExpressionNode" }, "funcType": { "$ref": "#/$defs/type" }, "anySlot": { "type": "boolean" },

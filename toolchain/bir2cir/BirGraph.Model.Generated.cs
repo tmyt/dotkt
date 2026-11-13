@@ -6800,6 +6800,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<bool> FakeOverride { get; set; }
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; set; }
     public OptionalField<TypeNode[]> _syntheticTypeArgs { get; set; }
+    public OptionalField<int> LexicalOwnerTypeParamCount { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<TypeNode> SuspendResult { get; set; }
     public OptionalField<TypeNode> SuspendTaskResult { get; set; }
@@ -7139,6 +7140,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
             && EqualField(FakeOverride, value.FakeOverride, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(InheritedImplementation, value.InheritedImplementation, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(_syntheticTypeArgs, value._syntheticTypeArgs, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
+            && EqualField(LexicalOwnerTypeParamCount, value.LexicalOwnerTypeParamCount, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
             && EqualField(RetSuspendFnTypePre, value.RetSuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(SuspendResult, value.SuspendResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(SuspendTaskResult, value.SuspendTaskResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -7210,6 +7212,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "fakeOverride", FakeOverride, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "inheritedImplementation", InheritedImplementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "_syntheticTypeArgs", _syntheticTypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "lexicalOwnerTypeParamCount", LexicalOwnerTypeParamCount, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "suspendResult", SuspendResult, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "suspendTaskResult", SuspendTaskResult, (writer, value) => { TypeNode.WriteJson(writer, value); });
@@ -7283,6 +7286,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (FakeOverride.IsPresent) result["fakeOverride"] = FakeOverride.IsNull ? null : JsonValue.Create(FakeOverride.Value);
         if (InheritedImplementation.IsPresent) result["inheritedImplementation"] = InheritedImplementation.IsNull ? null : ((BirGraphValue)InheritedImplementation.Value).ToDom();
         if (_syntheticTypeArgs.IsPresent) result["_syntheticTypeArgs"] = _syntheticTypeArgs.IsNull ? null : new JsonArray(_syntheticTypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (LexicalOwnerTypeParamCount.IsPresent) result["lexicalOwnerTypeParamCount"] = LexicalOwnerTypeParamCount.IsNull ? null : JsonValue.Create(LexicalOwnerTypeParamCount.Value);
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (SuspendResult.IsPresent) result["suspendResult"] = SuspendResult.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendResult.Value));
         if (SuspendTaskResult.IsPresent) result["suspendTaskResult"] = SuspendTaskResult.IsNull ? null : TypeNode.Write(SuspendTaskResult.Value);
@@ -13177,6 +13181,7 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
     public OptionalField<BirTypeParameter[]> MemberMethodTypeParams { get; set; }
     public OptionalField<TypeNode[]> MemberSignature { get; set; }
     public OptionalField<TypeNode> MemberReturnType { get; set; }
+    public OptionalField<bool> CompanionCall { get; set; }
     public OptionalField<bool> DotktDeclarationIdentityBound { get; set; }
     public OptionalField<TypeNode> DotktDelegateSlot { get; set; }
     public OptionalField<BirMemberReference> DelegateCtorRef { get; set; }
@@ -13420,6 +13425,7 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
             && EqualField(MemberMethodTypeParams, value.MemberMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(MemberSignature, value.MemberSignature, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(MemberReturnType, value.MemberReturnType, (left, right) => TypeNodeDataEquality.Equal(left, right))
+            && EqualField(CompanionCall, value.CompanionCall, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(DotktDeclarationIdentityBound, value.DotktDeclarationIdentityBound, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(DotktDelegateSlot, value.DotktDelegateSlot, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(DelegateCtorRef, value.DelegateCtorRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -13451,6 +13457,7 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         WriteOptional(writer, "memberMethodTypeParams", MemberMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "companionCall", CompanionCall, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "dotktDeclarationIdentityBound", DotktDeclarationIdentityBound, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "dotktDelegateSlot", DotktDelegateSlot, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "delegateCtorRef", DelegateCtorRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -13484,6 +13491,7 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         if (MemberMethodTypeParams.IsPresent) result["memberMethodTypeParams"] = MemberMethodTypeParams.IsNull ? null : new JsonArray(MemberMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
+        if (CompanionCall.IsPresent) result["companionCall"] = CompanionCall.IsNull ? null : JsonValue.Create(CompanionCall.Value);
         if (DotktDeclarationIdentityBound.IsPresent) result["dotktDeclarationIdentityBound"] = DotktDeclarationIdentityBound.IsNull ? null : JsonValue.Create(DotktDeclarationIdentityBound.Value);
         if (DotktDelegateSlot.IsPresent) result["dotktDelegateSlot"] = DotktDelegateSlot.IsNull ? null : TypeNode.Write(DotktDelegateSlot.Value);
         if (DelegateCtorRef.IsPresent) result["delegateCtorRef"] = DelegateCtorRef.IsNull ? null : ((BirGraphValue)DelegateCtorRef.Value).ToDom();
