@@ -58,7 +58,7 @@ static partial class EnumIntrinsicLowering
         var mappedValues = RichEnumCall(rich, "chosenEntriesApi", null);
         var mappedParse = RichEnumCall(rich, "chosenParseApi", valueOfArgument);
         if (BirNodeType.Of(mappedValues) != new TypeNode.Array(rich) || BirNodeType.Of(mappedParse) != rich
-            || ArrayConstructionLowering.ArrayElementOf(BirGraphStaticType.Surface(mappedValues, new Dictionary<string, TypeNode>())) != rich)
+            || ArrayConstructionLowering.ArrayElementOf(BirGraphStaticType.Surface((IBirExpression)mappedValues, new Dictionary<string, TypeNode>())) != rich)
             throw new InvalidOperationException("Typed rich enum API lost its exact array/result type before array lowering");
         Console.WriteLine("[enum intrinsic frame] self-test OK (owning declarations, shadow/owner selection, ordinary frame, rich descriptors)");
     }

@@ -402,6 +402,16 @@ sealed class Pipeline
             RangeMembershipLowering.Apply(source, inventory.LocalTopLevelFunctions, appBuild);
             RangeConstructionLowering.Apply(source);
         }
+        var enumRuntimeLookup = false;
+        foreach (var source in captured)
+        {
+            // Range realization can produce further primitive operations.
+            PrimitiveOperatorLowering.Apply(source, refs);
+            EnumIntrinsicLowering.Apply(source, richEnums, inventory.LocalTopLevelFunctions, appBuild, refs,
+                representationMethodFrames);
+            enumRuntimeLookup |= EnumValueLowering.Apply(source, refs, richEnumFields, basicEnums, explicitEnums, parseEnums);
+        }
+        enums = enums with { RuntimeLookup = enumRuntimeLookup };
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -436,6 +446,7 @@ sealed class Pipeline
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
     {
+        _enumRuntimeLookup |= module.Preparation.Enums.RuntimeLookup;
         var birFiles = module.Files;
         var birRoots = birFiles.Select(b => b.Root).ToList();
         var declarationSemanticSignatures = module.Signatures;
@@ -502,8 +513,6 @@ sealed class Pipeline
         // ALL input files: EnumIntrinsicLowering lowers `enumValues<RichEnum>()` to the synthesized static values()
         // (not the System.Enum-reflection semantic node — a rich enum is a plain singleton class).
         var localRichEnums = module.Preparation.Enums.Rich;
-        // Producer-owned instance slots, captured module-wide in the typed prefix.
-        var localRichEnumFields = module.Preparation.Enums.RichFields;
 
         // The local BASIC (value-type, `kind:"enum"`) enum type names across ALL files — EnumMemberBinding rebinds a
         // `System.Enum`-inherited Object-slot call (`E.A.toString()`) on such an owner to an `objMethod`. Must be
@@ -512,10 +521,6 @@ sealed class Pipeline
         // NetInteropBinding (reference-KLIB-projected owner -> `clrInstance`, a `constrained. callvirt`), and a klib-external
         // `kotlin.*` enum arrives from kotc already as an `objMethod`; neither reaches this local `callInstance` gap.
         var localBasicEnums = module.Preparation.Enums.Basic;
-
-        // Typed declaration lowering already selected exact physical constants.
-        var localExplicitEnums = module.Preparation.Enums.Explicit;
-        var localParseEnums = module.Preparation.Enums.Parse;
 
         // The local reference TYPES (classes + interfaces) module-wide (name -> declared universal slots + base) —
         // AnySlotRebind rebinds a dead-ending `callInstance <UserType>.GetHashCode/ToString/Equals` (a fake override
@@ -550,26 +555,6 @@ sealed class Pipeline
             // inherited protected-property read may be correctly realigned to object[] while its store into a
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
             NullableTvErasureCallRealign.CollectNewSyntheticTypes(bir.Root, nullableTvDeclRets);
-            // PRIMITIVE OPERATORS (#52 Phase 5): realize faithful primitive member calls as CIR binOp/unaryOp nodes.
-            // Runs in ref + app before body-squash/type/suspend consumers, so a ref-build ctor field-init or base-arg
-            // (not body-squashed) carries a raw IL operation rather than an unresolvable bodyless builtin call.
-            PrimitiveOperatorLowering.Apply(bir.Root, refs);
-            // ENUM REIFIED INTRINSICS (#73): kotc emits the faithful top-level `callStatic owner:null method:enumValues
-            // typeArgs:[T]` for `enumValues<T>()`/`enumValueOf<T>()`, including the cold values operation for entries.
-            // Re-emit the same BIR vocabulary — rich enum -> static values()/valueOf(), basic/generic-param -> semantic
-            // enumValues/enumParse — deriving rich-vs-basic from the explicit producer fact (local `enumRich:true`,
-            // referenced trusted [KotlinRichEnum]). Runs
-            // BEFORE ArrayConstructionLowering (#77): a `for (x in enumValues<Color>())` for-loop wraps
-            // this call in a `forArray` whose element ArrayConstructionLowering derives via StaticType off the ALREADY-
-            // lowered `enumValues`/rich-`values()` node — so the reified top-level intrinsic must already be in its
-            // final semantic shape when element derivation runs. EnumEntries itself was bound to a cached list
-            // before representation materialization and must never be replaced by an array-valued expression here.
-            EnumIntrinsicLowering.Apply(
-                bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner, refs, representationMethodFrames);
-            // ENUM ENTRY VALUES: kotc preserves owner + entry-name Kotlin identity. Resolve a referenced rich enum's
-            // carrier-mapped singleton field, or a CLR enum's potentially sparse/negative/aliased physical constant,
-            // from the exact compile reference here.
-            _enumRuntimeLookup |= EnumValueLowering.Apply(bir.Root, refs, localRichEnumFields, localBasicEnums, localExplicitEnums, localParseEnums);
             // ARRAY CONSTRUCTION + INTRINSIC ELEMENT (#73 Phase 2b-A): kotc emits the faithful `kotlin.IntArray`
             // identity — the sized ctor as `new kotlin.IntArray(size, init)`, the arrayGet/arraySet/forArray
             // intrinsics with NO `elem`. Derive the sized-array construction (newArrayInit/newArraySized) + stamp the
@@ -1806,7 +1791,7 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
 sealed record EnumPreparation(HashSet<string> Rich,
     IReadOnlyDictionary<string, (string Name, string Ordinal)> RichFields, HashSet<string> Basic,
     IReadOnlyDictionary<string, BasicEnumMetadata> Explicit,
-    IReadOnlyDictionary<string, BasicEnumMetadata> Parse);
+    IReadOnlyDictionary<string, BasicEnumMetadata> Parse, bool RuntimeLookup = false);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);

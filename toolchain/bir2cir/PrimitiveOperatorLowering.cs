@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using System.Threading;
 using DotKt.Bir;
 
@@ -14,7 +12,7 @@ using DotKt.Bir;
 // the Kotlin<->CLR relation, so they live HERE now, keyed off the pure-Kotlin owner FQN.
 //
 // Runs UNCONDITIONALLY (reference AND app builds) on owning source BIR at representation entry, then again on
-// remaining DOM nodes synthesized by range and other lowerings, before ref body-squash/type/suspend consumers.
+// owning typed nodes synthesized by range and other lowerings, before ref body-squash/type/suspend consumers.
 // A primitive operator is a bodyless builtin
 // member with NO ref.dll symbol — in the reference build a ctor
 // field-initializer / base-arg is NOT body-squashed, so a surviving `callInstance kotlin.Int.inv` would reach
@@ -51,7 +49,7 @@ static partial class PrimitiveOperatorLowering
     // The IR-intrinsic marker owner kotc stamps on the comparison/equality intrinsic calls.
     const string IntrinsicOwner = "kotlin.internal.ir";
     // The value primitives whose Kotlin type has a VALUE `<`/`>`/`<=`/`>=` compare (the signed integrals + Double/Float
-    // + bool/char, NOT the unsigned inline classes). ShapeCompareOperand reads this to detect a value-nullable operand
+    // + bool/char, NOT the unsigned inline classes). TypedCompareOperand reads this to detect a value-nullable operand
     // (`Int?`/`Double?` smart-cast into a compare) that must surface `Nullable<T>.Value` — Double/Float ARE included
     // here (a `Double?` compare needs the unwrap). This is a COMPARE-operand set only; the EQEQ fast-path uses the
     // narrower EqEqPrimFq (Double/Float excluded — see #95).
@@ -81,277 +79,10 @@ static partial class PrimitiveOperatorLowering
         "kotlin.Char", "kotlin.Byte", "kotlin.Short", "kotlin.UByte", "kotlin.UShort",
     };
 
-    internal static void SelfTest()
-    {
-        var slot = new TypeNode.Tv("method", 0);
-        foreach (var right in new TypeNode[] { slot, new TypeNode.Tv("method", 1),
-                     new TypeNode.Tv("type", 0), new TypeNode.Nullable(slot) })
-        {
-            var comparison = new JsonObject {
-                ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(IntrinsicOwner), ["method"] = "EQEQEQ",
-                ["args"] = new JsonArray(
-                    new JsonObject { ["k"] = "callStatic", ["method"] = "value", ["sty"] = TypeJson.Write(slot),
-                        ["ret"] = TypeJson.Fqn("object") },
-                    new JsonObject { ["k"] = "local", ["name"] = "other", ["sty"] = TypeJson.Write(right) }),
-            };
-            var lowered = LowerIntrinsic(comparison, BirScope.Empty).AsObject();
-            if (lowered["op"]?.GetValue<string>() != "==="
-                || !JsonNode.DeepEquals(lowered["lhs"], comparison["args"][0])
-                || !JsonNode.DeepEquals(lowered["rhs"], comparison["args"][1]))
-                throw new InvalidOperationException("Identity lowering decided a physical operand slot before value projection");
-        }
-        Console.WriteLine("[identity operand slots] self-test OK (same generic slot, distinct index/scope/nullability)");
-
-        foreach (var owner in new[] { "kotlin.Int", "kotlin.Long", "kotlin.UInt", "kotlin.ULong" })
-        foreach (var member in owner is "kotlin.UInt" or "kotlin.ULong"
-                     ? new[] { "shl", "shr" } : new[] { "shl", "shr", "ushr" })
-        {
-            var distance = new JsonObject { ["k"] = "callStatic", ["method"] = "distance", ["args"] = new JsonArray() };
-            var call = new JsonObject {
-                ["k"] = "callInstance", ["ownerType"] = TypeJson.Fqn(owner), ["method"] = member,
-                ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "value" },
-                ["args"] = new JsonArray(distance.DeepClone()),
-            };
-            var before = call.DeepClone();
-            var lowered = Lower(call, BirScope.Empty).AsObject();
-            var mask = owner is "kotlin.Long" or "kotlin.ULong" ? 63 : 31;
-            var expectedOp = member == "shl" ? "<<"
-                : member == "ushr" || owner is "kotlin.UInt" or "kotlin.ULong" ? ">>>" : ">>";
-            if (lowered["op"]?.GetValue<string>() != expectedOp
-                || !JsonNode.DeepEquals(lowered["lhs"], call["recv"])
-                || lowered["rhs"]?["k"]?.GetValue<string>() != "binOp"
-                || lowered["rhs"]?["op"]?.GetValue<string>() != "&"
-                || !JsonNode.DeepEquals(lowered["rhs"]?["lhs"], distance)
-                || lowered["rhs"]?["rhs"]?["value"]?.GetValue<int>() != mask
-                || !JsonNode.DeepEquals(call, before))
-                throw new InvalidOperationException($"Primitive shift must mask its single-evaluated distance: {owner}.{member}");
-        }
-        Console.WriteLine("[primitive shift distances] self-test OK (signed/unsigned, both widths, single evaluation)");
-        TypedSelfTest();
-    }
-
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null)
-    {
-        switch (root)
-        {
-            case JsonObject o: WalkObject(o, BirScope.Empty); break;
-            case JsonArray a: WalkArray(a, BirScope.Empty); break;
-        }
-    }
-
-    static void WalkArray(JsonArray arr, BirScope scope)
-    {
-        // A statement sequence: a `var` enters scope for the SUBSEQUENT siblings only (lexical block scoping — so two
-        // for-loops each destructuring to `v` of different element types do not collide). The mutable child is created
-        // lazily, only when the array actually declares a var (args/sig arrays allocate nothing).
-        var cur = scope;
-        for (var i = 0; i < arr.Count; i++)
-        {
-            switch (arr[i])
-            {
-                case JsonObject co: WalkObject(co, cur); if (Lower(co, cur) is JsonNode r) arr[i] = r; break;
-                case JsonArray ca: WalkArray(ca, cur); break;
-            }
-            if (arr[i] is JsonObject vo && (vo["k"] as JsonValue)?.GetValue<string>() == "var")
-            {
-                if (ReferenceEquals(cur, scope)) cur = scope.Child();
-                cur.Declare(vo);
-            }
-        }
-    }
-
-    // Bottom-up: rewrite a node's CHILDREN (so a nested operator operand is already lowered), THEN lower the node
-    // itself — wrapping the already-lowered recv/args into the binOp/unaryOp. A declaration node extends `scope` with
-    // its params + body locals so StaticType can recover a bare operand `local`'s declared type.
-    static void WalkObject(JsonObject obj, BirScope scope)
-    {
-        var child = scope.Extend(obj);
-        foreach (var key in obj.Select(kv => kv.Key).ToList())
-            switch (obj[key])
-            {
-                case JsonObject co: WalkObject(co, child); if (Lower(co, child) is JsonNode r) obj[key] = r; break;
-                case JsonArray ca: WalkArray(ca, child); break;
-            }
-    }
-
-    // A primitive-operator `callInstance` / comparison-intrinsic `callStatic` becomes the corresponding CIR
-    // binOp/unaryOp; an unrecognized call remains a method call.
-    static JsonNode Lower(JsonObject o, BirScope scope)
-    {
-        var k = (o["k"] as JsonValue)?.GetValue<string>();
-        if (k == "callStatic") return LowerIntrinsic(o, scope);
-        if (k != "callInstance") return null;
-        if (OwnerFqn(o["ownerType"]) is not string ownerFqn) return null;
-        if ((o["method"] as JsonValue)?.GetValue<string>() is not string member) return null;
-        var args = o["args"] as JsonArray ?? new JsonArray();
-
-        // String concatenation (`a + b`, receiver `kotlin.String`). kotc emits the faithful
-        // `callInstance kotlin.String.plus(a, b)` with no CLR hint; realize it as a two-part CIR `concat`.
-        // The following faithful-recognition stage recovers each part's static type and applies the shared
-        // string-template routing (collection -> clrCollToString, nullable -> LibraryKt.toString).
-        if (ownerFqn == "kotlin.String" && member == "plus" && args.Count == 1)
-            return new JsonObject
-            {
-                ["k"] = "concat",
-                ["parts"] = new JsonArray { o["recv"]?.DeepClone(), args[0]?.DeepClone() },
-            };
-
-        if (!PrimitiveOpFq.Contains(ownerFqn)) return null;
-
-        if (args.Count == 1 && ArithOp.TryGetValue(member, out var aop))
-        {
-            // #94: unsigned `shr` is LOGICAL (zero-filling) — Kotlin's `UInt.shr`/`ULong.shr` zero-fill, unlike the
-            // sign-propagating arithmetic `>>`. Route it to `>>>` (ilemit `Shr_Un`). `shl` is bit-identical for
-            // signed/unsigned, and the narrow unsigned types (UByte/UShort) have no shift operator, so only UInt/ULong
-            // reach here.
-            aop = ArithmeticSymbol(ownerFqn, member, aop);
-            JsonNode right = args[0]?.DeepClone();
-            // Kotlin masks shift distances; raw CIL shifts do not guarantee that on every target.
-            if (aop is "<<" or ">>" or ">>>")
-                right = new JsonObject {
-                    ["k"] = "binOp", ["op"] = "&", ["lhs"] = right,
-                    ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"),
-                        ["value"] = ShiftMask(ownerFqn) },
-                };
-            var bin = new JsonObject { ["k"] = "binOp", ["op"] = aop, ["lhs"] = o["recv"]?.DeepClone(), ["rhs"] = right };
-            return WrapDeclaredReturn(o, ownerFqn, bin);
-        }
-        if (args.Count == 0 && UnaryOp.TryGetValue(member, out var uop))
-            return WrapDeclaredReturn(o, ownerFqn, new JsonObject { ["k"] = "unaryOp", ["op"] = uop, ["e"] = o["recv"]?.DeepClone() });
-        // inc/dec (the `i++`/`i--` desugaring) -> `(recv + 1)`/`(recv - 1)`. The `const 1` is typed `kotlin.Int` for
-        // EVERY primitive (physical value coercion widens it), so a narrow receiver's `+1` runs at int width and MUST be converted back
-        // to the receiver's own narrow type (`dynRet`) — else `(127.toByte()).inc()` yields int 128, not Byte -128.
-        if (args.Count == 0 && (member == "inc" || member == "dec"))
-            return WrapDeclaredReturn(o, ownerFqn, new JsonObject
-            {
-                ["k"] = "binOp", ["op"] = member == "inc" ? "+" : "-",
-                ["lhs"] = o["recv"]?.DeepClone(),
-                ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = 1 },
-            });
-        return null;
-    }
-
-    // A comparison intrinsic `callStatic owner=kotlin.internal.ir` -> `{k:binOp, op:<}`, else null. The operands
-    // already carry the frontend-resolved value shape required by the CIR comparison node.
-    static JsonNode LowerIntrinsic(JsonObject o, BirScope scope)
-    {
-        if (OwnerFqn(o["owner"]) != IntrinsicOwner) return null;
-        if ((o["method"] as JsonValue)?.GetValue<string>() is not string m) return null;
-        var args = o["args"] as JsonArray ?? new JsonArray();
-        // The comparison intrinsics (`less`/`lessOrEqual`/`greater`/`greaterOrEqual`) -> `{k:binOp, op:<}`. kotc emits
-        // the PLAIN operand expressions; the operand SHAPING that the retired kotc COMPARE block did — a nullable
-        // primitive (`Int?` smart-cast to `Int`) surfaces `Nullable<T>.Value`, a boxed-Any operand casts to the
-        // OTHER operand's concrete type — is derived HERE from StaticType (the CLR<->Kotlin relation), satisfying the
-        // CIR binOp requirement that both stack operands have the physical comparison type.
-        if (args.Count == 2 && CompareOp.TryGetValue(m, out var cop))
-            return new JsonObject
-            {
-                ["k"] = "binOp", ["op"] = cop,
-                ["lhs"] = ShapeCompareOperand(args[0], args[1], scope),
-                ["rhs"] = ShapeCompareOperand(args[1], args[0], scope),
-            };
-        // Integral primitive equality is direct CIL. Floating structural equality
-        // retains its total-order rules, independently of direct IEEE operators.
-        // Every other EQEQ uses the same null-safe Kotlin runtime operation;
-        // collection static types do not select or bypass a virtual equals slot.
-        if (m == "EQEQ" && args.Count == 2)
-        {
-            if (KotlinEqualityLowering.NullComparison(args[0], args[1]) is JsonObject nullCheck)
-                return nullCheck;
-            // #59: recover the operand static types via StaticType (no kotc hint). SURFACE (the former `argTypes`)
-            // drives the primitive fast-path; VALUE drives floating total-order recognition.
-            var ls = StaticType.Surface(args[0], scope);
-            var rs = StaticType.Surface(args[1], scope);
-            if (ls is TypeNode.Fqn lsf && EqEqPrimFq.Contains(lsf.Name)
-                && rs is TypeNode.Fqn rsf && EqEqPrimFq.Contains(rsf.Name))
-                // Pin the selected primitive operands before late generic value
-                // realignment can expose an object-returning physical declaration.
-                // The explicit boundary then supplies unbox.any where necessary;
-                // the emitter does not reconstruct Kotlin's comparison types.
-                return new JsonObject { ["k"] = "binOp", ["op"] = "==",
-                    ["lhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(ls), ["e"] = args[0]?.DeepClone() },
-                    ["rhs"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(rs), ["e"] = args[1]?.DeepClone() } };
-            var lt = StaticType.Value(args[0], scope);
-            var rt = StaticType.Value(args[1], scope);
-            var lu = FaithfulHints.StripAnyCast(args[0]);
-            var ru = FaithfulHints.StripAnyCast(args[1]);
-            if (lt != null && rt != null)
-            {
-                if (FaithfulHints.IsNonNullFqn(lt, "kotlin.Double") && FaithfulHints.IsNonNullFqn(rt, "kotlin.Double"))
-                    return FaithfulHints.FloatCall("clrDoubleEquals", lu, ru);
-                if (FaithfulHints.IsNonNullFqn(lt, "kotlin.Float") && FaithfulHints.IsNonNullFqn(rt, "kotlin.Float"))
-                    return FaithfulHints.FloatCall("clrFloatEquals", lu, ru);
-                // #152: STRUCTURAL EQEQ over two value-nullable Double/Float (`Double?`/`Float?` — a data-class `equals`
-                // field, or a `==` routed to the structural path). Both VALUE types are raw `Nullable<T>` (not boxed Any):
-                // the non-null arms above miss them, and the `objEq` fallback boxes both -> `Double.Equals`, which uses
-                // IEEE `==` for the value compare (`(-0.0).Equals(0.0)==true`) — violating Kotlin's TOTAL-ORDER structural
-                // equals (`-0.0 != 0.0`, `NaN == NaN`) that #95 adopted for the non-null case and that the bit-based
-                // hashCode requires. Synthesize null-safe bit-equality off `nullableHasValue`/`nullableValue` +
-                // clrDoubleEquals/clrFloatEquals: null==null -> true, exactly one null -> false, both present -> the
-                // total-order helper on the unwrapped values. (A DIRECT `a == b` on `Double?` is IEEE per #95 and is
-                // routed to the `ieee754equals` arm above — it never reaches this EQEQ arm.) The RAW `args[i]` (not the
-                // cast-stripped `lu`/`ru`) are hoisted: StripAnyCast only peels a bare-`Any` box, and the var init's
-                // `object -> Nullable<T>` coercion is the correct unbox — feeding the raw nullable operand is deliberate.
-                if (NullableFloatElem(lt) is string lfe && NullableFloatElem(rt) is string rfe && lfe == rfe)
-                    return NullableFloatEquals(args[0], args[1], lfe);
-            }
-            return KotlinEqualityLowering.Call(args[0], args[1], nullSafe: true);
-        }
-        // Preserve identity intent until physical operand types are final. Numeric equality
-        // already uses == and must not acquire reference boxing from this operation.
-        if (m == "EQEQEQ" && args.Count == 2)
-        {
-            // Value projection may still erase an ordinary local. The final
-            // physical identity owner compares the actual resulting slots;
-            // matching Kotlin T stamps do not license an early extraction.
-            return new JsonObject { ["k"] = "binOp", ["op"] = "===",
-                ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
-        }
-        // `ieee754equals`: the ordered IEEE-754 float/double comparison (`-0.0 == 0.0`, `NaN != NaN`) -> raw CIL
-        // `ceq` (`binOp ==`). For the NON-NULL direct `==` the operands already satisfy the raw CIR binOp contract. But
-        // the frontend ALSO routes a DIRECT/mixed NULLABLE float `==`
-        // (`Double? == Double?`, `Double == Double?`) here with RAW `Nullable<T>` operands — a raw `binOp ==` would then
-        // emit `ceq` over `Nullable<double>` structs = UNVERIFIABLE IL / InvalidProgram (#180). When at least one operand
-        // is value-nullable, shape a null-safe IEEE compare (the #152 operand-hoist skeleton, but the both-present core is
-        // a RAW `binOp ==` — direct-operator IEEE per #95: `-0.0 == 0.0` TRUE, `NaN == NaN` FALSE — NOT the total-order
-        // clr{Double,Float}Equals of the STRUCTURAL #152 path). null==null -> true, one null -> false.
-        if (m == "ieee754equals" && args.Count == 2)
-        {
-            // Detect nullness off SURFACE (not Value): the frontend routes to `ieee754equals` by the STATIC type it
-            // saw, and an explicit `x as Double?` cast IS that surface nullable — `Value` peels the cast to the boxed
-            // `Any` underneath and would miss it, leaving the broken raw `ceq` over `Nullable<T>`. A smart-cast unwrap is
-            // a `nullableValue` node whose Surface is the non-null elem, so it still classifies non-null (raw path).
-            var lf = FloatOperand(StaticType.Surface(args[0], scope));
-            var rf = FloatOperand(StaticType.Surface(args[1], scope));
-            if (lf is { } lo && rf is { } ro && (lo.nullable || ro.nullable))
-                return NullableIeeeEquals(args[0], lo.nullable, args[1], ro.nullable, lo.nullable ? lo.elem : ro.elem);
-            return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
-        }
-        return null;
-    }
-
-    // Shape a comparison operand the way the retired kotc COMPARE `operand()` helper did, but off StaticType:
-    //   (1) a value-nullable primitive (`Int?`) -> wrap in `{k:nullableValue, elem, e}` (surface `Nullable<T>.Value`);
-    //       a raw `Nullable<T>` struct load into a compare op is invalid IL / reads garbage (the C1 miscompile).
-    //   (2) a boxed-Any operand (surface `kotlin.Any`, e.g. an un-narrowed smart-cast `x is Int && x > 10`) whose
-    //       OTHER operand pins a concrete type -> cast it to that type so the op sees the value, not the box.
-    // An operand already unwrapped (a `nullableValue` node) surfaces its non-null elem, so (1) never double-wraps.
-    static JsonNode ShapeCompareOperand(JsonNode operand, JsonNode other, BirScope scope)
-    {
-        var s = StaticType.Surface(operand, scope);
-        if (s is TypeNode.Nullable ns && ns.Of is TypeNode.Fqn nf && ComparePrimFq.Contains(nf.Name))
-            return new JsonObject { ["k"] = "nullableValue", ["elem"] = TypeNode.Write(ns.Of), ["e"] = operand?.DeepClone() };
-        if (s is TypeNode.Fqn sf && sf.Name == "kotlin.Any")
-        {
-            var os = StaticType.Surface(other, scope);
-            if (os is not null && !(os is TypeNode.Fqn of && of.Name == "kotlin.Any"))
-                return new JsonObject { ["k"] = "cast", ["type"] = TypeNode.Write(os), ["e"] = operand?.DeepClone() };
-        }
-        return operand?.DeepClone();
-    }
+    internal static void SelfTest() => TypedSelfTest();
 
     // The value-nullable float element FQN (`kotlin.Double`/`kotlin.Float`) iff the type is raw `Nullable<T>` over a
-    // bare Double/Float — the #152 gate. A boxed-Any operand (StaticType.Value = kotlin.Any) or a non-float nullable
+    // bare Double/Float — the #152 gate. A boxed-Any operand (BirGraphStaticType.Value = kotlin.Any) or a non-float nullable
     // fails, so ONLY a `Double?`/`Float?` structural EQEQ reaches the null-safe bit-equality synthesis.
     static string NullableFloatElem(TypeNode t) =>
         t is TypeNode.Nullable n && n.Of is TypeNode.Fqn { Args: null } f
@@ -369,114 +100,10 @@ static partial class PrimitiveOperatorLowering
         return null;
     }
 
-    // Null-safe DIRECT/mixed IEEE `==` over `Double?`/`Float?` operands (#180). Same operand-hoist skeleton as the
-    // structural #152 path — each operand hoisted into a temp so a side-effecting operand is evaluated ONCE — but the
-    // both-present core is a RAW `binOp ==` (IEEE: `-0.0 == 0.0` TRUE, `NaN == NaN` FALSE, the direct-operator semantics
-    // #95 fixed for the non-null case), NOT the total-order clr{Double,Float}Equals. A NON-null operand is hoisted into a
-    // plain `T` temp (its `hasValue` is a const `true`, its value the bare local); a nullable operand into a `Nullable<T>`
-    // temp read via nullableHasValue/nullableValue. Result: null==null -> true, exactly one null -> false, both present ->
-    // IEEE `==` on the unwrapped values. Emitting `ceq` over `Nullable<T>` structs (the pre-#180 raw path) is unverifiable.
-    static JsonNode NullableIeeeEquals(JsonNode a, bool aNullable, JsonNode b, bool bNullable, string elemFqn)
-    {
-        var na = FreshNullableEqualityTemporary();
-        var nb = FreshNullableEqualityTemporary();
-        JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
-        JsonObject Bool(bool v) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = v };
-        JsonNode VarType(bool nullable) => nullable
-            ? new JsonObject { ["t"] = "nullable", ["of"] = TypeJson.Fqn(elemFqn) }
-            : TypeJson.Fqn(elemFqn);
-        JsonObject Var(string name, JsonNode init, bool nullable) =>
-            new() { ["k"] = "var", ["name"] = name, ["type"] = VarType(nullable), ["init"] = init.DeepClone() };
-        JsonNode HasValue(string name, bool nullable) => nullable
-            ? new JsonObject { ["k"] = "nullableHasValue", ["elem"] = TypeJson.Fqn(elemFqn), ["e"] = Local(name) }
-            : Bool(true);
-        JsonNode Value(string name, bool nullable) => nullable
-            ? new JsonObject { ["k"] = "nullableValue", ["elem"] = TypeJson.Fqn(elemFqn), ["e"] = Local(name) }
-            : Local(name);
-        // both present -> RAW IEEE `binOp ==` on the unwrapped values; both null -> true.
-        var whenSameNullness = new JsonObject
-        {
-            ["k"] = "cond",
-            ["cond"] = HasValue(na, aNullable),
-            ["then"] = new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = Value(na, aNullable), ["rhs"] = Value(nb, bNullable) },
-            ["else"] = Bool(true),
-        };
-        // hasValue(a) == hasValue(b) ? (above) : false  — exactly one null is unequal.
-        var result = new JsonObject
-        {
-            ["k"] = "cond",
-            ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = HasValue(na, aNullable), ["rhs"] = HasValue(nb, bNullable) },
-            ["then"] = whenSameNullness,
-            ["else"] = Bool(false),
-        };
-        return new JsonObject
-        {
-            ["k"] = "valueBlock",
-            ["stmts"] = new JsonArray { Var(na, a, aNullable), Var(nb, b, bNullable) },
-            ["result"] = result,
-        };
-    }
-
     // Distinct temp-name counter for the #152/#180 hoisted operands (mirrors PreconditionLowering's `__rn$`).
     static int _neCounter;
     static string FreshNullableEqualityTemporary() => "__ne$" + Interlocked.Increment(ref _neCounter);
     static string ArithmeticSymbol(string owner, string member, string symbol) =>
         member == "shr" && owner is "kotlin.UInt" or "kotlin.ULong" ? ">>>" : symbol;
     static int ShiftMask(string owner) => owner is "kotlin.Long" or "kotlin.ULong" ? 63 : 31;
-
-    // Null-safe TOTAL-ORDER equality over two value-nullable `Double?`/`Float?` operands (#152). Hoists each raw
-    // `Nullable<T>` operand into a temp (so a side-effecting operand is evaluated ONCE, not per HasValue/Value read),
-    // then builds `null==null -> true / one null -> false / both present -> clr{Double,Float}Equals(a.Value, b.Value)`
-    // as nested `cond` (no `&&`/`||` node kind in CIR). The float helper does `toBits()==toBits()` — `-0.0 != 0.0`,
-    // `NaN == NaN` — matching the bit-based hashCode.
-    static JsonNode NullableFloatEquals(JsonNode a, JsonNode b, string elemFqn)
-    {
-        var floatEq = elemFqn == "kotlin.Double" ? "clrDoubleEquals" : "clrFloatEquals";
-        var na = FreshNullableEqualityTemporary();
-        var nb = FreshNullableEqualityTemporary();
-        JsonObject NullableType() => new() { ["t"] = "nullable", ["of"] = TypeJson.Fqn(elemFqn) };
-        JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
-        JsonObject Var(string name, JsonNode init) => new() { ["k"] = "var", ["name"] = name, ["type"] = NullableType(), ["init"] = init.DeepClone() };
-        JsonObject HasValue(string name) => new() { ["k"] = "nullableHasValue", ["elem"] = TypeJson.Fqn(elemFqn), ["e"] = Local(name) };
-        JsonObject Value(string name) => new() { ["k"] = "nullableValue", ["elem"] = TypeJson.Fqn(elemFqn), ["e"] = Local(name) };
-        JsonObject Bool(bool v) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = v };
-        // both present -> the total-order float helper on the unwrapped values; both null -> true.
-        var whenSameNullness = new JsonObject
-        {
-            ["k"] = "cond",
-            ["cond"] = HasValue(na),
-            ["then"] = FaithfulHints.FloatCall(floatEq, Value(na), Value(nb)),
-            ["else"] = Bool(true),
-        };
-        // hasValue(a) == hasValue(b) ? (above) : false  — exactly one null is unequal.
-        var result = new JsonObject
-        {
-            ["k"] = "cond",
-            ["cond"] = new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = HasValue(na), ["rhs"] = HasValue(nb) },
-            ["then"] = whenSameNullness,
-            ["else"] = Bool(false),
-        };
-        return new JsonObject
-        {
-            ["k"] = "valueBlock",
-            ["stmts"] = new JsonArray { Var(na, a), Var(nb, b) },
-            ["result"] = result,
-        };
-    }
-
-    static string OwnerFqn(JsonNode t) =>
-        TypeJson.Read(t) is TypeNode.Fqn f ? ReferenceMetadataIndex.BareOwnerFqn(f.Name) : null;
-
-    // Wrap a lowered narrow/char operator (`bare`) in a `conv` to its DECLARED Kotlin return type, carried on the
-    // call as the frontend-resolved `dynRet`. Consumes what kotc already resolved (no re-derivation of Kotlin's
-    // operator-typing rules here). A full-width owner (not in NarrowResultFq) is left bare — ilemit's natural typing
-    // already matches. See NarrowResultFq for the truncation rationale (#93). kotc stamps `dynRet` UNCONDITIONALLY on
-    // every member callInstance (BirEmitterCalls, `birType(call.type)`), so the missing/non-Fqn fallback is defensive
-    // and believed-unreachable for a NarrowResultFq owner (a bare fallback would silently reintroduce truncation).
-    static JsonNode WrapDeclaredReturn(JsonObject o, string ownerFqn, JsonNode bare)
-    {
-        if (!NarrowResultFq.Contains(ownerFqn)) return bare;
-        if (TypeJson.Read(o["dynRet"]) is not TypeNode.Fqn ret) return bare;
-        return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(ret.Name), ["e"] = bare };
-    }
 }
