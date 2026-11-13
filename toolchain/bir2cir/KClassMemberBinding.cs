@@ -82,18 +82,14 @@ static class KClassMemberBinding
         // type) AND folding the receiver away drops no evaluation. That last test is Q2 of the value questions
         // (bir-common/ValueStability.cs), asked here for the same reason CallEvalLowering asks it of a binding nothing
         // reads: this fold makes the receiver unread, so it may only be removed where evaluating it is unobservable.
+        // A classRef names its referent, not its System.Type value: folding
+        // (Int::class)::class as though that token were an Int would be wrong.
         BirRuntimeClass value when value.E.OrDefault() is BirGraphNode e && ValueStability.IsDroppable(e.Tag)
             && e is not BirClassReference
             && FqnOf(e.ResultTypeStamp ?? e.ExplicitSourceType) is string st && KnownFinal.Contains(st) => st,
         _ => null,
     };
 
-    // Does this node's `sty`/`type` slot name the type of the VALUE it produces? For almost every kind it does, which
-    // is what lets the bound-`::class` fold above read the receiver's static type straight off it. `classRef` is the
-    // exception and the reason this test exists: its `type` is the type the token REFERS TO, not the type it IS
-    // (kotc emits `{"k":"classRef","type":<the referenced type>}`, BirEmitterExpressions `IrClassReference`) — the
-    // value is a `System.Type`. Reading it as the value's type folds `(Int::class)::class.simpleName` to "Int",
-    // which is the name of the class the token names, not of the token. The receiver there is a `KClass`.
     // The Kotlin FQN a type slot names — the bare Fqn, or a nullable-of-Fqn unwrapped to its core (an inline-spliced
     // `T::class` with a nullable T arg, or a `String?` receiver; the Kotlin answer is the non-null identity's name).
     // Null for any other token shape (tv/array/fn), which the caller routes to the run-time read instead of folding.
