@@ -14950,11 +14950,12 @@ internal static class BirGraphMessagePack
         OptionalField<BirOverride[]> field7 = default;
         OptionalField<TypeNode> field8 = default;
         OptionalField<TypeNode> field9 = default;
+        OptionalField<TypeNode> field10 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 10); if (IrMessagePack.ReadString(ref reader) != "clrEventGet") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 11); if (IrMessagePack.ReadString(ref reader) != "clrEventGet") throw new FormatException(); break;
                 case "companionCall":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
@@ -14995,6 +14996,10 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 9);
                     field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
                     break;
+                case "ret":
+                    Seen(ref seen, 1UL << 10);
+                    field10 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -15011,13 +15016,14 @@ internal static class BirGraphMessagePack
             Overrides = field7,
             CompanionReceiver = field8,
             SuspendFnTypePre = field9,
+            Ret = field10,
         };
     }
 
     internal static void WriteBirEventGet(ref MessagePackWriter writer, BirEventGet value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.CompanionCall.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.Overrides.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.CompanionCall.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.Overrides.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("clrEventGet");
         if (value.CompanionCall.IsPresent)
@@ -15113,6 +15119,15 @@ internal static class BirGraphMessagePack
             else
             {
                 IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+            }
+        }
+        if (value.Ret.IsPresent)
+        {
+            writer.Write("ret");
+            if (value.Ret.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.Ret.Value, depth + 1);
             }
         }
     }
@@ -25059,11 +25074,12 @@ internal static class BirGraphMessagePack
         OptionalField<IBirExpression> field1 = default;
         OptionalField<IBirExpression[]> field2 = default;
         OptionalField<BirMemberReference> field3 = default;
+        OptionalField<TypeNode> field4 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 4); if (IrMessagePack.ReadString(ref reader) != "delegateInvoke") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 5); if (IrMessagePack.ReadString(ref reader) != "delegateInvoke") throw new FormatException(); break;
                 case "funcType":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -25080,6 +25096,10 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 3);
                     field3 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
+                case "sty":
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -25090,13 +25110,14 @@ internal static class BirGraphMessagePack
             Recv = field1,
             Args = field2,
             InvokeRef = field3,
+            Sty = field4,
         };
     }
 
     internal static void WriteBirDelegateInvoke(ref MessagePackWriter writer, BirDelegateInvoke value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.FuncType.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.InvokeRef.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.FuncType.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.InvokeRef.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("delegateInvoke");
         if (value.FuncType.IsPresent)
@@ -25138,6 +25159,15 @@ internal static class BirGraphMessagePack
             else
             {
                 WriteBirMemberReference(ref writer, value.InvokeRef.Value, depth + 1);
+            }
+        }
+        if (value.Sty.IsPresent)
+        {
+            writer.Write("sty");
+            if (value.Sty.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.Sty.Value, depth + 1);
             }
         }
     }

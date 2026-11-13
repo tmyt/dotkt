@@ -2692,6 +2692,7 @@ internal static class BirGraphDom
                 case "overrides": break;
                 case "companionReceiver": break;
                 case "suspendFnTypePre": break;
+                case "ret": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirEventGet at {source.GetPath()}");
             }
         return new BirEventGet
@@ -2706,6 +2707,7 @@ internal static class BirGraphDom
             Overrides = Field<BirOverride[]>(fields, "overrides", value => ((JsonArray)value!).Select(item0 => ReadBirOverride(item0!)).ToArray()),
             CompanionReceiver = Field<TypeNode>(fields, "companionReceiver", value => TypeNode.Parse(value!.GetValue<string>())),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            Ret = Field<TypeNode>(fields, "ret", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 
@@ -4760,6 +4762,7 @@ internal static class BirGraphDom
                 case "recv": break;
                 case "args": break;
                 case "invokeRef": break;
+                case "sty": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirDelegateInvoke at {source.GetPath()}");
             }
         return new BirDelegateInvoke
@@ -4768,6 +4771,7 @@ internal static class BirGraphDom
             Recv = Field<IBirExpression>(fields, "recv", value => ReadBirExpression(value!)),
             Args = Field<IBirExpression[]>(fields, "args", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             InvokeRef = Field<BirMemberReference>(fields, "invokeRef", value => ReadBirMemberReference(value!)),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 

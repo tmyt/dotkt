@@ -317,8 +317,7 @@ static partial class CallEvalLowering
         // only because their producer defines them that way; require that producer to state the fact on the node
         // instead of reconstructing it here from ownerType. Other historically untyped values retain their existing
         // handling — this check is the field-specific ownership boundary exercised by the companion spill path.
-        if (valueType == null && value is JsonObject { } valueObject
-            && Str(valueObject["k"]) == "staticField")
+        if (valueType == null && value is JsonObject valueObject && Str(valueObject["k"]) == "staticField")
             throw new InvalidOperationException(
                 $"bir2cir: cannot type the static-field value whose evaluation must be preserved before {context}; "
                 + "its producer must carry the field's exact node-local result type.");

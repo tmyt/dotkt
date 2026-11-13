@@ -222,7 +222,7 @@ static partial class NullableTvErasureCallRealign
                 AddUnambiguous(declarations, name + "|" + sig.Params.Length, sig);
     }
 
-    sealed record MethodSnapshot(string Name, string Identity, string PropertyName, string AccessorKind,
+    internal sealed record MethodSnapshot(string Name, string Identity, string PropertyName, string AccessorKind,
         int Arity, bool Static, DeclSig Signature);
 
     static void CollectNewTypeContainers(JsonNode node, DeclIndex idx)
@@ -232,27 +232,7 @@ static partial class NullableTvErasureCallRealign
             foreach (var t in types)
                 if (t is JsonObject to)
                 {
-                    if (Str(to["name"]) is string nm && !idx.ByOwner.ContainsKey(nm))
-                    {
-                        var sigs = new Dictionary<string, DeclSig>(StringComparer.Ordinal);
-                        var propertySigs = new Dictionary<string, List<DeclSig>>(StringComparer.Ordinal);
-                        if (to["methods"] is JsonArray ms)
-                            foreach (var method in ms.OfType<JsonObject>())
-                                if (ReadMethodSnapshot(method) is { } snapshot)
-                                    AddMethodSnapshot(idx, nm, snapshot, sigs, propertySigs);
-                        idx.ByOwner[nm] = sigs;
-                        idx.PropertiesByOwner[nm] = propertySigs;
-                        var ctors = new Dictionary<int, TypeNode[]>();
-                        if (to["ctors"] is JsonArray cs)
-                            foreach (var c in cs)
-                                if (c is JsonObject co && ReadParams(co["params"]) is TypeNode[] cp)
-                                    AddConstructorSnapshot(ctors, cp);
-                        idx.Ctors[nm] = ctors;
-                        var slots = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-                        CollectSlots(to["fields"], slots);
-                        CollectSlots(to["properties"], slots);
-                        idx.Slots[nm] = slots;
-                    }
+                    if (Str(to["name"]) is string nm) AdmitNewType(idx, nm, () => CaptureRecipe(to));
                     CollectNewTypeContainers(to, idx);   // late materialized nested types
                 }
     }

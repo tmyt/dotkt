@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Realign a generic subtype cast from the already-constructed source interface/base. If `D<X> : I<X>` and an
 // expression has static type `I<object>`, a frontend cast target `D<T>` must become `D<object>` after an ABI erasure of
@@ -17,28 +19,21 @@ static class GenericDowncastRealignment
         public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
     }
 
-    public static Dictionary<string, Def> Collect(IEnumerable<JsonNode> roots)
+    public static Dictionary<string, Def> Collect(IEnumerable<BirFileDeclaration> roots)
     {
         var result = new Dictionary<string, Def>(StringComparer.Ordinal);
-        foreach (var root in roots) CollectFrom(root, result);
+        foreach (var file in roots)
+            foreach (var type in file.Types.OrEmpty())
+                if (type.Name.HasValue)
+                    result[type.Name.Value] = new Def {
+                        // This consumer has always used the own declaration vector,
+                        // not the captured+own physical frame used by SupertypeGraph.
+                        Arity = type.TypeParams.OrEmpty().Length,
+                        Base = BirGraphValue.CopyType(type.Base.OrDefault()) as TypeNode.Fqn,
+                        Interfaces = type.Interfaces.OrEmpty().OfType<TypeNode.Fqn>()
+                            .Select(value => (TypeNode.Fqn)BirGraphValue.CopyType(value)).ToArray(),
+                    };
         return result;
-    }
-
-    static void CollectFrom(JsonNode node, Dictionary<string, Def> result)
-    {
-        if (node is not JsonObject obj || obj["types"] is not JsonArray types) return;
-        foreach (var type in types.OfType<JsonObject>())
-        {
-            if (Str(type["name"]) is string name)
-                result[name] = new Def
-                {
-                    Arity = (type["typeParams"] as JsonArray)?.Count ?? 0,
-                    Base = TypeJson.Read(type["base"]) as TypeNode.Fqn,
-                    Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read).OfType<TypeNode.Fqn>().ToArray()
-                        ?? Array.Empty<TypeNode.Fqn>(),
-                };
-            CollectFrom(type, result);
-        }
     }
 
     public static void Apply(JsonNode root, IReadOnlyDictionary<string, Def> defs)

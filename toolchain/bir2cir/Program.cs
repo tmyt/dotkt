@@ -66,6 +66,9 @@ static class Bir2Cir
                 ForInLowering.SelfTestTypedRangePrefix();
                 ArrayConstructionLowering.SelfTestSource();
                 CharCodeInvokeLowering.SelfTestSource();
+                NetInteropBinding.TypedSelfTest();
+                PropertyReferenceFunctionLowering.SelfTestSource();
+                LocalStaticOwnerBinding.SelfTestSource();
                 NullableTvErasureCallRealign.SelfTestSourceFixedSlots();
                 ValueSlotNullableWrite.SelfTestSource();
                 RoundtripMetadata.SourceSuspendResultSelfTest();
@@ -427,6 +430,25 @@ sealed class Pipeline
             FaithfulHintRecognition.Apply(source, inventory.LocalTopLevelFunctions);
             CharCodeInvokeLowering.Apply(source);
         }
+        // Native binding consumes the same owning operations before the one
+        // remaining DOM frontier. Reference builds retain Kotlin declarations.
+        if (!referenceBuild)
+            foreach (var source in captured) NetInteropBinding.Apply(source, refs);
+        // Property-reference adaptation appends declarations. Capture the
+        // consumers' original module clock before any file creates an adapter.
+        var propertyFunctionFields = PropertyReferenceFunctionLowering.CollectFieldSlots(captured);
+        var localStatics = LocalStaticOwnerBinding.Collect(captured);
+        var moduleBindings = new ModuleBindingSnapshots(
+            AnySlotRebind.CollectLocalTypes(captured),
+            GenericDowncastRealignment.Collect(captured),
+            SupertypeGraph.CollectSource(captured));
+        var syntheticTypes = captured.Select(source =>
+            NullableTvErasureCallRealign.CaptureNewSyntheticTypes(source, nullableDeclarations)).ToArray();
+        foreach (var source in captured)
+        {
+            PropertyReferenceFunctionLowering.Apply(source, propertyFunctionFields);
+            LocalStaticOwnerBinding.Apply(source, localStatics);
+        }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -439,7 +461,8 @@ sealed class Pipeline
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
                 root,
-                inputsWithSources[index].Suspend));
+                inputsWithSources[index].Suspend,
+                syntheticTypes[index]));
         }
 
         var continuingRoots = files.Select(file => file.Root).ToArray();
@@ -456,7 +479,8 @@ sealed class Pipeline
         retiredDom.Clear();
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames, placement,
-            new ModulePreparation(inventory, forwardedEvents, nullableDeclarations, uncheckedReturns, enums, sharedCells));
+            new ModulePreparation(inventory, forwardedEvents, nullableDeclarations, uncheckedReturns, enums, sharedCells,
+                moduleBindings));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -541,20 +565,9 @@ sealed class Pipeline
         // inherited from the implicit kotlin.Any, which ilemit cannot resolve because the base field is absent) to an
         // `objMethod`, exactly as EnumMemberBinding does for value-type enums (#96). Module-wide because the call site
         // may live in a different .bir.json than the type declaration, while ilemit's emitted-type table is assembly-wide.
-        var localRefTypes = AnySlotRebind.CollectLocalTypes(birFiles.Select(f => f.Root));
-
-        // The static members every LOCALLY DECLARED type carries, module-wide: a `C.f()` call site may live in another
-        // .bir.json than C's declaration. Feeds LocalStaticOwnerBinding, which moves such a call's declaring type onto
-        // the CLR owner axis before the ownerless (reference-universe) recognizers get a look at it.
-        var localStatics = LocalStaticOwnerBinding.Collect(birFiles.Select(f => f.Root));
-        // Property-reference values may be written into a function-typed field declared by a sibling BIR file.
-        // Preserve the module's declared field slots before per-file lowering so the representation boundary never
-        // has to infer a field type from a use or from a generated property's physical class.
-        var propertyFunctionFields = PropertyReferenceFunctionLowering.CollectFieldSlots(
-            birFiles.Select(f => f.Root));
-
-        var genericDowncastHierarchy = GenericDowncastRealignment.Collect(birFiles.Select(f => f.Root));
-        var iterableHierarchy = SupertypeGraph.Collect(birFiles.Select(f => f.Root));
+        var localRefTypes = module.Preparation.Bindings.LocalReferenceTypes;
+        var genericDowncastHierarchy = module.Preparation.Bindings.GenericDowncastHierarchy;
+        var iterableHierarchy = module.Preparation.Bindings.IterableHierarchy;
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
@@ -568,35 +581,12 @@ sealed class Pipeline
             // slots in the nullable-generic use index before the declaration erasure below. Otherwise a late
             // inherited protected-property read may be correctly realigned to object[] while its store into a
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
-            NullableTvErasureCallRealign.CollectNewSyntheticTypes(bir.Root, nullableTvDeclRets);
-            // .NET-INTEROP CALL BINDING (A2 / #61): bind a reference-KLIB-projected .NET member call — which kotc now emits as
-            // a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN identity — to its CLR call SHAPE
-            // (clrStatic/clrInstance/clrPropGet/clrPropSet/clrGeneric*), resolved off the loaded .NET reference
-            // assemblies (ReferenceMetadataIndex's long-lived MetadataLoadContext). THIS is where .NET binding belongs
-            // (the Kotlin<->CLR layer); kotc is .NET-agnostic. Runs EARLY — before ShapeSynthesis (so a generic .NET
-            // method's `shapeTypes` is derived) and before every type-erasing / substitution pass — reproducing the flow
-            // that existed when kotc emitted the `clr*` nodes directly. A no-op for a `kotlin.*`/local/unresolvable owner
-            // (the stdlib is bound by MemberCallSubstitution off the ref.dll). Dedicated event-read and managed-reference
-            // vocabulary remains for its own lowering rather than being interpreted as an ordinary native call.
-            // Non-ref only (the stdlib self-build injects no dll2klib .NET interop).
-            if (!_options.RefBuild) NetInteropBinding.Apply(bir.Root, refs);
-            // PROPERTY-REFERENCE FUNCTION MATERIALIZATION (#242): kotc emits a genuine KProperty construction plus
-            // its callable KProperty interface fact. Once every inline/default payload has been spliced and .NET calls
-            // expose their declared parameter vectors, adapt any such value that fills a function-typed slot to a
-            // forwarding CLR closure. The walk is structural over locals/fields/returns/call and delegate arguments/
-            // array writes/joins, so one representation rule covers aliases, vararg packs, and nested values alike.
-            PropertyReferenceFunctionLowering.Apply(bir.Root, propertyFunctionFields);
-            // A Kotlin static member call whose declaring type is emitted by THIS compilation: the declaring identity
-            // IS the CLR owner, so move it onto the owner axis now — after the .NET binder has had first refusal and
-            // before the ownerless recognizers below, which resolve names against the reference universe and must
-            // never be offered a call whose owner is already known. Runs in every build: a ref build declares the same
-            // statics, and its bodies are squashed later.
-            LocalStaticOwnerBinding.Apply(bir.Root, localStatics);
+            NullableTvErasureCallRealign.ApplyNewSyntheticTypes(bir.SyntheticTypes, nullableTvDeclRets);
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
             // #11/#501 — VALUE-TYPE PLATFORM SLOT ACCESS COERCION: reconcile reflected bare/Nullable<V> property or
             // field slots with the Kotlin platform view on both writes and reads. Writes receive explicit wrap/unwrap;
             // reads carry the reflected physical result so the receiving local cannot reinterpret Nullable<V> as V.
-            // Runs right after NetInteropBinding and before BirTypeLowering. Non-ref only.
+            // Runs after source/native binding and before BirTypeLowering. Non-ref only.
             if (!_options.RefBuild) ValueSlotNullableWrite.Apply(bir.Root, refs, isValueFqn);
             // W1-S1 (#46/#44): the `clrGeneric*` overload-matcher is now the STRUCTURED `resolvedMemberParams` descriptor
             // NetInteropBinding carries (the callee's declared param TypeNodes) — BirTypeLowering lowers it and ilemit
@@ -1767,7 +1757,8 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
     }
 }
 
-sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
+sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend,
+    NullableTvErasureCallRealign.SyntheticTypesSnapshot SyntheticTypes);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
     SourceModuleIndex SourceIndex,
     GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots,
@@ -1778,7 +1769,10 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     IReadOnlyDictionary<(string Owner, string Event), TypeNode> ForwardedEvents,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
-    IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells);
+    IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings);
+sealed record ModuleBindingSnapshots(Dictionary<string, AnySlotRebind.TypeInfo> LocalReferenceTypes,
+    Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy,
+    Dictionary<string, SupertypeGraph.Def> IterableHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties);
