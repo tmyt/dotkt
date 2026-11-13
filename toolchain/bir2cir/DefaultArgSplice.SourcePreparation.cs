@@ -18,7 +18,8 @@ static partial class DefaultArgSplice
             var materialized = new List<MaterializedOccurrence>();
             var owner = file.FileClass.OrDefault();
             var expansion = new TypedDefaultExpansion(refs, hoist, owner, "source default preparation");
-            var fileContext = new CaptureContext(owner ?? "<file>", file.Pos.OrDefault()?.F.OrDefault(), file.Pos.OrDefault()?.L.OrDefault());
+            var position = file.Pos.OrDefault();
+            var fileContext = new CaptureContext("<file>", position?.F.OrDefault(), position?.L.HasValue == true ? position.L.Value : null);
             void Walk(BirGraphValue node, CaptureContext context)
             {
                 if (node == null || node is BirAttribute or IBirExecutablePayload) return;

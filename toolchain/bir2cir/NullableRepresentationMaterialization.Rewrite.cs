@@ -110,6 +110,9 @@ static partial class NullableRepresentationMaterialization
             if (role == BirRepresentationRole.Constraint) return mapping.Rewrite(type,
                 type is TypeNode.Tv ? NullableGenericErasure.Pos.Argument : NullableGenericErasure.Pos.Slot);
             var location = role switch {
+                // A ref-cell declaration owns a value slot. Native address uses do not
+                // change its declaration projection to the argument frame.
+                BirRepresentationRole.Element when node is BirRefTypeDeclaration => NullableGenericErasure.Pos.Slot,
                 BirRepresentationRole.ValueType or BirRepresentationRole.Element when node is not BirGraphNode && mapping.IsNativeField(node)
                     => NullableGenericErasure.Pos.Argument,
                 BirRepresentationRole.Return or BirRepresentationRole.ResultStamp when node is BirFieldGet or BirStaticFieldGet or BirLateinitGet

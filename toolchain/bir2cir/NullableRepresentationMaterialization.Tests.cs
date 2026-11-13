@@ -89,6 +89,15 @@ static partial class NullableRepresentationMaterialization
             && nativeStore.Ret.Value is TypeNode.Fqn { Args: { } arguments } && TestTypes(arguments, TestTv(0, "type"), TestTv(1, "type"))
             && TestSame(ownMethod.Params.Value[0].Type.Value, TestTv(1)),
             "Kotlin body demand changed a native owner's scalar slot or lost an independent method value frame");
+
+        var nativeCell = new BirRefTypeDeclaration { Name = "NativeCell", TypeParams = new[] { TestParameter("T") },
+            Elem = TestNullable(TestTv(0, "type")), _nativeLocation = true };
+        var cellRoot = TestFile("NativeCellSlots"); cellRoot.RefTypes = new[] { nativeCell };
+        var cellPolicy = TestPolicy(cellRoot);
+        Apply(new[] { cellRoot }, _ => false, policy: cellPolicy);
+        TestRequire(cellPolicy.IsNativeField(nativeCell) && nativeCell.TypeParams.Value.Length == 2
+            && TestSame(nativeCell.Elem.Value, TestType("object")),
+            "Native ref-cell declaration changed its value slot into a nullable argument companion");
     }
 
     static void TestParameterRolesAndBounds()

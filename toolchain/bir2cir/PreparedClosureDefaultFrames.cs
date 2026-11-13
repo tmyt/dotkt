@@ -10,7 +10,6 @@ using static ClosureSynthesis;
 // Restore their current transformed fields, not a pre-materialization file copy.
 static class PreparedClosureDefaultFrames
 {
-    internal const string ReturnArgumentKey = "_preparedDelegateReturnArgument";
     internal sealed record StageResult(IReadOnlyList<BirClassDefinition> Types, Action Restore);
 
     internal static StageResult Stage(BirFileDeclaration file, IEnumerable<MaterializedOccurrence> inputs, ReferenceMetadataIndex refs)

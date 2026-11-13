@@ -204,11 +204,6 @@ sealed partial class GenericRepresentationPolicy
             ? new TypeNode.Fqn(bound.Name, bound.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray()) : bound
         : HasNativeConstraint(bound) ? bound : null;
 
-    internal bool OwnsMethodValueSlots(JsonObject declaration) =>
-        OwnsMethodValueSlots((declaration["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-                .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic"),
-            (declaration["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>().Select(edge => TypeJson.Read(edge["owner"])));
-
     internal bool OwnsMethodValueSlots(bool intrinsic, IEnumerable<TypeNode> overrideOwners) =>
         !intrinsic && !overrideOwners.Any(owner => !OwnsValueSlots((owner as TypeNode.Fqn)?.Name));
 
@@ -230,8 +225,6 @@ sealed partial class GenericRepresentationPolicy
 
     public NullableRepresentationFrame.Role ApplicationRole(string owner, NullableRepresentationFrame.Role role) =>
         role;
-
-    public bool IsStorageElement(string kind, string key) => false;
 
     // Frame expansion must retain the source owner until declaration matching is complete. Lowering only a
     // call's type arguments here would compare CLR IReadOnlyList<T> with a selected Kotlin List<T> descriptor.

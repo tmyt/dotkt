@@ -22,19 +22,6 @@ sealed class NullableRepresentationTypes
     internal NullableRepresentationFrame MethodFrame => _method;
     internal bool NativeOwnerSlots { get; }
 
-    // These facts are expressed in the selected declaration's frame, not the lexical caller's frame.
-    internal static bool IsDeclarationFrameKey(string key, string kind, JsonObject expression) => key is
-        "sig" or "shapeTypes" or "paramSig" or "delegationSig"
-        or "memberOwnerTypeParams" or "memberMethodTypeParams"
-        or "sharedCellTypeParams"
-        or "memberReturnType" or "memberSignature" or "memberType" or "awaitResult"
-        || key == "retType" && kind == "callInline"
-        || key == "argTypes" && kind != null && kind != "new"
-        // BIR's exact result-stamp contract (spec §2.7): a result equal to sty is already caller-relative,
-        // even on a constructed member/property call. Owner presence does not establish result ownership.
-        || key == "ret" && kind is "callStatic" or "callInstance"
-            && IsDeclarationReturn(kind, TypeJson.Read(expression["ret"]), TypeJson.Read(expression["sty"]));
-
     internal static bool IsDeclarationReturn(string kind, TypeNode result, TypeNode stamp) =>
         kind is "callStatic" or "callInstance" && !(stamp != null && stamp.Equals(result));
 
@@ -82,7 +69,6 @@ sealed class NullableRepresentationTypes
     public TypeNode StorageArgument(TypeNode type) => Rewrite(type, NullableGenericErasure.Pos.Argument, storage: true);
     internal TypeNode StorageConstraint(TypeNode.Fqn bound) =>
         _policy?.StorageConstraint(bound) is { } constraint ? Argument(constraint) : null;
-    public bool IsStorageElement(string kind, string key) => _policy?.IsStorageElement(kind, key) == true;
     public bool IsNativeField(JsonObject node) => _policy?.IsNativeField(node) == true;
     public bool IsNativeField(BirGraphValue node) => _policy?.IsNativeField(node) == true;
     public TypeNode ArgumentForRole(TypeNode type, NullableRepresentationFrame.Role role) => role switch {
