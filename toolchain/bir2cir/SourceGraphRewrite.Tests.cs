@@ -53,7 +53,7 @@ static partial class SourceGraphRewrite
             if (node is BirLocal read)
             {
                 var type = expected[read];
-                if (BirGraphStaticType.Surface(read, scope) != type)
+                if (BirGraphStaticType.Surface((IBirExpression)read, scope) != type)
                     throw new InvalidOperationException("Source lexical rewrite leaked or prematurely declared a local");
                 observed.Add((scope, type));
                 checkedReads++;
