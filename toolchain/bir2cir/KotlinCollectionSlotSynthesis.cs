@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // KOTLIN-ONLY collection-interface slots — the mirror image of CollectionBclSlotSynthesis.
 //

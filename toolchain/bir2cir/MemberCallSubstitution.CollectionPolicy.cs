@@ -168,11 +168,11 @@ static partial class MemberCallSubstitution
         if (owner.Name == "kotlin.collections.MutableList"
             && (member is "set" or "set_Item" && count == 2 || member is "removeAt" or "RemoveAt" && count == 1))
         {
-            var helper = (member is "set" or "set_Item", projected) switch {
+            var indexedHelper = (member is "set" or "set_Item", projected) switch {
                 (true, true) => "clrProjectedListSet", (false, true) => "clrProjectedListRemoveAt",
                 (true, false) => "clrListSet", _ => "clrListRemoveAt",
             };
-            return Plan(helper, projected, explicitResult is TypeNode.Tv ? null : explicitResult)
+            return Plan(indexedHelper, projected, explicitResult is TypeNode.Tv ? null : explicitResult)
                 with { Element = projected ? element : OwnerElemArg(owner) };
         }
         return null;
