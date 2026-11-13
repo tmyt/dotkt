@@ -74,10 +74,43 @@ sealed partial class AliasConstructorDelegationExpansion
         if (temporary.Name.Value == nestedName || ((BirLocal)reads["argument"]).Name.Value != temporary.Name.Value
             || ((BirVariable)((BirValueBlock)temporary.Init.Value).Stmts.Value[0]).Name.Value != nestedName)
             throw new InvalidOperationException("Alias argument temporary captured an incoming argument's local");
+        SelfTestAliasDefinitionOwnership();
         SelfTestNestedConstructions();
         SelfTestCarrier();
         TypedCallEvalLowering.SelfTest();
         Console.WriteLine("[alias constructor expansion] self-test OK (owning composition, lexical scopes, nested identity, executable codecs)");
+    }
+
+    static void SelfTestAliasDefinitionOwnership()
+    {
+        var text = new TypeNode.Fqn("System.String");
+        var terminal = new TypeNode[] { text, new TypeNode.Fqn("System.Object") };
+        var baseType = new TypeNode.Fqn("Probe.BaseAlias");
+        BirConstructor Constructor() => new() {
+            Params = new[] { new BirParameter { Name = "p0", Type = text } },
+            BaseArgs = new IBirExpression[] { Read("p0") }, DelegationSig = new TypeNode[] { text },
+        };
+        var alias = new BirClassDefinition {
+            Name = "Probe.DefinedAlias", Kind = "class", Base = baseType, Ctors = new[] { Constructor() },
+        };
+        var derived = new BirClassDefinition {
+            Name = "Probe.Consumer", Kind = "class", Base = baseType, Ctors = new[] { Constructor() },
+        };
+        var expansion = new AliasConstructorDelegationExpansion(new Dictionary<string, BirClassDefinition> {
+            ["Probe.DefinedAlias"] = (BirClassDefinition)alias.DeepClone(),
+            [baseType.Name] = new() { Name = baseType.Name, Kind = "class", Ctors = new[] { Constructor() } },
+        }, null);
+        expansion.memo[(baseType.Name, 0)] = Payload(new[] { "p0" }, new TypeNode[] { text }, Array.Empty<IBirStatement>(),
+            new IBirExpression[] { Read("p0"), Constant(null) }, terminal);
+        expansion.Apply(new BirFileDeclaration { Types = new IBirTypeDeclaration[] { alias, derived } });
+        var definition = alias.Ctors.Value[0];
+        var consumer = derived.Ctors.Value[0];
+        if (definition.PreStmts.IsPresent || definition.BaseArgs.Value.Length != 1
+            || !definition.DelegationSig.Value.SequenceEqual(new TypeNode[] { text })
+            || consumer.PreStmts.OrEmpty().Length != 1 || consumer.BaseArgs.Value.Length != 2
+            || !consumer.DelegationSig.Value.SequenceEqual(terminal)
+            || expansion.aliases["Probe.DefinedAlias"].Ctors.Value[0].PreStmts.IsPresent)
+            throw new InvalidOperationException("Alias adapter definitions were materialized as runtime constructor consumers");
     }
 
     static void SelfTestNestedConstructions()

@@ -67,7 +67,13 @@ sealed partial class AliasConstructorDelegationExpansion
 
     public void Apply(BirFileDeclaration root)
     {
-        foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>()) ExpandType(type);
+        foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>())
+        {
+            var name = type.Name.OrDefault();
+            // Alias constructors define adapters; they are not runtime TypeDefs
+            // whose base delegations need materialization at this boundary.
+            if (name == null || !aliases.ContainsKey(ReferenceMetadataIndex.BareOwnerFqn(name))) ExpandType(type);
+        }
         RewriteConstructions(root);
     }
 
