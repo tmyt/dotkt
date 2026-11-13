@@ -19,7 +19,7 @@ using DotKt.Bir;
 //
 // Runs per file, right after NetInteropBinding and before MemberCallSubstitution: the external binders have had first
 // refusal, and the ownerless recognizers that follow must not see a call whose declaring type is already resolved.
-static class LocalStaticOwnerBinding
+static partial class LocalStaticOwnerBinding
 {
     internal sealed class LocalStatics
     {
@@ -50,24 +50,28 @@ static class LocalStaticOwnerBinding
                 var name = type["staticCarrier"] is JsonObject carrier && Str(carrier["owner"]) is string semantic
                     ? semantic
                     : physicalName;
-                LocalStatics statics = null;
                 foreach (var method in methods.OfType<JsonObject>())
                     // Physical helpers (including hoisted local functions) do
                     // not declare Kotlin static members on this semantic owner.
                     if (Bool(method["static"]) && !Bool(method["generated"]) && Str(method["name"]) is string mn)
                     {
-                        if (statics == null && !index.TryGetValue(name, out statics))
-                            index[name] = statics = new LocalStatics { PhysicalOwner = physicalName };
-                        else if (statics.PhysicalOwner != physicalName)
-                            throw new System.InvalidOperationException(
-                                $"multiple local static owners claim semantic type '{name}'");
-                        statics.Methods.Add(mn);
-                        if (KotlinPropertyAccessors.TryIdentity(method, out var propertyName, out var accessorKind))
-                            statics.PropertyAccessors[propertyName + "\u001f" + accessorKind] = mn;
+                        var accessor = KotlinPropertyAccessors.TryIdentity(method, out var propertyName, out var accessorKind);
+                        AddStatic(index, name, physicalName, mn, accessor ? propertyName : null, accessorKind);
                     }
             }
             CollectInto(type, index);
         }
+    }
+
+    static void AddStatic(Dictionary<string, LocalStatics> index, string semanticOwner, string physicalOwner,
+        string method, string property, string accessor)
+    {
+        if (!index.TryGetValue(semanticOwner, out var statics))
+            index[semanticOwner] = statics = new LocalStatics { PhysicalOwner = physicalOwner };
+        else if (statics.PhysicalOwner != physicalOwner)
+            throw new System.InvalidOperationException($"multiple local static owners claim semantic type '{semanticOwner}'");
+        statics.Methods.Add(method);
+        if (property != null) statics.PropertyAccessors[property + "\u001f" + accessor] = method;
     }
 
     public static void Apply(JsonNode root, Dictionary<string, LocalStatics> index)

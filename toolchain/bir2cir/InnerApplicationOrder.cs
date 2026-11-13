@@ -10,6 +10,7 @@ using DotKt.Cir;
 // Declaration-relative substitution needs this order even before the application itself is projected.
 sealed class InnerApplicationOrder
 {
+    internal readonly record struct DeclarationFact(string Name, bool Inner, int CapturedCount, string SemanticOwner);
     readonly Dictionary<string, (int Count, string Owner)> _locals = new(StringComparer.Ordinal);
     readonly ReferenceMetadataIndex _references;
 
@@ -22,10 +23,17 @@ sealed class InnerApplicationOrder
     internal InnerApplicationOrder(IEnumerable<BirFileDeclaration> roots, ReferenceMetadataIndex references)
     {
         _references = references;
-        foreach (var declaration in roots.SelectMany(root => root.Types.OrEmpty()))
-            if (declaration is BirClassDefinition type)
-                Add(type.Name.OrDefault(), type.Mods.OrDefault()?.Inner.OrDefault() == true,
-                    type.OuterTypeParamCount.OrDefault(), type.SemanticOwner.OrDefault());
+        foreach (var root in roots) Add(Capture(root));
+    }
+
+    internal static DeclarationFact[] Capture(BirFileDeclaration file)
+        => file.Types.OrEmpty().OfType<BirClassDefinition>().Select(type => new DeclarationFact(
+            type.Name.OrDefault(), type.Mods.OrDefault()?.Inner.OrDefault() == true,
+            type.OuterTypeParamCount.OrDefault(), type.SemanticOwner.OrDefault())).ToArray();
+
+    internal void Add(IEnumerable<DeclarationFact> declarations)
+    {
+        foreach (var fact in declarations) Add(fact.Name, fact.Inner, fact.CapturedCount, fact.SemanticOwner);
     }
 
     public void Add(JsonNode node)

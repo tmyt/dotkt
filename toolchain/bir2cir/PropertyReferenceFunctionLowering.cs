@@ -15,7 +15,7 @@ using DotKt.Bir;
 // join. Transparent valueBlock/cond/cast/array containers propagate the same target to their values. The forwarding
 // class captures the KProperty through its declared interface and invokes that interface, so no generated-name,
 // physical-layout, or method-body inference is involved.
-static class PropertyReferenceFunctionLowering
+static partial class PropertyReferenceFunctionLowering
 {
     const string Marker = "propertyFunction";
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
@@ -408,9 +408,7 @@ static class PropertyReferenceFunctionLowering
         TypeNode type = StaticType.Surface(value, BirScope.FromVars(context.Locals));
         while (type is TypeNode.Nullable nullable) type = nullable.Of;
         while (type is TypeNode.Oblivious oblivious) type = oblivious.Of;
-        return type is TypeNode.Fqn iface
-            && (iface.Name.StartsWith("kotlin.reflect.KProperty", StringComparison.Ordinal)
-                || iface.Name.StartsWith("kotlin.reflect.KMutableProperty", StringComparison.Ordinal))
+        return type is TypeNode.Fqn iface && IsPropertyInterface(iface)
             ? iface : null;
     }
 
@@ -430,41 +428,14 @@ static class PropertyReferenceFunctionLowering
 
     static void Adapt(JsonObject construction, TypeNode.Fqn authoredIface, TypeNode.Fn target)
     {
-        if (authoredIface.Args is not { Length: > 0 } ifaceArgs)
-            throw new InvalidOperationException("bir2cir: propertyFunction interface has no value argument");
-        var arity = authoredIface.Name switch
-        {
-            "kotlin.reflect.KProperty0" or "kotlin.reflect.KMutableProperty0" => 0,
-            "kotlin.reflect.KProperty1" or "kotlin.reflect.KMutableProperty1" => 1,
-            "kotlin.reflect.KProperty2" or "kotlin.reflect.KMutableProperty2" => 2,
-            _ => throw new InvalidOperationException(
-                $"bir2cir: propertyFunction names non-KProperty interface '{authoredIface.Name}'"),
-        };
-        if (ifaceArgs.Length != arity + 1 || target.DelegateParams.Length != arity)
-            throw new InvalidOperationException(
-                $"bir2cir: KProperty{arity} cannot fill function slot with {target.DelegateParams.Length} parameter(s)");
-
-        var canonicalName = $"kotlin.reflect.KProperty{arity}";
-        var actuals = new List<TypeNode>();
-        var allowsRefStruct = new List<bool>();
-        TypeNode Dense(TypeNode actual, bool propertyArgument)
-        {
-            if (!MentionsTypeVariable(actual)) return actual;
-            var index = actuals.FindIndex(t => t.Equals(actual));
-            if (index < 0)
-            {
-                index = actuals.Count;
-                actuals.Add(actual);
-                allowsRefStruct.Add(!propertyArgument);
-            }
-            else if (propertyArgument) allowsRefStruct[index] = false;
-            return new TypeNode.Tv("type", index);
-        }
-
-        var denseIfaceArgs = ifaceArgs.Select(t => Dense(t, propertyArgument: true)).ToArray();
-        var denseParams = target.DelegateParams.Select(t => Dense(t, propertyArgument: false)).ToArray();
-        var denseRet = Dense(target.Ret, propertyArgument: false);
-        var denseIface = new TypeNode.Fqn(canonicalName, denseIfaceArgs);
+        var plan = PlanAdapter(authoredIface, target);
+        var arity = plan.Arity;
+        var actuals = plan.Actuals;
+        var allowsRefStruct = plan.AllowsRefStruct;
+        var denseIface = plan.Interface;
+        var denseIfaceArgs = denseIface.Args;
+        var denseParams = plan.Parameters;
+        var denseRet = plan.Return;
 
         string name;
         do name = $"dotkt${_scope}$PropertyFunctionAdapter{_nextAdapter++}";
@@ -554,7 +525,7 @@ static class PropertyReferenceFunctionLowering
             ["ctors"] = new JsonArray { ctor },
             ["methods"] = new JsonArray { invoke },
         };
-        if (actuals.Count > 0)
+        if (actuals.Length > 0)
             adapter["typeParams"] = new JsonArray(actuals.Select((_, i) =>
             {
                 var parameter = new JsonObject { ["name"] = "T" + i };
@@ -567,12 +538,12 @@ static class PropertyReferenceFunctionLowering
         captured.Remove(Marker);
         foreach (var key in construction.Select(pair => pair.Key).ToList()) construction.Remove(key);
         construction["k"] = "newClosure";
-        construction["closureType"] = TypeJson.Write(actuals.Count == 0
+        construction["closureType"] = TypeJson.Write(actuals.Length == 0
             ? self : new TypeNode.Fqn(name, actuals.ToArray()));
         construction["captures"] = new JsonArray { captured };
         construction["method"] = "invoke";
         construction["funcType"] = TypeJson.Write(target);
-        if (actuals.Count > 0)
+        if (actuals.Length > 0)
             construction["typeArgs"] = new JsonArray(actuals.Select(TypeJson.Write).ToArray());
     }
 

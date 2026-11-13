@@ -1477,6 +1477,8 @@ sealed partial class TypedCirProjection
 
     internal CirDelegateInvoke ProjectCirDelegateInvoke(BirDelegateInvoke value)
     {
+        if (value.Sty.IsPresent)
+            throw new InvalidOperationException("Unconsumed lowering fact on BirDelegateInvoke");
         return new CirDelegateInvoke
         {
             FuncType = Require(value.FuncType),

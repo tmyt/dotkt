@@ -89,5 +89,66 @@ static partial class NullableTvErasureCallRealign
         Assert(index.ByDeclarationOwner["Holder"]["plain-id"].Ret == Fqn("Plain")
             && ReferenceEquals(index.ByOwner["Owner"]["late|1"], admitted),
             "late type admission rescanned an already-owned declaration");
+        SyntheticClockSelfTest();
+    }
+
+    static void SyntheticClockSelfTest()
+    {
+        static TypeNode.Fqn Fqn(string name) => new(name);
+        static void Check(bool condition, string message)
+        { if (!condition) throw new InvalidOperationException("Nullable synthetic snapshot: " + message); }
+        var existing = new BirClassDefinition { Kind = "class", Name = "Existing", Methods = new[] {
+            new BirFunctionDeclaration { Name = "original", Ret = Fqn("Original"), Params = Array.Empty<BirParameter>() },
+        } };
+        DeclIndex Initial() => CollectDeclaredMemberRets(new[] { new BirFileDeclaration {
+            Types = new IBirTypeDeclaration[] { (BirClassDefinition)existing.DeepClone() },
+        } });
+        var first = Initial();
+        var oldSignature = first.ByOwner["Existing"]["original|0"];
+        var arguments = new TypeNode[] { new TypeNode.Tv("type", 1) };
+        var result = new TypeNode.Fqn("Box", arguments);
+        var method = new BirFunctionDeclaration { Name = "read", DeclarationId = "synthetic-read", Ret = result,
+            Params = new[] { new BirParameter { Type = result } } };
+        var inner = new BirClassDefinition { Name = "Outer.Inner", Kind = "class", Mods = new BirModifiers { Inner = true },
+            OuterTypeParamCount = 1, SemanticOwner = "Outer", Methods = new[] { method },
+            TypeParams = new[] { new BirTypeParameter { Name = "Own" } }, CapturedTypeParams = new[] { new BirTypeParameter { Name = "Enclosing" } },
+            Fields = new[] { new BirFieldDeclaration { Name = "storage", Type = result } },
+            Ctors = new[] { new BirConstructor { Params = new[] { new BirParameter { Type = result } } } } };
+        var function = new TypeNode.Fn(false, Fqn("kotlin.Int"), Array.Empty<TypeNode>());
+        var make = new BirFunctionDeclaration { Name = "make", Ret = function, Body = new IBirStatement[] {
+            new BirReturn { Value = new BirNew { Type = Fqn("Property"), PropertyFunction = new BirPropertyFunction {
+                Iface = new TypeNode.Fqn("kotlin.reflect.KProperty0", new TypeNode[] { Fqn("kotlin.Int") }),
+            } } },
+        } };
+        var file = new BirFileDeclaration { FileClass = "Delayed", Methods = new[] { make },
+            Types = new IBirTypeDeclaration[] { (BirClassDefinition)existing.DeepClone(), inner } };
+        var pending = CaptureNewSyntheticTypes(file, first);
+        Check(first.ByOwner.Count == 1 && first.ByDeclarationOwner.Count == 0,
+            "capture must not admit any owner or exact method identity");
+        Check(pending.Types.Length == 1, "already-owned declarations must not allocate another recipe");
+        PropertyReferenceFunctionLowering.Apply(file, PropertyReferenceFunctionLowering.CollectFieldSlots(new[] { file }));
+        Check(file.Types.Value.Length == 3, "fixture must really append a property-function adapter after capture");
+        arguments[0] = Fqn("Changed");
+        inner.Mods.Value.Inner = false;
+        method.Name = "later-name";
+        ApplyNewSyntheticTypes(pending, first);
+        Check(first.ByOwner.Count == 2 && ReferenceEquals(first.ByOwner["Existing"]["original|0"], oldSignature)
+            && !first.ByOwner.ContainsKey(file.Types.Value[2].Name.Value), "admission uses saved owners and preserves existing entries");
+        var saved = first.ByOwner["Outer.Inner"]["read|1"];
+        Check(ReferenceEquals(saved, first.ByDeclarationOwner["Outer.Inner"]["synthetic-read"])
+            && ((TypeNode.Fqn)saved.Ret).Args[0] == new TypeNode.Tv("type", 1)
+            && ((TypeNode.Fqn)first.Ctors["Outer.Inner"][1][0]).Args[0] == new TypeNode.Tv("type", 1)
+            && ((TypeNode.Fqn)first.Slots["Outer.Inner"]["storage"]).Args[0] == new TypeNode.Tv("type", 1),
+            "delayed signatures, constructors and slots own their pre-adaptation type vectors");
+        var ownFirst = new TypeNode.Fqn("Outer.Inner", new TypeNode[] { Fqn("Own"), Fqn("Enclosing") });
+        Check(first.SourceApplicationOrder.DeclarationArguments(ownFirst).SequenceEqual(new[] { Fqn("Enclosing"), Fqn("Own") }),
+            "inner application order uses the captured explicit owner facts");
+        ((TypeNode.Fqn)saved.Ret).Args[0] = Fqn("IndexMutation");
+        var second = Initial();
+        ApplyNewSyntheticTypes(pending, second);
+        Check(((TypeNode.Fqn)second.ByOwner["Outer.Inner"]["read|1"].Ret).Args[0] == new TypeNode.Tv("type", 1),
+            "separate continuing indexes must not share mutable snapshot vectors");
+        ApplyNewSyntheticTypes(pending, first);
+        Check(ReferenceEquals(first.ByOwner["Outer.Inner"]["read|1"], saved), "repeated add-only admission must not replace an existing signature");
     }
 }

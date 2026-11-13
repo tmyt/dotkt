@@ -66,6 +66,8 @@ static class Bir2Cir
                 ForInLowering.SelfTestTypedRangePrefix();
                 ArrayConstructionLowering.SelfTestSource();
                 CharCodeInvokeLowering.SelfTestSource();
+                PropertyReferenceFunctionLowering.SelfTestSource();
+                LocalStaticOwnerBinding.SelfTestSource();
                 RoundtripMetadata.SourceSuspendResultSelfTest();
                 InheritedMemberOwnerBinding.SourceProjectionSelfTest();
                 TypedExecutableFrames.SelfTest();

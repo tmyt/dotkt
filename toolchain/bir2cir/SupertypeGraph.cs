@@ -70,7 +70,9 @@ static class SupertypeGraph
                 _ => throw new InvalidOperationException("Unaccounted source hierarchy owner: " + declaration.GetType().Name),
             };
             if (name != null) result[name] = new Def { Name = name, Kind = kind, Arity = arity,
-                Base = baseType as TypeNode.Fqn, Interfaces = interfaces.OfType<TypeNode.Fqn>().ToArray() };
+                Base = BirGraphValue.CopyType(baseType) as TypeNode.Fqn,
+                Interfaces = interfaces.OfType<TypeNode.Fqn>()
+                    .Select(edge => (TypeNode.Fqn)BirGraphValue.CopyType(edge)).ToArray() };
         }
         return result;
     }

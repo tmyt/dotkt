@@ -24160,18 +24160,25 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<IBirExpression> Recv { get; set; }
     public OptionalField<IBirExpression[]> Args { get; set; }
     public OptionalField<BirMemberReference> InvokeRef { get; set; }
-    public override TypeNode? FunctionTypeStamp => FuncType.OrDefault();
+    public OptionalField<TypeNode> Sty { get; set; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
+    public override TypeNode? FunctionTypeStamp => FuncType.OrDefault() ?? Sty.OrDefault();
+    public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
+    public override TypeNode? ExplicitSourceType => Sty.OrDefault();
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (FuncType.HasValue) { visit("funcType", (TypeNode)FuncType.Value); }
+        if (Sty.HasValue) { visit("sty", (TypeNode)Sty.Value); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
         if (FuncType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)FuncType.Value, visit); }
+        if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
     public override void VisitNameFields(Action<string> visit)
     {
         if (FuncType.HasValue) { BirGraphNameFields.VisitType((TypeNode)FuncType.Value, visit); }
+        if (Sty.HasValue) { BirGraphNameFields.VisitType((TypeNode)Sty.Value, visit); }
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -24197,10 +24204,12 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone()) : Recv,
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone()).ToArray()) : Args,
         InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)InvokeRef.Value).DeepClone()) : InvokeRef,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(rewrite(FuncType.Value)) : FuncType,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -24210,10 +24219,12 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
         InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)InvokeRef.Value)) : InvokeRef,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
     };
     public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
     {
         if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(rewrite(FuncType.Value));
+        if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite(Sty.Value));
     }
     public override void VisitGenericFrame(
         Action<BirGenericFrameRole, TypeNode> type,
@@ -24223,6 +24234,7 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
         if (InvokeRef.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)InvokeRef.Value); }
+        if (Sty.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)Sty.Value); }
     }
     public override void RewriteGenericFrameInPlace(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -24232,6 +24244,7 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
         if (InvokeRef.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)InvokeRef.Value); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)); }
     }
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
@@ -24241,6 +24254,7 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (InvokeRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)InvokeRef.Value); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
     }
     public override void RewriteOwnershipInPlace(
         Func<BirOwnershipRole, TypeNode, TypeNode> type,
@@ -24250,13 +24264,15 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
         if (InvokeRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)InvokeRef.Value); }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirDelegateInvoke value
             && EqualField(FuncType, value.FuncType, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(Recv, value.Recv, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(Args, value.Args, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
-            && EqualField(InvokeRef, value.InvokeRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
+            && EqualField(InvokeRef, value.InvokeRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
+            && EqualField(Sty, value.Sty, (left, right) => TypeNodeDataEquality.Equal(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -24265,6 +24281,7 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         WriteOptional(writer, "recv", Recv, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "args", Args, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "invokeRef", InvokeRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "sty", Sty, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -24275,6 +24292,7 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         if (Recv.IsPresent) result["recv"] = Recv.IsNull ? null : ((BirGraphValue)Recv.Value).ToDom();
         if (Args.IsPresent) result["args"] = Args.IsNull ? null : new JsonArray(Args.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (InvokeRef.IsPresent) result["invokeRef"] = InvokeRef.IsNull ? null : ((BirGraphValue)InvokeRef.Value).ToDom();
+        if (Sty.IsPresent) result["sty"] = Sty.IsNull ? null : TypeNode.Write(Sty.Value);
         return result;
     }
 }
