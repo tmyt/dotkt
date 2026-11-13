@@ -1,13 +1,13 @@
 using System.Globalization;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // CLR P/INVOKE DECLARATIONS — consume Kotlin's `external` declaration fact together with the exact external
 // DllImportAttribute application and normalize them into one physical CIR import descriptor. DllImportAttribute is a
 // pseudo-custom attribute: it must not survive beside the descriptor as an ordinary attribute blob. ilemit receives
 // every MethodDef/ImplMap decision explicitly and only writes it through Reflection.Emit's equivalent metadata API.
-static class PInvokeLowering
+static partial class PInvokeLowering
 {
     const string DllImport = "System.Runtime.InteropServices.DllImportAttribute";
 
@@ -18,95 +18,77 @@ static class PInvokeLowering
         "System.IntPtr", "System.UIntPtr",
     };
 
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums)
+    public static void Apply(BirFileDeclaration root, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums)
     {
-        if (root is not JsonObject file) return;
-        ApplyMethods(file["methods"] as JsonArray, refs, localEnums);
-        ApplyTypes(file["types"] as JsonArray, refs, localEnums);
+        foreach (var method in root.Methods.OrEmpty()) ApplyMethod(method, refs, localEnums);
+        foreach (var type in root.Types.OrEmpty())
+            foreach (var method in Methods(type)) ApplyMethod(method, refs, localEnums);
     }
 
-    static void ApplyTypes(JsonArray types, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums)
+    // Owning declarations are flat; NestedIn records physical nesting. Do not
+    // enter executable metadata payloads or body-local declaration templates.
+    static BirFunctionDeclaration[] Methods(IBirTypeDeclaration type) => type switch {
+        BirClassDefinition value => value.Methods.OrEmpty(),
+        BirInterfaceDefinition value => value.Methods.OrEmpty(),
+        BirEnumDefinition value => value.Methods.OrEmpty(),
+        _ => throw new InvalidOperationException("Unaccounted P/Invoke declaration owner: " + type.GetType().Name),
+    };
+
+    static string StringConstant(BirFunctionDeclaration method, IBirAttributeValue node, string position)
     {
-        if (types == null) return;
-        foreach (var node in types.OfType<JsonObject>())
-        {
-            ApplyMethods(node["methods"] as JsonArray, refs, localEnums);
-            ApplyTypes(node["types"] as JsonArray, refs, localEnums);
-        }
-    }
-
-    static void ApplyMethods(JsonArray methods, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums)
-    {
-        if (methods == null) return;
-        foreach (var method in methods.OfType<JsonObject>()) ApplyMethod(method, refs, localEnums);
-    }
-
-    static bool Mod(JsonObject method, string name) =>
-        method["mods"] is JsonObject mods && Bool(mods[name]);
-
-    static bool Bool(JsonNode node) =>
-        node is JsonValue value && value.TryGetValue<bool>(out var result) && result;
-
-    static string StringConstant(JsonObject method, JsonNode node, string position)
-    {
-        if (node is JsonObject obj && Str(obj["k"]) == "const" && obj["value"] is JsonValue value &&
-            value.TryGetValue<string>(out var text) && text != null)
-            return text;
+        if (node is BirConstant { Value.HasValue: true } constant && constant.Value.Value is BirLiteral.TextLiteral text)
+            return text.Value;
         throw Error(method, $"{position} must be a constant String");
     }
 
-    static bool BooleanConstant(JsonObject method, JsonNode node, string position)
+    static bool BooleanConstant(BirFunctionDeclaration method, IBirAttributeValue node, string position)
     {
-        if (node is JsonObject obj && Str(obj["k"]) == "const" && obj["value"] is JsonValue value &&
-            value.TryGetValue<bool>(out var result))
-            return result;
+        if (node is BirConstant { Value.HasValue: true } constant && constant.Value.Value is BirLiteral.BooleanLiteral boolean)
+            return boolean.Value;
         throw Error(method, $"{position} must be a constant Boolean");
     }
 
-    static int EnumConstant(JsonObject method, JsonNode node, string position)
+    static int EnumConstant(BirFunctionDeclaration method, IBirAttributeValue node, string position)
     {
-        if (node is JsonObject obj && Str(obj["k"]) == "enumValue" &&
-            obj["physicalValue"] is JsonValue value && value.TryGetValue<string>(out var text) &&
-            int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result))
+        if (node is BirEnumValue value && value.PhysicalValue.HasValue &&
+            int.TryParse(value.PhysicalValue.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result))
             return result;
         throw Error(method, $"{position} must be a resolved CLR enum constant");
     }
 
-    static string Str(JsonNode node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+    static InvalidOperationException Error(BirFunctionDeclaration method, string message) =>
+        new($"{FieldLegality.PosPrefix(method.Pos.OrDefault()?.F.OrDefault(),
+            method.Pos.HasValue && method.Pos.Value.L.HasValue ? method.Pos.Value.L.Value : (int?)null)}P/Invoke {message}");
 
-    static InvalidOperationException Error(JsonObject method, string message) =>
-        new($"{FieldLegality.PosPrefix(method)}P/Invoke {message}");
-
-    static void ApplyMethod(JsonObject method, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums)
+    static void ApplyMethod(BirFunctionDeclaration method, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums)
     {
-        var external = Mod(method, "external");
-        var attrs = method["attrs"] as JsonArray;
-        var imports = attrs?.OfType<JsonObject>()
-            .Where(attr => TypeJson.OwnerName(attr["attr"]) == DllImport)
-            .ToList() ?? new List<JsonObject>();
-        if (!external && imports.Count == 0) return;
+        var external = method.Mods.OrDefault()?.External.OrDefault() == true;
+        var attrs = method.Attrs.OrEmpty();
+        var imports = attrs.Where(attr => attr.Attr.OrDefault() is TypeNode.Fqn { Name: DllImport }).ToArray();
+        if (!external && imports.Length == 0) return;
 
-        var name = Str(method["name"]) ?? "<unnamed>";
+        var name = method.Name.OrDefault() ?? "<unnamed>";
         if (!external)
             throw Error(method, $"'{name}' carries DllImportAttribute without the Kotlin external declaration fact");
-        if (imports.Count != 1)
+        if (imports.Length != 1)
             throw Error(method, $"external method '{name}' requires exactly one DllImportAttribute application");
-        if (!Bool(method["static"]))
+        if (!method.Static.OrDefault())
             throw Error(method, $"'{name}' must be static");
-        if (method["typeParams"] is JsonArray typeParameters && typeParameters.Count != 0)
+        if (method.TypeParams.OrEmpty().Length != 0)
             throw Error(method, $"'{name}' must not be generic");
-        if (Bool(method["abstract"]) || Bool(method["virtual"]) || Bool(method["override"]))
+        if (method.Abstract.OrDefault() || method.Virtual.OrDefault() || method.Override.OrDefault())
             throw Error(method, $"'{name}' must not occupy a managed virtual slot");
         ValidateSignature(method, name, refs, localEnums);
 
         var import = imports[0];
-        if (!Bool(import["attrExternal"]) || import["memberRef"] is not JsonObject ctorRef ||
-            Str(ctorRef["kind"]) != "ctor" || TypeJson.OwnerName(ctorRef["declaringType"]) != DllImport)
+        var ctorRef = import.MemberRef.OrDefault();
+        if (!import.AttrExternal.OrDefault() || ctorRef?.Kind.OrDefault() != "ctor"
+            || ctorRef.DeclaringType.OrDefault() is not TypeNode.Fqn { Name: DllImport })
             throw Error(method, $"'{name}' does not carry the exact external DllImportAttribute constructor identity");
-        if (import["args"] is not JsonArray fixedArguments || fixedArguments.Count != 1)
+        if (!import.Args.HasValue || import.Args.Value.Length != 1)
             throw Error(method, $"'{name}' requires the DllImportAttribute(String) constructor");
 
-        var module = StringConstant(method, fixedArguments[0], "library name");
+        var module = StringConstant(method, import.Args.Value[0], "library name");
         if (module.Length == 0)
             throw Error(method, $"'{name}' has an empty native library name");
         var entryPoint = name;
@@ -124,16 +106,15 @@ static class PInvokeLowering
         // ilemit must write after this physical normalization; source-level presence is not an output fact.
         var pseudoFields = new List<string> { "CallingConvention" };
 
-        if (import["namedArgs"] is JsonArray namedArguments)
-            foreach (var named in namedArguments.OfType<JsonObject>())
+        foreach (var named in import.NamedArgs.OrEmpty())
             {
-                var argumentName = Str(named["name"])
+                var argumentName = named.Name.OrDefault()
                     ?? throw Error(method, $"'{name}' has an unnamed DllImport argument");
-                if (Str(named["kind"]) != "field")
+                if (named.Kind.OrDefault() != "field")
                     throw Error(method, $"'{name}' DllImport argument '{argumentName}' is not a CLR field");
                 if (!seen.Add(argumentName))
                     throw Error(method, $"'{name}' repeats DllImport argument '{argumentName}'");
-                var value = named["value"];
+                var value = named.Value.OrDefault();
                 switch (argumentName)
                 {
                     case "EntryPoint": entryPoint = StringConstant(method, value, "EntryPoint"); break;
@@ -165,59 +146,59 @@ static class PInvokeLowering
                     pseudoFields.Add(argumentName);
             }
 
-        method["pinvoke"] = new JsonObject
+        method.Pinvoke = new BirPInvoke
         {
-            ["module"] = module,
-            ["entryPoint"] = entryPoint,
-            ["callingConvention"] = callingConvention,
-            ["callingConventionType"] = TypeJson.Fqn("System.Runtime.InteropServices.CallingConvention"),
-            ["charSet"] = charSet,
-            ["charSetType"] = TypeJson.Fqn("System.Runtime.InteropServices.CharSet"),
-            ["exactSpelling"] = exactSpelling,
-            ["setLastError"] = setLastError,
-            ["preserveSig"] = preserveSig,
-            ["bestFitMapping"] = bestFitMapping,
-            ["throwOnUnmappableChar"] = throwOnUnmappableChar,
-            ["pseudoFields"] = new JsonArray(pseudoFields.Select(value => (JsonNode)value).ToArray()),
+            Module = module,
+            EntryPoint = entryPoint,
+            CallingConvention = callingConvention,
+            CallingConventionType = new TypeNode.Fqn("System.Runtime.InteropServices.CallingConvention"),
+            CharSet = charSet,
+            CharSetType = new TypeNode.Fqn("System.Runtime.InteropServices.CharSet"),
+            ExactSpelling = exactSpelling,
+            SetLastError = setLastError,
+            PreserveSig = preserveSig,
+            BestFitMapping = bestFitMapping,
+            ThrowOnUnmappableChar = throwOnUnmappableChar,
+            PseudoFields = pseudoFields.ToArray(),
             // Reflection.Emit exposes DllImport as a pseudo-custom-attribute API. The exact constructor operand is
             // already resolved by bir2cir; ilemit consumes it only as that API's metadata handle, never as an emitted
             // CustomAttribute row or a member-selection request.
-            ["attributeCtorRef"] = ctorRef.DeepClone(),
+            AttributeCtorRef = (BirMemberReference)ctorRef.DeepClone(),
         };
-        method["extern"] = true;
-        method["body"] = new JsonArray();
-        if (method["mods"] is JsonObject mods)
+        method.Extern = true;
+        method.Body = Array.Empty<IBirStatement>();
+        if (method.Mods.HasValue)
         {
-            mods.Remove("external");
-            if (mods.Count == 0) method.Remove("mods");
+            var mods = method.Mods.Value;
+            mods.External = default;
+            if (mods == new BirModifiers()) method.Mods = default;
         }
-        attrs.Remove(import);
+        method.Attrs = attrs.Where(attribute => !ReferenceEquals(attribute, import)).ToArray();
     }
 
     static void ValidateSignature(
-        JsonObject method,
+        BirFunctionDeclaration method,
         string name,
         ReferenceMetadataIndex refs,
         IReadOnlySet<string> localEnums)
     {
-        if (method["ret"] is not JsonNode returnNode)
+        if (!method.Ret.HasValue)
             throw Error(method, $"'{name}' has no return type");
-        var returnType = TypeNode.Read(JsonDocument.Parse(returnNode.ToJsonString()).RootElement);
+        var returnType = method.Ret.Value;
         if (returnType is not TypeNode.Fqn { Name: "System.Void" or "void" or "kotlin.Unit" } &&
             !SupportedScalar(returnType, refs, localEnums))
             throw Error(method,
                 $"'{name}' return type is outside the supported blittable primitive, enum, IntPtr, and UIntPtr subset");
 
-        if (method["params"] is not JsonArray parameters) return;
-        foreach (var parameter in parameters.OfType<JsonObject>())
+        foreach (var parameter in method.Params.OrEmpty())
         {
-            if (parameter["type"] is not JsonNode typeNode)
+            if (!parameter.Type.HasValue)
                 throw Error(method, $"'{name}' has a parameter with no type");
-            var type = TypeNode.Read(JsonDocument.Parse(typeNode.ToJsonString()).RootElement);
+            var type = parameter.Type.Value;
             if (type is TypeNode.ByRef byRef) type = byRef.Of;
             if (!SupportedScalar(type, refs, localEnums))
                 throw Error(method,
-                    $"'{name}' parameter '{Str(parameter["name"]) ?? "<unnamed>"}' is outside " +
+                    $"'{name}' parameter '{parameter.Name.OrDefault() ?? "<unnamed>"}' is outside " +
                     "the supported blittable primitive, enum, IntPtr, UIntPtr, and ClrRef subset");
         }
     }
