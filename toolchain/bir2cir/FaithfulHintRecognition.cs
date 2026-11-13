@@ -1,10 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
-using DotKt.Cir;
 
 // Select the CLR representation of Kotlin rendering and floating-point ordering.
 // kotc supplies ordinary Kotlin operations, not helper names or representation
@@ -141,42 +138,7 @@ static partial class FaithfulHints
 
     // Double/Float total-order helpers on kotlin.NumbersKt (NO type-args). `method` = clrDoubleCompare/clrFloatCompare
     // (compareTo) or clrDoubleEquals/clrFloatEquals (boxed `==` / explicit `.equals`).
-    public static JsonObject FloatCall(string method, JsonNode a, JsonNode b) =>
-        Helper(FloatHelper(method), new JsonArray { a.DeepClone(), b.DeepClone() });
-
     internal static BirCallStatic FloatCall(string method, IBirExpression a, IBirExpression b)
         => Helper(FloatHelper(method), new[] { a, b });
-
-    // The remaining DOM producers cross only the binding-fact boundary, not their executable arguments.
-    internal static void BindHelper(JsonObject call, Func<BirCallStatic, BirCallStatic> bind)
-    {
-        var arguments = call["typeArgs"] as JsonArray;
-        var facts = new BirCallStatic {
-            Owner = TypeJson.Read(call["owner"]), Method = call["method"].GetValue<string>(),
-            Sig = ((JsonArray)call["sig"]).Select(TypeJson.Read).ToArray(),
-            TypeArgs = arguments == null ? default : OptionalField<TypeNode[]>.Of(arguments.Select(TypeJson.Read).ToArray()),
-        };
-        var bound = bind(facts);
-        call[DeclarationIdentityBinding.Key] = bound.DeclarationId.Value;
-        if (bound.TypeArgs.HasValue)
-            call["typeArgs"] = new JsonArray(bound.TypeArgs.Value.Select(TypeJson.Write).ToArray());
-    }
-
-    static JsonObject Helper(HelperSpecification specification, JsonArray args)
-    {
-        // `typeArgs` is omitted when the helper is non-generic; consumers bind every field by key.
-        var o = new JsonObject
-        {
-            ["k"] = "callStatic",
-            ["owner"] = TypeJson.Fqn(specification.Owner),
-            ["method"] = specification.Method,
-            ["sig"] = new JsonArray(specification.Signature.Select(TypeJson.Write).ToArray()),
-            ["args"] = args,
-        };
-        if (specification.TypeArguments != null)
-            o["typeArgs"] = new JsonArray(specification.TypeArguments.Select(TypeJson.Write).ToArray());
-        if (_bindHelper != null) BindHelper(o, _bindHelper);
-        return o;
-    }
 
 }
