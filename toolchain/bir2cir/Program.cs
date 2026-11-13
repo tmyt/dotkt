@@ -233,9 +233,8 @@ sealed class Pipeline
             captured, refs, sourceIsValue, carryForReference: referenceBuild);
         if (!referenceBuild)
             foreach (var source in captured) aliasConstructorDelegations.Apply(source);
-        // Snapshot collection-selection facts before any semantic helper producer
-        // rewrites source expressions.
-        // Only declaration/scalar facts survive this owning-to-DOM frontier.
+        // Snapshot source collection-selection facts before helper producers
+        // change expressions; consume them before entering the DOM frontier.
         var collectionInputs = new SourceCollectionInputs(captured, refs);
         var sourceTopLevelFns = captured.SelectMany(source => source.Methods.OrEmpty())
             .Select(method => method.Name.OrDefault()).Where(name => name != null).ToHashSet(StringComparer.Ordinal);
@@ -251,6 +250,7 @@ sealed class Pipeline
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)FaithfulHintRecognition.Apply(captured[index], sourceTopLevelFns);
             }
         });
+        CollectionHelperBinding.Apply(captured, refs, sourceIndex.CollisionAliases, collectionInputs);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -266,7 +266,7 @@ sealed class Pipeline
                 inputsWithSources[index].Suspend));
         }
 
-        return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, collectionInputs);
+        return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex);
     }
 
     // #68 (PART 2): rewrite every `{t:"fqn","name":"kotlin.CharSequence"}` type REFERENCE to the synthetic
@@ -309,7 +309,6 @@ sealed class Pipeline
         var representationAliases = module.SourceIndex.CollisionAliases;
         var localValueTypeFqns = module.SourceIndex.ValueTypes;
         ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
-        CollectionHelperBinding.Apply(birRoots, refs, representationAliases, module.CollectionInputs);
         // Kotlin `reified` is a declaration fact; the hidden nullable-instantiation Boolean is a distinct CLR ABI
         // demand. Derive the latter from nullable-sensitive operations and exact call/lift correspondences as one
         // module-wide fixed point before per-file materialization starts.
@@ -1919,7 +1918,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
-    ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex, SourceCollectionInputs CollectionInputs);
+    ValueRepresentationSourcePolicy ValuePolicy, SourceModuleIndex SourceIndex);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions
