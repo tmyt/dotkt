@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // NOTHING-VALUE TERMINATION (#197): an expression the frontend typed `kotlin.Nothing` produces NO value — control
 // leaves it and never comes back. `throw`/`return` in expression position say so in their own node kind, and ilemit
@@ -157,12 +159,19 @@ static class NothingValueTermination
     /// its result in, so `fun f(): Nothing` stamps `kotlin.Nothing` on the METHOD. Only a node that names an
     /// expression kind can be an expression; a declaration names none.
     static bool NeedsTermination(JsonObject node)
-        => Str(node["k"]) != null && NodeType.IsNothing(NodeType.Stamp(node)) && !Terminates(node);
+        => NeedsTermination(Str(node["k"]), NodeType.Stamp(node));
+
+    static bool NeedsTermination(string kind, TypeNode stamp)
+        => kind != null && NodeType.IsNothing(stamp) && !Terminates(kind);
+
+    internal static IBirExpression Consume(IBirExpression value)
+        => value is BirGraphNode node && NeedsTermination(node.Tag, node.ResultTypeStamp)
+            ? new BirThrowExpression { Value = OptionalField<IBirExpression>.Of(value) } : value;
 
     // IDEMPOTENCE: does control already leave this expression, so that terminating it would only nest one `throw`
     // inside another? Every kind here is a terminator in its own right — kotc's expression-position `throw`/`return`
     // and the `break`/`continue` wrappers, which the frontend may stamp `kotlin.Nothing` exactly as it stamps a call.
-    static bool Terminates(JsonNode node) => node is JsonObject o && Str(o["k"]) switch
+    static bool Terminates(string kind) => kind switch
     {
         "throwExpr" or "returnExpr" or "throw" or "return" or "goto" or "break" or "continue" => true,
         _ => false,

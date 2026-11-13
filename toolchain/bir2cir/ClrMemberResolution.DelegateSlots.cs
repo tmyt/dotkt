@@ -168,59 +168,15 @@ static partial class ClrMemberResolution
     // ---- materialization -----------------------------------------------------------------------
 
     static JsonObject _adapterHost;
-    static JsonObject _valueAdapterDocument;
     static string _adapterScope = "File";
     static int _nextAdapter;
     static int _nextValueAdapter;
     static readonly Dictionary<string, string> _adapters = new(StringComparer.Ordinal);
 
-    // A Kotlin function value can cross the same void-to-value seam through ordinary storage, returns,
-    // or local calls, without a CLR member resolver marking a construction. The final value-flow pass supplies
-    // both physical types. Capture the value once and reuse the same adapter as literal delegate slots.
-    internal static JsonObject AdaptUnitDelegateValue(JsonObject document, JsonObject value,
-        TypeNode source, TypeNode target)
-    {
-        if (PhysicalFunctionShape(source) is not TypeNode.Fn { Ret: TypeNode.Fqn { Name: "void" or "System.Void", Args: null } } natural
-            || PhysicalFunctionShape(target) is not TypeNode.Fn { Ret: TypeNode.Fqn { Name: "kotlin.Unit" or "object" or "System.Object", Args: null } } wanted)
-            return null;
-        if (!ReferenceEquals(_valueAdapterDocument, document))
-        {
-            _valueAdapterDocument = document;
-            _adapters.Clear();
-            _adapterScope = string.Concat(((document["fileClass"] as JsonValue)?.GetValue<string>() ?? "File")
-                .Select(c => char.IsLetterOrDigit(c) ? c : '_'));
-        }
-        _adapterHost = document;
-        // Store before testing for null: nullable function values must stay null, and producing a delegate
-        // can have effects. Capturing the temporary preserves one evaluation on either branch.
-        var temporary = $"dotkt$unitDelegateValue{_nextValueAdapter++}";
-        var adapted = new JsonObject { ["k"] = "local", ["name"] = temporary };
-        AdaptVoidConstruction(adapted, natural, BirTypeLowering.DelegateFqnOf(wanted), wanted.Ret);
-        _adapterHost = null;
-        JsonObject NullValue() => new()
-        {
-            ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Fqn("System.Object")), ["value"] = null,
-        };
-        return new JsonObject
-        {
-            ["k"] = "valueBlock", ["type"] = TypeJson.Write(target),
-            ["stmts"] = new JsonArray(new JsonObject
-            {
-                ["k"] = "var", ["name"] = temporary, ["type"] = TypeJson.Write(source),
-                ["init"] = value.DeepClone(),
-            }),
-            ["result"] = new JsonObject
-            {
-                ["k"] = "cond", ["type"] = TypeJson.Write(target),
-                ["cond"] = new JsonObject
-                {
-                    ["k"] = "binOp", ["op"] = "===", ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = temporary },
-                    ["rhs"] = NullValue(),
-                },
-                ["then"] = NullValue(), ["else"] = adapted,
-            },
-        };
-    }
+    // Both the earlier construction pass and the final typed value-flow owner
+    // synthesize this family. Keep one allocator across their explicit boundary.
+    internal static string FreshDelegateAdapterName(string scope) => $"dotkt${scope}$UnitDelegateAdapter{_nextAdapter++}";
+    internal static string FreshUnitDelegateTemporary() => $"dotkt$unitDelegateValue{_nextValueAdapter++}";
 
     // Local function slots use Fn; exact imported CLR signatures use the equivalent named Func/Action.
     // Read the latter's physical Invoke and close its owner parameters, without folding the Unit class to void.
@@ -357,7 +313,12 @@ static partial class ClrMemberResolution
     // Capture the natural delegate once. The adapter's Invoke owns the destination signature, and its body
     // crosses each representation seam explicitly. Generic parameters stand for complete slot types rather
     // than borrowing the enclosing method's frame or reproducing its constraints.
-    static void AdaptBoxedSlots(JsonObject construction, TypeNode.Fn natural, TypeNode.Fqn slot, TypeNode.Fn target)
+    internal sealed record DelegateAdapterPlan(TypeNode.Fn Frame, int Arity, TypeNode Return,
+        TypeNode[] Parameters, int? GenericArity, TypeNode[] Arguments);
+
+    // This is representation policy over immutable TypeNodes, shared by the
+    // earlier DOM construction owner and the final owning typed value owner.
+    static DelegateAdapterPlan BoxedDelegateAdapterPlan(TypeNode.Fn natural, TypeNode.Fn target)
     {
         var sourceParameters = natural.DelegateParams;
         var targetParameters = target.DelegateParams;
@@ -382,7 +343,13 @@ static partial class ClrMemberResolution
             sourceParameters.Select(Lift).ToArray(), null, natural.Clr);
         var targetFrame = targetParameters.Select(Lift).ToArray();
         var targetReturn = producesUnit ? target.Ret : Lift(target.Ret);
-        var adapter = AdapterClass(sourceFrame, arity, targetReturn, targetFrame, arguments.Count);
+        return new(sourceFrame, arity, targetReturn, targetFrame, arguments.Count, arguments.ToArray());
+    }
+
+    static void AdaptBoxedSlots(JsonObject construction, TypeNode.Fn natural, TypeNode.Fqn slot, TypeNode.Fn target)
+    {
+        var plan = BoxedDelegateAdapterPlan(natural, target);
+        var adapter = AdapterClass(plan.Frame, plan.Arity, plan.Return, plan.Parameters, plan.GenericArity);
         var captured = (JsonObject)construction.DeepClone();
         construction.Clear();
         if (captured["pos"] is JsonNode position) construction["pos"] = position.DeepClone();
@@ -391,7 +358,7 @@ static partial class ClrMemberResolution
         construction["method"] = "invoke";
         construction["captures"] = new JsonArray { captured };
         construction["funcType"] = TypeJson.Write(slot);
-        construction["typeArgs"] = new JsonArray(arguments.Select(TypeJson.Write).ToArray());
+        construction["typeArgs"] = new JsonArray(plan.Arguments.Select(TypeJson.Write).ToArray());
         ResolveDelegateCtor(construction, slot);
     }
 
@@ -465,15 +432,11 @@ static partial class ClrMemberResolution
     // Replace the void-returning construction with a `newClosure` over an adapter that produces the Unit value the
     // slot's Invoke has to return. The original construction becomes the adapter's single capture, so its own
     // resolved constructor and Invoke keep describing the natural delegate.
-    static void AdaptVoidConstruction(JsonObject construction, TypeNode.Fn naturalFn,
-        TypeNode.Fqn slot, TypeNode slotReturn)
+    static DelegateAdapterPlan VoidDelegateAdapterPlan(TypeNode.Fn naturalFn, TypeNode.Fqn slot, TypeNode slotReturn)
     {
         if (PhysicalFunctionShape(slot, includeNominal: true) is TypeNode.Fn target
             && HasRepresentationSlotSeam(naturalFn, target))
-        {
-            AdaptBoxedSlots(construction, naturalFn, slot, target);
-            return;
-        }
+            return BoxedDelegateAdapterPlan(naturalFn, target);
         // The value the adapter returns is the `Unit` singleton, so the slot's Invoke must be able to receive it.
         // Kotlin resolution only fills such a slot from a `Unit` lambda, so anything else is a producer defect
         // rather than a program this rule has to accept.
@@ -487,7 +450,14 @@ static partial class ClrMemberResolution
         var frame = new TypeNode.Fn(false, new TypeNode.Fqn("void"),
             Enumerable.Range(0, parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray(),
             null, naturalFn.Clr);
-        var adapter = AdapterClass(frame, parameters.Length, slotReturn);
+        return new(frame, parameters.Length, slotReturn, null, null, parameters);
+    }
+
+    static void AdaptVoidConstruction(JsonObject construction, TypeNode.Fn naturalFn,
+        TypeNode.Fqn slot, TypeNode slotReturn)
+    {
+        var plan = VoidDelegateAdapterPlan(naturalFn, slot, slotReturn);
+        var adapter = AdapterClass(plan.Frame, plan.Arity, plan.Return, plan.Parameters, plan.GenericArity);
 
         var captured = new JsonObject();
         foreach (var kv in construction.ToList()) { captured[kv.Key] = kv.Value?.DeepClone(); construction.Remove(kv.Key); }
@@ -499,8 +469,8 @@ static partial class ClrMemberResolution
         construction["method"] = "invoke";
         construction["captures"] = new JsonArray { captured };
         construction["funcType"] = TypeJson.Write(slot);
-        if (parameters.Length > 0)
-            construction["typeArgs"] = new JsonArray(parameters.Select(TypeJson.Write).ToArray());
+        if (plan.Parameters != null || plan.Arguments.Length > 0)
+            construction["typeArgs"] = new JsonArray(plan.Arguments.Select(TypeJson.Write).ToArray());
         ResolveDelegateCtor(construction, slot);
     }
 
@@ -509,11 +479,10 @@ static partial class ClrMemberResolution
     static string AdapterClass(TypeNode.Fn frame, int arity, TypeNode slotReturn,
         TypeNode[] slotParameters = null, int? genericArity = null)
     {
-        var key = $"{TypeNode.ToJson(frame)}|{arity}|{genericArity}|{TypeNode.ToJson(slotReturn)}|"
-            + (slotParameters == null ? "unit" : string.Join(";", slotParameters.Select(TypeNode.ToJson)));
+        var key = DelegateAdapterKey(frame, arity, slotReturn, slotParameters, genericArity);
         if (_adapters.TryGetValue(key, out var existing)) return existing;
 
-        var name = $"dotkt${_adapterScope}$UnitDelegateAdapter{_nextAdapter++}";
+        var name = FreshDelegateAdapterName(_adapterScope);
         var frameJson = TypeJson.Write(frame);
         var self = new JsonObject { ["t"] = "fqn", ["name"] = name };
 
@@ -622,6 +591,14 @@ static partial class ClrMemberResolution
         _adapters[key] = name;
         return name;
     }
+
+    internal static string DelegateAdapterKey(DelegateAdapterPlan plan) =>
+        DelegateAdapterKey(plan.Frame, plan.Arity, plan.Return, plan.Parameters, plan.GenericArity);
+
+    static string DelegateAdapterKey(TypeNode.Fn frame, int arity, TypeNode slotReturn,
+        TypeNode[] slotParameters, int? genericArity) =>
+        $"{TypeNode.ToJson(frame)}|{arity}|{genericArity}|{TypeNode.ToJson(slotReturn)}|"
+            + (slotParameters == null ? "unit" : string.Join(";", slotParameters.Select(TypeNode.ToJson)));
 
     static JsonObject DelegateInvokeCall(JsonObject self, JsonNode frameJson, int arity)
     {

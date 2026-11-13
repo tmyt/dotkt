@@ -23,18 +23,27 @@ unaccounted alias-profile omissions. The current file/annotation input profiles
 deliberately exclude physical assembly attributes and resolved attribute identity;
 those are produced after the input frontier. No arbitrary field bag is part of the IR.
 
-Input construction, suspend declaration inventory, and source-default freezing
-own this graph. Remaining DOM-based passes currently receive a direct one-way
+Input construction, suspend declaration inventory, source-default freezing,
+source fact capture, and source-known inherited suspend forwarders own this
+graph. The source declaration index is captured before these physical-only
+forwarders are added. The remaining value-representation index retains the
+original declarations' live occurrences and exact membership, not a frozen
+signature snapshot or newly generated forwarding methods.
+Remaining DOM-based passes currently receive a direct one-way
 projection, including a numeric-token leaf adapter. This is an incremental
 migration seam, not completion of #1414; it must disappear as owning passes move
 to the typed graph. No enclosing graph is serialized and reparsed at that seam.
 
 Final physical declaration synthesis (wide delegates and compiler metadata
-attribute classes) constructs typed CIR directly. After physical operand
-normalization, source roots enter an owning typed graph once and remain typed
-through protected-region transfers, canonical-type elision, metadata admission,
-variance resolution and schema-generated CIR projection. No final graph returns
-to DOM. Reference-only literal
+attribute classes) constructs typed CIR directly. After exact member binding and
+foreign-slot validation, source roots enter an owning typed graph once and remain
+typed through physical value/storage coercion, function-signature completion,
+ordered-operand normalization, final declaration validation, protected-region
+transfers, canonical-type elision, metadata admission, variance resolution and
+schema-generated CIR projection. Earlier DOM consumers of the physical result
+oracle and native-local allocator remain at their own migration boundary; they
+share the same scalar type policy rather than wrapping the typed suffix in DOM.
+No final graph returns to DOM. Reference-only literal
 placeholders are rewritten through schema-generated executable edges in typed
 CIR; declaration signatures and opaque metadata are not executable edges.
 The remaining intermediate DOM projection is still an unfinished migration boundary.
@@ -1150,7 +1159,7 @@ which is every construction whose mapped-away argument is a literal, so the `Has
 Because this producer runs ~240 passes after `CallEvalLowering.Apply`, the block it mints is NOT folded by
 `MergeNestedResult` and may nest inside another block's `result`. Consumers recurse, so nesting is tolerated rather
 than normalized here. At final CIR admission, after suspend lowering and physical value coercions,
-`PhysicalOperandNormalization` gives returns, loop transfers and protected-region entries
+`TypedPhysicalOperandNormalization` gives returns, loop transfers and protected-region entries
 inside ordered operands an empty physical evaluation stack. It materializes each hazardous operand as a whole,
 snapshots preceding values in order, and keeps conditional/loop prefixes at their guarded or repeated evaluation
 site. Managed-reference argument locations and native value receivers retain storage identity rather than becoming

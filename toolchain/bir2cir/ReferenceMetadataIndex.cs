@@ -3575,6 +3575,23 @@ sealed partial class ReferenceMetadataIndex
         JsonArray selectedTypeParams, TypeNode[] implementationOwnerTypeArguments,
         bool selectedSuspend, out ReferencedMethodDeclaration declaration, bool semanticConstraints = false,
         string selectedDeclarationId = null)
+        => TrySelectedOverrideDeclarationByShape(ownerFqn, sourceMember, accessorKind, methodArity, signature,
+            ownerTypeArguments, KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(selectedTypeParams,
+                implementationOwnerTypeArguments, semanticConstraints ? null : PhysicalConstraintType),
+            selectedSuspend, out declaration, semanticConstraints, selectedDeclarationId);
+
+    internal bool TrySelectedSourceOverrideDeclaration(string ownerFqn, string sourceMember, int methodArity,
+        IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments, BirTypeParameter[] selectedTypeParams,
+        TypeNode[] implementationOwnerTypeArguments, bool selectedSuspend, out ReferencedMethodDeclaration declaration)
+        => TrySelectedOverrideDeclarationByShape(ownerFqn, sourceMember, null, methodArity, signature,
+            ownerTypeArguments, KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(selectedTypeParams,
+                implementationOwnerTypeArguments), selectedSuspend, out declaration, semanticConstraints: true,
+            selectedDeclarationId: null);
+
+    bool TrySelectedOverrideDeclarationByShape(string ownerFqn, string sourceMember, string accessorKind,
+        int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments, string selectedShape,
+        bool selectedSuspend, out ReferencedMethodDeclaration declaration, bool semanticConstraints,
+        string selectedDeclarationId)
     {
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
@@ -3587,11 +3604,9 @@ sealed partial class ReferenceMetadataIndex
                 && (semanticConstraints ? member.NullableFrame?.SourceArity ?? member.MethodArity
                     : member.MethodArity) == methodArity
                 && member.Suspend == selectedSuspend
-                && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
+                && KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                     semanticConstraints ? member.SemanticMethodTypeParams ?? member.MethodTypeParams : member.MethodTypeParams,
-                    selectedTypeParams,
-                    ownerTypeArguments, implementationOwnerTypeArguments,
-                    semanticConstraints ? null : PhysicalConstraintType)
+                    ownerTypeArguments, semanticConstraints ? null : PhysicalConstraintType) == selectedShape
                 // An explicit override identity selects the declaration even when its value slots were projected.
                 // Comparing its exact construction to the implementer's carrier must not undo that selection.
                 && (selectedDeclarationId != null

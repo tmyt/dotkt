@@ -4,20 +4,13 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Materialize representation-induced value conversions in CIR.
-//
-// Kotlin relates its mutable and read-only collection surfaces, while their lowered CLR sibling interfaces are
-// unrelated in the CLR type lattice. BirTypeLowering owns that physical projection; this final value-flow pass owns
-// the casts the projection requires. It runs only after memberRef and every synthetic declaration are final, so both
-// sides of an edge come from CIR facts: declaration slots, lexical storage, or an exact resolved external member.
-// Owner-dependent Kotlin constraints likewise do not imply a physical CLR relation between two generic slots.
-// A value crossing those slots needs an explicit boxed conversion, even when Kotlin proved the assignment legal.
-// ilemit consequently emits ordinary `cast` nodes without recovering source constraints or collection vocabulary.
-// A physical void invocation likewise needs an explicit Unit value when its result is consumed. Preserve the call
-// as an expression statement and read the resolved singleton afterwards; discarded calls remain ordinary void calls.
-static class PhysicalValueCoercion
+// Shared physical TypeNode policy and the early DOM owners' result/storage helpers.
+// Final value-flow rewriting is owned by TypedPhysicalValueCoercion.
+static partial class PhysicalValueCoercion
 {
-    static bool NeedsConversion(TypeNode source, TypeNode target, Index index)
+    internal static bool NeedsConversion(TypeNode source, TypeNode target, ValueTypeOracle isValue,
+        Func<TypeNode.Fqn, bool> isExistentialOwner, Func<TypeNode.Fqn, bool> isNativeReference,
+        Func<TypeNode.Fqn, TypeNode.Fqn, bool> hasDeclaredCarrier)
     {
         source = SignatureValueTypes.Of(source);
         target = SignatureValueTypes.Of(target);
@@ -25,22 +18,22 @@ static class PhysicalValueCoercion
         return source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
         || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-            && !IsVoid(target) && NeedsBox(target, index.IsValue)
+            && !IsVoid(target) && NeedsBox(target, isValue)
         || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-            && IsReferenceSlot(target, index.IsValue)
+            && IsReferenceSlot(target, isValue)
             && target is not TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
         || source is TypeNode.Fqn carrier && target is TypeNode.Fqn native
-            && index.IsExistentialOwner(carrier)
-            && (index.IsNativeReference(native) || index.HasDeclaredCarrier(native, carrier))
+            && isExistentialOwner(carrier)
+            && (isNativeReference(native) || hasDeclaredCarrier(native, carrier))
         || CollectionViewFaces.IsViewSeam(source, target)
         || source is TypeNode.Fqn { Name: "System.Array" } && target is TypeNode.Array
         // A concrete value or generic stack slot is not a reference, even when its boxed value implements the
         // target interface. State the boxing edge before a conditional merge, store, argument or return.
         || !IsVoid(source) && !IsVoid(target)
-            && NeedsBox(source, index.IsValue) && IsReferenceSlot(target, index.IsValue);
+            && NeedsBox(source, isValue) && IsReferenceSlot(target, isValue);
     }
 
-    static void ValidateNativePointerConversion(TypeNode source, TypeNode target)
+    internal static void ValidateNativePointerConversion(TypeNode source, TypeNode target)
     {
         if (source == null || target == null || IsVoid(target)) return;
         if ((source is TypeNode.FnPtr || target is TypeNode.FnPtr)
@@ -49,7 +42,7 @@ static class PhysicalValueCoercion
                 + $" (source={TypeNode.ToJson(source)}, target={TypeNode.ToJson(target)})");
     }
 
-    static bool NeedsBox(TypeNode type, ValueTypeOracle isValue) => type switch
+    internal static bool NeedsBox(TypeNode type, ValueTypeOracle isValue) => type switch
     {
         TypeNode.Tv => true,
         TypeNode.Nullable nullable => NeedsBox(nullable.Of, isValue),
@@ -58,7 +51,7 @@ static class PhysicalValueCoercion
         _ => false,
     };
 
-    static bool IsReferenceSlot(TypeNode type, ValueTypeOracle isValue) => type switch
+    internal static bool IsReferenceSlot(TypeNode type, ValueTypeOracle isValue) => type switch
     {
         TypeNode.Array => true,
         TypeNode.Nullable nullable => IsReferenceSlot(nullable.Of, isValue),
@@ -72,35 +65,9 @@ static class PhysicalValueCoercion
     {
         readonly Dictionary<string, List<MethodShape>> _methods = new(StringComparer.Ordinal);
         readonly Dictionary<string, TypeNode> _fields = new(StringComparer.Ordinal);
-        readonly Dictionary<string, TypeNode[]> _closureConstructors = new(StringComparer.Ordinal);
-        readonly HashSet<string> _nonGenericClasses = new(StringComparer.Ordinal);
-        readonly HashSet<(string Class, string Carrier)> _declaredCarriers = new();
-        IReadOnlyDictionary<string, SupertypeGraph.Def> _types;
-        readonly Func<JsonObject> _unitValue;
-        internal ValueTypeOracle IsValue;
-        internal Func<TypeNode.Fqn, bool> IsReferenceOwner;
-        internal Func<TypeNode.Fqn, bool> IsExistentialOwner;
-        internal Func<TypeNode.Fqn, bool> IsNativeReference;
-        internal Func<TypeNode.Fqn, TypeNode.Fqn, bool> ReferencedCarrier;
-        internal JsonObject Document;
-        internal bool ReferenceBuild;
-        internal ReferenceMetadataIndex References;
-        internal GenericArrayStorageLowering.FreshNames ArrayNames;
-
-        Index(Func<JsonObject> unitValue) => _unitValue = unitValue;
-        internal JsonObject UnitValue() => _unitValue();
-        internal bool HasDeclaredCarrier(TypeNode.Fqn target, TypeNode.Fqn source) =>
-            _declaredCarriers.Contains((target.Name, source.Name))
-            || ReferencedCarrier?.Invoke(target, source) == true
-            || _declaredCarriers.Any(edge => edge.Class == target.Name
-                && SupertypeGraph.Reaches(source, new TypeNode.Fqn(edge.Carrier), _types, References))
-            || References?.TryExistentialPhysicalOwner(target.Name, out var carrier) == true
-                && SupertypeGraph.Reaches(source, new TypeNode.Fqn(carrier), _types, References);
-
-        internal static Index Build(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue)
+        internal static Index Build(IReadOnlyList<JsonNode> roots)
         {
-            var result = new Index(unitValue);
-            result._types = SupertypeGraph.Collect(roots);
+            var result = new Index();
             foreach (var root in roots.OfType<JsonObject>())
             {
                 var fileOwner = Str(root["fileClass"]);
@@ -114,19 +81,6 @@ static class PhysicalValueCoercion
         void AddType(JsonObject type)
         {
             var owner = Str(type["name"]);
-            // newClosure names an already allocated closure definition. Its
-            // one constructor supplies the capture slots; fields and source
-            // capture stamps are not a substitute for that physical signature.
-            if (owner != null && type["ctors"] is JsonArray { Count: 1 } constructors
-                && constructors[0]?["params"] is JsonArray constructorParameters)
-                _closureConstructors[owner] = constructorParameters.OfType<JsonObject>()
-                    .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
-            if (owner != null && Str(type["kind"]) == "class" && TypeParameterFrame.Count(type) == 0)
-                _nonGenericClasses.Add(owner);
-            if (owner != null && Str(type["kind"]) is "class" or "interface")
-                foreach (var edge in type["interfaces"] as JsonArray ?? new JsonArray())
-                    if (TypeJson.Read(edge) is TypeNode.Fqn { Args: null } implemented)
-                        _declaredCarriers.Add((owner, implemented.Name));
             AddMembers(owner, type);
             if (type["types"] is JsonArray nested)
                 foreach (var child in nested.OfType<JsonObject>()) AddType(child);
@@ -157,14 +111,6 @@ static class PhysicalValueCoercion
         internal TypeNode Field(string owner, string name)
             => owner != null && name != null && _fields.TryGetValue(Key(owner, name), out var type) ? type : null;
 
-        internal TypeNode[] ClosureParameters(JsonObject expression)
-        {
-            if (TypeJson.Read(expression["closureType"]) is not TypeNode.Fqn owner
-                || !_closureConstructors.TryGetValue(owner.Name, out var parameters)) return null;
-            var arguments = ReadTypes(expression["typeArgs"] as JsonArray) ?? owner.Args;
-            return parameters.Select(parameter => Close(parameter, arguments, null)).ToArray();
-        }
-
         internal MethodShape Method(JsonObject call)
         {
             var owner = CallOwner(call);
@@ -182,333 +128,11 @@ static class PhysicalValueCoercion
 
         static string Key(string owner, string name) => owner + "\u0000" + name;
 
-        internal bool ExactReferenceOwner(TypeNode.Fqn owner) => IsReferenceOwner(owner)
-            || _nonGenericClasses.Contains(owner.Name) && !IsValue(owner);
     }
 
-    sealed class Scope
-    {
-        internal readonly Dictionary<string, TypeNode> Locals;
-        internal readonly TypeNode Return;
-        internal readonly TypeNode Owner;
-        internal readonly Dictionary<string, TypeNode> TemporaryFields;
-        internal readonly Dictionary<string, TypeNode> TemporaryLocals;
-
-        internal Scope(TypeNode owner = null, TypeNode ret = null,
-            Dictionary<string, TypeNode> locals = null, Dictionary<string, TypeNode> temporaryFields = null,
-            Dictionary<string, TypeNode> temporaryLocals = null)
-        {
-            Owner = owner;
-            Return = ret;
-            Locals = locals ?? new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-            TemporaryFields = temporaryFields ?? new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-            TemporaryLocals = temporaryLocals ?? new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-        }
-
-        internal Scope Frame(JsonObject declaration, TypeNode owner, TypeNode ret)
-        {
-            var locals = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-            if (declaration["params"] is JsonArray parameters)
-                foreach (var parameter in parameters.OfType<JsonObject>())
-                    if (Str(parameter["name"]) is string name && TypeJson.Read(parameter["type"]) is TypeNode type)
-                        locals[name] = SignatureValueTypes.Of(type);
-            var temporaryFields = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-            var temporaryLocals = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-            while (CollectTemporaryValues(declaration["preStmts"], temporaryFields, temporaryLocals)
-                | CollectTemporaryValues(declaration["body"], temporaryFields, temporaryLocals)) { }
-            return new Scope(owner, ret, locals, temporaryFields, temporaryLocals);
-        }
-
-        internal Scope Copy() => new(Owner, Return, new Dictionary<string, TypeNode>(Locals, StringComparer.Ordinal), TemporaryFields, TemporaryLocals);
-    }
-
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue,
-        ValueTypeOracle isValue, bool referenceBuild = false, Func<TypeNode.Fqn, bool> isReferenceOwner = null,
-        Func<TypeNode.Fqn, bool> isExistentialOwner = null, Func<TypeNode.Fqn, bool> isNativeReference = null,
-        Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null, ReferenceMetadataIndex references = null)
-    {
-        var index = Index.Build(roots, unitValue);
-        index.IsValue = isValue;
-        index.IsReferenceOwner = isReferenceOwner ?? (_ => false);
-        index.IsExistentialOwner = isExistentialOwner ?? (_ => false);
-        index.IsNativeReference = isNativeReference ?? (_ => false);
-        index.ReferencedCarrier = referencedCarrier;
-        index.ReferenceBuild = referenceBuild;
-        index.References = references;
-        foreach (var root in roots.OfType<JsonObject>()) RewriteDocument(root, index);
-    }
-
-    internal static void SelfTest()
-    {
-        NumericOperandsSelfTest();
-        var root = JsonNode.Parse("""
-        {"fileClass":"ValueEdges","methods":[
-          {"name":"nativeSlot","typeParams":[{"name":"T"}],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
-           "ret":{"t":"tv","scope":"method","i":0},"body":[]},
-          {"name":"read","typeParams":[{"name":"T"},{"name":"P"}],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
-           "ret":{"t":"tv","scope":"method","i":1},"body":[{"k":"return","value":{
-             "k":"callStatic","owner":{"t":"fqn","name":"ValueEdges"},"method":"nativeSlot",
-             "sig":[{"t":"tv","scope":"method","i":0}],"typeArgs":[{"t":"tv","scope":"method","i":0}],
-             "args":[{"k":"local","name":"value"}],"ret":{"t":"tv","scope":"method","i":1}}}]},
-          {"name":"view","params":[{"name":"value","type":{"t":"fqn","name":"System.Object"}}],
-           "ret":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.String"}]},
-           "body":[{"k":"return","value":{"k":"local","name":"value"}}]}]}
-        """)!.AsObject();
-        var carrierView = root["methods"][2].DeepClone().AsObject();
-        carrierView["name"] = "carrierView";
-        carrierView["params"][0]["type"] = TypeJson.Fqn("Carrier");
-        root["methods"].AsArray().Add(carrierView);
-        root["types"] = new JsonArray(new JsonObject { ["name"] = "PlainOwner", ["kind"] = "class" });
-        root["types"].AsArray().Add(new JsonObject {
-            ["name"] = "GenericOwner", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
-            ["interfaces"] = new JsonArray(TypeJson.Fqn("Carrier")),
-        });
-        root["types"].AsArray().Add(new JsonObject {
-            ["name"] = "UnrelatedOwner", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
-        });
-        root["types"].AsArray().Add(new JsonObject {
-            ["name"] = "InterfaceOwner", ["kind"] = "interface", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
-            ["interfaces"] = new JsonArray(TypeJson.Fqn("Carrier")),
-        });
-        root["types"].AsArray().Add(new JsonObject {
-            ["name"] = "DerivedCarrier", ["kind"] = "interface",
-            ["interfaces"] = new JsonArray(TypeJson.Fqn("Carrier")),
-        });
-        var exactLocalView = carrierView.DeepClone().AsObject();
-        exactLocalView["name"] = "exactLocalView";
-        exactLocalView["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" });
-        exactLocalView["ret"] = TypeJson.Write(new TypeNode.Fqn("GenericOwner", new TypeNode[] { new TypeNode.Tv("method", 0) }));
-        root["methods"].AsArray().Add(exactLocalView);
-        var interfaceView = exactLocalView.DeepClone().AsObject();
-        interfaceView["name"] = "interfaceView";
-        interfaceView["params"][0]["type"] = TypeJson.Fqn("DerivedCarrier");
-        interfaceView["ret"] = TypeJson.Write(new TypeNode.Fqn("InterfaceOwner", new TypeNode[] { new TypeNode.Tv("method", 0) }));
-        root["methods"].AsArray().Add(interfaceView);
-        var blockLocalView = exactLocalView.DeepClone().AsObject();
-        blockLocalView["name"] = "blockLocalView";
-        blockLocalView["body"][0]["value"] = new JsonObject {
-            ["k"] = "valueBlock", ["type"] = blockLocalView["ret"].DeepClone(),
-            ["stmts"] = new JsonArray(new JsonObject {
-                ["k"] = "var", ["name"] = "stored", ["type"] = TypeJson.Fqn("Carrier"),
-                ["init"] = new JsonObject { ["k"] = "local", ["name"] = "value" },
-            }),
-            ["result"] = new JsonObject { ["k"] = "local", ["name"] = "stored" },
-        };
-        root["methods"].AsArray().Add(blockLocalView);
-        var unrelatedView = exactLocalView.DeepClone().AsObject();
-        unrelatedView["name"] = "unrelatedView";
-        unrelatedView["ret"] = TypeJson.Write(new TypeNode.Fqn("UnrelatedOwner", new TypeNode[] { new TypeNode.Tv("method", 0) }));
-        root["methods"].AsArray().Add(unrelatedView);
-        var referencedView = exactLocalView.DeepClone().AsObject();
-        referencedView["name"] = "referencedView";
-        referencedView["ret"] = TypeJson.Fqn("ReferencedOwner");
-        root["methods"].AsArray().Add(referencedView);
-        var localReceiver = JsonNode.Parse("""
-          {"name":"localReceiver","typeParams":[{"name":"P"}],
-           "params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
-           "ret":{"t":"fqn","name":"System.Int32"},"body":[{"k":"return","value":{
-             "k":"constrainedCall","iface":{"t":"fqn","name":"PlainOwner"},
-             "recvType":{"t":"tv","scope":"method","i":0},"method":"Read",
-             "recv":{"k":"local","name":"value"},"sig":[],"args":[],
-             "ret":{"t":"fqn","name":"System.Int32"}}}]}
-          """).AsObject();
-        root["methods"].AsArray().Add(localReceiver);
-        root["types"].AsArray().Add(JsonNode.Parse("""
-          {"name":"CapturedValue","kind":"class","typeParams":[{"name":"T"}],
-           "ctors":[{"params":[{"name":"value","type":{"t":"tv","scope":"type","i":0}}],"body":[]}]}
-          """));
-        var closureCapture = JsonNode.Parse("""
-          {"name":"closureCapture","typeParams":[{"name":"T"},{"name":"P"}],
-           "params":[{"name":"value","type":{"t":"tv","scope":"method","i":1}}],
-           "ret":{"t":"fqn","name":"void"},"body":[
-             {"k":"expr","e":{"k":"newClosure","closureType":{"t":"fqn","name":"CapturedValue"},
-               "typeArgs":[{"t":"tv","scope":"method","i":0}],"captures":[{"k":"local","name":"value"}]}},
-             {"k":"expr","e":{"k":"newClosure","closureType":{"t":"fqn","name":"CapturedValue"},
-               "typeArgs":[{"t":"tv","scope":"method","i":1}],"captures":[{"k":"local","name":"value"}]}}]}
-          """).AsObject();
-        root["methods"].AsArray().Add(closureCapture);
-        var opaqueResults = JsonNode.Parse("""
-          {"fileClass":"OpaqueResults","methods":[
-            {"name":"nativeResult","params":[],"ret":{"t":"fqn","name":"NativeView"},"body":[]},
-            {"name":"opaqueResult","params":[],"ret":{"t":"fqn","name":"System.Object"},"body":[]},
-            {"name":"probe","params":[],"ret":{"t":"fqn","name":"void"},"body":[
-              {"k":"var","name":"nativeAsObject","type":{"t":"fqn","name":"System.Object"},"init":{"k":"callStatic","owner":{"t":"fqn","name":"OpaqueResults"},
-                "method":"nativeResult","sig":[],"args":[],"ret":{"t":"fqn","name":"System.Object"}}},
-              {"k":"var","name":"opaqueAsNative","type":{"t":"fqn","name":"NativeView"},"init":{"k":"callStatic","owner":{"t":"fqn","name":"OpaqueResults"},
-                "method":"opaqueResult","sig":[],"args":[],"ret":{"t":"fqn","name":"NativeView"}}},
-              {"k":"var","name":"propertyAsObject","type":{"t":"fqn","name":"System.Object"},"init":{"k":"clrPropGet","type":{"t":"fqn","name":"NativeOwner"},
-                "name":"Value","static":false,"recv":{"k":"const","type":{"t":"fqn","name":"NativeOwner"},"value":null},
-                "ret":{"t":"fqn","name":"System.Object"},"memberRef":{"kind":"propertyAccessor",
-                  "declaringType":{"t":"fqn","name":"NativeOwner"},"name":"get_Value",
-                  "returnType":{"t":"fqn","name":"NativeView"},"parameterTypes":[]}}}]}]}
-          """).AsObject();
-        ApplyAll(new JsonNode[] { opaqueResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
-        var opaqueEdges = opaqueResults["methods"][2]["body"].AsArray();
-        foreach (var (edge, expected) in opaqueEdges.Select((edge, index) => (edge,
-                     index == 1 ? "System.Object" : "NativeView")))
-            if (Str(edge["init"]["k"]) != "cast"
-                || TypeJson.Read(edge["init"]["e"]["ret"]) != new TypeNode.Fqn(expected))
-                throw new InvalidOperationException("Opaque reference projection lost an exact local/native result contract");
-        var genericResults = JsonNode.Parse("""
-          {"fileClass":"GenericResults","methods":[
-            {"name":"read","typeParams":[{"name":"T"}],"params":[],"ret":{"t":"tv","scope":"method","i":0},"body":[]},
-            {"name":"probe","typeParams":[{"name":"T"}],"params":[],"ret":{"t":"fqn","name":"void"},"body":[
-              {"k":"var","name":"value","type":{"t":"fqn","name":"object"},"init":
-                {"k":"callStatic","owner":{"t":"fqn","name":"GenericResults"},"method":"read",
-                 "typeArgs":[{"t":"tv","scope":"method","i":0}],"sig":[],"args":[],"ret":{"t":"fqn","name":"object"}}}]}]}
-          """).AsObject();
-        ApplyAll(new JsonNode[] { genericResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
-        var genericBox = genericResults["methods"][1]["body"][0]["init"];
-        if (Str(genericBox["k"]) != "cast"
-            || TypeJson.Read(genericBox["type"]) != new TypeNode.Fqn("object")
-            || TypeJson.Read(genericBox["e"]["ret"]) != new TypeNode.Tv("method", 0))
-            throw new InvalidOperationException("A generic physical return lost boxing at its opaque value boundary");
-        var valueResults = JsonNode.Parse("""
-          {"fileClass":"ValueResults","methods":[
-            {"name":"read","params":[],"ret":{"t":"fqn","name":"object"},"body":[]},
-            {"name":"probe","params":[],"ret":{"t":"fqn","name":"void"},"body":[]}]}
-          """).AsObject();
-        var valueBody = valueResults["methods"][1]["body"].AsArray();
-        JsonObject ReadAs(TypeNode type) => new() {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("ValueResults"), ["method"] = "read",
-            ["sig"] = new JsonArray(), ["args"] = new JsonArray(), ["dynRet"] = TypeJson.Write(type),
-        };
-        var integer = new TypeNode.Fqn("System.Int32");
-        var nullableInteger = new TypeNode.Nullable(integer);
-        foreach (var type in new TypeNode[] { integer, nullableInteger, new TypeNode.Fqn("object") })
-            valueBody.Add(new JsonObject { ["k"] = "var", ["name"] = "value" + valueBody.Count,
-                ["type"] = TypeJson.Write(type), ["init"] = ReadAs(type) });
-        valueBody.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = ReadAs(integer) });
-        ApplyAll(new JsonNode[] { valueResults }, () => throw new InvalidOperationException("Unexpected Unit conversion"),
-            type => type.Name == "System.Int32");
-        foreach (var position in new[] { 0, 1 })
-            if (Str(valueBody[position]["init"]["k"]) != "cast"
-                || TypeJson.Read(valueBody[position]["init"]["type"]) != (position == 0 ? integer : nullableInteger)
-                || TypeJson.Read(valueBody[position]["init"]["e"]["dynRet"]) != new TypeNode.Fqn("object"))
-                throw new InvalidOperationException("Consumed erased invocation lost its concrete value projection");
-        if (Str(valueBody[2]["init"]["k"]) != "callStatic" || Str(valueBody[3]["expr"]["k"]) != "callStatic"
-            || TypeJson.Read(valueBody[3]["expr"]["dynRet"]) != new TypeNode.Fqn("object"))
-            throw new InvalidOperationException("Object storage or discarded invocation acquired a premature extraction");
-        ApplyAll(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
-            isExistentialOwner: owner => owner.Name is "Carrier" or "DerivedCarrier",
-            isNativeReference: owner => owner.Name == "System.Collections.Generic.IReadOnlyList",
-            referencedCarrier: (target, source) => target.Name == "ReferencedOwner" && source.Name == "Carrier");
-        var result = root["methods"][1]["body"][0]["value"];
-        if (Str(result["k"]) != "cast" || TypeJson.Read(result["type"]) != new TypeNode.Tv("method", 1)
-            || TypeJson.Read(result["e"]["ret"]) != new TypeNode.Tv("method", 0))
-            throw new InvalidOperationException("Local generic value conversion lost the exact inner result slot");
-        var view = root["methods"][2]["body"][0]["value"];
-        if (Str(view["k"]) != "cast" || TypeJson.Read(view["type"]) != TypeJson.Read(root["methods"][2]["ret"]))
-            throw new InvalidOperationException("Object storage did not convert to the declared reference value slot");
-        if (Str(carrierView["body"][0]["value"]["k"]) != "cast")
-            throw new InvalidOperationException("A declared carrier value lost its checked native interface view");
-        if (Str(exactLocalView["body"][0]["value"]["k"]) != "cast"
-            || TypeJson.Read(exactLocalView["body"][0]["value"]["type"]) != TypeJson.Read(exactLocalView["ret"])
-            || Str(unrelatedView["body"][0]["value"]["k"]) != "local")
-            throw new InvalidOperationException("Local carrier conversion guessed a class or discarded the exact declaration closure");
-        if (Str(referencedView["body"][0]["value"]["k"]) != "cast"
-            || TypeJson.Read(referencedView["body"][0]["value"]["type"]) != TypeJson.Read(referencedView["ret"]))
-            throw new InvalidOperationException("A referenced carrier lost its recorded target declaration");
-        if (Str(interfaceView["body"][0]["value"]["k"]) != "cast"
-            || TypeJson.Read(interfaceView["body"][0]["value"]["type"]) != TypeJson.Read(interfaceView["ret"]))
-            throw new InvalidOperationException("A derived carrier lost its declared generic interface value slot");
-        if (Str(blockLocalView["body"][0]["value"]["result"]["k"]) != "cast"
-            || TypeJson.Read(blockLocalView["body"][0]["value"]["result"]["type"])
-                != TypeJson.Read(blockLocalView["ret"]))
-            throw new InvalidOperationException("A value block concealed its physical result from the declared value slot");
-        var referenceCall = localReceiver["body"][0]["value"];
-        if (TypeJson.Read(referenceCall["recvType"]) != new TypeNode.Fqn("PlainOwner")
-            || Str(referenceCall["recv"]["k"]) != "cast"
-            || TypeJson.Read(referenceCall["recv"]["type"]) != new TypeNode.Fqn("PlainOwner"))
-            throw new InvalidOperationException("A local non-generic declaring class lost its explicit reference receiver");
-        var captures = closureCapture["body"][0]["e"]["captures"];
-        if (Str(captures[0]["k"]) != "cast"
-            || TypeJson.Read(captures[0]["type"]) != new TypeNode.Tv("method", 0)
-            || Str(closureCapture["body"][1]["e"]["captures"][0]["k"]) != "local")
-            throw new InvalidOperationException("Closure captures did not use the exact allocated constructor frame");
-        var unusedParameters = JsonNode.Parse("""
-          [{"name":"<unused var>","type":{"t":"fqn","name":"object"}},
-           {"name":"<unused var>","type":{"t":"fqn","name":"object"}}]
-          """)!.AsArray().OfType<JsonObject>().ToArray();
-        var emptyBody = new JsonArray();
-        var unchanged = new JsonArray(unusedParameters.Select(parameter => parameter.DeepClone()).ToArray()).ToJsonString();
-        AllocateNativeLocals(emptyBody, unusedParameters, emptyBody);
-        if (emptyBody.Count != 0 || unchanged != new JsonArray(
-                unusedParameters.Select(parameter => parameter.DeepClone()).ToArray()).ToJsonString())
-            throw new InvalidOperationException("Unused anonymous parameters acquired addressable storage");
-        Console.WriteLine("[physical value edges] self-test OK (local generic result, erased result, native carrier view)");
-    }
-
-    static void NumericOperandsSelfTest()
-    {
-        foreach (var referenceBuild in new[] { false, true })
-        foreach (var (left, right, target) in new[] {
-            ("long", "int", "System.Int64"), ("int", "double", "System.Double"),
-            ("uint", "ulong", "System.UInt64"), ("short", "sbyte", "System.Int32"),
-            ("char", "ushort", "System.Int32"), ("kotlin.Long", "kotlin.Int", "System.Int64"),
-            ("uint", "int", "System.UInt32"), ("int", "uint", "System.Int32"),
-        })
-        {
-            var scope = new Scope(locals: new Dictionary<string, TypeNode> {
-                ["left"] = new TypeNode.Fqn(left), ["right"] = new TypeNode.Fqn(right),
-            });
-            var index = Index.Build(Array.Empty<JsonNode>(), () => throw new InvalidOperationException());
-            index.ReferenceBuild = referenceBuild;
-            var operation = new JsonObject {
-                ["k"] = "binOp", ["op"] = "+",
-                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "left" },
-                ["rhs"] = new JsonObject { ["k"] = "local", ["name"] = "right" },
-            };
-            CoerceInputs(operation, scope, index);
-            foreach (var side in new[] { "lhs", "rhs" })
-                if (BirTypeLowering.CanonicalExpressionResult(ExprType(operation[side], scope, index))
-                    != new TypeNode.Fqn(target))
-                    throw new InvalidOperationException($"Mixed arithmetic lost its physical width: {left}/{right}");
-            var once = operation.DeepClone();
-            CoerceInputs(operation, scope, index);
-            if (!JsonNode.DeepEquals(once, operation))
-                throw new InvalidOperationException("Numeric operand coercion is not stable on its first result");
-            foreach (var shift in new[] { "<<", ">>", ">>>" })
-            {
-                if (left != "long" || right != "int") continue;
-                var shifted = new JsonObject {
-                    ["k"] = "binOp", ["op"] = shift,
-                    ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "left" },
-                    ["rhs"] = new JsonObject { ["k"] = "local", ["name"] = "right" },
-                };
-                var before = shifted.DeepClone();
-                CoerceInputs(shifted, scope, index);
-                if (!JsonNode.DeepEquals(before, shifted))
-                    throw new InvalidOperationException("Numeric coercion rewrote a shift distance");
-            }
-        }
-        foreach (var kind in new[] { "clrStatic", "clrInstance", "callStatic", "callInstance", "constrainedCall" })
-        {
-            var call = new JsonObject { ["k"] = kind };
-            if (kind is "clrStatic" or "clrInstance")
-                call["memberRef"] = new JsonObject {
-                    ["returnType"] = TypeJson.Write(new TypeNode.ByRef(new TypeNode.Fqn("System.Int32"))),
-                };
-            else call["calleeRet"] = TypeJson.Fqn("System.Int32");
-            var operation = new JsonObject {
-                ["k"] = "binOp", ["op"] = "+", ["lhs"] = call,
-                ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int64"), ["value"] = 1 },
-            };
-            var index = Index.Build(Array.Empty<JsonNode>(), () => throw new InvalidOperationException());
-            CoerceInputs(operation, new Scope(), index);
-            if (Str(operation["lhs"]?["k"]) != "conv"
-                || TypeJson.Read(operation["lhs"]?["to"]) != new TypeNode.Fqn("System.Int64")
-                || !JsonNode.DeepEquals(operation["lhs"]?["e"], call))
-                throw new InvalidOperationException($"Numeric coercion lost the exact copied result of {kind}");
-        }
-        Console.WriteLine("[numeric operands] self-test OK (widths, stack categories, signed ties, ref mode, shifts, call values)");
-    }
-
-    // Terminal operand materialization reads the same exact CLR result contract as value coercion. In particular
-    // source sty stamps and Kotlin array spellings are not authoritative for final physical call/spill slots.
     internal static Func<JsonNode, BirScope, TypeNode> ResultTypeOracle(IReadOnlyList<JsonNode> roots)
     {
-        var index = Index.Build(roots, () => throw new InvalidOperationException("Type lookup cannot materialize Unit"));
+        var index = Index.Build(roots);
         var fields = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         return (node, scope) =>
         {
@@ -517,85 +141,10 @@ static class PhysicalValueCoercion
                 return construction["typeArgs"] is JsonArray args && args.Count > 0
                     ? new TypeNode.Fqn(implementation.Name, args.Select(TypeJson.Read).ToArray()) : implementation;
             return ConstructedReferenceType(node, fields, scope.VarTypes)
-                ?? ExprType(node, new Scope(locals: scope.VarTypes), index);
+                ?? ExprType(node, scope.VarTypes, index);
         };
     }
 
-    static void RewriteDocument(JsonObject root, Index index)
-    {
-        index.Document = root;
-        // This is a new structural phase; do not reuse the earlier FBound allocator's snapshot.
-        index.ArrayNames = new GenericArrayStorageLowering.FreshNames(root);
-        var fileOwner = Str(root["fileClass"]);
-        RewriteMembers(root, fileOwner == null ? null : new TypeNode.Fqn(fileOwner), index);
-        if (root["types"] is JsonArray types)
-            foreach (var type in types.OfType<JsonObject>().ToArray()) RewriteType(type, index);
-    }
-
-    static void RewriteType(JsonObject type, Index index)
-    {
-        var owner = TypeJson.Read(type["selfType"])
-            ?? (Str(type["name"]) is string name ? new TypeNode.Fqn(name) : null);
-        RewriteMembers(type, owner, index);
-        if (type["types"] is JsonArray nested)
-            foreach (var child in nested.OfType<JsonObject>()) RewriteType(child, index);
-    }
-
-    static void RewriteMembers(JsonObject container, TypeNode owner, Index index)
-    {
-        if (container["fields"] is JsonArray fields)
-            foreach (var field in fields.OfType<JsonObject>())
-                if (field["init"] is JsonNode init && TypeJson.Read(field["type"]) is TypeNode target)
-                {
-                    var fieldScope = new Scope(owner);
-                    var rewritten = Rewrite(init, fieldScope, index);
-                    if (!index.ReferenceBuild) rewritten = Coerce(rewritten, target, fieldScope, index);
-                    if (!ReferenceEquals(rewritten, init)) field["init"] = rewritten;
-                }
-        if (container["ctors"] is JsonArray constructors)
-            foreach (var constructor in constructors.OfType<JsonObject>())
-            {
-                if (!index.ReferenceBuild)
-                {
-                    var prologue = constructor["preStmts"] as JsonArray ?? new JsonArray();
-                    AllocateNativeLocals((constructor["preStmts"] as JsonArray ?? new JsonArray())
-                        .Concat(constructor["thisArgs"] as JsonArray ?? constructor["baseArgs"] as JsonArray ?? new JsonArray())
-                        .Concat(constructor["body"] as JsonArray ?? new JsonArray()),
-                        (constructor["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>(),
-                        prologue, index.ArrayNames);
-                    if (constructor["preStmts"] == null && prologue.Count != 0) constructor["preStmts"] = prologue;
-                }
-                var scope = new Scope().Frame(constructor, owner, new TypeNode.Fqn("void"));
-                // Constructor delegation is executable CIR too. Its evaluation plan establishes locals consumed by
-                // the bare argument vector, so preserve the same order ilemit uses: preStmts, delegation, body.
-                if (constructor["preStmts"] is JsonArray pre) RewriteArray(pre, scope, index);
-                var arguments = constructor["thisArgs"] as JsonArray ?? constructor["baseArgs"] as JsonArray;
-                if (arguments != null)
-                {
-                    RewriteArray(arguments, scope, index);
-                    if (!index.ReferenceBuild) CoerceVector(arguments, ConstructorParameterTypes(constructor), scope, index);
-                }
-                if (constructor["body"] is JsonArray body) RewriteArray(body, scope, index);
-            }
-        if (container["methods"] is JsonArray methods)
-            foreach (var method in methods.OfType<JsonObject>())
-            {
-                var scope = new Scope().Frame(method, owner, TypeJson.Read(method["ret"]));
-                if (method["body"] is JsonArray body)
-                {
-                    if (!index.ReferenceBuild) AllocateNativeLocals(body,
-                        (method["params"] as JsonArray ?? new JsonArray()).OfType<JsonObject>(), body,
-                        index.ArrayNames);
-                    RewriteArray(body, scope, index);
-                }
-            }
-    }
-
-    // A CLR managed reference names storage, not a converted value. A local used
-    // by an exact resolved ref/out parameter therefore keeps that parameter's
-    // element type for its whole storage lifetime. Ordinary reads and writes are
-    // reconciled by the value-flow walk below; no temporary copy or reference
-    // lifetime tracking is involved, and repeated arguments name the same slot.
     internal static void AllocateNativeLocals(IEnumerable<JsonNode> body,
         IEnumerable<JsonObject> parameterDeclarations, JsonArray prologue,
         GenericArrayStorageLowering.FreshNames arrayNames = null, bool genericParametersOnly = false)
@@ -692,130 +241,6 @@ static class PhysicalValueCoercion
         }
     }
 
-    static JsonNode Rewrite(JsonNode node, Scope scope, Index index, bool resultUsed = true)
-    {
-        if (node is JsonArray array) { RewriteArray(array, scope, index); return array; }
-        if (node is not JsonObject obj) return node;
-
-        // A nested declaration owns a fresh parameter/local frame. Synthetic declarations normally live in the
-        // module tables by this stage, but localFun remains a declaration object until its own lowering path consumes it.
-        if (obj["k"] == null && obj["params"] is JsonArray && obj["body"] is JsonArray nestedBody)
-        {
-            var nestedScope = new Scope().Frame(obj, scope.Owner, TypeJson.Read(obj["ret"]));
-            RewriteArray(nestedBody, nestedScope, index);
-            return obj;
-        }
-
-        var loopScope = LoopScope(obj, scope);
-        foreach (var child in obj.ToList())
-        {
-            if (child.Value == null) continue;
-            if (child.Key == "catches" && Str(obj["k"]) is "try" or "tryExpr"
-                && child.Value is JsonArray catches)
-            {
-                foreach (var clause in catches.OfType<JsonObject>())
-                {
-                    var catchScope = scope.Copy();
-                    if (Str(clause["var"]) is string caught && TypeJson.Read(clause["excType"]) is TypeNode exceptionType)
-                        catchScope.Locals[caught] = exceptionType;
-                    Rewrite(clause, catchScope, index);
-                }
-                continue;
-            }
-            var childScope = child.Key == "body" && loopScope != null ? loopScope : scope;
-            var rewritten = Rewrite(child.Value, childScope, index,
-                ChildUsesValue(obj, child.Key, scope, resultUsed));
-            if (!ReferenceEquals(rewritten, child.Value)) obj[child.Key] = rewritten;
-        }
-
-        // Late value blocks can lack a result stamp. The lexical storage and
-        // resolved member slots above are authoritative for their array value.
-        if (index.References != null && obj["array"] != null
-            && GenericArrayStorageLowering.LowerOperation(obj, index.References, index.ArrayNames,
-                ExprType(obj["array"], scope, index)))
-            return Rewrite(obj, scope, index, resultUsed);
-
-        // Dereferences consume the pointer's exact element type. The original
-        // value stamp can name a Kotlin storage companion instead; conversions
-        // belong on the loaded/stored value, never on the managed pointer.
-        if (Str(obj["k"]) is "byrefLoad" or "byrefStore")
-        {
-            var pointer = obj["ptr"] ?? (Str(obj["local"]) is string local
-                ? new JsonObject { ["k"] = "local", ["name"] = local } : null);
-            if (ExprType(pointer, scope, index) is TypeNode.ByRef reference)
-                obj["elem"] = TypeJson.Write(reference.Of);
-        }
-
-        // A constrained receiver uses the actual lexical location, which may
-        // retain native T even when its Kotlin value stamp used Storage(T).
-        if (Str(obj["k"]) == "constrainedCall" && TypeJson.Read(obj["recvType"]) is TypeNode.Tv
-            && ExprType(obj["recv"], scope, index) is TypeNode.Tv receiverVariable)
-            obj["recvType"] = TypeJson.Write(receiverVariable);
-
-        // A reference-only declaring class needs a class reference, not an
-        // unconstrained storage companion. Constrain the explicit converted
-        // reference instead; boxing cannot copy mutable struct state here.
-        // Object/ValueType/Enum and interfaces retain their addressable dispatch.
-        if (Str(obj["k"]) == "constrainedCall" && TypeJson.Read(obj["recvType"]) is TypeNode.Tv
-            && (TypeJson.Read(ResolvedMember(obj)?["declaringType"]) ?? TypeJson.Read(obj["iface"]))
-                is TypeNode.Fqn referenceOwner
-            && index.ExactReferenceOwner(referenceOwner))
-        {
-            obj["recvType"] = TypeJson.Write(referenceOwner);
-            CoerceSlot(obj, "recv", referenceOwner, scope, index);
-        }
-
-        // Collection allocation nodes already state their exact reference-type constructor. A compiler-owned
-        // single-evaluation binding can retain that type even when its Kotlin surface is existential. Do not narrow
-        // user storage or declaration signatures: those can contain other instantiations, including value elements.
-        if (!index.ReferenceBuild && obj.Remove(CallEvalLowering.ValueTemporaryKey) && Str(obj["k"]) == "var"
-            && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
-        {
-            // The child walk may already have wrapped a spilled-field read in its explicit conversion. Use the
-            // binding's precomputed provenance rather than trying to rediscover it through rewritten expressions.
-            var constructed = Str(obj["name"]) is string temporary
-                && scope.TemporaryLocals.TryGetValue(temporary, out var known) ? known
-                : ConstructedReferenceType(obj["init"], scope.TemporaryFields, scope.TemporaryLocals);
-            if (constructed is TypeNode.Fqn) obj["type"] = TypeJson.Write(constructed);
-        }
-        CoerceInputs(obj, scope, index);
-        // Reference declarations retain Kotlin signature vocabulary. Only consume the
-        // executable operations left in constructor delegation after body squash.
-        if (index.ReferenceBuild) return obj;
-        if (Str(obj["k"]) is "return" or "returnExpr" && IsVoid(scope.Return)
-            && obj["value"] is JsonNode discarded)
-        {
-            // A specialized Unit result can remain a real value even though this declaration returns void.
-            // Evaluate it once for effects (and exceptions), then return with an empty stack, including in try.
-            var exit = (JsonObject)obj.DeepClone();
-            exit.Remove("value");
-            var effect = new JsonObject { ["k"] = "exprStmt", ["expr"] = discarded.DeepClone() };
-            return Str(obj["k"]) == "return"
-                ? new JsonObject { ["k"] = "block", ["body"] = new JsonArray(effect, exit) }
-                : new JsonObject
-                {
-                    ["k"] = "valueBlock", ["type"] = TypeJson.Fqn("void"),
-                    ["stmts"] = new JsonArray(effect), ["result"] = exit,
-                };
-        }
-        var result = CoerceDeclaredResult(obj, scope, index, resultUsed);
-        if (Str(obj["k"]) == "field" && TemporaryFieldKey(obj) is string fieldKey
-            && scope.TemporaryFields.TryGetValue(fieldKey, out var retained)
-            && ExprType(obj, scope, index) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
-            return new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(retained), ["e"] = obj.DeepClone() };
-        if (resultUsed && Str(obj["k"]) == "const" && IsVoid(ExprType(result, scope, index)))
-            return index.UnitValue();
-        if (resultUsed && CanProduceVoidValue(Str(obj["k"])) && IsVoid(ExprType(result, scope, index)))
-            return new JsonObject
-            {
-                ["k"] = "valueBlock",
-                ["type"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Unit")),
-                ["stmts"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = result.DeepClone() }),
-                ["result"] = index.UnitValue(),
-            };
-        return result;
-    }
-
     static TypeNode ConstructedReferenceType(JsonNode value, IReadOnlyDictionary<string, TypeNode> fields,
         IReadOnlyDictionary<string, TypeNode> locals)
     {
@@ -837,421 +262,9 @@ static class PhysicalValueCoercion
         && TypeJson.Read(node["ownerType"]) is TypeNode owner && Str(node["name"]) is string name
             ? owner.ToString() + "\u0000" + name : null;
 
-    static bool CollectTemporaryValues(JsonNode node, Dictionary<string, TypeNode> fields,
-        Dictionary<string, TypeNode> locals)
-    {
-        var changed = false;
-        if (node is JsonArray array)
-        {
-            foreach (var child in array) changed |= CollectTemporaryValues(child, fields, locals);
-            return changed;
-        }
-        if (node is not JsonObject obj || obj["params"] is JsonArray && obj["body"] is JsonArray) return false;
-        if (Str(obj["k"]) == "setField" && obj[CallEvalLowering.ValueTemporaryKey]?.GetValue<bool>() == true
-            && TemporaryFieldKey(obj) is string key && !fields.ContainsKey(key)
-            && ConstructedReferenceType(obj["value"], fields, locals) is TypeNode type)
-        {
-            fields[key] = type;
-            changed = true;
-        }
-        if (Str(obj["k"]) == "var" && obj[CallEvalLowering.ValueTemporaryKey]?.GetValue<bool>() == true
-            && Str(obj["name"]) is string name && !locals.ContainsKey(name)
-            && ConstructedReferenceType(obj["init"], fields, locals) is TypeNode localType)
-        {
-            locals[name] = localType;
-            changed = true;
-        }
-        foreach (var child in obj) changed |= CollectTemporaryValues(child.Value, fields, locals);
-        return changed;
-    }
-
     static bool IsVoid(TypeNode type) => type is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
 
-    static bool CanProduceVoidValue(string kind) => kind is
-        "callStatic" or "callInstance" or "constrainedCall" or "clrStatic" or "clrInstance"
-        or "clrGenericStatic" or "clrGenericInstance" or "delegateInvoke" or "cond" or "valueBlock";
-
-    static bool ChildUsesValue(JsonObject parent, string key, Scope scope, bool resultUsed) =>
-        (Str(parent["k"]), key) switch
-        {
-            ("exprStmt", "expr") => false,
-            ("return" or "returnExpr", "value") => !IsVoid(scope.Return),
-            ("valueBlock", "result") or ("cond", "then" or "else") =>
-                resultUsed && !IsVoid(TypeJson.Read(parent["type"])),
-            _ => true,
-        };
-
-    static void RewriteArray(JsonArray array, Scope scope, Index index)
-    {
-        for (var i = 0; i < array.Count; i++)
-        {
-            if (array[i] is JsonNode item)
-            {
-                var rewritten = Rewrite(item, scope, index);
-                if (!ReferenceEquals(rewritten, item)) array[i] = rewritten;
-            }
-            if (array[i] is JsonObject statement && Str(statement["k"]) == "var"
-                && Str(statement["name"]) is string name && TypeJson.Read(statement["type"]) is TypeNode type)
-                scope.Locals[name] = type;
-        }
-    }
-
-    static Scope LoopScope(JsonObject node, Scope scope)
-    {
-        var kind = Str(node["k"]);
-        if (kind is not ("for" or "forRange" or "forArray" or "forEachInline" or "forIn")) return null;
-        var name = Str(node["var"]);
-        if (name == null) return null;
-        var type = TypeJson.Read(node["elem"])
-            ?? (kind is "for" or "forRange" ? new TypeNode.Fqn("System.Int32") : null);
-        if (type == null) return null;
-        var child = scope.Copy();
-        child.Locals[name] = type;
-        return child;
-    }
-
-    static void CoerceInputs(JsonObject node, Scope scope, Index index)
-    {
-        var kind = Str(node["k"]);
-        if (kind == "binOp") WidenNumericOperands(node, scope, index);
-        if (index.ReferenceBuild && !(kind == "binOp" && Str(node["op"]) == "===")) return;
-        switch (kind)
-        {
-            case "objMethod":
-                ValidateNativePointerConversion(ExprType(node["recv"], scope, index), new TypeNode.Fqn("System.Object"));
-                ValidateNativePointerConversion(ExprType(node["arg"], scope, index), new TypeNode.Fqn("System.Object"));
-                break;
-            case "objEq":
-                ValidateNativePointerConversion(ExprType(node["lhs"], scope, index), new TypeNode.Fqn("System.Object"));
-                ValidateNativePointerConversion(ExprType(node["rhs"], scope, index), new TypeNode.Fqn("System.Object"));
-                break;
-            case "isInst": case "isInstRef":
-                var checkedValue = ExprType(node["e"], scope, index);
-                ValidateNativePointerConversion(checkedValue, new TypeNode.Fqn("System.Object"));
-                ValidateNativePointerConversion(checkedValue, TypeJson.Read(node["type"]));
-                break;
-            case "concat":
-                if (node["parts"] is JsonArray parts)
-                    foreach (var part in parts)
-                        ValidateNativePointerConversion(ExprType(part, scope, index), new TypeNode.Fqn("System.Object"));
-                break;
-            case "cast":
-                ValidateNativePointerConversion(ExprType(node["e"], scope, index), TypeJson.Read(node["type"]));
-                break;
-            case "binOp" when Str(node["op"]) == "===":
-                var identityLeft = ExprType(node["lhs"], scope, index);
-                var identityRight = ExprType(node["rhs"], scope, index);
-                if (identityLeft == null || identityRight == null)
-                    throw new InvalidOperationException("bir2cir: identity comparison lacks a physical operand type");
-                // Only equal physical slots retain the documented homogeneous comparison.
-                // Distinct slots compare references: box generic/value operands explicitly,
-                // without calling Equals or narrowing one operand to the other's type.
-                if (!identityLeft.Equals(identityRight))
-                    foreach (var operand in new[] { "lhs", "rhs" })
-                    {
-                        ValidateNativePointerConversion(ExprType(node[operand], scope, index), new TypeNode.Fqn("System.Object"));
-                        node[operand] = new JsonObject
-                        {
-                            ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Object"),
-                            ["e"] = node[operand]!.DeepClone(),
-                        };
-                    }
-                node["op"] = "==";
-                break;
-            case "var":
-                CoerceSlot(node, "init", TypeJson.Read(node["type"]), scope, index);
-                break;
-            case "setLocal":
-                if (Str(node["name"]) is string local && scope.Locals.TryGetValue(local, out var localType))
-                    CoerceSlot(node, "value", localType, scope, index);
-                break;
-            case "setField": case "setFieldExpr": case "staticFieldSet":
-                CoerceSlot(node, "value", FieldTarget(node, scope, index), scope, index);
-                break;
-            case "return": case "returnExpr":
-                CoerceSlot(node, "value", scope.Return, scope, index);
-                break;
-            case "valueBlock":
-                CoerceSlot(node, "result", TypeJson.Read(node["type"]), scope, index);
-                break;
-            case "callStatic": case "callInstance": case "constrainedCall":
-            case "clrStatic": case "clrInstance": case "clrGenericStatic": case "clrGenericInstance":
-                CoerceArguments(node, ParameterTypes(node), scope, index);
-                break;
-            case "new": case "newClr":
-                CoerceConstructorArguments(node, scope, index);
-                break;
-            case "newClosure":
-                CoerceVector(node["captures"] as JsonArray, index.ClosureParameters(node), scope, index);
-                break;
-            case "delegateInvoke":
-                CoerceDelegateArguments(node, scope, index);
-                break;
-            case "clrPropSet":
-                CoerceSlot(node, "value", FieldTarget(node, scope, index), scope, index);
-                break;
-            case "arraySet":
-                CoerceSlot(node, "value", TypeJson.Read(node["elem"]), scope, index);
-                break;
-            case "stackSet": case "byrefStore":
-                CoerceSlot(node, "value", TypeJson.Read(node["elem"]), scope, index);
-                break;
-            case "newArray":
-                CoerceArray(node["elems"] as JsonArray, TypeJson.Read(node["elem"]), scope, index);
-                break;
-            case "newList":
-                CoerceArray(node["elems"] as JsonArray, TypeJson.Read(node["elem"]), scope, index);
-                break;
-            case "cond":
-                var result = TypeJson.Read(node["type"]);
-                CoerceSlot(node, "then", result, scope, index);
-                CoerceSlot(node, "else", result, scope, index);
-                break;
-        }
-        // The receiver is an input slot too. An array element or generic result may expose the storage
-        // collection face while the selected member belongs to its read-only face. Use the exact resolved
-        // owner, just as argument coercion uses the exact selected parameter vector.
-        if (node["recv"] != null && ResolvedMember(node) is JsonObject selected)
-        {
-            // Address-taking dispatch consumes the recorded receiver construction, not a boxed instance of the
-            // declaring interface. Preserve that physical slot for constrained calls and CLR struct dispatch.
-            var receiverTarget = Str(node["k"]) switch
-            {
-                "constrainedCall" => TypeJson.Read(node["recvType"]),
-                "clrInstance" or "clrPropGet" or "clrPropSet" => TypeJson.Read(node["type"]),
-                _ => TypeJson.Read(selected["declaringType"]),
-            };
-            CoerceSlot(node, "recv", receiverTarget, scope, index);
-        }
-    }
-
-    static void CoerceDelegateArguments(JsonObject node, Scope scope, Index index)
-    {
-        // Invoke's resolved declaration owns the constructed function delegate's physical slots.
-        // Unlike a Kotlin function type, that declaration states exactly what the emitted call consumes.
-        if (node["invokeRef"] is not JsonObject invoke || node["args"] is not JsonArray args)
-            throw new InvalidOperationException("bir2cir: delegate invocation has no resolved argument contract");
-        // A function-bounded generic value still occupies a generic stack slot. Its selected
-        // Invoke consumes a delegate reference, so materialize that boxing edge in CIR too.
-        CoerceSlot(node, "recv", TypeJson.Read(invoke["declaringType"]), scope, index);
-        var targets = ReadTypes(invoke["parameterTypes"] as JsonArray)
-            ?? throw new InvalidOperationException("bir2cir: delegate invocation has no parameter types");
-        if (targets.Length != args.Count)
-            throw new InvalidOperationException("bir2cir: delegate invocation argument count differs from its resolved contract");
-        targets = targets.Select(t => Close(t, OwnerArgs(invoke), Array.Empty<TypeNode>())).ToArray();
-        CoerceVector(args, targets, scope, index);
-        for (var i = 0; i < args.Count; i++)
-        {
-            if (args[i] is not JsonNode value || targets[i] is TypeNode.ByRef
-                || targets[i].Equals(ExprType(value, scope, index))) continue;
-            // State the argument conversion explicitly: a value-type argument to an object/interface slot
-            // requires boxing, even though the Kotlin source needs no explicit cast.
-            args[i] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(targets[i]), ["e"] = value.DeepClone() };
-        }
-    }
-
-    static void CoerceArguments(JsonObject node, TypeNode[] targets, Scope scope, Index index)
-    {
-        if (node["args"] is JsonArray args) CoerceVector(args, targets, scope, index);
-    }
-
-    static void CoerceConstructorArguments(JsonObject node, Scope scope, Index index)
-    {
-        // A local new's argTypes already describe the caller's closed construction. Only a resolved constructor
-        // memberRef still carries declaration-relative parameters that need substitution through its owner.
-        var targets = node["memberRef"] is JsonObject
-            ? ParameterTypes(node)
-            : ReadTypes(node["argTypes"] as JsonArray);
-        CoerceArguments(node, targets, scope, index);
-        // An erased value may cross into a closed constructor parameter, but that target belongs to the
-        // selected physical declaration, not to an independently closed source projection. In particular,
-        // Holder<MutableList<*>> constructs Holder<object>: its argument must not be cast to IList<object>.
-        if (node["memberRef"] is not JsonObject member || Str(member["kind"]) != "ctor"
-            || node["args"] is not JsonArray args || targets?.Length != args.Count) return;
-        for (var i = 0; i < args.Count; i++)
-            if (args[i] is JsonNode argument
-                && ExprType(argument, scope, index) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-                && targets[i] is TypeNode.Fqn or TypeNode.Array or TypeNode.Fn or TypeNode.Tv
-                && targets[i] is not TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
-                args[i] = new JsonObject
-                {
-                    ["k"] = "cast", ["type"] = TypeJson.Write(targets[i]), ["e"] = argument.DeepClone(),
-                };
-    }
-
-    static void CoerceVector(JsonArray args, TypeNode[] targets, Scope scope, Index index)
-    {
-        if (targets == null || args == null || targets.Length != args.Count) return;
-        for (var i = 0; i < args.Count; i++)
-            if (args[i] is JsonNode arg)
-            {
-                var coerced = Coerce(arg, targets[i], scope, index);
-                if (!ReferenceEquals(coerced, arg)) args[i] = coerced;
-            }
-    }
-
-    static void CoerceArray(JsonArray values, TypeNode target, Scope scope, Index index)
-    {
-        if (values == null || target == null) return;
-        for (var i = 0; i < values.Count; i++)
-            if (values[i] is JsonNode value)
-            {
-                var coerced = Coerce(value, target, scope, index);
-                if (!ReferenceEquals(coerced, value)) values[i] = coerced;
-            }
-    }
-
-    static void CoerceSlot(JsonObject owner, string key, TypeNode target, Scope scope, Index index)
-    {
-        if (target != null && owner[key] is JsonNode value)
-        {
-            var coerced = Coerce(value, target, scope, index);
-            if (!ReferenceEquals(coerced, value)) owner[key] = coerced;
-        }
-    }
-
-    static JsonNode Coerce(JsonNode value, TypeNode target, Scope scope, Index index)
-    {
-        target = SignatureValueTypes.Of(target);
-        // A stamp-less conditional still has an internal verifier merge before its enclosing store/argument/return.
-        // An outer cast is too late: normalize the sibling branch itself and state the merge type once an edge proves
-        // it. Typed conditionals take the same path earlier through CoerceInputs.
-        if (target != null && value is JsonObject conditional && Str(conditional["k"]) == "cond"
-            && conditional["type"] == null)
-        {
-            var thenSeam = NeedsConversion(ExprType(conditional["then"], scope, index), target, index);
-            var elseSeam = NeedsConversion(ExprType(conditional["else"], scope, index), target, index);
-            if (thenSeam || elseSeam)
-            {
-                CoerceSlot(conditional, "then", target, scope, index);
-                CoerceSlot(conditional, "else", target, scope, index);
-                conditional["type"] = TypeJson.Write(target);
-                return conditional;
-            }
-        }
-        var got = ExprType(value, scope, index);
-        if (value is JsonObject expression
-            && ClrMemberResolution.AdaptUnitDelegateValue(index.Document, expression, got, target) is JsonObject adapter)
-            return adapter;
-        if (!NeedsConversion(got, target, index)) return value;
-        return new JsonObject
-        {
-            ["k"] = "cast",
-            ["type"] = TypeJson.Write(target),
-            ["e"] = value.DeepClone(),
-        };
-    }
-
-    static JsonNode CoerceDeclaredResult(JsonObject expression, Scope scope, Index index, bool resultUsed)
-    {
-        var declared = TypeJson.Read(expression["ret"]) ?? TypeJson.Read(expression["dynRet"]);
-        if (declared == null) return expression;
-        var actual = PhysicalResult(expression, scope, index);
-        // Discarding an invocation consumes only its effects, not its Kotlin value projection. Keep the physical
-        // result explicit so emission pops it without an unnecessary cast/unbox; an explicit source cast remains
-        // a separate expression and still executes even when its result is discarded.
-        if (!resultUsed && actual != null
-            && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall")
-        {
-            foreach (var key in new[] { "sty", "ret", "dynRet" })
-                if (expression[key] != null) expression[key] = TypeJson.Write(actual);
-            return expression;
-        }
-        // A field read and its address denote the declared location. Keep that
-        // exact scalar result here; its consuming value edge supplies any storage
-        // conversion. Wrapping the location would make a ref argument a value.
-        if (Str(expression["k"]) is "field" or "staticField" or "lateinitGet"
-            && declared is TypeNode.Tv && actual is TypeNode.Tv && declared != actual)
-        {
-            foreach (var key in new[] { "sty", "ret", "dynRet" })
-                if (expression[key] != null) expression[key] = TypeJson.Write(actual);
-            return expression;
-        }
-        // A closed generic return can be a real value even when the Kotlin Unit return stamp folded to void.
-        // Keep the exact closed physical result on the call instead of asking ilemit to recover its generic frame.
-        if (IsVoid(declared) && actual != null && !IsVoid(actual))
-        {
-            foreach (var key in new[] { "ret", "dynRet" })
-                if (expression[key] != null) expression[key] = TypeJson.Write(actual);
-            return expression;
-        }
-        // When the physical return itself is generic, ret can still use the callee's declaration frame.
-        // Conversions between those slots belong on the consuming edge, whose target is in the caller's frame.
-        // An object-returning Kotlin call can already carry a caller-facing generic projection in ret.
-        // Make that projection explicit before its consumer inspects the physical expression result;
-        // otherwise identity comparison would box its other operand while the call still unboxes to T.
-        var genericObjectProjection = declared is TypeNode.Tv
-            && actual is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-            && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
-        // Generated exact helpers may still return a CLR generic stack value
-        // while the surrounding Kotlin value is opaque. State its boxing before
-        // a later consumer attempts an object-to-generic extraction.
-        var objectGenericProjection = actual is TypeNode.Tv
-            && declared is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-            && Str(expression["k"]) is "callStatic" or "callInstance" or "constrainedCall";
-        // An invocation's result hint is caller-relative. Its exact member or
-        // local declaration may return T while the Kotlin value uses Storage(T).
-        // State that conversion explicitly, with the native result on the inner
-        // invocation; otherwise an enclosing cast appears to be an identity cast.
-        var genericSlotProjection = declared is TypeNode.Tv && actual is TypeNode.Tv
-            && !declared.Equals(actual)
-            && Str(expression["k"]) is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
-                or "callStatic" or "callInstance" or "constrainedCall";
-        var arrayStorageProjection = SignatureValueTypes.Of(actual) is TypeNode.Fqn { Name: "System.Array" }
-            && SignatureValueTypes.Of(declared) is TypeNode.Array;
-        // An opaque ordinary value and its exact native/local return are separate contracts. Even an upcast to
-        // Object must leave the real member result on the inner call; a following consumer may need that fact.
-        var opaqueReferenceProjection = actual != null && !actual.Equals(declared)
-            && (SignatureValueTypes.Of(actual) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-                || SignatureValueTypes.Of(declared) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
-            && IsReferenceSlot(actual, index.IsValue) && IsReferenceSlot(declared, index.IsValue);
-        // An erased invocation can have a concrete value-type use, too. The extraction belongs before that
-        // consumer (including arithmetic), not after it. Discarded calls and intentionally object-valued storage
-        // keep their deferred result; field/address locations are not invocation value projections.
-        var opaqueValueProjection = resultUsed && NeedsBox(declared, index.IsValue) && declared is not TypeNode.Tv
-            && SignatureValueTypes.Of(actual) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-            && Str(expression["k"]) is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
-                or "callStatic" or "callInstance" or "constrainedCall" or "delegateInvoke";
-        if (!genericObjectProjection && !objectGenericProjection && !genericSlotProjection && !arrayStorageProjection && !opaqueReferenceProjection
-            && !opaqueValueProjection
-            && !CollectionViewFaces.IsViewSeam(actual, declared)) return expression;
-        var physical = expression.DeepClone().AsObject();
-        // The inner expression leaves the exact member/declaration result on the CLR stack. Once the caller-facing
-        // view moves to the explicit outer cast, every surviving inner result stamp must describe that physical value;
-        // otherwise ilemit quite reasonably sees an identity cast and emits no instruction.
-        foreach (var key in new[] { "sty", "ret", "dynRet" })
-            if (physical[key] != null) physical[key] = TypeJson.Write(actual);
-        return new JsonObject
-        {
-            ["k"] = "cast",
-            ["type"] = TypeJson.Write(declared),
-            ["e"] = physical,
-        };
-    }
-
-    // Resolve arithmetic widths after member results and lexical slots are physical. ilemit must not choose
-    // a representation while emitting operands. Shifts keep an Int32 distance; ref constructors execute too.
-    static void WidenNumericOperands(JsonObject node, Scope scope, Index index)
-    {
-        if (Str(node["op"]) is "<<" or ">>" or ">>>" or "===") return;
-        var left = BirTypeLowering.CanonicalExpressionResult(ExprType(node["lhs"], scope, index));
-        var right = BirTypeLowering.CanonicalExpressionResult(ExprType(node["rhs"], scope, index));
-        var leftRank = NumericRank(left);
-        var rightRank = NumericRank(right);
-        if (leftRank < 0 || rightRank < 0 || left == right) return;
-        var target = leftRank >= rightRank ? left : right;
-        // Byte/short/char already occupy Int32 stack slots. A conversion to the other's storage width would
-        // truncate a value rather than widen it; their actual arithmetic category is Int32.
-        if (Math.Max(leftRank, rightRank) < 2) target = new TypeNode.Fqn("System.Int32");
-        foreach (var operand in new[] { "lhs", "rhs" })
-            if ((operand == "lhs" ? left : right) != target)
-                node[operand] = new JsonObject
-                {
-                    ["k"] = "conv", ["to"] = TypeJson.Write(target), ["e"] = node[operand]!.DeepClone(),
-                };
-    }
-
-    static int NumericRank(TypeNode type) => type is TypeNode.Fqn { Args: null } named ? named.Name switch
+    internal static int NumericRank(TypeNode type) => type is TypeNode.Fqn { Args: null } named ? named.Name switch
     {
         "System.Double" => 5,
         "System.Single" => 4,
@@ -1262,19 +275,19 @@ static class PhysicalValueCoercion
         _ => -1,
     } : -1;
 
-    static TypeNode ExprType(JsonNode node, Scope scope, Index index)
+    static TypeNode ExprType(JsonNode node, IReadOnlyDictionary<string, TypeNode> locals, Index index)
     {
         if (node is not JsonObject obj) return null;
         var kind = Str(obj["k"]);
-        if (kind == "local" && Str(obj["name"]) is string name && scope.Locals.TryGetValue(name, out var local))
+        if (kind == "local" && Str(obj["name"]) is string name && locals.TryGetValue(name, out var local))
             return local;
-        if (kind == "this") return scope.Owner;
+        if (kind == "this") return null;
         // Plain local CIR calls already carry their exact declaration contract. A Kotlin function modifier on
         // a parameter is metadata, not a reason to re-match the call against another declaration.
         if (kind is "callStatic" or "callInstance" or "constrainedCall"
             && TypeJson.Read(obj["calleeRet"]) is TypeNode declared)
             return SignatureValueTypes.Of(Close(declared, CallOwner(obj)?.Args, MethodArgs(obj)));
-        if (PhysicalResult(obj, scope, index) is TypeNode physical)
+        if (PhysicalResult(obj, locals, index) is TypeNode physical)
         {
             // Ordinary CLR calls copy a ref return. byrefOf is the separate operation retaining its pointer;
             // arithmetic and value spills both consume the loaded element, not the method's T& signature.
@@ -1282,12 +295,12 @@ static class PhysicalValueCoercion
                 physical = reference.Of;
             return SignatureValueTypes.Of(physical);
         }
-        var inferred = NodeType.Of(obj, child => ExprType(child, scope, index),
+        var inferred = NodeType.Of(obj, child => ExprType(child, locals, index),
             name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var elem) ? elem : null);
-        return SignatureValueTypes.Of(index.ReferenceBuild ? inferred : BirTypeLowering.CanonicalExpressionResult(inferred));
+        return SignatureValueTypes.Of(BirTypeLowering.CanonicalExpressionResult(inferred));
     }
 
-    static TypeNode PhysicalResult(JsonObject expression, Scope scope, Index index)
+    static TypeNode PhysicalResult(JsonObject expression, IReadOnlyDictionary<string, TypeNode> locals, Index index)
     {
         var kind = Str(expression["k"]);
         if (kind == "cast") return TypeJson.Read(expression["type"]);
@@ -1303,42 +316,18 @@ static class PhysicalValueCoercion
         }
         if (kind is "field" or "staticField" or "lateinitGet")
         {
-            var owner = FieldOwner(expression, scope, index);
+            var owner = FieldOwner(expression, locals, index);
             return Close(index.Field(owner?.Name, Str(expression["name"])), owner?.Args, MethodArgs(expression));
         }
         return null;
     }
 
-    static TypeNode FieldTarget(JsonObject node, Scope scope, Index index)
-    {
-        if (ResolvedMember(node) is JsonObject member)
-        {
-            var raw = Str(member["kind"]) == "field"
-                ? TypeJson.Read(member["returnType"])
-                : ReadTypes(member["parameterTypes"] as JsonArray)?.LastOrDefault();
-            return Close(raw, OwnerArgs(member), MethodArgs(node));
-        }
-        var owner = FieldOwner(node, scope, index);
-        var localRaw = TypeJson.Read(node["memberType"]) ?? index.Field(owner?.Name, Str(node["name"]));
-        return Close(localRaw, owner?.Args, MethodArgs(node));
-    }
-
-    static TypeNode.Fqn FieldOwner(JsonObject node, Scope scope, Index index)
+    static TypeNode.Fqn FieldOwner(JsonObject node, IReadOnlyDictionary<string, TypeNode> locals, Index index)
         => TypeJson.Read(node["ownerType"] ?? node["type"]) as TypeNode.Fqn
-            ?? ExprType(node["recv"], scope, index) as TypeNode.Fqn;
+            ?? ExprType(node["recv"], locals, index) as TypeNode.Fqn;
 
     static JsonObject ResolvedMember(JsonObject node)
         => node["memberRef"] as JsonObject ?? node["fieldRef"] as JsonObject;
-
-    static TypeNode[] ConstructorParameterTypes(JsonObject constructor)
-    {
-        if (constructor["baseCtorRef"] is JsonObject member)
-        {
-            var parameters = ReadTypes(member["parameterTypes"] as JsonArray);
-            return parameters?.Select(p => Close(p, OwnerArgs(member), Array.Empty<TypeNode>())).ToArray();
-        }
-        return ReadTypes(constructor["delegationSig"] as JsonArray);
-    }
 
     static TypeNode[] ParameterTypes(JsonObject node)
     {
@@ -1371,7 +360,7 @@ static class PhysicalValueCoercion
     static TypeNode[] MethodArgs(JsonObject node)
         => ReadTypes(node["typeArgs"] as JsonArray) ?? Array.Empty<TypeNode>();
 
-    static TypeNode Close(TypeNode type, TypeNode[] ownerArgs, TypeNode[] methodArgs) => type switch
+    internal static TypeNode Close(TypeNode type, TypeNode[] ownerArgs, TypeNode[] methodArgs) => type switch
     {
         null => null,
         TypeNode.Tv { Scope: "type" } tv when ownerArgs != null && tv.I >= 0 && tv.I < ownerArgs.Length => ownerArgs[tv.I],

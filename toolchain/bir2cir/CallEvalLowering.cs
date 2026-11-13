@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // CALL-EVALUATION PLAN LOWERING (BIR `callEval`/`bindRef`/`delegationBindings` -> today's vocabulary).
 //
@@ -446,16 +447,25 @@ static class CallEvalLowering
     internal static bool IsLvalueFormer(JsonNode node)
     {
         if (node is not JsonObject o) return false;
-        return Str(o["k"]) switch
+        return IsLvalueFormer(Str(o["k"]), Str(o["member"]));
+    }
+
+    internal static bool IsLvalueFormer(BirGraphValue node) => IsLvalueFormer(
+        (node as BirGraphNode)?.Tag, node switch {
+            BirFieldGet field => field.Member.OrDefault(),
+            BirPropertyGet property => property.Member.OrDefault(),
+            _ => null,
+        });
+
+    static bool IsLvalueFormer(string kind, string member) => kind switch
         {
             "local" or "this" or "staticField" or "arrayGet" or "stackGet" or "byrefLoad" => true,
             // A resolved accessor call and a Nullable<T>.Value read are rvalues. A CLR field projected through
             // property syntax remains storage only when resolution has said so explicitly.
-            "field" => Str(o["member"]) != "accessor",
-            "clrPropGet" => Str(o["member"]) == "field",
+            "field" => member != "accessor",
+            "clrPropGet" => member == "field",
             _ => false,
         };
-    }
 
     // Does this node's emitter consume `recv` as an ADDRESS rather than as a value? Shared by the suspend operand
     // planner and the physical operand normalizer. A copied native value receiver would make a member write mutate
@@ -464,23 +474,64 @@ static class CallEvalLowering
     internal static bool ReceiverNeedsAddress(JsonObject o, ValueTypeOracle isValue)
     {
         var k = Str(o["k"]);
-        if (k == "constrainedCall") return true;
-        static bool IsTypeVariable(TypeNode type) => type switch
-        {
-            TypeNode.Tv => true,
-            TypeNode.Oblivious p => IsTypeVariable(p.Of),
-            TypeNode.Nullable n => IsTypeVariable(n.Of),
-            _ => false,
-        };
-        if (o["recv"] is JsonObject recv && IsTypeVariable(NodeType.Stamp(recv))) return true;
         var owner = k switch
         {
             "setField" or "setFieldExpr" => TypeJson.Read(o["ownerType"]),
             "clrPropSet" or "clrInstance" or "clrGenericInstance" => TypeJson.Read(o["type"]),
             _ => null,
         };
-        return owner is TypeNode.Fqn f && isValue(f);
+        return ReceiverNeedsAddress(k, o["recv"] is JsonObject recv ? NodeType.Stamp(recv) : null,
+            owner, isValue);
     }
+
+    internal static bool ReceiverNeedsAddress(BirGraphValue node, ValueTypeOracle isValue)
+    {
+        IBirExpression receiver = node switch {
+            BirObjectMethod value => value.Recv.OrDefault(),
+            BirCallInstance value => value.Recv.OrDefault(),
+            BirFieldGet value => value.Recv.OrDefault(),
+            BirFieldSetExpression value => value.Recv.OrDefault(),
+            BirLateinitGet value => value.Recv.OrDefault(),
+            BirLateinitIsInitialized value => value.Recv.OrDefault(),
+            BirClrEventForwarder value => value.Recv.OrDefault(),
+            BirEventGet value => value.Recv.OrDefault(),
+            BirEventRaise value => value.Recv.OrDefault(),
+            BirNewBoundDelegate value => value.Recv.OrDefault(),
+            BirSetField value => value.Recv.OrDefault(),
+            BirConstrainedCall value => value.Recv.OrDefault(),
+            BirGenericInstance value => value.Recv.OrDefault(),
+            BirEventAdd value => value.Recv.OrDefault(),
+            BirEventRemove value => value.Recv.OrDefault(),
+            BirNativeInstance value => value.Recv.OrDefault(),
+            BirNativeStatic value => value.Recv.OrDefault(),
+            BirPropertyGet value => value.Recv.OrDefault(),
+            BirPropertySet value => value.Recv.OrDefault(),
+            BirDelegateInvoke value => value.Recv.OrDefault(),
+            BirBoundClrDelegate value => value.Recv.OrDefault(),
+            _ => null,
+        };
+        var owner = node switch {
+            BirSetField value => value.OwnerType.OrDefault(),
+            BirFieldSetExpression value => value.OwnerType.OrDefault(),
+            BirPropertySet value => value.Type.OrDefault(),
+            BirNativeInstance value => value.Type.OrDefault(),
+            BirGenericInstance value => value.Type.OrDefault(),
+            _ => null,
+        };
+        return ReceiverNeedsAddress((node as BirGraphNode)?.Tag,
+            (receiver as BirGraphValue)?.ResultTypeStamp, owner, isValue);
+    }
+
+    static bool ReceiverNeedsAddress(string kind, TypeNode receiverStamp, TypeNode owner,
+        ValueTypeOracle isValue) => kind == "constrainedCall" || IsTypeVariable(receiverStamp)
+        || owner is TypeNode.Fqn named && isValue(named);
+
+    static bool IsTypeVariable(TypeNode type) => type switch {
+        TypeNode.Tv => true,
+        TypeNode.Oblivious value => IsTypeVariable(value.Of),
+        TypeNode.Nullable value => IsTypeVariable(value.Of),
+        _ => false,
+    };
 
     /// May this OPERAND of an addressable location stay where it is, or must its value be pinned into a local?
     ///
