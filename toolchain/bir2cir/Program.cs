@@ -60,6 +60,7 @@ static class Bir2Cir
                 ClrEventImplBinding.SelfTestSourceFacts();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
+                ObjectSlotRename.SelfTest();
                 DefaultBirCarrier.SelfTest();
                 ExecutableBirCodec.SelfTest();
                 MaterializedExecutable.SelfTest();
@@ -238,6 +239,7 @@ sealed class Pipeline
                 captured[index], collectionInputs.Helpers.Bind);
             captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)EnumEntriesLowering.Apply(
                 captured[index], refs, collectionInputs.Helpers.Bind);
+            captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)ObjectSlotRename.Apply(captured[index]);
         }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
@@ -307,7 +309,6 @@ sealed class Pipeline
             {
                 foreach (var root in birRoots)
                 {
-                    ObjectSlotRename.Apply(root);
                     PrimitiveOperatorLowering.Apply(root, refs);
                     FaithfulHintRecognition.Apply(root, refs, sourceTopLevelFns);
                 }
