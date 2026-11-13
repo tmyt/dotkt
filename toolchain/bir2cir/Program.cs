@@ -97,6 +97,7 @@ static class Bir2Cir
                 EnumEntriesLowering.SelfTest();
                 CompanionRepresentationLoweringTests.SelfTest();
                 InnerRepresentationFrameTests.SelfTest();
+                OpaqueCarrierTypeBinding.SelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 KotlinGenericScalarSlots.SourceScalarSelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
