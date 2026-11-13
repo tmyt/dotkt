@@ -2018,6 +2018,7 @@ internal static class BirGraphDom
                 case "kotlinSupertypesPre": break;
                 case "staticCarrier": break;
                 case "companionCarrier": break;
+                case "basicEnum": break;
                 case "generated": break;
                 case "abstract": break;
                 case "final": break;
@@ -2054,6 +2055,7 @@ internal static class BirGraphDom
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
             StaticCarrier = Field<BirStaticCarrier>(fields, "staticCarrier", value => ReadBirStaticCarrier(value!)),
             CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),
+            BasicEnum = Field<BirBasicEnumCarrier>(fields, "basicEnum", value => ReadBirBasicEnumCarrier(value!)),
             Generated = Field<bool>(fields, "generated", value => value!.GetValue<bool>()),
             Abstract = Field<bool>(fields, "abstract", value => value!.GetValue<bool>()),
             Final = Field<bool>(fields, "final", value => value!.GetValue<bool>()),
@@ -3935,6 +3937,42 @@ internal static class BirGraphDom
         return new BirLabel
         {
             Id = Field<int>(fields, "id", value => value!.GetValue<int>()),
+        };
+    }
+
+    internal static BirBasicEnumCarrier ReadBirBasicEnumCarrier(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "underlying": break;
+                case "entries": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirBasicEnumCarrier at {source.GetPath()}");
+            }
+        return new BirBasicEnumCarrier
+        {
+            Underlying = Field<string>(fields, "underlying", value => value!.GetValue<string>()),
+            Entries = Field<BirBasicEnumCarrierEntry[]>(fields, "entries", value => ((JsonArray)value!).Select(item0 => ReadBirBasicEnumCarrierEntry(item0!)).ToArray()),
+        };
+    }
+
+    internal static BirBasicEnumCarrierEntry ReadBirBasicEnumCarrierEntry(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "name": break;
+                case "ordinal": break;
+                case "physicalValue": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirBasicEnumCarrierEntry at {source.GetPath()}");
+            }
+        return new BirBasicEnumCarrierEntry
+        {
+            Name = Field<string>(fields, "name", value => value!.GetValue<string>()),
+            Ordinal = Field<int>(fields, "ordinal", value => value!.GetValue<int>()),
+            PhysicalValue = Field<string>(fields, "physicalValue", value => value!.GetValue<string>()),
         };
     }
 

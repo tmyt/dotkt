@@ -617,7 +617,7 @@
       "properties": { "underlying": { "$ref": "#/$defs/type" } }, "required": ["underlying"], "additionalProperties": false
     },
     "birEnumDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirEnumDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["entries"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirEnumDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["entries"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" }, "basicEnum": { "$ref": "#/$defs/basicEnumCarrier" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "enum" }, "semanticOwner": { "type": "string" }, "vis": { "type": "string" },
         "clrEnum": { "$ref": "#/$defs/birClrEnumDeclaration" }, "entries": { "type": "array", "items": { "$ref": "#/$defs/birEnumEntryDeclaration" } },
@@ -2413,25 +2413,26 @@
     },
     "basicEnumCarrier": {
       "type": "object",
+      "x-dotkt-model": { "name": "BirBasicEnumCarrier", "domain": "birLoweringValues" },
       "$comment": "bir2cir transient ordered map for every Kotlin-authored basic enum. RoundtripMetadata consumes it into trusted [KotlinBasicEnum]; declaration entries retain their physical literal facts for ilemit.",
       "properties": {
         "underlying": { "type": "string" },
         "entries": {
           "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": { "type": "string" },
-              "ordinal": { "type": "integer", "minimum": 0 },
-              "physicalValue": { "type": "string" }
-            },
-            "required": ["name", "ordinal", "physicalValue"],
-            "additionalProperties": false
-          }
+          "items": { "$ref": "#/$defs/basicEnumCarrierEntry" }
         }
       },
       "required": ["underlying", "entries"],
       "additionalProperties": false
+    },
+    "basicEnumCarrierEntry": {
+      "type": "object", "x-dotkt-model": { "name": "BirBasicEnumCarrierEntry", "domain": "birLoweringValues" },
+      "properties": {
+        "name": { "type": "string" },
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "physicalValue": { "type": "string" }
+      },
+      "required": ["name", "ordinal", "physicalValue"], "additionalProperties": false
     },
     "typeDecl": {
       "type": "object",

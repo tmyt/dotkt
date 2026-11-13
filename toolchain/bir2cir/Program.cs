@@ -83,6 +83,7 @@ static class Bir2Cir
                 NullableRepresentationTypes.SelfTest();
                 NullableRepresentationMaterialization.SelfTest();
                 EnumIntrinsicLowering.SelfTest();
+                ClrEnumLowering.SelfTest();
                 EnumValueLowering.SelfTest();
                 EnumEntriesLowering.SelfTest();
                 CompanionRepresentationLoweringTests.SelfTest();
@@ -312,6 +313,14 @@ sealed class Pipeline
             genericRepresentations, valuePolicy.HasClassifier);
         var nullableDeclarations = NullableTvErasureCallRealign.CollectDeclaredMemberRets(captured, refs);
         var uncheckedDeclarations = UncheckedGenericCastReturnErasure.CaptureSource(captured);
+        var richEnums = EnumIntrinsicLowering.CollectRichEnums(captured);
+        // Snapshot producer-owned instance slots before lowering cross-file enum access.
+        var richEnumFields = EnumValueLowering.CollectRichInstanceFields(captured);
+        var basicEnums = EnumMemberBinding.CollectBasicEnums(captured);
+        // Select exact CLR integral widths and ordered physical constants once,
+        // retaining separate explicit-remapping and all-enum parsing inventories.
+        var explicitEnums = ClrEnumLowering.Apply(captured, out var parseEnums);
+        var enums = new EnumPreparation(richEnums, richEnumFields, basicEnums, explicitEnums, parseEnums);
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
@@ -334,7 +343,7 @@ sealed class Pipeline
             continuingRoots.Cast<JsonObject>().ToArray());
         return new LoadedBirModule(files, signatures, valuePolicy, sourceIndex, nullableWitnessDemand,
             genericRepresentations, scalarSlots, valueSources, representationMethodFrames, placement,
-            new ModulePreparation(ownership, inventory, forwardedEvents, nullableDeclarations, uncheckedReturns));
+            new ModulePreparation(ownership, inventory, forwardedEvents, nullableDeclarations, uncheckedReturns, enums));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -418,9 +427,9 @@ sealed class Pipeline
         // The local RICH-enum type names (a `kind:"class"` decl carrying the faithful `enumRich:true` marker), across
         // ALL input files: EnumIntrinsicLowering lowers `enumValues<RichEnum>()` to the synthesized static values()
         // (not the System.Enum-reflection semantic node — a rich enum is a plain singleton class).
-        var localRichEnums = EnumIntrinsicLowering.CollectRichEnums(birFiles.Select(f => f.Root));
-        // Snapshot producer-owned instance slots module-wide before lowering any cross-file enum access.
-        var localRichEnumFields = EnumValueLowering.CollectRichInstanceFields(birFiles.Select(f => f.Root));
+        var localRichEnums = module.Preparation.Enums.Rich;
+        // Producer-owned instance slots, captured module-wide in the typed prefix.
+        var localRichEnumFields = module.Preparation.Enums.RichFields;
 
         // The local BASIC (value-type, `kind:"enum"`) enum type names across ALL files — EnumMemberBinding rebinds a
         // `System.Enum`-inherited Object-slot call (`E.A.toString()`) on such an owner to an `objMethod`. Must be
@@ -428,11 +437,11 @@ sealed class Pipeline
         // LOCAL enums need it — a CROSS-ASSEMBLY enum's inherited-member call is closed one pass earlier by
         // NetInteropBinding (reference-KLIB-projected owner -> `clrInstance`, a `constrained. callvirt`), and a klib-external
         // `kotlin.*` enum arrives from kotc already as an `objMethod`; neither reaches this local `callInstance` gap.
-        var localBasicEnums = EnumMemberBinding.CollectBasicEnums(birFiles.Select(f => f.Root));
+        var localBasicEnums = module.Preparation.Enums.Basic;
 
-        // EXPLICIT CLR ENUMS (#526): validate kotc's source-owned ordered constant map and resolve the Kotlin
-        // integral type to its exact CLR underlying type before any use-site enum operation is lowered.
-        var localExplicitEnums = ClrEnumLowering.Apply(birFiles.Select(f => f.Root), out var localParseEnums);
+        // Typed declaration lowering already selected exact physical constants.
+        var localExplicitEnums = module.Preparation.Enums.Explicit;
+        var localParseEnums = module.Preparation.Enums.Parse;
 
         // The local reference TYPES (classes + interfaces) module-wide (name -> declared universal slots + base) —
         // AnySlotRebind rebinds a dead-ending `callInstance <UserType>.GetHashCode/ToString/Equals` (a fake override
@@ -1852,7 +1861,11 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
 sealed record ModulePreparation(TypeOwnershipLowering.PreparedFacts Ownership, TypedModuleInventory Inventory,
     IReadOnlyDictionary<(string Owner, string Event), TypeNode> ForwardedEvents,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
-    UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns);
+    UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums);
+sealed record EnumPreparation(HashSet<string> Rich,
+    IReadOnlyDictionary<string, (string Name, string Ordinal)> RichFields, HashSet<string> Basic,
+    IReadOnlyDictionary<string, BasicEnumMetadata> Explicit,
+    IReadOnlyDictionary<string, BasicEnumMetadata> Parse);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties,
     CompanionRepresentationLowering.LocalIndex Companions, CompanionExtensionBinding.LocalIndex Extensions);

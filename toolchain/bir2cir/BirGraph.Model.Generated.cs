@@ -8110,6 +8110,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
     public OptionalField<SourceTypeFacts> KotlinSupertypesPre { get; set; }
     public OptionalField<BirStaticCarrier> StaticCarrier { get; set; }
     public OptionalField<BirCompanionCarrier> CompanionCarrier { get; set; }
+    public OptionalField<BirBasicEnumCarrier> BasicEnum { get; set; }
     public OptionalField<bool> Generated { get; set; }
     public OptionalField<bool> Abstract { get; set; }
     public OptionalField<bool> Final { get; set; }
@@ -8139,6 +8140,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         if (Pos.HasValue) { visit((BirGraphValue)Pos.Value); }
         if (StaticCarrier.HasValue) { visit((BirGraphValue)StaticCarrier.Value); }
         if (CompanionCarrier.HasValue) { visit((BirGraphValue)CompanionCarrier.Value); }
+        if (BasicEnum.HasValue) { visit((BirGraphValue)BasicEnum.Value); }
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { visit((BirGraphValue)item0); } }
         if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { visit((BirGraphValue)item0); } }
         if (Fields.HasValue) { foreach (var item0 in Fields.Value) { visit((BirGraphValue)item0); } }
@@ -8159,6 +8161,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         if (Pos.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
         if (StaticCarrier.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)StaticCarrier.Value!, replacement => StaticCarrier = OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)replacement))); }
         if (CompanionCarrier.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)CompanionCarrier.Value!, replacement => CompanionCarrier = OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)replacement))); }
+        if (BasicEnum.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)BasicEnum.Value!, replacement => BasicEnum = OptionalField<BirBasicEnumCarrier>.Of((BirBasicEnumCarrier)replacement))); }
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
         if (CapturedTypeParams.HasValue) { for (var index0 = 0; index0 < CapturedTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = CapturedTypeParams.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)CapturedTypeParams.Value[at0]!, replacement => CapturedTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
         if (Fields.HasValue) { for (var index0 = 0; index0 < Fields.Value.Length; index0++) { var at0 = index0; var child0 = Fields.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Fields.Value[at0]!, replacement => Fields.Value[at0] = (BirFieldDeclaration)replacement)); } }
@@ -8184,6 +8187,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)rewrite((BirGraphValue)Pos.Value)) : Pos,
         StaticCarrier = StaticCarrier.HasValue ? OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)rewrite((BirGraphValue)StaticCarrier.Value)) : StaticCarrier,
         CompanionCarrier = CompanionCarrier.HasValue ? OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)rewrite((BirGraphValue)CompanionCarrier.Value)) : CompanionCarrier,
+        BasicEnum = BasicEnum.HasValue ? OptionalField<BirBasicEnumCarrier>.Of((BirBasicEnumCarrier)rewrite((BirGraphValue)BasicEnum.Value)) : BasicEnum,
         TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : TypeParams,
         CapturedTypeParams = CapturedTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(CapturedTypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : CapturedTypeParams,
         Fields = Fields.HasValue ? OptionalField<BirFieldDeclaration[]>.Of(Fields.Value.Select(item0 => (BirFieldDeclaration)rewrite((BirGraphValue)item0)).ToArray()) : Fields,
@@ -8204,6 +8208,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone()) : Pos,
         StaticCarrier = StaticCarrier.HasValue ? OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)((BirGraphValue)StaticCarrier.Value).DeepClone()) : StaticCarrier,
         CompanionCarrier = CompanionCarrier.HasValue ? OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)((BirGraphValue)CompanionCarrier.Value).DeepClone()) : CompanionCarrier,
+        BasicEnum = BasicEnum.HasValue ? OptionalField<BirBasicEnumCarrier>.Of((BirBasicEnumCarrier)((BirGraphValue)BasicEnum.Value).DeepClone()) : BasicEnum,
         Base = Base.HasValue ? OptionalField<TypeNode>.Of(CopyType(Base.Value)) : Base,
         Interfaces = Interfaces.HasValue ? OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => CopyType(item0)).ToArray()) : Interfaces,
         TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : TypeParams,
@@ -8237,6 +8242,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value)) : Pos,
         StaticCarrier = StaticCarrier.HasValue ? OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)child(BirGenericFrameRole.Lexical, (BirGraphValue)StaticCarrier.Value)) : StaticCarrier,
         CompanionCarrier = CompanionCarrier.HasValue ? OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)child(BirGenericFrameRole.Lexical, (BirGraphValue)CompanionCarrier.Value)) : CompanionCarrier,
+        BasicEnum = BasicEnum.HasValue ? OptionalField<BirBasicEnumCarrier>.Of((BirBasicEnumCarrier)child(BirGenericFrameRole.Lexical, (BirGraphValue)BasicEnum.Value)) : BasicEnum,
         Base = Base.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Base.Value)) : Base,
         Interfaces = Interfaces.HasValue ? OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()) : Interfaces,
         TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : TypeParams,
@@ -8270,6 +8276,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         if (Pos.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value); }
         if (StaticCarrier.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)StaticCarrier.Value); }
         if (CompanionCarrier.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)CompanionCarrier.Value); }
+        if (BasicEnum.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)BasicEnum.Value); }
         if (Base.HasValue) { Base = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Base.Value)); }
         if (Interfaces.HasValue) { Interfaces = OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => type(BirGenericFrameRole.Lexical, item0)).ToArray()); }
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
@@ -8296,6 +8303,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         if (Pos.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Pos.Value); }
         if (StaticCarrier.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)StaticCarrier.Value); }
         if (CompanionCarrier.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)CompanionCarrier.Value); }
+        if (BasicEnum.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)BasicEnum.Value); }
         if (Base.HasValue) { Base = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, Base.Value)); }
         if (Interfaces.HasValue) { Interfaces = OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, item0)).ToArray()); }
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
@@ -8322,6 +8330,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         if (Pos.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pos.Value); }
         if (StaticCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)StaticCarrier.Value); }
         if (CompanionCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CompanionCarrier.Value); }
+        if (BasicEnum.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)BasicEnum.Value); }
         if (Base.HasValue) { Base = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Base.Value)); }
         if (Interfaces.HasValue) { Interfaces = OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
         if (TypeParams.HasValue) { foreach (var item0 in TypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
@@ -8351,6 +8360,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
             && EqualField(KotlinSupertypesPre, value.KotlinSupertypesPre, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(StaticCarrier, value.StaticCarrier, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(CompanionCarrier, value.CompanionCarrier, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
+            && EqualField(BasicEnum, value.BasicEnum, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(Generated, value.Generated, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Abstract, value.Abstract, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Final, value.Final, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
@@ -8386,6 +8396,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         WriteOptional(writer, "kotlinSupertypesPre", KotlinSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
         WriteOptional(writer, "staticCarrier", StaticCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "companionCarrier", CompanionCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "basicEnum", BasicEnum, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "generated", Generated, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "abstract", Abstract, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "final", Final, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -8423,6 +8434,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         if (KotlinSupertypesPre.IsPresent) result["kotlinSupertypesPre"] = KotlinSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(KotlinSupertypesPre.Value);
         if (StaticCarrier.IsPresent) result["staticCarrier"] = StaticCarrier.IsNull ? null : ((BirGraphValue)StaticCarrier.Value).ToDom();
         if (CompanionCarrier.IsPresent) result["companionCarrier"] = CompanionCarrier.IsNull ? null : ((BirGraphValue)CompanionCarrier.Value).ToDom();
+        if (BasicEnum.IsPresent) result["basicEnum"] = BasicEnum.IsNull ? null : ((BirGraphValue)BasicEnum.Value).ToDom();
         if (Generated.IsPresent) result["generated"] = Generated.IsNull ? null : JsonValue.Create(Generated.Value);
         if (Abstract.IsPresent) result["abstract"] = Abstract.IsNull ? null : JsonValue.Create(Abstract.Value);
         if (Final.IsPresent) result["final"] = Final.IsNull ? null : JsonValue.Create(Final.Value);
@@ -16419,6 +16431,142 @@ internal sealed record BirLabel : BirGraphNode, IBirStatement
         var result = new JsonObject();
         result["k"] = "label";
         if (Id.IsPresent) result["id"] = Id.IsNull ? null : JsonValue.Create(Id.Value);
+        return result;
+    }
+}
+
+internal sealed record BirBasicEnumCarrier : BirGraphValue
+{
+    public OptionalField<string> Underlying { get; set; }
+    public OptionalField<BirBasicEnumCarrierEntry[]> Entries { get; set; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { visit((BirGraphValue)item0); } }
+    }
+    public override void VisitChildSlots(Action<BirGraphSlot> visit)
+    {
+        if (Entries.HasValue) { for (var index0 = 0; index0 < Entries.Value.Length; index0++) { var at0 = index0; var child0 = Entries.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Entries.Value[at0]!, replacement => Entries.Value[at0] = (BirBasicEnumCarrierEntry)replacement)); } }
+    }
+    public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
+    {
+        Entries = Entries.HasValue ? OptionalField<BirBasicEnumCarrierEntry[]>.Of(Entries.Value.Select(item0 => (BirBasicEnumCarrierEntry)rewrite((BirGraphValue)item0)).ToArray()) : Entries,
+    };
+    public override BirGraphValue DeepClone() => this with
+    {
+        Entries = Entries.HasValue ? OptionalField<BirBasicEnumCarrierEntry[]>.Of(Entries.Value.Select(item0 => (BirBasicEnumCarrierEntry)((BirGraphValue)item0).DeepClone()).ToArray()) : Entries,
+    };
+    public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+        Entries = Entries.HasValue ? OptionalField<BirBasicEnumCarrierEntry[]>.Of(Entries.Value.Select(item0 => (BirBasicEnumCarrierEntry)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Entries,
+    };
+    public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
+    {
+    }
+    public override void RewriteGenericFrameInPlace(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Action<BirGenericFrameRole, BirGraphValue> child)
+    {
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteRepresentationInPlace(
+        Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
+        Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+        if (Entries.HasValue) { foreach (var item0 in Entries.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+    }
+    public override bool StructurallyEquals(BirGraphValue other)
+        => other is BirBasicEnumCarrier value
+            && EqualField(Underlying, value.Underlying, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(Entries, value.Entries, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
+    public override void WriteJson(Utf8JsonWriter writer)
+    {
+        writer.WriteStartObject();
+        WriteOptional(writer, "underlying", Underlying, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "entries", Entries, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        writer.WriteEndObject();
+    }
+    public override JsonObject ToDom()
+    {
+        var result = new JsonObject();
+        if (Underlying.IsPresent) result["underlying"] = Underlying.IsNull ? null : JsonValue.Create(Underlying.Value);
+        if (Entries.IsPresent) result["entries"] = Entries.IsNull ? null : new JsonArray(Entries.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        return result;
+    }
+}
+
+internal sealed record BirBasicEnumCarrierEntry : BirGraphValue
+{
+    public OptionalField<string> Name { get; set; }
+    public OptionalField<int> Ordinal { get; set; }
+    public OptionalField<string> PhysicalValue { get; set; }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
+    public override void VisitChildSlots(Action<BirGraphSlot> visit)
+    {
+    }
+    public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
+    {
+    };
+    public override BirGraphValue DeepClone() => this with
+    {
+    };
+    public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+    };
+    public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
+    {
+    }
+    public override void RewriteGenericFrameInPlace(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Action<BirGenericFrameRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteRepresentationInPlace(
+        Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
+        Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
+    public override bool StructurallyEquals(BirGraphValue other)
+        => other is BirBasicEnumCarrierEntry value
+            && EqualField(Name, value.Name, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(Ordinal, value.Ordinal, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
+            && EqualField(PhysicalValue, value.PhysicalValue, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
+    public override void WriteJson(Utf8JsonWriter writer)
+    {
+        writer.WriteStartObject();
+        WriteOptional(writer, "name", Name, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "ordinal", Ordinal, (writer, value) => { writer.WriteNumberValue(value); });
+        WriteOptional(writer, "physicalValue", PhysicalValue, (writer, value) => { writer.WriteStringValue(value); });
+        writer.WriteEndObject();
+    }
+    public override JsonObject ToDom()
+    {
+        var result = new JsonObject();
+        if (Name.IsPresent) result["name"] = Name.IsNull ? null : JsonValue.Create(Name.Value);
+        if (Ordinal.IsPresent) result["ordinal"] = Ordinal.IsNull ? null : JsonValue.Create(Ordinal.Value);
+        if (PhysicalValue.IsPresent) result["physicalValue"] = PhysicalValue.IsNull ? null : JsonValue.Create(PhysicalValue.Value);
         return result;
     }
 }
