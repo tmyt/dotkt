@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // A foreign CLR G<X> cannot implement a DotKt-synthesized existential after its assembly has already been emitted,
 // and G<object> is a different reified invariant type. Keep a foreign G<*> value in an object slot and route only the
@@ -953,8 +954,7 @@ static class ForeignStarProjectionBinding
         }
         foreach (var root in roots) CollectWrites(root);
 
-        var result = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
-        var pending = new List<(string Name, TypeNode.Fqn StarOwner, JsonNode Init)>();
+        var pending = new List<ClosedViewVariable>();
         void CollectVars(JsonNode node)
         {
             if (node is JsonObject obj)
@@ -962,7 +962,8 @@ static class ForeignStarProjectionBinding
                 if (Str(obj["k"]) == "var" && Str(obj["name"]) is string name && !assigned.Contains(name)
                     && obj["init"] is JsonNode init
                     && TryForeignStarOwner(TypeJson.Read(obj["type"]), refs, out var starOwner, out _))
-                    pending.Add((name, starOwner, init));
+                    pending.Add(new(name, starOwner, NodeType.Of(init),
+                        init is JsonObject local && Str(local["k"]) == "local" ? Str(local["name"]) : null));
                 foreach (var child in obj.Select(p => p.Value).Where(v => v != null)) CollectVars(child);
             }
             else if (node is JsonArray array)
@@ -970,20 +971,54 @@ static class ForeignStarProjectionBinding
         }
         foreach (var root in roots) CollectVars(root);
 
+        return ResolveClosedViewHints(pending, refs);
+    }
+
+    internal static Dictionary<string, TypeNode.Fqn> CollectClosedViewHints(IReadOnlyList<BirFileDeclaration> roots,
+        ReferenceMetadataIndex refs)
+    {
+        void Visit(BirGraphValue node, Action<BirGraphValue> inspect)
+        {
+            if (node is IBirExecutablePayload) return;
+            inspect(node);
+            node.VisitChildren(child => Visit(child, inspect));
+        }
+        var assigned = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var root in roots) Visit(root, node => {
+            if (node is BirSetLocal { Name.HasValue: true } write) assigned.Add(write.Name.Value);
+        });
+        var pending = new List<ClosedViewVariable>();
+        foreach (var root in roots) Visit(root, node => {
+            if (node is BirVariable { Name.HasValue: true, Init.HasValue: true } variable
+                && !assigned.Contains(variable.Name.Value)
+                && TryForeignStarOwner(variable.Type.OrDefault(), refs, out var owner, out _))
+                pending.Add(new(variable.Name.Value, owner,
+                    BirNodeType.Of(variable.Init.Value as BirGraphNode),
+                    variable.Init.Value is BirLocal local ? local.Name.OrDefault() : null));
+        });
+        return ResolveClosedViewHints(pending, refs);
+    }
+
+    sealed record ClosedViewVariable(string Name, TypeNode.Fqn Owner, TypeNode InitialType, string Alias);
+
+    static Dictionary<string, TypeNode.Fqn> ResolveClosedViewHints(IReadOnlyList<ClosedViewVariable> pending,
+        ReferenceMetadataIndex refs)
+    {
+        var result = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
+
         var changed = true;
         while (changed)
         {
             changed = false;
-            foreach (var (name, starOwner, init) in pending)
+            foreach (var (name, starOwner, initialType, source) in pending)
             {
                 if (result.ContainsKey(name)) continue;
-                TypeNode candidate = NodeType.Of(init);
+                TypeNode candidate = initialType;
                 while (candidate is TypeNode.Nullable nullable) candidate = nullable.Of;
                 while (candidate is TypeNode.Oblivious oblivious) candidate = oblivious.Of;
                 TypeNode.Fqn exact = candidate as TypeNode.Fqn;
                 if ((exact == null || exact.Args?.Any(ContainsExistential) == true)
-                    && init is JsonObject local && Str(local["k"]) == "local"
-                    && Str(local["name"]) is string source && result.TryGetValue(source, out var inherited))
+                    && source != null && result.TryGetValue(source, out var inherited))
                     exact = inherited;
                 if (exact?.Args is not { Length: > 0 } args || exact.Name != starOwner.Name
                     || args.Length != starOwner.Args.Length || args.Any(ContainsExistential)
