@@ -61,15 +61,6 @@ static partial class ForeignStarProjectionBinding
     internal static void ContinueWithProjection(Func<TypeNode, bool, TypeNode> projectValueType)
         => _projectValueType = projectValueType;
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots,
-        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, string> localClrAliases, Func<TypeNode, bool, TypeNode> projectValueType)
-    {
-        _localClrAliases = localClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
-        _projectValueType = projectValueType;
-        ApplyAll(roots, localExistentialOwners, refs, resetUsage: true);
-    }
-
     // Some type-parameter calls acquire their final constrained/member owner after the main existential pass. Re-run
     // only the same exact binding once that owner exists, preserving whether the earlier pass already required the
     // runtime support assembly.

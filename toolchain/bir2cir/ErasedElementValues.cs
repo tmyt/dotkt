@@ -17,17 +17,6 @@ static partial class ErasedElementValues
     internal static TypeNode.Tv RetainedVariable(JsonObject value) =>
         TypeJson.Read(value[SourceVariableKey]) as TypeNode.Tv;
 
-    internal static void ClearRetainedVariables(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            obj.Remove(SourceVariableKey);
-            foreach (var child in obj.Select(pair => pair.Value)) ClearRetainedVariables(child);
-        }
-        else if (node is JsonArray array)
-            foreach (var child in array) ClearRetainedVariables(child);
-    }
-
     internal static void ApplyType(JsonObject type, ReferenceMetadataIndex references,
         IReadOnlyDictionary<string, JsonObject> definitions,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,

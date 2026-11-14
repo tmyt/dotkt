@@ -59,23 +59,6 @@ static partial class ConstrainedTypeParameterReceiverBinding
         foreach (var root in roots) BindFile(root, arity: null, close: true);
     }
 
-    internal static void CloseMethodOwners(JsonObject method, JsonObject owner,
-        JsonArray methodParameters, ReferenceMetadataIndex refs)
-    {
-        BindMethod(method, CloneTypeParametersWithErasedSourceBounds(owner), arity: null,
-            close: true, isValue: null, refs: refs,
-            methodParametersOverride: methodParameters);
-    }
-
-    internal static void CloseTypeOwners(JsonObject type)
-    {
-        var parameters = CloneTypeParametersWithErasedSourceBounds(type);
-        if (type["methods"] is JsonArray methods)
-            foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, parameters, arity: null, close: true, isValue: null,
-                    refs: null);
-    }
-
     // PHASE 2 — author the constrained dispatch over the now-declaring, now-constructed owner.
     public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localExistentialOwners = null)
@@ -161,14 +144,14 @@ static partial class ConstrainedTypeParameterReceiverBinding
 
     static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity, bool close,
         ValueTypeOracle isValue, ReferenceMetadataIndex refs,
-        JsonArray methodParametersOverride = null, IReadOnlyDictionary<string, string> localExistentialOwners = null)
+        IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
         TypeNode.Fqn AllocatedDispatchOwner(TypeNode.Fqn selected) =>
             localExistentialOwners != null && localExistentialOwners.TryGetValue(selected.Name, out var carrier)
                 ? new TypeNode.Fqn(carrier)
                 : refs?.TryExistentialPhysicalOwner(selected.Name, out var referencedCarrier) == true
                     ? new TypeNode.Fqn(referencedCarrier) : null;
-        var methodParams = methodParametersOverride ?? CloneMethodParametersWithErasedSourceBounds(method);
+        var methodParams = CloneMethodParametersWithErasedSourceBounds(method);
         // A storage companion can retain only the allocated existential owner,
         // rather than the ordinary source parameter's constructed CLR bound.
         // The allocation map and that companion's actual constraint jointly
