@@ -46,6 +46,9 @@ static partial class AliasHelperHoist
 
     static BirClassDefinition BuildOwnershipHost(IBirTypeDeclaration owner, IBirTypeDeclaration[] types)
     {
+        // Physical nested children still need an enclosing TypeDef after the
+        // alias implementation is replaced by a BCL type. Keep only that shell
+        // and companion value storage, never the original implementation state.
         if (!owner.Name.HasValue) return null;
         var children = types.Where(type => type.NestedIn.OrDefault() == owner.Name.Value
             || type.SemanticOwner.OrDefault() == owner.Name.Value).ToArray();
@@ -67,6 +70,8 @@ static partial class AliasHelperHoist
     static BirClassDefinition BuildHelper(IBirTypeDeclaration declaration, string owner,
         ReferenceMetadataIndex refs, GenericRepresentationPolicy representations)
     {
+        // Reference metadata can report alias-interface default members as
+        // concrete rule-3 candidates. Only an alias class owns these helpers.
         if (declaration.Kind.OrDefault() != "class") return null;
         var frame = NullableRepresentationViews.TypeFacts((BirGraphValue)declaration)?.NullableFrame
             ?? new NullableRepresentationFrame(declaration.TypeParams.OrEmpty().Length, Array.Empty<int>());
@@ -76,9 +81,13 @@ static partial class AliasHelperHoist
         foreach (var method in declaration.Methods.OrEmpty())
         {
             if (!method.Name.HasValue || method.Static.OrDefault() || !method.Body.HasValue) continue;
+            // An accessor reading erased backing state cannot become a static
+            // helper on the native representation.
             if (KotlinPropertyAccessors.TryIdentity(method, out _, out _)
                 && method.Body.Value.Any(statement => BodyReadsBackingField((BirGraphValue)statement))) continue;
             var objectSlot = method.ObjectOverride.OrDefault();
+            // Inline value object slots read their wrapper's erased data field;
+            // neither those nor native-array object slots use this helper ABI.
             if (UsesNativeArrayObjectSlot(owner, objectSlot) || inlineValue && objectSlot) continue;
             if (refs.IsRule3Member(owner, method.Name.Value))
                 methods.Add(HoistMethod(method, declaration.TypeParams.OrDefault(), receiver));

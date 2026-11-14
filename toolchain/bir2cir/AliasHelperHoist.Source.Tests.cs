@@ -73,7 +73,30 @@ static partial class AliasHelperHoist
         rehomeRoot.Types = retained;
         transitions.Release();
         AliasHandoffSelfTest();
+        OwnedVisibilitySelfTest();
         Console.WriteLine("[alias helper receiver] self-test OK (owning identities, exact disposition, binding roles, permutation, scope transfer)");
+    }
+
+    static void OwnedVisibilitySelfTest()
+    {
+        foreach (var reverse in new[] { false, true })
+        {
+            var alias = new BirClassDefinition { Name = "kotlin.Array", Kind = "class" };
+            var physical = new BirClassDefinition { Name = "PhysicalChild", Kind = "class", NestedIn = alias.Name, Vis = "private" };
+            var semantic = new BirClassDefinition { Name = "SemanticChild", Kind = "class", SemanticOwner = alias.Name, Vis = "private" };
+            var unrelated = new BirClassDefinition { Name = "Unrelated", Kind = "class", Vis = "private" };
+            IBirTypeDeclaration[] declarations = { alias, physical, semantic, unrelated };
+            var file = new BirFileDeclaration { Types = reverse ? declarations.Reverse().ToArray() : declarations };
+            var transitions = new AliasDeclarationTransitions();
+            Apply(file, ReferenceMetadataIndex.Build(Array.Empty<string>()),
+                new GenericRepresentationPolicy(new Dictionary<string, string>()), transitions, _ => { });
+            if (physical.Vis.Value != "internal" || semantic.Vis.Value != "internal" || unrelated.Vis.Value != "private"
+                || !file.Types.Value.Any(type => ReferenceEquals(type, physical))
+                || !file.Types.Value.Any(type => ReferenceEquals(type, semantic))
+                || !file.Types.Value.Any(type => ReferenceEquals(type, unrelated)))
+                throw new InvalidOperationException("Alias child visibility depends on declaration order or widens an unrelated private declaration");
+            transitions.Release();
+        }
     }
 
     static void AliasHandoffSelfTest()
