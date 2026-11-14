@@ -76,6 +76,27 @@
         "inherited": { "type": "boolean" }, "sourceAssociation": { "type": "string" }
       }, "required": ["name", "kind", "association"], "additionalProperties": false
     },
+    "sourceDeclarationSignature": {
+      "type": "object", "x-dotkt-csharp-type": "SourceDeclarationSignature", "x-dotkt-csharp-codec": "SourceDeclarationSignature",
+      "properties": { "params": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "ret": { "$ref": "#/$defs/type" } },
+      "required": ["params", "ret"], "additionalProperties": false
+    },
+    "birRoundtripDeclarationIdentity": {
+      "type": "object", "x-dotkt-model": { "name": "BirRoundtripDeclarationIdentity", "domain": "birLoweringValues" },
+      "properties": {
+        "declarationId": { "type": "string" }, "declarationSourceName": { "type": "string" },
+        "declarationSignatureAllocation": { "type": "boolean" },
+        "declarationSemanticSignature": { "$ref": "#/$defs/sourceDeclarationSignature" },
+        "semanticReifiedIndices": { "type": "array", "items": { "type": "integer" } },
+        "nullableWitnessIndices": { "type": "array", "items": { "type": "integer" } },
+        "nullableRepresentationFrame": { "type": "string", "x-dotkt-csharp-type": "NullableRepresentationFrame", "x-dotkt-csharp-codec": "DotKt.Bir.NullableRepresentationFrame", "x-dotkt-json-content": "#/$defs/nullableRepresentationFrame" }
+      }, "additionalProperties": false
+    },
+    "birInnerConstructorFactory": {
+      "type": "object", "x-dotkt-model": { "name": "BirInnerConstructorFactory", "domain": "birLoweringValues" },
+      "properties": { "inner": { "type": "string" }, "declaration": { "type": "string" }, "typeArgs": { "type": "array", "items": { "type": "integer" } } },
+      "required": ["inner", "declaration", "typeArgs"], "additionalProperties": false
+    },
     "capturedGenericArgument": {
       "type": "object", "x-dotkt-model": { "name": "CapturedGenericArgument", "domain": "birLoweringValues" },
       "properties": { "argument": { "type": "integer" }, "slots": { "type": "array", "items": { "type": "integer" } } },
@@ -112,6 +133,7 @@
     },
     "birFileDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFileDeclaration", "domain": "birCoreValues", "loweringProperties": {
+        "roundtripMetadataPending": { "type": "boolean" },
         "assemblyAttrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } },
         "attrs": { "x-dotkt-representation-role": "Attributes", "type": "array", "items": { "$ref": "#/$defs/birAttribute" } },
         "wellKnownRefs": { "type": "object", "additionalProperties": { "$ref": "#/$defs/memberRef" }, "x-dotkt-csharp-type": "PhysicalMemberTable", "x-dotkt-csharp-codec": "PhysicalMemberTable" },
@@ -480,6 +502,8 @@
     },
     "birParameter": {
       "type": "object", "x-dotkt-model": { "name": "BirParameter", "domain": "birCoreValues", "loweringSourceFields": ["default"], "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "roundtripMetadataPending": { "type": "boolean" },
+        "collIdentity": { "type": "string", "x-dotkt-kotlin-json-type": true, "x-dotkt-frame-role": "FrozenSourceFact" },
         "functionSignatureType": { "$ref": "#/$defs/type" },
         "kotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },
         "nullableGeneric": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },
@@ -519,6 +543,12 @@
     },
     "birFunctionDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": { "lexicalOwnerTypeParamCount": { "type": "integer" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "roundtripMetadataPending": { "type": "boolean" },
+        "roundtripDeclarationIdentity": { "$ref": "#/$defs/birRoundtripDeclarationIdentity", "x-dotkt-frame-role": "FrozenSourceFact" },
+        "roundtripMethodBounds": { "$ref": "#/$defs/sourceMethodBoundsText", "x-dotkt-frame-role": "FrozenSourceFact" },
+        "roundtripSuspend": { "type": "boolean" },
+        "existentialInnerConstructorFactory": { "$ref": "#/$defs/birInnerConstructorFactory", "x-dotkt-frame-role": "FrozenSourceFact" },
+        "collIdentityRet": { "type": "string", "x-dotkt-kotlin-json-type": true, "x-dotkt-frame-role": "FrozenSourceFact" },
         "semanticReifiedIndices": { "type": "array", "items": { "type": "integer" } },
         "nullableWitnessIndices": { "type": "array", "items": { "type": "integer" } },
         "suspendResult": { "type": "string", "x-dotkt-kotlin-json-type": true },
@@ -557,7 +587,10 @@
       "required": ["params", "ret", "body"], "additionalProperties": false
     },
     "birConstructor": {
-      "type": "object", "x-dotkt-model": { "name": "BirConstructor", "domain": "birCoreValues", "executionFrame": [] },
+      "type": "object", "x-dotkt-model": { "name": "BirConstructor", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": {
+        "roundtripMetadataPending": { "type": "boolean" },
+        "roundtripDeclarationIdentity": { "$ref": "#/$defs/birRoundtripDeclarationIdentity", "x-dotkt-frame-role": "FrozenSourceFact" }
+      } },
       "properties": {
         "params": { "type": "array", "items": { "$ref": "#/$defs/birParameter" } },
         "baseArgs": { "oneOf": [{ "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } }, { "type": "null" }] },
@@ -573,6 +606,8 @@
     },
     "birFieldDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFieldDeclaration", "domain": "birCoreValues", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "roundtripMetadataPending": { "type": "boolean" },
+        "collIdentity": { "type": "string", "x-dotkt-kotlin-json-type": true, "x-dotkt-frame-role": "FrozenSourceFact" },
         "_nativeLocation": { "type": "boolean" },
         "constant": { "$ref": "#/$defs/literalValue" }, "kotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },
         "nullableGeneric": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true }
@@ -598,6 +633,8 @@
     },
     "birPropertyDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirPropertyDeclaration", "domain": "birCoreValues", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "roundtripMetadataPending": { "type": "boolean" },
+        "collIdentity": { "type": "string", "x-dotkt-kotlin-json-type": true, "x-dotkt-frame-role": "FrozenSourceFact" },
         "kotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },
         "nullableGeneric": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true }
       } },

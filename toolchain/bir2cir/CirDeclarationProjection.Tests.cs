@@ -11,7 +11,7 @@ static partial class CirDeclarationProjection
     internal static CirFileDeclaration ReadCirFileDeclaration(JsonNode source, bool runtimeMode = false)
     {
         var graph = BirGraphDom.ReadBirFileDeclaration(source);
-        RoundtripMetadata.StampTypeHeaders(graph, runtimeMode);
+        RoundtripMetadata.CompleteMetadata(graph, runtimeMode);
         var emitted = graph.Types.OrEmpty().Select(TypedCirProjection.TypeName).ToHashSet(StringComparer.Ordinal);
         return new TypedCirProjection(emitted).ProjectCirFileDeclaration(graph);
     }
@@ -33,7 +33,7 @@ static partial class CirDeclarationProjection
         CollectionIdentityRecord.RecordMemberSlots(file);
         if (!method.ContainsKey("collIdentityRet") || !method["params"][0].AsObject().ContainsKey("collIdentity"))
             throw new Exception("Collection metadata handoff control did not exercise its producer");
-        RoundtripMetadata.Stamp(file);
+        RoundtripMetadata.PrepareMetadata(file, runtimeMode: false);
         AddCarrierDefinition(file, "KotlinCollectionIdentityAttribute");
         var declarations = ReadCirFileDeclaration(file);
         AttributeApplication[][] sites = [declarations.Methods[0].RetAttrs.Value,
@@ -64,7 +64,7 @@ static partial class CirDeclarationProjection
                 ["name"] = "Companion", ["visibility"] = "public", ["physicalOwner"] = "Physical.Owner", ["physicalOwnerArity"] = 1 },
             ["staticCarrier"] = new JsonObject { ["owner"] = "Physical.Owner" }
         });
-        RoundtripMetadata.StripRuntimeAttrs(runtime);
+        RoundtripMetadata.PrepareMetadata(runtime, runtimeMode: true);
         AddCarrierDefinition(runtime, "KotlinDeclarationIdentityAttribute");
         var runtimeDeclarations = ReadCirFileDeclaration(runtime, runtimeMode: true);
         var physical = runtimeDeclarations.Types[0].Methods.Value[0];

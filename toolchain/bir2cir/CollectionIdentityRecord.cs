@@ -28,7 +28,7 @@ using DotKt.Bir;
 //
 // APP builds only (StdlibMode == App): the collapse only fires in a non-ref build, and only an app-emitted library is
 // re-consumed cross-module via dll2klib. The stdlib ref surface keeps `kotlin.*` verbatim (no collapse -> no
-// ambiguity); the rt.dll is never metadata-read (RoundtripMetadata.StripRuntimeAttrs drops attrs there).
+// ambiguity); the rt.dll is never metadata-read (RoundtripMetadata.CompleteMetadata filters runtime metadata there).
 static class CollectionIdentityRecord
 {
     // The read-only collection tokens whose Root-V collapse target (IList/ICollection) collides with the mutable
