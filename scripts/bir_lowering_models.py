@@ -814,13 +814,20 @@ def outputs(root, definitions):
     source_call = shapes["birCallInstance"]["properties"]
     target_call = shapes["birCallStatic"]["properties"]
     consumed = {"k", "recv", "ownerType", "virtual", "super", "memberRef", "memberOwnerTypeParams",
-                "memberVisibility", "shapeTypes", "declarationId"}
+                "memberVisibility", "shapeTypes", "declarationId",
+                # These selected-instance declaration/dispatch facts have no
+                # static-call field. The producer authors the new target; they
+                # must not survive this structural move as facts about it.
+                "overrides", "clrOwnerResolved", "static", "_erasedConstraintDispatch",
+                "_exactExistentialBridgeOwnerCall", "_physicalDeclarationSignature"}
     model += ["// Structural move only; the producer authors the new selected target.",
               "internal static class BirCallConversion", "{",
               "    internal static BirCallStatic MoveInstanceToStatic(BirCallInstance source) => new()", "    {"]
     for field, value in source_call.items():
-        if field in consumed or field not in target_call:
+        if field in consumed:
             continue
+        if field not in target_call:
+            raise ValueError(f"Unclassified instance/static call field omission: {field}")
         if cs(value) != cs(target_call[field]):
             raise ValueError(f"Instance/static call field {field} has incompatible owning shapes")
         prop = member(field)
