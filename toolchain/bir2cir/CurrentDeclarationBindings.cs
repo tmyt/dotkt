@@ -57,7 +57,7 @@ sealed class CurrentDeclarationBindings
         }
         foreach (var root in roots)
         {
-            // IndexLocalMethods deliberately ignores a facade with no name.
+            // A nameless facade does not own a method-selection bucket.
             if (!root.FileClass.HasValue) continue;
             AddMethods(root.FileClass.Value, root.Methods.OrEmpty());
             foreach (var owner in root.Types.OrEmpty())

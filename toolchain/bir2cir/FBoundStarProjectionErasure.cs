@@ -1593,32 +1593,6 @@ static partial class FBoundStarProjectionErasure
         return true;
     }
 
-    static Dictionary<string, List<JsonObject>> IndexLocalMethods(IEnumerable<JsonObject> roots)
-    {
-        var result = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
-        _localDeclarations = new();
-        void AddMethods(JsonObject owner, string ownerName)
-        {
-            if (owner["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                    if (Str(method["name"]) is string name)
-                    {
-                        var key = ownerName + "\0" + name;
-                        if (!result.TryGetValue(key, out var candidates))
-                            result[key] = candidates = new List<JsonObject>();
-                        candidates.Add(method);
-                        if (Str(method[DeclarationIdentityBinding.Key]) is string identity)
-                            _localDeclarations.Add((ownerName, identity), method);
-                    }
-            if (owner["types"] is JsonArray nested)
-                foreach (var type in nested.OfType<JsonObject>())
-                    if (Str(type["name"]) is string typeName) AddMethods(type, typeName);
-        }
-        foreach (var root in roots)
-            if (Str(root["fileClass"]) is string fileClass) AddMethods(root, fileClass);
-        return result;
-    }
-
     static JsonObject LocalDelegateTarget(JsonObject arrayInitializer)
     {
         if (arrayInitializer["init"] is not JsonObject { } initializer
