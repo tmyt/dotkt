@@ -4,6 +4,9 @@ using DotKt.Cir;
 
 static partial class FBoundStarProjectionErasure
 {
+    // An inner value's carrier cannot inherit a CLR class. Cross to a proven
+    // base while the source frame is available, without recovering an enclosing
+    // generic argument or replacing registered declarations inside the operand.
     internal static void AlignCapturedInnerBaseValuesSource(BirFileDeclaration root, CarrierDemandPlan demand,
         ReferenceMetadataIndex refs)
     {
@@ -18,7 +21,7 @@ static partial class FBoundStarProjectionErasure
                 var parameters = new Dictionary<string, TypeNode>(variables, StringComparer.Ordinal);
                 node.VisitSourceParameters((name, type) => parameters[name] = type);
                 variables = parameters;
-                // The old callable frame reads ret only. An absent ret on a
+                // A callable frame reads ret only. An absent ret on a
                 // constructor, inline or suspend donor resets the return frame.
                 returnType = null;
                 node.VisitOwnTypeFields((field, type) => { if (field == "ret") returnType = type; });
@@ -32,7 +35,7 @@ static partial class FBoundStarProjectionErasure
                     || !IsCapturedInner(source, demand.Owners, refs)
                     || ProjectConstructedArguments(source, target.Name, context) is not { Count: 0 }) return value;
                 return new BirCast { Type = BirGraphValue.CopyType(targetType), Sty = BirGraphValue.CopyType(targetType),
-                    E = OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)value).DeepClone()), _exactBridgeCast = true };
+                    E = OptionalField<IBirExpression>.Of(value), _exactBridgeCast = true };
             }
 
             var (arguments, signature) = node switch {
@@ -71,7 +74,7 @@ static partial class FBoundStarProjectionErasure
                     if (statement is BirVariable { Name.HasValue: true, Type.HasValue: true } variable)
                         inner[variable.Name.Value] = variable.Type.Value;
                 }
-                // Each old array had its own child scope. In particular a
+                // Each statement region has its own child scope. In particular a
                 // valueBlock's statements do not export locals to this sibling.
                 if (region.Result is { } result) Walk(result.Value, variables, returnType);
             });

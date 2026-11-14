@@ -86,8 +86,8 @@ static partial class FBoundStarProjectionErasure
         if (!(ordinary || context.IsCapturedInner(type.Value) || SignatureValueTypes.Of(type.Value) is TypeNode.ByRef)
             || projected == type.Value) return;
 
-        // DOM stored a string snapshot; the typed frozen fact must likewise
-        // not share mutable nested argument vectors with the live source slot.
+        // Frozen source facts must not share mutable nested argument vectors
+        // with the live parameter slot.
         var source = kotlinType.HasValue ? kotlinType
             : OptionalField<TypeNode>.Of(BirGraphValue.CopyType(nullableGeneric.OrDefault() ?? type.Value));
         switch (parameter)

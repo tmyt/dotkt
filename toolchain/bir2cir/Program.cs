@@ -689,7 +689,7 @@ sealed class Pipeline
 
         // Surface preparation snapshots the original method parameter types.
         // Align every body's captured-inner values before projecting any source
-        // parameter ABI, matching the previous module-wide physical schedule.
+        // parameter ABI, preserving the module-wide dependency order.
         foreach (var source in captured)
             FBoundStarProjectionErasure.AlignCapturedInnerBaseValuesSource(source, carrierSurface.Demand, refs);
         var carrierProjection = FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(
@@ -789,7 +789,7 @@ sealed class Pipeline
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
                 module.Preparation.CarrierSurface, sharedCells,
-                physicalParameterIndices, physicalDeclarationSources);
+                physicalDeclarationSources);
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
         // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
