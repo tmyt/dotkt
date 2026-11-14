@@ -502,6 +502,9 @@ sealed class Pipeline
             // Keep unchecked generic results object-typed until a real typed
             // consumer; the captured body-Tv facts retain their exact identity.
             UncheckedGenericCastReturnErasure.Apply(source, uncheckedDeclarations);
+            // Restore invariant collection call arguments from the original
+            // selected declaration and this file's current owning body/frame.
+            if (!referenceBuild) MapVarianceRealign.Apply(source, inventory.CalleeTypeParameters, refs);
             captured[index] = null;
             // The remaining passes still own DOM graphs. Construct that frontier
             // directly; never serialize/reparse the typed input between passes.
@@ -581,10 +584,6 @@ sealed class Pipeline
         // supertype, so this synthetic-retention is a technical necessity, not a preference. (docs/design-charsequence-clr-string.md)
         var hasUserCharSeqImpl = module.Preparation.Inventory.HasUserCharSeqImplementation;
 
-        // Exact declaration identities select the callee's parameter-type vector,
-        // captured module-wide before override or per-file declaration changes.
-        var calleeTypeParams = module.Preparation.Inventory.CalleeTypeParameters;
-
         // Declaration returns were snapshotted before typed erasure. Re-derive
         // each use from that declaration, not the frontend's substituted return.
         var nullableTvDeclRets = module.Preparation.NullableDeclarations;
@@ -618,14 +617,6 @@ sealed class Pipeline
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
             // Initial nullable-use flow already ran on owning source BIR.
             // Subsequent calls below follow only their actual late capability transitions.
-            // VARIANCE -> INVARIANCE type-arg REALIGNMENT (il-bymap): kotc approximates a use-site `in`/`out` variance
-            // projection to `kotlin.Any` (JVM-erased, harmless), so a call into an INVARIANT @ClrTypeAlias collection
-            // generic (`getOrImplicitDefault<K,V>` on a `Map<String,V>` receiver) carries a `K = Any` typeArg while the
-            // actual arg pins `K = String`. On the CLR `IDictionary<,>` is invariant, so the mismatch -> EntryPointNotFound
-            // at `ContainsKey`. Realign each such typeArg to the actual argument's concrete type-argument. BIR-space,
-            // before MemberCallSubstitution + type lowering; non-ref only. A no-op when the arg already agrees (genuine
-            // `<Any>` calls) or the callee isn't a local input (an app never re-lowers a referenced stdlib body).
-            if (!_options.RefBuild) MapVarianceRealign.Apply(bir.Root, calleeTypeParams, refs);
             // CALL substitution (substitute/app builds only): a member call / construction whose OWNER is a CLR-bound
             // type in the ref.dll (@ClrTypeAlias, or the legacy class-level @ClrIntrinsic) is rewritten to a plain BCL
             // call/new. This is the bir2cir home of what kotc's clrName() member routing used to do — sourced from the

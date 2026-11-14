@@ -916,6 +916,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override OptionalField<TypeNode> ErasedValueVariableFact { get => _erasedValueVariable; set => _erasedValueVariable = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
@@ -1125,6 +1126,7 @@ internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<IBirExpression> NullWitness { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -1305,6 +1307,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<IBirExpression> KotlinClassifierPredicate { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -2887,6 +2890,7 @@ internal sealed record BirDefaultValue : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -2995,6 +2999,7 @@ internal sealed record BirEnumName : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -3117,6 +3122,7 @@ internal sealed record BirEnumOrdinal : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<BirPhysicalEnumValue[]> Values { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -3251,6 +3257,7 @@ internal sealed record BirEnumParse : BirGraphNode, IBirExpression, IBirAttribut
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -3651,6 +3658,7 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -4028,6 +4036,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Ret.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
@@ -4663,6 +4672,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Ret.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
@@ -5261,6 +5271,7 @@ internal sealed record BirCallLocal : BirGraphNode, IBirExpression, IBirAttribut
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Ret.OrDefault();
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
@@ -5463,6 +5474,7 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
     public override OptionalField<TypeNode> ErasedValueVariableFact { get => _erasedValueVariable; set => _erasedValueVariable = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
@@ -5825,6 +5837,7 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Ret.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -6059,6 +6072,7 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
     public override TypeNode? ResultTypeStamp => Ret.OrDefault();
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (OwnerType.HasValue) { visit("ownerType", (TypeNode)OwnerType.Value); }
@@ -13284,6 +13298,7 @@ internal sealed record BirSamConversion : BirGraphNode, IBirExpression, IBirAttr
     public override TypeNode? FunctionTypeStamp => FuncType.OrDefault();
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -14563,6 +14578,7 @@ internal sealed record BirEventGet : BirGraphNode, IBirExpression, IBirAttribute
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -14755,6 +14771,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -17417,6 +17434,7 @@ internal sealed record BirConstant : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -17924,6 +17942,7 @@ internal sealed record BirConditional : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override OptionalField<TypeNode> ErasedValueVariableFact { get => _erasedValueVariable; set => _erasedValueVariable = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
@@ -18343,6 +18362,7 @@ internal sealed record BirEnumValue : BirGraphNode, IBirExpression, IBirAttribut
     public OptionalField<string> PhysicalValue { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -18466,6 +18486,7 @@ internal sealed record BirEnumValues : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<BirPhysicalEnumValue[]> Values { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -18704,6 +18725,7 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<bool> KotlinClassifierRef { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -19320,6 +19342,7 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override OptionalField<TypeNode> ErasedValueVariableFact { get => _erasedValueVariable; set => _erasedValueVariable = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
@@ -19510,6 +19533,7 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -20191,6 +20215,7 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (OwnerType.HasValue) { visit("ownerType", (TypeNode)OwnerType.Value); }
@@ -20807,6 +20832,7 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -21281,6 +21307,7 @@ internal sealed record BirVariable : BirGraphNode, IBirStatement
     public OptionalField<string> Role { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -23101,6 +23128,7 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (Type.HasValue) { visit("type", (TypeNode)Type.Value); }
@@ -23311,6 +23339,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Ret.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
@@ -23706,6 +23735,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -23974,6 +24004,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -24529,6 +24560,7 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -24806,6 +24838,7 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -25090,6 +25123,7 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -25452,6 +25486,7 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -25810,6 +25845,7 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -26145,6 +26181,7 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -26611,6 +26648,7 @@ internal sealed record BirEnumBits : BirGraphNode, IBirExpression, IBirAttribute
     public OptionalField<IBirExpression> E { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (Type.HasValue) { visit("type", (TypeNode)Type.Value); }
@@ -26977,6 +27015,7 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
     public override TypeNode? FunctionTypeStamp => FuncType.OrDefault();
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
@@ -27291,6 +27330,7 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
     public override TypeNode? FunctionTypeStamp => FuncType.OrDefault();
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
