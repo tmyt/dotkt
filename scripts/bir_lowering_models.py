@@ -487,10 +487,12 @@ def outputs(root, definitions):
             model += ["    public override void ClearSyntheticFrameFacts()", "    {"]
             model += [f"        {prop} = default;" for prop in synthetic_facts]
             model += ["    }"]
-        model += ["    public override void VisitNameFields(Action<string> visit)", "    {"]
+        model += ["    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)", "    {"]
         for field, value in fields:
             prop = member(field)
-            if field in {"name", "var"} and cs(value) == "string":
+            if field == "var" and cs(value) == "string":
+                model += [f"        if (includeVariableNames && {prop}.HasValue) visit({prop}.Value);"]
+            elif field == "name" and cs(value) == "string":
                 model += [f"        if ({prop}.HasValue) visit({prop}.Value);"]
             elif is_type_slot(value):
                 body = visit(value, prop + ".Value", callback="BirGraphNameFields.VisitType", cast="TypeNode", suffix=", visit")

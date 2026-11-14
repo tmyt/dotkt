@@ -198,7 +198,7 @@
       "required": ["k", "op", "lhs", "rhs"], "additionalProperties": false
     },
     "birCast": {
-      "type": "object", "x-dotkt-model": { "name": "BirCast", "domain": "birCore", "role": "expression", "loweringProperties": { "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" }, "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "_physicalDeclarationSignature": { "type": "boolean" }, "_exactBridgeCast": { "type": "boolean" }, "functionValueRestoration": { "type": "boolean" }, "kotlinTypeWitness": { "$ref": "#/$defs/birExpressionNode" }, "kotlinRuntimeTypeWitness": { "$ref": "#/$defs/birExpressionNode" }, "kotlinClassifierPredicate": { "$ref": "#/$defs/birExpressionNode" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirCast", "domain": "birCore", "role": "expression", "loweringProperties": { "dotktProjectedCollection": { "type": "boolean" }, "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" }, "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "_physicalDeclarationSignature": { "type": "boolean" }, "_exactBridgeCast": { "type": "boolean" }, "functionValueRestoration": { "type": "boolean" }, "kotlinTypeWitness": { "$ref": "#/$defs/birExpressionNode" }, "kotlinRuntimeTypeWitness": { "$ref": "#/$defs/birExpressionNode" }, "kotlinClassifierPredicate": { "$ref": "#/$defs/birExpressionNode" } } },
       "properties": { "k": { "const": "cast" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" }, "reifiedTypeOperand": { "type": "boolean" }, "e": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "type", "e"], "additionalProperties": false
     },
@@ -325,6 +325,7 @@
     },
     "birCallStatic": {
       "type": "object", "x-dotkt-model": { "name": "BirCallStatic", "domain": "birCore", "role": "expression", "loweringProperties": { "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "dotktProjectedCollection": { "type": "boolean" },
         "_resolvedMethodTypeParams": { "x-dotkt-frame-role": "ResolvedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
         "dotktKotlinSigId": { "type": "integer" },
         "projectedHelperReceiver": { "type": "integer" },

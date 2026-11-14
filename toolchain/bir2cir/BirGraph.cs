@@ -47,7 +47,7 @@ internal abstract record BirGraphValue
     public abstract void VisitChildSlots(Action<BirGraphSlot> visit);
     // Own scalar name/var fields and structured type leaves only. The caller
     // controls graph descent; encoded source facts and carrier bytes stay opaque.
-    public abstract void VisitNameFields(Action<string> visit);
+    public abstract void VisitNameFields(Action<string> visit, bool includeVariableNames = true);
     // Direct structural leaves only; callers own graph descent. Field names
     // distinguish explicit phase facts without reflecting over CLR properties.
     public abstract void VisitOwnTypeFields(Action<string, TypeNode> visit);
