@@ -21,10 +21,13 @@ static partial class StarProjectionLowering
         var iterableCast = new BirCast { Type = iterable, E = new BirLocal { Name = "value" } };
         var rawIterator = new BirCallInstance { OwnerType = mutableIterable, Method = "iterator", Args = Array.Empty<IBirExpression>(),
             Recv = new BirCast { Type = mutableIterable, E = new BirCallStatic { Method = "iteratorEffect" } } };
+        var nonNullableTest = new BirIsInstance { Type = list, E = new BirCallStatic {
+            Method = "nonNullableEffect", Ret = AnyN, Args = Array.Empty<IBirExpression>() } };
         var body = new IBirStatement[] {
             new BirExpressionStatement { Expr = count }, new BirExpressionStatement { Expr = test },
             new BirExpressionStatement { Expr = cast }, new BirExpressionStatement { Expr = concrete },
             new BirExpressionStatement { Expr = iterableCast }, new BirExpressionStatement { Expr = rawIterator },
+            new BirExpressionStatement { Expr = nonNullableTest },
         };
         var method = new BirFunctionDeclaration { Name = "probe", Params = Array.Empty<BirParameter>(), Body = body };
         var methods = new[] { method };
@@ -53,6 +56,9 @@ static partial class StarProjectionLowering
             && rawCast.E.Value is BirCallStatic { Method.Value: "iteratorEffect" }
             && !rawCast.DotktProjectedCollection.IsPresent && UsedRuntimeFallback,
             "mutable Iterable dispatch must preserve its observable raw cast and original receiver effect");
+        Check(At(6) is BirCallStatic { Method.Value: "starProjectionKotlinCollectionIsInstance" } nonNullable
+            && nonNullable.Args.Value[0] is BirCallStatic { Method.Value: "nonNullableEffect" },
+            "an absent optional null-match flag must retain the nonnullable classifier contract");
         var nodes = new List<BirGraphValue>(); file.Visit(nodes.Add);
         Check(nodes.OfType<BirCallStatic>().Count(call => call.Method.OrDefault() == "castEffect") == 1
             && nodes.OfType<BirCallStatic>().Count(call => call.Method.OrDefault() == "iteratorEffect") == 1,

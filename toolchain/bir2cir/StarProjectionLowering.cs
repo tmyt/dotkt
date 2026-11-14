@@ -5,6 +5,10 @@ using static KotlinRuntimeTypeWitness;
 
 // Classifier tests and existential collection operations preserve the original
 // Kotlin object while selecting only the physical face required by the operation.
+// Native collection faces alone do not prove Kotlin membership: dictionaries
+// and arrays expose them too, HashSet has no nongeneric collection face, and a
+// Kotlin List implementation need not implement nongeneric IList. Use composite
+// classifiers while keeping independent List and Set contracts intact.
 static partial class StarProjectionLowering
 {
     internal const string ProjectedCollectionMarker = "dotktProjectedCollection";
@@ -121,12 +125,17 @@ static partial class StarProjectionLowering
                 if (IsStarCollection(operation.Type.OrDefault(), out var physical) && (operation.IsTest || node is BirInstanceOrNull && physical == "System.Collections.IEnumerable"))
                     operation.Type = new TypeNode.Fqn(physical);
                 if (node is BirCast cast && IsStarCollection(cast.Type.OrDefault(), out var castPhysical))
-                { cast.Type = new TypeNode.Fqn(castPhysical); cast.DotktProjectedCollection = true; }
+                {
+                    cast.Type = new TypeNode.Fqn(castPhysical);
+                    // Preserve semantic provenance after the raw facade loses
+                    // its element closure; the later member context consumes it.
+                    cast.DotktProjectedCollection = true;
+                }
                 if (operation.Operand.HasValue && IsIdentityCollection(operation.Type.OrDefault(), out var kind, out var nullable))
                 {
                     UsedRuntimeFallback = true;
                     node = LowerIdentityClassifier(operation.IsTest ? "isInst" : operation.IsCast ? "cast" : "isInstRef",
-                        operation.Operand.Value, kind, nullable || node is BirIsInstance { NullMatches.Value: true }, operation.Type.Value);
+                        operation.Operand.Value, kind, nullable || node is BirIsInstance test && test.NullMatches.OrDefault(), operation.Type.Value);
                     slot.Replace(node);
                 }
             }
@@ -154,6 +163,8 @@ static partial class StarProjectionLowering
         };
         var call = Call(method, new[] { AnyN, Int, Type, Type }, kind == "isInst" ? Bool : kind == "isInstRef" || nullable ? AnyN : Any,
             CopyExpression(operand), ConstInt(classifier), ClassRef(first), ClassRef(second));
+        // Any is a concrete closure, not a star. Keep its physical value cast
+        // after the membership guard instead of discarding that exact interface.
         if (kind != "isInst" && HasConcreteTypeArguments(target))
             return kind == "cast" ? new BirCast { Type = BirGraphValue.CopyType(target), E = call }
                 : new BirInstanceOrNull { Type = BirGraphValue.CopyType(target), E = call };
@@ -164,6 +175,7 @@ static partial class StarProjectionLowering
     static BirGraphValue LowerIdentityMember(BirCallInstance call, BirCast cast, int kind, ReferenceMetadataIndex refs,
         CollectionHelperBinding.CollectionSourceContext context)
     {
+        // Maps use semantic map dispatchers, not the collection iterator protocol.
         if (kind is 6 or 7) return null;
         var receiver = (IBirExpression)LowerIdentityClassifier("cast", cast.E.Value, kind, false, cast.Type.Value);
         return call.Method.OrDefault() switch {
@@ -184,6 +196,8 @@ static partial class StarProjectionLowering
             5 => "projectedMutableCollectionCountErased", _ => "projectedCollectionCountErased" }, new[] { Any }, Int, CopyExpression(call.Recv.Value));
     }
     static bool CanUseErasedReceiver(BirCallInstance call, IReadOnlyDictionary<string, TypeNode.Fqn> views)
+        // A source-authored closed view belongs to exact foreign binding. A
+        // runtime-only erased helper would discard its selected interface.
         => call.Recv.HasValue && !HasConcreteTypeArguments(call.OwnerType.OrDefault())
             && !(call.Recv.Value is BirCast cast && HasConcreteTypeArguments(cast.Type.OrDefault()))
             && !(call.Recv.Value is BirLocal { Name.HasValue: true } local && views.ContainsKey(local.Name.Value));
@@ -198,8 +212,12 @@ static partial class StarProjectionLowering
             : Call("projectedListGetErased", new[] { Any, Int }, AnyN, receiver, CopyExpression(call.Args.Value[0]));
     }
     static BirCallStatic LowerIterableMember(BirCallInstance call, BirCast cast, string physical, bool mutable)
+        // Preserve the observable cast: enumerable storage alone must not make
+        // a rejected mutable collection cast succeed.
         => call.Method.OrDefault() == "iterator" ? IteratorCall(mutable, Cast(mutable ? physical : "System.Collections.IEnumerable", CopyExpression(cast.E.Value))) : null;
     static BirCallStatic IteratorCall(bool mutable, IBirExpression receiver) => new() {
+        // Kotlin hasNext is idempotent; CLR MoveNext is not. The immutable raw
+        // enumerator therefore needs the bridge implementing Kotlin Iterator.
         Owner = new TypeNode.Fqn(mutable ? "kotlin.collections.ClrCollectionDefaultsKt" : "kotlin.collections.ClrIteratorBridgeKt"),
         Method = mutable ? "clrMutableIteratorErased" : "iteratorOverRawEnumerable", Sig = new[] { Any }, Args = new[] { receiver },
         Ret = new TypeNode.Fqn(mutable ? "kotlin.collections.MutableIterator" : "kotlin.collections.Iterator", new[] { AnyN }),

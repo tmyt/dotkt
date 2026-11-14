@@ -28,6 +28,8 @@ static partial class KotlinRuntimeTypeWitness
                 MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.ArrayStorageMethodOf(refs, method, parameters, owner, false)),
             };
             var typeType = new TypeNode.Fqn("System.Type");
+            // An opaque foreign construction uses its open definition, not
+            // Object or G<Object>. Raw membership owns that token's view test.
             var test = Choose(NativeCall("System.Type", "get_IsGenericTypeDefinition", classifier, "System.Boolean", []),
                 new BirCallStatic { Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt"), Method = "starProjectionHasView",
                     Sig = new TypeNode[] { typeType, typeType }, Ret = Boolean, Args = new IBirExpression[] {
@@ -47,9 +49,13 @@ static partial class KotlinRuntimeTypeWitness
             IBirExpression result;
             if (operation.IsCast)
             {
+                // A semantic predicate cannot permit an impossible physical
+                // array cast. The original operation still owns null rejection.
                 var semanticMatches = Choose(matches,
                     Choose(KotlinTypeWitness.BinaryValue("===", Local(), NullValue()), BoolValue(true), physical.CastTest(Local()), Boolean),
                     BoolValue(false), Boolean);
+                // Without a predicate retain the matches-only preguard: the
+                // collection cast, not its is-test, owns membership exceptions.
                 var castMatches = Choose(KotlinTypeWitness.BinaryValue("===", CopyExpression(predicate), NullValue()),
                     (IBirExpression)matches.DeepClone(), semanticMatches, Boolean);
                 statements.Add(new BirIf { Branches = new[] { new BirBranch {
@@ -59,6 +65,7 @@ static partial class KotlinRuntimeTypeWitness
                     } } } });
                 result = (IBirExpression)physical.Node;
             }
+            // isInstRef returns a boxed nullable value, never an unboxed T.
             else result = Choose(matches, (IBirExpression)physical.Node, operation.IsTest ? BoolValue(false) : NullValue(),
                 operation.IsTest ? Boolean : new TypeNode.Fqn("object"));
             return new BirValueBlock { Stmts = statements.ToArray(), Result = OptionalField<IBirExpression>.Of(result) };

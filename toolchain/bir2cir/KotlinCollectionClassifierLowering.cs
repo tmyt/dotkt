@@ -41,6 +41,8 @@ static partial class KotlinCollectionClassifierLowering
         }
         var nullableObject = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
         var opaqueAlias = operandType is TypeNode.Fqn alias && AliasVarianceRepresentation.RequiresErasure(alias, refs);
+        // A nominal/storage guard owns Kotlin membership. Its physical test
+        // must use that same opaque alias ABI, not demand a new closed native face.
         void Project(ClassifierOperation test)
         {
             if (opaqueAlias) test.ProjectPhysicalType(OpaqueTestType(test.Type.OrDefault()));
@@ -79,6 +81,8 @@ static partial class KotlinCollectionClassifierLowering
             return operation.Node;
         }
 
+        // A sentinel would itself satisfy erased T=object. Guard membership
+        // separately and spill the original operand so its effects execute once.
         string temp;
         do temp = "dotkt$collectionClassifier$value$" + next++; while (!names.Add(temp));
         var local = new BirLocal { Name = temp };
@@ -93,6 +97,8 @@ static partial class KotlinCollectionClassifierLowering
             };
         var target = physical.Type.OrDefault();
         var safeResult = target is TypeNode.Nullable ? target : new TypeNode.Nullable(target);
+        // Nullable erasure has already run; a new T? result must use boxed
+        // storage rather than merging an unboxed value with a null reference.
         safeResult = NullableGenericErasure.EraseNullableTv(safeResult, _ => false);
         var result = new BirConditional {
             Type = operation.IsTest ? default : OptionalField<TypeNode>.Of(safeResult),
