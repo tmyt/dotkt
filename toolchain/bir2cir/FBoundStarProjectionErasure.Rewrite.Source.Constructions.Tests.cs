@@ -62,6 +62,7 @@ static partial class FBoundStarProjectionErasure
                 new TypeNode[] { new TypeNode.Tv("method", 0) });
             factory.Slot.Params.Value[0].Type = new TypeNode.Fqn("System.Object");
             factory.Slot.Params.Value[0].FunctionSignatureType = selectedSignature;
+            var expectedSignature = new TypeNode.Mod(false, selectedSignature, new TypeNode.Fqn("System.Object"));
             var replacement = BindStarInnerConstructionSource(construction, null, null, state);
             ((BirExpressionStatement)caller.Body.Value[0]).Expr = OptionalField<IBirExpression>.Of((IBirExpression)replacement);
             Require(replacement is BirCallInstance call && call.Method.Value == factory.Slot.Name.Value
@@ -69,12 +70,12 @@ static partial class FBoundStarProjectionErasure
                 && ReferenceEquals(call.Recv.Value, receiver) && ReferenceEquals(call.Args.Value.Single(), operand)
                 && call.TypeArgs.Value is [TypeNode.Fqn { Name: "kotlin.String" }] && call._innerFactoryArguments.Value
                 && call.Sig.Value.Single() == new TypeNode.Fqn("System.Object")
-                && call.CalleeParams.Value.Single() == selectedSignature
-                && !ReferenceEquals(((TypeNode.Fqn)call.CalleeParams.Value[0]).Args, selectedSignature.Args)
+                && call.CalleeParams.Value.Single() == expectedSignature
+                && !ReferenceEquals(((TypeNode.Fqn)((TypeNode.Mod)call.CalleeParams.Value[0]).M).Args, selectedSignature.Args)
                 && ReferenceEquals(((BirLocalFunction)operand.Stmts.Value[0]).Decl.Value, nested),
                 "inner factory lost selected binding/signature/frame, actual receiver or nested operand declaration");
             selectedSignature.Args[0] = text;
-            Require(((TypeNode.Fqn)((BirCallInstance)replacement).CalleeParams.Value[0]).Args[0]
+            Require(((TypeNode.Fqn)((TypeNode.Mod)((BirCallInstance)replacement).CalleeParams.Value[0]).M).Args[0]
                 is TypeNode.Tv { Scope: "method", I: 0 },
                 "binding captured an early factory signature or retained its live mutable argument vector");
             var noSignature = new BirNew { Type = construction.Type, ConstructorDeclarationId = constructor.DeclarationId,

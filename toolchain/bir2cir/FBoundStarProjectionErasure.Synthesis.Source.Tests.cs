@@ -59,10 +59,16 @@ static partial class FBoundStarProjectionErasure
                 && ReferenceEquals(row.Slot, slot) && ReferenceEquals(row.EmittedSlot, slot), "original occurrences or emitted row changed");
             Require(slot.Name.Value == "$star$apply$0" && slot.Abstract.Value && slot.Virtual.Value
                 && slot.Vis.Value == "public" && !slot.Static.Value && !slot.Override.Value && !slot.ObjectOverride.Value
-                && slot.Body.Value.Length == 0 && slot.Attrs.Value.Length == 0 && !slot.Generated.IsPresent
+                && slot.Body.Value.Length == 0 && slot.Attrs.Value.Length == 1 && !slot.Generated.IsPresent
                 && slot.DeclarationId.Value == ExistentialSlotIdentity("apply", "Box")
                 && slot.SuspendRet.Value is TypeNode.Fqn { Name: "kotlin.Any" } && slot.Mods.Value.Suspend.Value,
                 "slot identity, presence, result facts or separate naming domain changed");
+            var sourceIdentity = slot.Attrs.Value.Single();
+            Require(sourceIdentity.Attr.Value is TypeNode.Fqn { Name: "DotKt.Runtime.CompilerServices.KotlinSourceMethodAttribute" }
+                && sourceIdentity.Args.Value[0] is BirAttributeLiteral { Value.Value: BirLiteral.TextLiteral { Value: BirCarrier.JsonV1 } }
+                && System.Text.Encoding.UTF8.GetString(((BirOpaqueBytes)sourceIdentity.Args.Value[1]).Bytes.Value)
+                    == "{\"name\":\"apply\",\"sourceDeclaration\":\"apply\"}",
+                "renamed slot lost the shared source method identity carrier or inferred identity from its physical spelling");
             var call = (BirCallInstance)((BirReturn)bridge.Body.Value.Single()).Value.Value;
             Require(bridge.Generated.Value && bridge.PhysicalSlotBridge.Value && bridge.Vis.Value == "private"
                 && bridge.ClrInterfaceImpls.Value.Single().Owner.Value == new TypeNode.Fqn("Box$star")

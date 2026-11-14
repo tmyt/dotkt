@@ -146,11 +146,15 @@ static partial class FBoundStarProjectionErasure
         Require(!plan.Bounds(sourceMethod, 1).Contains(disposable), "late query froze captured constraints instead of reading the live declaration");
         sourceMethod["typeParams"][1]["constraints"] = before;
 
+        // Carrier-surface preparation above legitimately authored methods and
+        // source-bound facts. A fresh proof plan must leave THAT current graph
+        // unchanged, just as the initial planner left its own input unchanged.
+        var currentBeforePlanning = root.DeepClone();
         var missingBindings = PrepareCurrentDeclarations(new[] { root }, values);
         _ = PrepareNativeProofs(missingBindings, refs, values);
         root.ToDom((source, actual) => { if (!ReferenceEquals(source, donor)) missingBindings.ObserveProjection(source, actual); });
         Reject(missingBindings.BindProjected);
-        Require(root.StructurallyEquals(original), "proof planning mutated the continuing typed graph");
+        Require(root.StructurallyEquals(currentBeforePlanning), "proof planning mutated the continuing typed graph");
         Console.WriteLine("[owning native proof plan] self-test OK (source/physical constraints, fixed-point demand, native witnesses, ID-less handoff, live late rows and independent transfers)");
     }
 }
