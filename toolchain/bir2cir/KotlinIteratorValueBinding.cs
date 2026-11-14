@@ -7,22 +7,34 @@ using DotKt.Bir;
 // A generic Kotlin iterator read yields an erased value. The actual consumer, not the iterator adapter,
 // owns its extraction into a native T. Select only the standard declaration/override relation; unrelated
 // next/previous methods, super dispatch, and already-bound CLR bridges remain exact.
-sealed class KotlinIteratorValueBinding
+sealed partial class KotlinIteratorValueBinding
 {
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
 
     internal TypeNode.Tv Element(JsonObject call)
     {
-        if (Text(call["k"]) != "callInstance" || call["super"]?.GetValue<bool>() == true
-            || call["clrOwnerResolved"]?.GetValue<bool>() == true
-            || call["args"] is not JsonArray { Count: 0 }
-            || call["typeArgs"] is JsonArray { Count: > 0 }
-            || TypeJson.Read(call["sty"] ?? call["dynRet"]) is not TypeNode.Tv element)
-            return null;
+        var element = CandidateElement(Text(call["k"]) == "callInstance", call["super"]?.GetValue<bool>() == true,
+            call["clrOwnerResolved"]?.GetValue<bool>() == true, (call["args"] as JsonArray)?.Count,
+            (call["typeArgs"] as JsonArray)?.Count ?? 0, TypeJson.Read(call["sty"] ?? call["dynRet"]));
+        if (element == null) return null;
         return Operation(call) == null ? null : element;
     }
 
+    static TypeNode.Tv CandidateElement(bool instanceCall, bool super, bool resolved, int? arguments,
+        int typeArguments, TypeNode source) => instanceCall && !super && !resolved && arguments == 0 && typeArguments == 0
+            ? source as TypeNode.Tv : null;
+
     static string Operation(JsonObject call)
+    {
+        return SelectOperation(Text(call[DeclarationIdentityBinding.Key]), TypeJson.OwnerName(call["ownerType"]),
+            Text(call["method"]), (call["overrides"] as JsonArray)?.OfType<JsonObject>()
+                .Select(edge => new ProtocolOverride(Text(edge[DeclarationIdentityBinding.Key]),
+                    TypeJson.OwnerName(edge["owner"]), Text(edge["member"]), edge["arity"]?.GetValue<int>())));
+    }
+
+    readonly record struct ProtocolOverride(string Identity, string Owner, string Member, int? Arity);
+
+    static string SelectOperation(string identity, string owner, string member, IEnumerable<ProtocolOverride> overrides)
     {
         static bool Protocol(string owner, string member) => member switch {
             "next" => owner is "kotlin.collections.Iterator" or "kotlin.collections.MutableIterator"
@@ -30,14 +42,9 @@ sealed class KotlinIteratorValueBinding
             "previous" => owner is "kotlin.collections.ListIterator" or "kotlin.collections.MutableListIterator",
             _ => false,
         };
-        if (Text(call[DeclarationIdentityBinding.Key]) != null
-            && Protocol(TypeJson.OwnerName(call["ownerType"]), Text(call["method"])))
-            return Text(call["method"]);
-        return (call["overrides"] as JsonArray)?.OfType<JsonObject>()
-            .Where(edge => Text(edge[DeclarationIdentityBinding.Key]) != null
-                && edge["arity"]?.GetValue<int>() == 0
-                && Protocol(TypeJson.OwnerName(edge["owner"]), Text(edge["member"])))
-            .Select(edge => Text(edge["member"])).Distinct().SingleOrDefault();
+        if (identity != null && Protocol(owner, member)) return member;
+        return overrides?.Where(edge => edge.Identity != null && edge.Arity == 0 && Protocol(edge.Owner, edge.Member))
+            .Select(edge => edge.Member).Distinct().SingleOrDefault();
     }
 
     internal void Bind(JsonObject read)

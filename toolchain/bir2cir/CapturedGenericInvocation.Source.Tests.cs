@@ -7,6 +7,7 @@ static partial class CapturedGenericInvocation
 {
     internal static void SelfTestPhysicalInvocation()
     {
+        SourceParameterWitnessSelfTest();
         var references = ReferenceMetadataIndex.SourceCaptureTestIndex();
         var variable = new TypeNode.Tv("method", 0);
         var parameter = new BirTypeParameter { Name = "T", Constraints = new TypeNode[] { variable },
@@ -36,8 +37,8 @@ static partial class CapturedGenericInvocation
             } },
             new BirFileDeclaration { FileClass = "Second", Types = Array.Empty<IBirTypeDeclaration>(), Methods = new[] { Caller() } },
         }, references);
+        CaptureParameterWitnesses(roots);
         var dom = roots.Select(root => (JsonNode)root.ToDom()).ToArray();
-        CaptureParameterWitnesses(dom);
         var pending = PrepareLocalDeclarations(dom, flattenMissingOwners: false);
         var originalRoots = pending.Roots;
         var savedBucket = pending.Declarations["selected-id"];
@@ -96,6 +97,37 @@ static partial class CapturedGenericInvocation
             Require(pending.Roots != null && pending.Declarations["guard-id"][0].Dom != null,
                 "failed handoff must not release the original membership authority");
         }
+    }
+
+    static void SourceParameterWitnessSelfTest()
+    {
+        var variable = new TypeNode.Tv("method", 0);
+        var signature = new TypeNode.Fqn("Key", new TypeNode[] { variable });
+        var frame = new NullableRepresentationFrame(1, Array.Empty<int>());
+        var method = new BirFunctionDeclaration { Name = "selected", DeclarationId = "capture-witness",
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } },
+            Params = new[] { new BirParameter { Name = "key", Type = signature } }, NullableRepresentationFrame = frame };
+        var member = new BirFunctionDeclaration { Name = "member", DeclarationId = "member-witness",
+            Params = new[] { new BirParameter { Name = "value", Type = new TypeNode.Tv("type", 0) } } };
+        var sibling = new BirFunctionDeclaration { Name = "sibling", DeclarationId = "sibling-witness",
+            Params = Array.Empty<BirParameter>() };
+        var owner = new BirClassDefinition { Name = "Owner", Kind = "class", Methods = new[] { member },
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } } };
+        var files = new[] { new BirFileDeclaration { Methods = new[] { method }, Types = new IBirTypeDeclaration[] { owner } },
+            new BirFileDeclaration { Methods = new[] { sibling } } };
+        CaptureParameterWitnesses(files);
+        Require(_parameterWitnesses["capture-witness"].Single() is TypeNode.Fqn captured
+            && captured.Args.Single() == variable && !ReferenceEquals(captured, signature)
+            && !ReferenceEquals(captured.Args, signature.Args)
+            && _parameterWitnesses["member-witness"].Single() == new TypeNode.Tv("type", 0)
+            && _parameterWitnesses["sibling-witness"].Length == 0
+            && ReferenceEquals(_methodWitnessFrames["capture-witness"], frame)
+            && ReferenceEquals(files[0].Methods.Value[0], method) && ReferenceEquals(owner.Methods.Value[0], member),
+            "typed witness capture changed module membership/frame or kept a mutable source type vector");
+        signature.Args[0] = String;
+        method.Params.Value[0].Type = Object;
+        Require(((TypeNode.Fqn)_parameterWitnesses["capture-witness"][0]).Args[0] == variable,
+            "late physical parameter mutation changed the earlier witness authority");
     }
 
     static void Require(bool value, string message)

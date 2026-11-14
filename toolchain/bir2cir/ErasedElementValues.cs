@@ -573,6 +573,7 @@ static partial class ErasedElementValues
         Console.WriteLine("[open array element values] self-test OK (erased reads/aliases, retained signature)");
         IteratorSelfTest(pristine.AsObject());
         SourceScalarSelfTest();
+        SourceElementSelfTest();
     }
 
     static void IteratorSelfTest(JsonObject template)
