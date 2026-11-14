@@ -45,9 +45,12 @@ static partial class ExactMutableViewDispatch
         internal override JsonNode Binary(string op, JsonNode left, JsonNode right)
             => ExactMutableViewDispatch.Binary(op, left, right);
         internal override JsonNode Not(JsonNode value) => new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = value };
-        internal override JsonNode NonNull(JsonNode value) => Binary("!=", value, new JsonObject {
-            ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(Any)), ["value"] = null,
-        });
+        internal override JsonNode NonNull(JsonNode value) => new JsonObject {
+            ["k"] = "binOp", ["op"] = "!=", ["lhs"] = value,
+            ["rhs"] = new JsonObject {
+                ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(Any)), ["value"] = null,
+            },
+        };
         internal override JsonNode Eligible(JsonNode receiver, TypeNode.Fqn view, int family) => new JsonObject {
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.ExactMutableViewCacheKt"),
             ["method"] = "canUseExactMutableView", ["typeArgs"] = new JsonArray(),
