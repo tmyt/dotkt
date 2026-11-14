@@ -427,7 +427,10 @@
       "required": ["k", "ownerType", "name", "value"], "additionalProperties": false
     },
     "birLateinitGet": {
-      "type": "object", "x-dotkt-model": { "name": "BirLateinitGet", "domain": "birCore", "role": "expression", "loweringProperties": { "lateinitSourceName": { "type": "string" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirLateinitGet", "domain": "birCore", "role": "expression", "loweringProperties": {
+        "lateinitSourceName": { "type": "string" },
+        "ret": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" }
+      } },
       "properties": {
         "k": { "const": "lateinitGet" }, "ownerType": { "$ref": "#/$defs/type" }, "static": { "type": "boolean" }, "recv": { "$ref": "#/$defs/birExpressionNode" }, "name": { "type": "string" }, "companionReceiver": { "type": "string", "x-dotkt-kotlin-json-type": true }, "sty": { "x-dotkt-representation-role": "ResultStamp", "$ref": "#/$defs/type" },
         "memberVisibility": { "type": "string" }, "memberOwnerTypeParams": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "TypeParameterDeclarations", "x-dotkt-representation-parameters": "Owner", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberType": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "DeclaredMemberType", "x-dotkt-frame-role": "ReferencedDeclaration", "$ref": "#/$defs/type" }

@@ -2870,10 +2870,11 @@ internal static partial class BirGraphJson
         OptionalField<BirTypeParameter[]> field7 = default;
         OptionalField<TypeNode> field8 = default;
         OptionalField<string> field9 = default;
-        OptionalField<IBirExpression> field10 = default;
+        OptionalField<TypeNode> field10 = default;
         OptionalField<IBirExpression> field11 = default;
-        OptionalField<BirMemberReference> field12 = default;
-        OptionalField<bool> field13 = default;
+        OptionalField<IBirExpression> field12 = default;
+        OptionalField<BirMemberReference> field13 = default;
+        OptionalField<bool> field14 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -2881,7 +2882,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 14); if (ReadString(ref reader) != "lateinitGet") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 15); if (ReadString(ref reader) != "lateinitGet") throw new FormatException(); break;
                 case "ownerType":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
@@ -2922,21 +2923,25 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 9);
                     field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
-                case "value":
+                case "ret":
                     Seen(ref seen, 1UL << 10);
-                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
-                case "exception":
+                case "value":
                     Seen(ref seen, 1UL << 11);
                     field11 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
-                case "fieldRef":
+                case "exception":
                     Seen(ref seen, 1UL << 12);
-                    field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
+                    field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    break;
+                case "fieldRef":
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
                 case "volatile":
-                    Seen(ref seen, 1UL << 13);
-                    field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    Seen(ref seen, 1UL << 14);
+                    field14 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -2954,10 +2959,11 @@ internal static partial class BirGraphJson
             MemberOwnerTypeParams = field7,
             MemberType = field8,
             LateinitSourceName = field9,
-            Value = field10,
-            Exception = field11,
-            FieldRef = field12,
-            Volatile = field13,
+            Ret = field10,
+            Value = field11,
+            Exception = field12,
+            FieldRef = field13,
+            Volatile = field14,
         };
     }
 

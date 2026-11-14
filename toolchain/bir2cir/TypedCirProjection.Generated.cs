@@ -1270,7 +1270,7 @@ sealed partial class TypedCirProjection
 
     internal CirLateinitGet ProjectCirLateinitGet(BirLateinitGet value)
     {
-        if (value.CompanionReceiver.IsPresent || value.LateinitSourceName.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberType.IsPresent || value.MemberVisibility.IsPresent || value.Sty.IsPresent)
+        if (value.CompanionReceiver.IsPresent || value.LateinitSourceName.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberType.IsPresent || value.MemberVisibility.IsPresent || value.Ret.IsPresent || value.Sty.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirLateinitGet");
         return new CirLateinitGet
         {
