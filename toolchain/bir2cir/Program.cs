@@ -159,6 +159,8 @@ static class Bir2Cir
                 ClrMemberResolution.WellKnownTableSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
                 ConstrainedTypeParameterReceiverBinding.AritySnapshotSelfTest();
+                ConstrainedTypeParameterReceiverBinding.SelfTestSourceCloseOwners();
+                FBoundStarProjectionErasure.SelfTestSourceProjectionNormalization();
                 ConstrainedTypeParameterReceiverBinding.ResolvedPropertiesSelfTest();
                 SourceOwnerClosureTests.Run();
                 StdlibSubstituteTypeParams.SelfTest();
@@ -657,6 +659,12 @@ sealed class Pipeline
         if (!referenceBuild) ClrEventImplBinding.BindRaisesAll(captured, refs);
         if (!referenceBuild) ErasedElementValues.ApplyAll(captured, refs, isValueFqn, genericRepresentations);
         CapturedGenericInvocation.CaptureParameterWitnesses(captured);
+        // Late physical locations are distinct from original source eligibility.
+        // Close bound-owned receivers and normalize repeated variance before
+        // FBound snapshots declarations and exact native proof requirements.
+        genericRepresentations.RefreshPhysicalNativeLocations(captured);
+        ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(captured);
+        FBoundStarProjectionErasure.NormalizeRedundantProjections(captured, refs);
 
         for (var index = 0; index < captured.Length; index++)
         {
@@ -747,7 +755,6 @@ sealed class Pipeline
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         var overrideSourceParameters = module.Preparation.OverrideSourceParameters;
         var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
-        genericRepresentations.RecordNativeFields(staged.Select(s => s.Root));
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs, sharedCells,
                 physicalParameterIndices, physicalDeclarationSources, genericRepresentations);

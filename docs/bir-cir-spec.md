@@ -32,6 +32,9 @@ signature snapshot or newly generated forwarding methods.
 The owning module remains typed through local event-slot binding, collection
 identity and pointer validation, source array/nested-type fact capture, inner
 application projection, native event raises, and erased element/witness capture.
+It then admits late physical native storage separately from original source
+origins, closes bound-owned receivers, and normalizes repeated variance before
+FBound captures its declaration and proof snapshots.
 Override parameter shapes are captured before inner projection and associated
 with the exact continuing method occurrences at the single projection below.
 Remaining DOM-based passes currently receive a direct one-way
