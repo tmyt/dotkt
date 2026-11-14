@@ -1061,7 +1061,7 @@ sealed partial class TypedCirProjection
 
     internal CirNewClr ProjectCirNewClr(BirNewClr value)
     {
-        if (value.MemberSignature.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent)
+        if (value.KotlinHashStorageSignature.IsPresent || value.MemberSignature.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirNewClr");
         return new CirNewClr
         {
@@ -1385,7 +1385,7 @@ sealed partial class TypedCirProjection
 
     internal CirNativeInstance ProjectCirNativeInstance(BirNativeInstance value)
     {
-        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._erasedConstraintDispatch.IsPresent || value._foreignDeclarationSignature.IsPresent || value._resolvedMethodTypeParams.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.SuspendCall.IsPresent)
+        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._erasedConstraintDispatch.IsPresent || value._foreignDeclarationSignature.IsPresent || value._resolvedMethodTypeParams.IsPresent || value.KotlinHashStorageSignature.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.SuspendCall.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirNativeInstance");
         CheckSourceStamp(value.Sty, value.Ret);
         return new CirNativeInstance

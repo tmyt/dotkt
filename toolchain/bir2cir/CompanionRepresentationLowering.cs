@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
@@ -69,27 +68,4 @@ static partial class CompanionRepresentationLowering
     static bool IsCompanionMemberOwner(string owner, Association association) =>
         owner == association.SemanticName || owner == association.PhysicalName;
 
-    // The remaining physical pipeline still checks its actual DOM output at this late boundary.
-    public static void AssertNoCompanionValues(JsonNode root)
-    {
-        void Visit(JsonNode node, JsonObject parent = null, string property = null)
-        {
-            if (node is JsonObject obj)
-            {
-                if (Str(obj["k"]) == "companionValue")
-                    throw new InvalidOperationException(
-                        $"companionValue survived CLR companion use binding: owner={Str((obj["ownerType"] as JsonObject)?["name"])} " +
-                        $"semantic={Str((obj["companionType"] as JsonObject)?["name"])} " +
-                        $"context={(parent is null ? "root" : Str(parent["k"]) ?? Str(parent["kind"]) ?? "object")}.{property} " +
-                        $"member={Str(parent?["method"])} memberOwner={Str((parent?["ownerType"] as JsonObject)?["name"])}");
-                foreach (var child in obj)
-                    if (child.Value is not null) Visit(child.Value, obj, child.Key);
-            }
-            else if (node is JsonArray array)
-                foreach (var child in array)
-                    if (child is not null) Visit(child, parent, property);
-        }
-        Visit(root);
-    }
-    static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 }

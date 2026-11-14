@@ -4339,6 +4339,7 @@ internal static class BirGraphDom
                 case "args": break;
                 case "memberRef": break;
                 case "argTypes": break;
+                case "kotlinHashStorageSignature": break;
                 case "memberSignature": break;
                 case "resolvedMemberParams": break;
                 case "resolvedMemberReturn": break;
@@ -4350,6 +4351,7 @@ internal static class BirGraphDom
             Args = Field<IBirExpression[]>(fields, "args", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            KotlinHashStorageSignature = Field<bool>(fields, "kotlinHashStorageSignature", value => value!.GetValue<bool>()),
             MemberSignature = Field<TypeNode[]>(fields, "memberSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ResolvedMemberReturn = Field<TypeNode>(fields, "resolvedMemberReturn", value => TypeNode.Read(value) ?? throw new FormatException()),
@@ -4689,6 +4691,7 @@ internal static class BirGraphDom
                 case "argTypes": break;
                 case "sty": break;
                 case "super": break;
+                case "kotlinHashStorageSignature": break;
                 case "suspendCall": break;
                 case "_capturedGenericArgument": break;
                 case "_capturedGenericResult": break;
@@ -4717,6 +4720,7 @@ internal static class BirGraphDom
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
             Super = Field<bool>(fields, "super", value => value!.GetValue<bool>()),
+            KotlinHashStorageSignature = Field<bool>(fields, "kotlinHashStorageSignature", value => value!.GetValue<bool>()),
             SuspendCall = Field<bool>(fields, "suspendCall", value => value!.GetValue<bool>()),
             _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
             _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),

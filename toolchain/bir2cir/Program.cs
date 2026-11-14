@@ -47,6 +47,8 @@ static class Bir2Cir
                 ForeignStarProjectionBinding.SelfTest();
                 MemberCallSubstitution.StaticCollectionPreferenceSelfTest();
                 MemberCallSubstitution.SourceDeclarationSnapshotsSelfTest();
+                MemberCallSubstitution.FactoriesSourceSelfTest();
+                MemberCallSubstitution.SourceCallsSelfTest();
                 FunctionSignatureIdentity.SelfTest();
                 FunctionValueRepresentation.SelfTestSourceFacts();
                 BirNodeType.SelfTest();
@@ -67,6 +69,7 @@ static class Bir2Cir
                 ClrMemberResolution.DeclarationBindingsSelfTest();
                 BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
+                CharSeqStringLowering.SelfTestSource();
                 PrimitiveOperatorLowering.SelfTest();
                 SourceGraphRewrite.SelfTest();
                 ForInLowering.SelfTestTypedRangePrefix();
@@ -338,7 +341,6 @@ sealed class Pipeline
         KotlinPropertyAccessors.AllocateDeclarationsAndProperties(captured);
         var localPropertyDeclarations = MemberCallSubstitution.CollectLocalPropertyAccessors(captured);
         genericRepresentations.PrepareDomLocations(captured);
-        var placement = new DeclarationPlacement(localFactories, localPropertyDeclarations);
         var ownership = TypeOwnershipLowering.PrepareOwnershipFacts(captured);
         TypedCharSequenceIdentity.ApplyAll(captured);
         var forwardedEvents = ClrEventSubscriptionBinding.CollectForwardedOwners(captured);
@@ -572,6 +574,20 @@ sealed class Pipeline
             // Resolve physical event delegates from the pre-strip source recipe.
             // Raise/subscription sites still bind at their later physical-owner clock.
             if (!referenceBuild) ClrEventImplBinding.BindImplementations(source, refs, localEventDeclarations);
+            if (!referenceBuild) CompanionRepresentationLowering.AssertNoCompanionValues(source);
+            // A user CharSequence implementation must retain the polymorphic
+            // synthetic module-wide: snapshotting it would replace its authored
+            // length/index behavior with toString(), and sealed System.String
+            // cannot implement the interface contract.
+            // Collapse only pure apps, while property identity is still explicit.
+            CharSeqStringLowering.CharSeqRetLambdas charSeqReturns = null;
+            if (!referenceBuild && appBuild && !inventory.HasUserCharSeqImplementation)
+                CharSeqStringLowering.Apply(source, inventory.LocalTopLevelFunctions, out charSeqReturns);
+            // The selected declaration owns the CLR binding. Local sibling
+            // top-level calls stay owner-less; only app references are attributed.
+            if (!referenceBuild)
+                MemberCallSubstitution.Apply(source, refs, inventory.LocalTopLevelFunctions, appBuild, isValueFqn,
+                    localPropertyDeclarations, genericRepresentations, localFactories, sourceIndex.DeclarationIds);
             captured[index] = null;
             // The remaining owners still use DOM. Project once after the owning
             // representation and name allocation, never through an old adapter.
@@ -579,7 +595,7 @@ sealed class Pipeline
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
                 root,
-                inputsWithSources[index].Suspend, sourceUseViews[index]));
+                inputsWithSources[index].Suspend, sourceUseViews[index], charSeqReturns));
         }
 
         localEventDeclarations.ReleaseSourceRecipes();
@@ -597,7 +613,7 @@ sealed class Pipeline
         retiredDeclarations.Clear();
         retiredDom.Clear();
         return new LoadedBirModule(files, signatures, sourceIndex,
-            genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames, placement,
+            genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums, sharedCells,
                 moduleBindings));
     }
@@ -610,7 +626,6 @@ sealed class Pipeline
         var declarationSemanticSignatures = module.Signatures;
         var valueRepresentations = module.ValueRepresentations;
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
-        var localDeclarationIds = module.SourceIndex.DeclarationIds;
         var representationAliases = module.SourceIndex.CollisionAliases;
         var localValueTypeFqns = module.SourceIndex.ValueTypes;
         ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
@@ -621,31 +636,14 @@ sealed class Pipeline
         var scalarSlots = module.ScalarSlots;
         var physicalParameterIndices = scalarSlots.Parameters;
         var representationMethodFrames = module.RepresentationMethodFrames;
-        var localFactories = module.Placement.Factories;
-        var localPropertyDeclarations = module.Placement.Properties;
-        // The top-level funs DEFINED in this compilation (every file-class's own static methods, across all input
-        // files). A `callStatic owner=null` to one of these must stay owner-less (ilemit's FindStatic finds the
-        // sibling); only a name absent here is eligible for referenced-stdlib file-class attribution (Gap B).
-        var localTopLevelFns = module.Preparation.Inventory.LocalTopLevelFunctions;
         // The type FQNs DECLARED in this compilation (every input file's own `types`). SuspendColdLowering
         // uses it to decide whether the cold-core base (kotlin.coroutines.clr.internal.ContinuationImpl) is
         // a LOCAL type (rt-stdlib self-build -> bare base + local slot override) or a REFERENCED one
         // (app build -> clr: base + pendingOverrideOwner linkage).
         var localTypeFqns = module.Preparation.Inventory.EmittedTypeFqns;
-        // Attribute referenced top-level stdlib funs to their file-class owner only in an APP build: a stdlib self-
-        // build (`--build-stdlib=metadata|runtime`) defines them locally, so owner=null is correct there. The reference
-        // build never runs MemberCallSubstitution at all (see the RefBuild gate below).
+        // App-only physical interop stages remain separate from runtime/metadata
+        // self-builds; source call attribution already ran in the owning prefix.
         var attributeTopLevelOwner = _options.StdlibMode == BuildStdlibMode.App;
-
-        // Does THIS assembly declare a user `class S : CharSequence` (a type whose `interfaces` names the synthetic
-        // `dotkt$CharSequence`)? If so, CharSequence must stay the polymorphic synthetic ASSEMBLY-WIDE: a
-        // CharSequence param/local in such an assembly may hold that user impl and be read polymorphically
-        // (`show(cs: CharSequence) = cs.length` with `show(S("hello"))` == 5) — collapsing it to `string` would
-        // snapshot the value via `.toString()` and lose the length. So the CharSequence -> System.String lowering
-        // (CharSeqStringLowering) is DISABLED for such assemblies (they keep the synthetic, unchanged), and enabled
-        // only for a "pure" app assembly with no user implementer. Sealed System.String forbids a real `: string`
-        // supertype, so this synthetic-retention is a technical necessity, not a preference. (docs/design-charsequence-clr-string.md)
-        var hasUserCharSeqImpl = module.Preparation.Inventory.HasUserCharSeqImplementation;
 
         // Declaration returns were snapshotted before typed erasure. Re-derive
         // each use from that declaration, not the frontend's substituted return.
@@ -676,21 +674,9 @@ sealed class Pipeline
             // but these early per-file capabilities retain the same visibility
             // as this file's owning source-use pass. Global stages use canonical.
             var sourceUses = bir.NullableSourceUses;
-            if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
             // Initial nullable-use flow already ran on owning source BIR.
             // Subsequent calls below follow only their actual late capability transitions.
-            var working = bir.Root;
-            // Consume CharSequence property semantics while calls still carry the explicit Kotlin property name and
-            // accessor role. MemberCallSubstitution is the physical binding boundary for those calls; no later pass may
-            // recover `length` from the allocated MethodRef spelling.
-            CharSeqStringLowering.CharSeqRetLambdas charSeqRetLambdas = null;
-            if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
-                working = CharSeqStringLowering.Apply(working, localTopLevelFns, out charSeqRetLambdas);
-            // Resolve Kotlin calls through reference-owned bindings before type
-            // lowering removes their Kotlin owner and member vocabulary.
-            var substituted = _options.RefBuild ? working : MemberCallSubstitution.Apply(working, refs,
-                localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations, genericRepresentations,
-                localFactories, localDeclarationIds);
+            var substituted = bir.Root;
             // Reified-nullability witnesses were prepared while declaration identities and Kotlin type arguments were
             // still authoritative. Materialize them only after semantic calls (enum/array/collection intrinsics) have
             // either been replaced or deliberately retained, so a physical hidden ABI argument cannot interfere with
@@ -729,7 +715,7 @@ sealed class Pipeline
             IReadOnlyList<JsonNode> materializedDelegateAdapters = Array.Empty<JsonNode>();
             if (!_options.RefBuild)
                 substituted = StringCharSequenceBridge.Apply(
-                    substituted, refs, charSeqRetLambdas, out materializedDelegateAdapters);
+                    substituted, refs, bir.CharSeqReturns, out materializedDelegateAdapters);
             // The String/CharSequence call-boundary bridge may materialize a closure that captures a non-literal
             // `(P...) -> String` delegate and exposes `(P...) -> CharSequence` (#190). Assemble those late closure
             // ingredients now; all earlier source/inline/event closures were already consumed by the main passes.
@@ -1712,21 +1698,20 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 }
 
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend,
-    NullableTvErasureCallRealign.DeclIndex NullableSourceUses);
+    NullableTvErasureCallRealign.DeclIndex NullableSourceUses,
+    CharSeqStringLowering.CharSeqRetLambdas CharSeqReturns);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
     SourceModuleIndex SourceIndex,
     GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots,
     ValueRepresentationLowering ValueRepresentations,
     IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames,
-    DeclarationPlacement Placement, ModulePreparation Preparation);
+    ModulePreparation Preparation);
 sealed record ModulePreparation(TypedModuleInventory Inventory,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
     IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
-sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
-    IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 
 static class JsonOptions
