@@ -27,9 +27,6 @@ static partial class OwnerConstrainedMethodLowering
         Configure(references, physicalClassifier, nativeProofs);
     }
 
-    internal static bool HasMethodDependentBounds(JsonObject method) =>
-        HasMethodDependentBounds(ConstraintVectors(method["typeParams"] as JsonArray), ReadMethodFrame(method), References);
-
     internal static NullableRepresentationFrame ReadMethodFrame(JsonObject method) =>
         method[NullableRepresentationTypes.MethodFrameKey] is JsonValue encoded
             ? NullableRepresentationFrame.Read(JsonNode.Parse(encoded.GetValue<string>())) : null;
