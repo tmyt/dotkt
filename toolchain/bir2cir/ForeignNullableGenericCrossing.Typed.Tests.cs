@@ -40,14 +40,27 @@ static partial class ForeignNullableGenericCrossing
         };
         Refused(() => Check(returnCrossing, "owning-boundary"), "return");
 
-        var bytes = BirCarrier.EncodeBody<TypeNode>(BirCarrier.JsonV1, foreign, TypeNode.WriteJson);
         var physical = NullableGenericErasure.ErasedLoweredSlot(foreign);
         var parameter = new BirParameter { Name = "value", Type = physical, NullableGeneric = foreign };
-        var stamped = new BirParameter { Name = "value", Type = parameter.Type, Attrs = new[] {
-            new BirAttribute { Attr = new TypeNode.Fqn(RoundtripMetadata.AKNullableGen), Args = new IBirAttributeValue[] {
-                new BirAttributeLiteral { Value = new BirLiteral.TextLiteral(BirCarrier.JsonV1) }, new BirOpaqueBytes { Bytes = bytes },
-            } },
-        } };
+        BirParameter Stamped(string codec) => new() { Name = "value", Type = parameter.Type, Attrs = new[] {
+                new BirAttribute { Attr = new TypeNode.Fqn(RoundtripMetadata.AKNullableGen), Args = new IBirAttributeValue[] {
+                    new BirAttributeLiteral { Value = new BirLiteral.TextLiteral(codec) },
+                    new BirOpaqueBytes { Bytes = TypeNodeCarrier.Encode(codec, foreign) },
+                } },
+            } };
+        foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1 })
+        {
+            var carried = Stamped(codec);
+            if (!TypeNodeDataEquality.Equal(PreErasureTypeOf(carried), foreign))
+                throw new InvalidOperationException("Owning slot validation lost the declared TypeNode carrier codec: " + codec);
+            // The unstamped live fact is the same record at an earlier phase,
+            // and retains precedence when the attribute is also present.
+            carried.NullableGeneric = nullable;
+            if (!ReferenceEquals(PreErasureTypeOf(carried), nullable))
+                throw new InvalidOperationException("Owning slot validation replaced the declaration's unconsumed source fact");
+        }
+        var stamped = Stamped(TypeNodeCarrier.Codec);
+        var bytes = ((BirOpaqueBytes)stamped.Attrs.Value[0].Args.Value[1]).Bytes.Value;
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
         var slot = new Slot { Name = "Take", Arity = 0, Params = new TypeNode[] { foreign }, Ret = foreign };
         BirFunctionDeclaration Method(BirParameter value) => new() {
@@ -74,6 +87,6 @@ static partial class ForeignNullableGenericCrossing
             || method.NullableGenericRet.IsPresent || stampedMethod.NullableGenericRet.IsPresent || capture.NullableGeneric.IsPresent
             || !ReferenceEquals(((BirOpaqueBytes)stamped.Attrs.Value[0].Args.Value[1]).Bytes.Value, bytes))
             throw new InvalidOperationException("Owning slot validation did not consume actual source records or modified opaque metadata");
-        Console.WriteLine("[owning foreign boundary] self-test OK (selected parameter/return, source-slot correspondence, record consumption)");
+        Console.WriteLine("[owning foreign boundary] self-test OK (selected parameter/return, declared type codecs, source-slot correspondence, record consumption)");
     }
 }

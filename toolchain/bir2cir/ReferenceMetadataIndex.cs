@@ -6471,7 +6471,7 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // Decode a compiler-owned round-trip TypeNode carrier (`[KotlinType]`, `[KotlinNullableGeneric]` — both ride the
-    // same `(version, bytes)` BirCarrier envelope).  Full-name equality is insufficient: a foreign
+    // same explicitly declared TypeNode codec envelope). Full-name equality is insufficient: a foreign
     // assembly may define a lookalike.  The containing assembly has already passed the DotKt marker + generated
     // carrier test; additionally require this embedded attribute type to come from that assembly and itself carry
     // [CompilerGenerated], matching dll2klib's provenance rule.
@@ -6489,7 +6489,7 @@ sealed partial class ReferenceMetadataIndex
                     || cad.ConstructorArguments[0].Value is not string version)
                     continue;
                 var content = ReadByteArrayArg(cad.ConstructorArguments[1]);
-                return TypeNode.Parse(BirCarrier.DecodeBody(version, content).ToJsonString());
+                return TypeNodeCarrier.Decode(version, content);
             }
             catch
             {
