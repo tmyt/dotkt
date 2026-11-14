@@ -132,7 +132,7 @@ static partial class FBoundStarProjectionErasure
                 if (ContainsOwnerTv(bound) || OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "method", index,
                     method.NullableRepresentationFrame.OrDefault(), context.References))
                 {
-                    if (PhysicalBoundClassifier(bound, context.Owners, context.References) is { } classifier && !erased.Contains(classifier)) erased.Add(classifier);
+                    if (PhysicalBoundClassifier(bound, context.Projection) is { } classifier && !erased.Contains(classifier)) erased.Add(classifier);
                     foreach (var consequence in ContainsOwnerTv(bound)
                         ? OwnerConstrainedMethodLowering.IndependentBounds(bound, ownerParameters) : Enumerable.Empty<TypeNode>())
                         if (!IsObjectish(consequence) && !erased.Contains(consequence)) erased.Add(consequence);
