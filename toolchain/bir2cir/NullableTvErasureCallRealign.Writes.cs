@@ -109,7 +109,7 @@ static partial class NullableTvErasureCallRealign
             // names instead of building the wrong one and failing to convert it.
             if (target is TypeNode.Fqn tf && args[i] is JsonObject na && Str(na["k"]) == "new"
                 && TypeJson.Read(na["type"]) is TypeNode.Fqn sf
-                && SameClassifier(sf, tf) && !sf.Equals(tf) && IsObjectErasureOf(tf, sf))
+                && RetypeObject(sf, tf))
                 na["type"] = TypeJson.Write(tf);
             // The same rule for an ARRAY construction, which is how a `vararg` argument list is packed: build the
             // element type the slot names. `EvalNewArray` then reconciles the elements against it, so the `newarr`
@@ -128,10 +128,10 @@ static partial class NullableTvErasureCallRealign
             // unrelated to `Slot<object>`, so retyping the pack would emit a `stelem Slot<object>` over it and turn a
             // formal stack-type difference into an ArrayTypeMismatchException. The pack keeps the element it was
             // built with there; only the DESCRIPTOR follows the callee, because that resolves the member.
-            if (target is TypeNode.Array ta && IsBareObject(ta.Elem) && args[i] is JsonObject ar
+            if (target is TypeNode.Array ta && args[i] is JsonObject ar
                 && Str(ar["k"]) is "newArray" or "newArrayInit" or "newArraySized"
                 && TypeJson.Read(ar["elem"]) is TypeNode se
-                && !se.Equals(ta.Elem) && IsObjectErasureOf(ta.Elem, se) && NeedsObjectSeam(se))
+                && RetypeArrayElement(se, ta))
                 ar["elem"] = TypeJson.Write(ta.Elem);
             // And the same rule for a DELEGATE construction. `fun <T> invokeNullable(block: (T?) -> String)` declares
             // a physical `Func<object, string>` whatever `T` is, while kotc states the construction's `funcType` from
@@ -149,8 +149,7 @@ static partial class NullableTvErasureCallRealign
                 && TypeJson.Read(dl["funcType"]) is TypeNode.Fn dft
                 // A void target cannot acquire a value return by retyping its delegate. Preserve the
                 // natural construction for the physical adapter, which invokes it and produces Unit.
-                && !(IsVoidish(dft.Ret) && !IsVoidish(targetFunction.Ret))
-                && !dft.Equals(target) && IsObjectErasureOf(target, dft))
+                && RetypeDelegate(dft, targetFunction))
                 dl["funcType"] = TypeJson.Write(target);
             argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;
             // THE DESCRIPTOR IS OPEN; THE TARGET MUST BE CLOSED. A descriptor states the callee's DECLARED parameter
@@ -214,11 +213,18 @@ static partial class NullableTvErasureCallRealign
     // would be zipped against the DERIVED arity rather than the base view it is actually seen through.
     static bool UnifyMethodArgs(TypeNode declared, TypeNode flowed, TypeNode[] methodArgs, JsonObject call)
     {
-        var moved = false;
-        Walk(declared, flowed, nested: false);
+        var moved = UnifyMethodArgs(declared, flowed, methodArgs);
         if (moved && call["typeArgs"] is JsonArray typeArgs)
             for (var i = 0; i < methodArgs.Length && i < typeArgs.Count; i++)
                 typeArgs[i] = TypeJson.Write(methodArgs[i]);
+        return moved;
+    }
+
+    // The shape decision is shared by the source owning flow and later DOM capabilities.
+    static bool UnifyMethodArgs(TypeNode declared, TypeNode flowed, TypeNode[] methodArgs)
+    {
+        var moved = false;
+        Walk(declared, flowed, nested: false);
         return moved;
 
         void Walk(TypeNode d, TypeNode f, bool nested, bool underArray = false)
@@ -336,6 +342,12 @@ static partial class NullableTvErasureCallRealign
         TypeNode t = TypeJson.Read(k is "newBoundClrDelegate" or "newClrStaticDelegate"
             ? obj["clrType"]
             : obj["type"]);
+        return ClrOwner(t);
+    }
+
+    static TypeNode.Fqn ClrOwner(TypeNode type)
+    {
+        var t = type;
         while (true)
             switch (t)
             {
@@ -510,7 +522,7 @@ static partial class NullableTvErasureCallRealign
     static TypeNode SlotType(JsonObject obj, Ctx ctx)
     {
         if (TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn owner || Str(obj["name"]) is not string name) return null;
-        if (!ctx.Idx.Slots.TryGetValue(owner.Name, out var slots)) return null;
+        if (!ctx.Idx.IsVisibleOwner(owner.Name) || !ctx.Idx.Slots.TryGetValue(owner.Name, out var slots)) return null;
         if (!slots.TryGetValue(name, out var declared) || declared == null) return null;
         return Subst(NullableGenericErasure.EraseNullableTv(declared, _isValue), OwnerArguments(owner), null);
     }
@@ -714,8 +726,10 @@ static partial class NullableTvErasureCallRealign
     // Both cases are provisional in the way the whole pre-pass is: the general type-argument rule replaces this
     // predicate outright rather than growing another arm on it.
     static bool BuildsItsOwnElement(JsonObject arg)
-        => Str(arg["k"]) is "new" or "newArray" or "newArrayInit" or "newArraySized"
-           && !IsBareObject(TypeJson.Read(arg["elem"]));
+        => BuildsItsOwnElement(Str(arg["k"]), TypeJson.Read(arg["elem"]));
+
+    static bool BuildsItsOwnElement(string kind, TypeNode element)
+        => kind is "new" or "newArray" or "newArrayInit" or "newArraySized" && !IsBareObject(element);
 
     // `Unit`/`void` is the absence of a value, not a type to convert into.
     static bool IsVoidish(TypeNode t) => t is TypeNode.Fqn { Name: "void" or "kotlin.Unit" or "kotlin.Nothing", Args: null };
