@@ -848,30 +848,6 @@ static partial class FBoundStarProjectionErasure
     // before the slot becomes that interface/object.
     // RoundtripMetadata emits these facts as [KotlinType], and dll2klib restores them without inspecting the physical
     // carrier name. Calls and locals are intentionally excluded: this is exported declaration ABI only.
-    // Array identity on inheritance edges and bounds must be frozen before inner applications are rotated
-    // into CLR order. Reuse the declaration carriers, but do not perform any physical projection here.
-    public static void RecordArrayTypeEdges(IReadOnlyList<JsonNode> roots)
-    {
-        void Visit(JsonNode node)
-        {
-            if (node is JsonObject obj)
-            {
-                if (Str(obj["kind"]) != null)
-                {
-                    RecordProjectedSupertypes(obj, ContainsGenericArray);
-                    RecordProjectedTypeParameterBounds(obj, ContainsGenericArray);
-                }
-                if (obj["k"] == null && obj["name"] is JsonValue && obj["params"] is JsonArray)
-                    RecordProjectedMethodTypeParameterBounds(obj, ContainsGenericArray);
-                foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
-                    Visit(child);
-            }
-            else if (node is JsonArray array)
-                foreach (var child in array.Where(value => value != null).ToList()) Visit(child);
-        }
-        foreach (var root in roots) Visit(root);
-    }
-
     static void RecordDeclarationSurfaces(JsonNode node,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {

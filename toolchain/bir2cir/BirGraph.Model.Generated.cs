@@ -2112,22 +2112,28 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
     public override string Tag => "arrayGet";
     public OptionalField<IBirExpression> Array { get; set; }
     public OptionalField<IBirExpression> Index { get; set; }
+    public OptionalField<TypeNode> _erasedValueVariable { get; set; }
     public OptionalField<TypeNode> Elem { get; set; }
+    public override OptionalField<TypeNode> ErasedValueVariableFact { get => _erasedValueVariable; set => _erasedValueVariable = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
+        if (_erasedValueVariable.HasValue) { visit("_erasedValueVariable", (TypeNode)_erasedValueVariable.Value); }
         if (Elem.HasValue) { visit("elem", (TypeNode)Elem.Value); }
     }
     public override void RewriteOwnTypeFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite)
     {
+        if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(rewrite("_erasedValueVariable", BirGenericFrameRole.Lexical, _erasedValueVariable.Value));
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
+        if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_erasedValueVariable.Value, visit); }
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
+        if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitType((TypeNode)_erasedValueVariable.Value, visit); }
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -2155,10 +2161,12 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
     {
         Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Array.Value).DeepClone()) : Array,
         Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Index.Value).DeepClone()) : Index,
+        _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
+        _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(rewrite(_erasedValueVariable.Value)) : _erasedValueVariable,
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
     };
     public override BirGraphValue RewriteGenericFrame(
@@ -2167,10 +2175,12 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
     {
         Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Array.Value)) : Array,
         Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Index.Value)) : Index,
+        _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _erasedValueVariable.Value)) : _erasedValueVariable,
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
     };
     public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
     {
+        if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(rewrite(_erasedValueVariable.Value));
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite(Elem.Value));
     }
     public override void VisitGenericFrame(
@@ -2179,6 +2189,7 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Array.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Array.Value); }
         if (Index.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Index.Value); }
+        if (_erasedValueVariable.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)_erasedValueVariable.Value); }
         if (Elem.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)Elem.Value); }
     }
     public override void RewriteGenericFrameInPlace(
@@ -2187,6 +2198,7 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Array.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Array.Value); }
         if (Index.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Index.Value); }
+        if (_erasedValueVariable.HasValue) { _erasedValueVariable = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _erasedValueVariable.Value)); }
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)); }
     }
     public override void RewriteRepresentationInPlace(
@@ -2195,6 +2207,7 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Array.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Array.Value); }
         if (Index.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Index.Value); }
+        if (_erasedValueVariable.HasValue) { _erasedValueVariable = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, _erasedValueVariable.Value)); }
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
     }
     public override void RewriteOwnershipInPlace(
@@ -2203,12 +2216,14 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Array.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Array.Value); }
         if (Index.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Index.Value); }
+        if (_erasedValueVariable.HasValue) { _erasedValueVariable = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _erasedValueVariable.Value)); }
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirArrayGet value
             && EqualField(Array, value.Array, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(Index, value.Index, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
+            && EqualField(_erasedValueVariable, value._erasedValueVariable, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(Elem, value.Elem, (left, right) => TypeNodeDataEquality.Equal(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -2216,6 +2231,7 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
         writer.WriteString("k", "arrayGet");
         WriteOptional(writer, "array", Array, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "index", Index, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "_erasedValueVariable", _erasedValueVariable, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "elem", Elem, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
@@ -2225,6 +2241,7 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
         result["k"] = "arrayGet";
         if (Array.IsPresent) result["array"] = Array.IsNull ? null : ((BirGraphValue)Array.Value).ToDom();
         if (Index.IsPresent) result["index"] = Index.IsNull ? null : ((BirGraphValue)Index.Value).ToDom();
+        if (_erasedValueVariable.IsPresent) result["_erasedValueVariable"] = _erasedValueVariable.IsNull ? null : TypeNode.Write(_erasedValueVariable.Value);
         if (Elem.IsPresent) result["elem"] = Elem.IsNull ? null : TypeNode.Write(Elem.Value);
         return result;
     }

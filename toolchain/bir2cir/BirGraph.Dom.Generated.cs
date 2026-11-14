@@ -412,6 +412,7 @@ internal static class BirGraphDom
                 case "k": if (field.Value?.GetValue<string>() != "arrayGet") throw new FormatException(); break;
                 case "array": break;
                 case "index": break;
+                case "_erasedValueVariable": break;
                 case "elem": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirArrayGet at {source.GetPath()}");
             }
@@ -419,6 +420,7 @@ internal static class BirGraphDom
         {
             Array = Field<IBirExpression>(fields, "array", value => ReadBirExpression(value!)),
             Index = Field<IBirExpression>(fields, "index", value => ReadBirExpression(value!)),
+            _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             Elem = Field<TypeNode>(fields, "elem", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }

@@ -13,7 +13,7 @@ internal static class BirGraphMutationTests
         TypeNode target = new TypeNode.Fqn("kotlin.String");
         foreach (var origin in new BirGraphValue[] {
             new BirCallStatic(), new BirCallInstance(), new BirFieldGet(), new BirLocal(),
-            new BirCast(), new BirValueBlock(), new BirConditional(),
+            new BirCast(), new BirValueBlock(), new BirConditional(), new BirArrayGet(),
         })
         {
             origin.ErasedValueVariableFact = source;
