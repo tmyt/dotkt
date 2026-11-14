@@ -66,6 +66,7 @@ static class Bir2Cir
                 ClrMemberResolution.SelfTestTypedDelegateSlots();
                 ClrMemberResolution.SelfTestTypedInterfaceSlots();
                 ClrMemberResolution.SelfTestTypedBaseConstructors();
+                ClrMemberResolution.TypedExactCallSelfTest();
                 ClrMemberResolution.DeclarationBindingsSelfTest();
                 BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
@@ -103,6 +104,7 @@ static class Bir2Cir
                 ClrEventImplBinding.SelfTestSourceFacts();
                 ClrEventImplBinding.SelfTestLocalEventRecipes();
                 ClrEventImplBinding.SelfTestTypedImplementations();
+                ClrEventImplBinding.SelfTestTypedEventSlots();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 InlineBirStashTests.SelfTest();
@@ -142,6 +144,11 @@ static class Bir2Cir
                 KotlinCollectionSlotSynthesis.SelfTest();
                 CollectionBclSlotSynthesis.SelfTest();
                 KotlinOverrideSlotBridge.SelfTest();
+                KotlinOverrideSlotBridge.SourceParameterSnapshotSelfTest();
+                CollectionIdentityRecord.SourceSelfTest();
+                KotlinCollectionIdentitySynthesis.SourceSelfTest();
+                FBoundStarProjectionErasure.ArraySourceFactsSelfTest();
+                TypeOwnershipLowering.SelfTestSourceApplications();
                 ContinuationErasure.SelfTest();
                 ReferenceNullableStrip.FunctionSelfTest();
                 StarProjectionBoundLowering.FunctionSelfTest();
@@ -628,11 +635,35 @@ sealed class Pipeline
                 foreach (var owner in callbacks.AppendedTypes) SharedSyntheticSynthesis.DropSyntheticTypeArgs(owner);
                 CatchClauseWidening.Apply(source);
             }
-            captured[index] = null;
             sourceUseViews[index] = null;
             charSeqReturnViews[index] = null;
+        }
+
+        // This complete owning module still carries Kotlin classifier spelling
+        // and independent generic frames. Capture source facts before physical
+        // inner applications or erased element consumers rewrite those uses.
+        if (!referenceBuild) ClrEventImplBinding.BindLocalSubscriptionsAll(captured);
+        if (appBuild)
+            foreach (var source in captured) CollectionIdentityRecord.RecordTypeEdges(source);
+        if (!referenceBuild) KotlinCollectionIdentitySynthesis.ApplyAll(captured, refs);
+        for (var index = 0; index < captured.Length; index++)
+            BirTypeLowering.ValidatePointerVocabulary(captured[index], OutputNameFor(inputsWithSources[index].Path));
+        FBoundStarProjectionErasure.RecordArrayTypeEdges(captured);
+        var pendingOverrideParameters = KotlinOverrideSlotBridge.CaptureSourceParameters(captured);
+        TypeOwnershipLowering.RecordNestedSourceTypes(captured, refs);
+        TypeOwnershipLowering.ProjectInnerApplications(captured, refs);
+        NullableTvErasureCallRealign.ProjectDeclarationApplications(nullableDeclarations);
+        // Native raise slots use the newly flattened declaring-owner frame.
+        if (!referenceBuild) ClrEventImplBinding.BindRaisesAll(captured, refs);
+        if (!referenceBuild) ErasedElementValues.ApplyAll(captured, refs, isValueFqn, genericRepresentations);
+        CapturedGenericInvocation.CaptureParameterWitnesses(captured);
+
+        for (var index = 0; index < captured.Length; index++)
+        {
+            var source = captured[index];
+            captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
-            // continuing projection, after call-boundary materialization.
+            // continuing projection, after module-wide type/slot preparation.
             var root = source.ToDom();
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
@@ -650,13 +681,14 @@ sealed class Pipeline
         valueRepresentations.BindDomDeclarations(continuingRoots, retiredDom);
         var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
             continuingRoots.Cast<JsonObject>().ToArray(), retiredDom, aliasTransitions);
+        var overrideSourceParameters = pendingOverrideParameters.BindDom(continuingRoots);
         aliasTransitions.Release();
         retiredDeclarations.Clear();
         retiredDom.Clear();
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums, sharedCells,
-                moduleBindings));
+                moduleBindings, overrideSourceParameters));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -710,52 +742,10 @@ sealed class Pipeline
         foreach (var bir in birFiles)
             staged.Add((bir.Root, OutputNameFor(bir.Path)));
 
-        // Event subscriptions can target a Kotlin-declared event in a sibling source file. Every
-        // implementation now has its concrete delegate-derived declaration, so bind all call sites to those exact
-        // module-wide facts before type lowering.
-        if (!_options.RefBuild)
-        {
-            ClrEventImplBinding.BindLocalSubscriptionsAll(staged.Select(s => s.Root));
-        }
-
-        // Type-level #29 source truth must be captured at the last all-Kotlin boundary. Every source/inline type now
-        // exists, while inner applications, star projections, reference nullability, and captured type-parameter
-        // indexes still retain their Kotlin meaning. Those facts have no separate supertype-edge metadata channel.
-        if (attributeTopLevelOwner)
-            foreach (var stagedFile in staged) CollectionIdentityRecord.RecordTypeEdges(stagedFile.Root);
-
-        // Kotlin classifier meaning is fixed by this complete source/inline supertype graph, before ownership
-        // and existential lowering manufacture operational CLR faces. Referenced Kotlin owners already carry
-        // their declaration-owned identities; only actual foreign bases contribute CLR classifier policy.
-        if (!_options.RefBuild)
-            KotlinCollectionIdentitySynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
-
-        foreach (var stagedFile in staged)
-            BirTypeLowering.ValidatePointerVocabulary(stagedFile.Root, stagedFile.OutputName);
-
-        // All source and inline-spliced Kotlin type applications now exist. Project Kotlin inner argument order to
-        // CLR flattened nested order before the first CLR-oriented generic/slot pass consumes those applications.
-        FBoundStarProjectionErasure.RecordArrayTypeEdges(staged.Select(s => s.Root).ToList());
-        // Declaration selection needs Kotlin classifier spelling and argument order, not the metadata spelling
-        // or the physical existential/inner representation produced below. Keep these facts within this phase.
-        var overrideSourceParameters = KotlinOverrideSlotBridge.CaptureSourceParameters(staged.Select(s => s.Root));
-        TypeOwnershipLowering.RecordNestedSourceTypes(staged.Select(s => s.Root).ToList(), refs);
-        TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
-        NullableTvErasureCallRealign.ProjectDeclarationApplications(nullableTvDeclRets);
-        // A referenced raise's exact native signature is in flattened CLR order. Resolve it only after the
-        // declaring owner's Kotlin inner application has been projected, before later value-view erasure.
-        if (!_options.RefBuild) ClrEventImplBinding.BindRaisesAll(staged.Select(s => s.Root), refs);
-
-        // Preserve open array and iterator elements as ordinary erased values before array materialization
-        // and constrained-receiver binding. Exact native locations are allocated separately by
-        // the final value-flow pass; no declaration signature or allocation witness changes.
-        if (!_options.RefBuild)
-            ErasedElementValues.ApplyAll(staged.Select(s => s.Root), refs, isValueFqn, genericRepresentations);
-
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
-        CapturedGenericInvocation.CaptureParameterWitnesses(staged.Select(s => s.Root));
+        var overrideSourceParameters = module.Preparation.OverrideSourceParameters;
         var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
         genericRepresentations.RecordNativeFields(staged.Select(s => s.Root));
         var localExistentialOwners =
@@ -1686,7 +1676,8 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
 sealed record ModulePreparation(TypedModuleInventory Inventory,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
-    IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings);
+    IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings,
+    IReadOnlyDictionary<JsonObject, TypeNode[]> OverrideSourceParameters);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);

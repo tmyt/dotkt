@@ -29,6 +29,11 @@ graph. The source declaration index is captured before these physical-only
 forwarders are added. The remaining value-representation index retains the
 original declarations' live occurrences and exact membership, not a frozen
 signature snapshot or newly generated forwarding methods.
+The owning module remains typed through local event-slot binding, collection
+identity and pointer validation, source array/nested-type fact capture, inner
+application projection, native event raises, and erased element/witness capture.
+Override parameter shapes are captured before inner projection and associated
+with the exact continuing method occurrences at the single projection below.
 Remaining DOM-based passes currently receive a direct one-way
 projection, including a numeric-token leaf adapter. This is an incremental
 migration seam, not completion of #1414; it must disappear as owning passes move
