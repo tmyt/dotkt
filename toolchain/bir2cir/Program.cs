@@ -38,6 +38,7 @@ static class Bir2Cir
                 CirFinalizationTests.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
+                AliasDeclarationTransitions.HeaderFactsSelfTest();
                 DeclarationRename.SourceSelfTest();
                 MemberStrip.SelfTestSource();
                 InheritedDefaultFakeOverrideElision.SelfTestSource();
@@ -47,6 +48,9 @@ static class Bir2Cir
                 FBoundStarProjectionErasure.FieldAccessorsSourceSelfTest();
                 FBoundStarProjectionErasure.MethodPreparationSourceSelfTest();
                 FBoundStarProjectionErasure.CarrierDemandSourceSelfTest();
+                FBoundStarProjectionErasure.ProjectionContextSelfTest();
+                FBoundStarProjectionErasure.AlignmentSourceSelfTest();
+                FBoundStarProjectionErasure.ParameterProjectionSourceSelfTest();
                 SourceDeclarationSignatures.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();
@@ -679,6 +683,15 @@ sealed class Pipeline
         var carrierSurface = FBoundStarProjectionErasure.PrepareCarrierSurface(
             currentDeclarationPreparation, nativeProofs, refs, genericRepresentations,
             (owner, appended) => pendingOverrideParameters.AdmitMaterializedMethods(owner, appended, currentDeclarations));
+
+        // Surface preparation snapshots the original method parameter types.
+        // Align every body's captured-inner values before projecting any source
+        // parameter ABI, matching the previous module-wide physical schedule.
+        foreach (var source in captured)
+            FBoundStarProjectionErasure.AlignCapturedInnerBaseValuesSource(source, carrierSurface.Demand, refs);
+        var carrierProjection = FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(
+            carrierSurface.Demand, refs, aliasTransitions);
+        FBoundStarProjectionErasure.ProjectParameterDeclarations(captured, carrierProjection, scalarSlots.Parameters);
 
         for (var index = 0; index < captured.Length; index++)
         {
