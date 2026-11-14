@@ -114,95 +114,12 @@ static partial class AnySlotRebind
     }
 
     // Unbound method-reference lifts carry the selected Any slot without a virtual flag.
-    internal static bool IsVirtualToString(JsonObject call) =>
-        call["k"]?.GetValue<string>() == "callInstance"
-        && IsVirtualToString("callInstance", call["method"]?.GetValue<string>(),
-            call["anySlot"]?.GetValue<bool>() == true, call["virtual"]?.GetValue<bool>(), call["super"]?.GetValue<bool>() == true);
-
     internal static bool IsVirtualToString(BirCallInstance call) =>
         IsVirtualToString(call.Tag, call.Method.OrDefault(), call.AnySlot.OrDefault(),
             call.Virtual.HasValue ? call.Virtual.Value : null, call.Super.OrDefault());
 
     internal static bool IsVirtualToString(string kind, string method, bool anySlot, bool? virtualCall, bool superCall) =>
         kind == "callInstance" && method == "ToString" && anySlot && virtualCall != false && !superCall;
-
-    public static void Apply(JsonNode root, Dictionary<string, TypeInfo> types, ReferenceMetadataIndex refs) =>
-        Walk(root, types, refs);
-
-    static void Walk(JsonNode node, Dictionary<string, TypeInfo> types, ReferenceMetadataIndex refs)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                Rebind(obj, types, refs);
-                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, types, refs);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) if (it != null) Walk(it, types, refs);
-                break;
-        }
-    }
-
-    static void Rebind(JsonObject obj, Dictionary<string, TypeInfo> types, ReferenceMetadataIndex refs)
-    {
-        if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) != true) return;
-        var isCall = k == "callInstance";
-        var isDelegate = k is "newBoundDelegate" or "newBoundClrDelegate";
-        if (!isCall && !isDelegate) return;
-        if ((obj["method"] as JsonValue)?.TryGetValue<string>(out var method) != true || !ObjectSlots.Contains(method)) return;
-        var isSuper = (obj["super"] as JsonValue)?.TryGetValue<bool>(out var sup) == true && sup;
-        if (isSuper && obj["anySlot"]?.GetValue<bool>() != true) return;
-        var owner = TypeJson.OwnerName(obj["ownerType"]);
-        if (IsVirtualToString(obj))
-        {
-            // An imported existential carrier describes the Kotlin receiver but is not the declaration
-            // of the inherited Object slot. Bind the semantic slot before replacing the receiver's type.
-            // The Object virtual call reaches authored overrides on the actual implementation as well.
-            if (owner != null && !types.ContainsKey(owner)
-                && refs.TryExistentialPhysicalOwner(owner, out _)
-                && obj["recv"] is JsonNode importedReceiver)
-            {
-                ToObjMethod(obj, importedReceiver, method, arg: null);
-                return;
-            }
-            if (!AliasHelperHoist.UsesNativeArrayObjectSlot(owner, true))
-                obj.Remove("anySlot");
-        }
-        if (owner == null || !types.ContainsKey(owner)) return;     // non-local owner -> resolved by another binder
-        if (ResolvesSlot(types, owner, method)) return;             // declared here or on a resolvable base
-
-        // A fake inherited Any declaration need not have a MethodDef on the
-        // selected immediate base. Bind its real root without changing dispatch:
-        // super.equals stays a nonvirtual Object call, never the runtime helper.
-        if (isSuper)
-        {
-            obj["ownerType"] = TypeJson.Fqn("kotlin.Any");
-            return;
-        }
-
-        if (isDelegate)
-        {
-            // A bound method reference `p::hashCode` on a non-resolving reference type — a `newBoundDelegate` /
-            // `newBoundClrDelegate` that ilemit `ldftn`s against the owner, so it dead-ends identically. No `objMethod`
-            // form exists for a method reference; instead RETARGET the owner to `kotlin.Any` — the exact universal-owner
-            // token the frontend emits for `(p as Any)::hashCode` (verified to compile), so the standard substitution
-            // binds System.Object::GetHashCode and ilemit `ldvirtftn`s the runtime slot with the unchanged `virtual`.
-            obj["ownerType"] = TypeJson.Fqn("kotlin.Any");
-            // #204: newBoundDelegate's mandatory dispatch identity must track every owner retarget. Leaving the
-            // frontend class here while ownerType moves to Any/System.Object makes the two axes disagree at ilemit.
-            if (k == "newBoundDelegate") obj["calleeOwner"] = TypeJson.Fqn("kotlin.Any");
-            return;
-        }
-
-        if (obj["recv"] is not JsonNode recv) return;
-        // Object-slot arity gate (matches EmitObjMethod): Equals takes exactly one arg (moved args[0] -> `arg`),
-        // ToString/GetHashCode take none. A mismatch falls through to the original `callInstance` (a clear "method not
-        // found") rather than being miscast into an `objMethod` EmitObjMethod can't service.
-        var args = obj["args"] as JsonArray;
-        var argc = args?.Count ?? 0;
-        if (HasObjectSlotArity(method, argc))
-            ToObjMethod(obj, recv, method, method == "Equals" ? args[0] : null);
-    }
 
     // A local type RESOLVES the slot (so ilemit's FindMethod already finds it — leave the call alone) iff it or a local
     // ancestor declares the override, or its chain reaches an EXTERNAL base (a non-local `base`, incl. a `.NET` base)
@@ -223,21 +140,4 @@ static partial class AnySlotRebind
         return false;                                                  // terminated at kotlin.Any (or a cycle) -> unresolved
     }
 
-    // Rewrite `obj` in place into an `objMethod` node (ilemit callvirt's the System.Object virtual slot). Mirrors
-    // EnumMemberBinding.ToObjMethod; strips every callInstance-only key so no stale hint survives.
-    static void ToObjMethod(JsonObject obj, JsonNode recv, string method, JsonNode arg)
-    {
-        var newNode = new JsonObject
-        {
-            ["k"] = "objMethod",
-            ["method"] = method,
-            ["recv"] = recv.DeepClone(),
-        };
-        if (arg != null) newNode["arg"] = arg.DeepClone();
-        foreach (var key in new[] { "ownerType", "virtual", "method", "args", "arg", "sig", "dynRet", "ret", "overrides",
-                                    "recv", "typeArgs", "shapeTypes", "resolvedMemberParams", "argTypes", "anySlot", "super",
-                                    DeclarationIdentityBinding.Key })
-            obj.Remove(key);
-        foreach (var kv in newNode) obj[kv.Key] = kv.Value.DeepClone();
-    }
 }

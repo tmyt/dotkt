@@ -441,9 +441,8 @@ sealed class Pipeline
         // Function-typed field stores may target a sibling file's declaration.
         var propertyFunctionFields = PropertyReferenceFunctionLowering.CollectFieldSlots(captured);
         var localStatics = LocalStaticOwnerBinding.Collect(captured);
-        var moduleBindings = new ModuleBindingSnapshots(
-            AnySlotRebind.CollectLocalTypes(captured),
-            GenericDowncastRealignment.Collect(captured));
+        var localReferenceTypes = AnySlotRebind.CollectLocalTypes(captured);
+        var moduleBindings = new ModuleBindingSnapshots(GenericDowncastRealignment.Collect(captured));
         var iterableHierarchy = SupertypeGraph.CollectSource(captured);
         var syntheticTypes = captured.Select(source =>
             NullableTvErasureCallRealign.CaptureNewSyntheticTypes(source, nullableDeclarations)).ToArray();
@@ -460,6 +459,14 @@ sealed class Pipeline
             }
             ArrayNullableElemCanonicalization.Apply(source, isValueFqn);
             NullableIsInstMatch.Apply(source);
+            if (!referenceBuild)
+            {
+                // Resolve inherited enum/Object dispatch before alias substitution,
+                // then consume the remaining semantic equality and super intent.
+                EnumMemberBinding.Apply(source, basicEnums);
+                AnySlotRebind.Apply(source, localReferenceTypes, refs);
+                KotlinEqualityLowering.Apply(source);
+            }
         }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
@@ -563,21 +570,10 @@ sealed class Pipeline
         // Rich-enum declarations require their API metadata even in a runtime
         // stdlib build; the typed prefix has already resolved their uses.
         var localRichEnums = module.Preparation.Enums.Rich;
-
-        // The local BASIC (value-type, `kind:"enum"`) enum type names across ALL files — EnumMemberBinding rebinds a
-        // `System.Enum`-inherited Object-slot call (`E.A.toString()`) on such an owner to an `objMethod`. Must be
-        // module-wide (not per-file): the call site can be in a different .bir.json than the enum declaration. Only the
-        // LOCAL enums need it — a CROSS-ASSEMBLY enum's inherited-member call is closed one pass earlier by
-        // NetInteropBinding (reference-KLIB-projected owner -> `clrInstance`, a `constrained. callvirt`), and a klib-external
-        // `kotlin.*` enum arrives from kotc already as an `objMethod`; neither reaches this local `callInstance` gap.
+        // Later enum metadata and reflection indexing use the same module-wide
+        // native-enum inventory already consumed by typed dispatch binding.
         var localBasicEnums = module.Preparation.Enums.Basic;
 
-        // The local reference TYPES (classes + interfaces) module-wide (name -> declared universal slots + base) —
-        // AnySlotRebind rebinds a dead-ending `callInstance <UserType>.GetHashCode/ToString/Equals` (a fake override
-        // inherited from the implicit kotlin.Any, which ilemit cannot resolve because the base field is absent) to an
-        // `objMethod`, exactly as EnumMemberBinding does for value-type enums (#96). Module-wide because the call site
-        // may live in a different .bir.json than the type declaration, while ilemit's emitted-type table is assembly-wide.
-        var localRefTypes = module.Preparation.Bindings.LocalReferenceTypes;
         var genericDowncastHierarchy = module.Preparation.Bindings.GenericDowncastHierarchy;
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
@@ -594,13 +590,6 @@ sealed class Pipeline
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
             NullableTvErasureCallRealign.ApplyNewSyntheticTypes(bir.SyntheticTypes, nullableTvDeclRets);
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
-            // Bind Enum members before alias/helper substitution. In particular an Any.toString slot selected
-            // through Enum<T> must dispatch on the actual native or rich enum receiver.
-            if (!_options.RefBuild) EnumMemberBinding.Apply(bir.Root, localBasicEnums);
-            // Bind reference-type Object slots before physical receiver substitution. Local inherited slots
-            // and virtual ToString on imported existential carriers dispatch on the actual receiver.
-            if (!_options.RefBuild) AnySlotRebind.Apply(bir.Root, localRefTypes, refs);
-            if (!_options.RefBuild) KotlinEqualityLowering.Apply(bir.Root);
             // NULLABLE-GENERIC erasure — THE DECLARATION AXIS of #86's erasure invariant (ALL builds, so ref.dll +
             // rt.dll + the app's view of a signature agree). `Nullable(Tv)` (a nullable UNCONSTRAINED type variable
             // `T?`) has no CLR type of its own: `Nullable<T>` is inexpressible for an unconstrained T, and a bare `!T`
@@ -1751,8 +1740,7 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
     IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings);
-sealed record ModuleBindingSnapshots(Dictionary<string, AnySlotRebind.TypeInfo> LocalReferenceTypes,
-    Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
+sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey, IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> Properties);

@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Text.Json.Nodes;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
@@ -26,9 +25,6 @@ using DotKt.Cir;
 static partial class EnumMemberBinding
 {
     const string RuntimeOwner = "DotKt.Runtime.CompilerServices.EnumRuntimeKt";
-    // BCL Object-slot spellings (ObjectSlotRename runs first, so `anySlot` calls already carry these), and the arity of
-    // each as an `objMethod` — ToString/GetHashCode take no arg, Equals takes one (moved from args[0] to `arg`).
-
     // Collect the local BASIC (value-type) enum type names — a `kind:"enum"` decl — across ALL input files. The set
     // MUST span the whole compilation, not one .bir.json: kotc emits one file per source, but a call site
     // (`E.A.toString()`) may live in a DIFFERENT file from the `enum class E` declaration, while ilemit's emitted-type
@@ -44,92 +40,4 @@ static partial class EnumMemberBinding
         return set;
     }
 
-    public static void Apply(JsonNode root, HashSet<string> basicEnums) => Walk(root, basicEnums);
-
-    // ObjectSlotRename has already normalized the spelling, but only kotc's Any-slot fact proves the slot.
-    // An explicit super call is not virtual and must not be redirected to the receiver's override.
-    static bool IsVirtualEnumToString(JsonObject call, string owner) =>
-        owner == "kotlin.Enum" && AnySlotRebind.IsVirtualToString(call);
-
-    static void Walk(JsonNode node, HashSet<string> basicEnums)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                Rebind(obj, basicEnums);
-                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, basicEnums);
-                break;
-            case JsonArray arr:
-                foreach (var it in arr) if (it != null) Walk(it, basicEnums);
-                break;
-        }
-    }
-
-    static void Rebind(JsonObject obj, HashSet<string> basicEnums)
-    {
-        if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) != true || k != "callInstance") return;
-        if ((obj["method"] as JsonValue)?.TryGetValue<string>(out var method) != true) return;
-        if (obj["recv"] is not JsonNode recv) return;
-        var owner = TypeJson.OwnerName(obj["ownerType"]);
-
-        if (IsVirtualEnumToString(obj, owner))
-        {
-            obj.Remove("anySlot");
-            ToObjMethod(obj, recv, "ToString", arg: null);
-            return;
-        }
-
-        // Name uses the concrete stdlib getter through ordinary CLR-bound property substitution.
-        var propertyAccess = (obj["prop"] as JsonValue)?.TryGetValue<string>(out var access) == true ? access : null;
-        // `T : Enum<T>`.ordinal has no System.Enum property slot. Preserve Kotlin's declaration-index semantics
-        // explicitly: enumOrdinal over the receiver's lexical T asks ilemit only to emit the CIR-authored generic
-        // enum reflection sequence. This must happen before generic constrained-member binding; otherwise the bare
-        // Kotlin owner is mistaken for a real `System.Enum.get_ordinal` MemberRef.
-        if (owner == "kotlin.Enum" && method == "ordinal" && propertyAccess == "get")
-        {
-            var ordinal = new JsonObject
-            {
-                ["k"] = "callStatic",
-                ["owner"] = TypeJson.Fqn(RuntimeOwner),
-                ["method"] = "kotlinEnumOrdinal",
-                ["sig"] = new JsonArray { TypeJson.Fqn("kotlin.Any") },
-                ["ret"] = TypeJson.Fqn("kotlin.Int"),
-                ["args"] = new JsonArray { recv.DeepClone() },
-            };
-            obj.Clear();
-            foreach (var kv in ordinal) obj[kv.Key] = kv.Value?.DeepClone();
-            return;
-        }
-
-        // (1) CONCRETE receiver: a `System.Enum`-inherited Object slot on a local value-type enum owner that declares
-        // none of them. Box + `System.Object` virtual slot; System.Enum's override supplies name/equality/hash.
-        if (owner != null && basicEnums.Contains(owner) && AnySlotRebind.IsObjectSlot(method))
-        {
-            // Object-slot arity gate (matches EmitObjMethod): Equals takes exactly one arg (moved args[0] -> `arg`),
-            // ToString/GetHashCode take none. A mismatch is unreachable (a `kind:"enum"` declares no members), but a
-            // stray shape should fall through to the original `callInstance` (a clear "method not found") rather than
-            // be miscast into an `objMethod` EmitObjMethod can't service.
-            var args = obj["args"] as JsonArray;
-            var argc = args?.Count ?? 0;
-            if (AnySlotRebind.HasObjectSlotArity(method, argc))
-                ToObjMethod(obj, recv, method, method == "Equals" ? args[0] : null);
-        }
-    }
-
-    // Rewrite `obj` in place into an `objMethod` node (ilemit boxes a value-type receiver, then callvirt the Object slot).
-    static void ToObjMethod(JsonObject obj, JsonNode recv, string method, JsonNode arg)
-    {
-        var newNode = new JsonObject
-        {
-            ["k"] = "objMethod",
-            ["method"] = method,
-            ["recv"] = recv.DeepClone(),
-        };
-        if (arg != null) newNode["arg"] = arg.DeepClone();
-        foreach (var key in new[] { "ownerType", "virtual", "method", "prop", "propertyName", "propertyAccessor",
-                     "args", "arg", "argTypes", "sig", "dynRet", "ret", "overrides", "recv",
-                     DeclarationIdentityBinding.Key })
-            obj.Remove(key);
-        foreach (var kv in newNode) obj[kv.Key] = kv.Value.DeepClone();
-    }
 }
