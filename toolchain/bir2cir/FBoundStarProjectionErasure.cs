@@ -36,12 +36,14 @@ static partial class FBoundStarProjectionErasure
     static HashSet<string> _usedCarrierNames = new(StringComparer.Ordinal);
     static GenericRepresentationPolicy _valueSlots;
 
-    sealed class Owner
+    internal sealed partial class Owner
     {
         public string Name;
         public string ErasedName;
-        public JsonObject Def;
-        public JsonObject Root;
+        JsonObject physicalDefinition;
+        JsonObject physicalRoot;
+        public JsonObject Def { get => DefinitionBinding == null ? physicalDefinition : DefinitionBinding.Physical; set => physicalDefinition = value; }
+        public JsonObject Root { get => RootBinding == null ? physicalRoot : RootBinding.Physical; set => physicalRoot = value; }
         public int Arity;
         public bool Needed;
         public readonly Dictionary<JsonObject, (JsonObject Slot, TypeNode[] Signature)> Slots = new();
@@ -50,53 +52,29 @@ static partial class FBoundStarProjectionErasure
     }
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
-        CurrentDeclarationPreparation preparation, NativeProofPlan nativeProofs, GenericRepresentationPolicy valueSlots,
+        CarrierSurfacePreparation surface,
         IReadOnlyList<SharedSyntheticSynthesis.CellStorage> sharedCells = null,
         IDictionary<string, int[]> physicalParameterIndices = null,
         IDictionary<string, string> physicalDeclarationSources = null)
     {
+        var preparation = surface.Demand.Preparation;
         var defs = preparation.BindDefinitions();
-        var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
-        OwnerConstrainedMethodLowering.Reset(refs, bound => PhysicalBoundClassifier(bound, owners, refs),
-            (method, index) => _nativeProofs.Bounds(method, index));
+        var owners = surface.Demand.BindOwners();
+        _nativeProofs = surface.Demand.NativeProofs;
+        OwnerConstrainedMethodLowering.ConfigurePreparedMethods(preparation.Bindings, refs,
+            bound => PhysicalBoundClassifier(bound, owners, refs), (method, index) => _nativeProofs.Bounds(method, index));
         var rootList = roots.OfType<JsonObject>().ToList();
-        _valueSlots = valueSlots;
-        foreach (var owner in preparation.GenericOwners)
-            owners.Add(owner.Name, new Owner {
-                Name = owner.Name, Def = owner.Definition.Physical, Root = owner.Root.Physical,
-                Arity = owner.Arity, Needed = owner.Needed,
-            });
+        _valueSlots = surface.Demand.Values;
         var localClrAliases = preparation.LocalClrAliases;
         _valueSlots.RegisterLocalDefinitions(defs, localClrAliases);
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
         foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
         var supertypeDefs = preparation.BindSourceSupertypes();
         _sourceSupertypes = supertypeDefs;
-        // Snapshot declaration-owned edges before synthesis attaches carrier interfaces to the live definitions.
-        var baseContracts = owners.Values.ToDictionary(owner => owner.Name, owner => SupertypeGraph.Reachable(
-            new SupertypeGraph.Def { Base = TypeJson.Read(owner.Def["base"]) as TypeNode.Fqn },
-            supertypeDefs, refs).ToArray(), StringComparer.Ordinal);
+        var baseContracts = surface.Demand.BaseContracts;
         _localMethods = preparation.BindLocalMethods();
         _localDeclarations = preparation.BindLocalDeclarations();
-        _nativeProofs = nativeProofs;
-        AllocateCarrierNames(owners, defs.Keys);
-        foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
-        MarkNeededClosure(owners, baseContracts);
-
-        foreach (var definition in defs.Values.Concat(rootList))
-            if (definition["methods"] is JsonArray declaredMethods)
-                foreach (var method in declaredMethods.OfType<JsonObject>())
-                    if (HasOwnerDependentMethodConstraint(method)
-                        || OwnerConstrainedMethodLowering.HasMethodDependentBounds(method)
-                        || method[OwnerConstrainedMethodLowering.OverrideBoundsKey] != null)
-                        OwnerConstrainedMethodLowering.Record(method, definition);
-        foreach (var owner in owners.Values.Where(owner => owner.Needed))
-            AddFieldAccessors(owner);
-        var sourceSignatures = defs.Values
-            .SelectMany(definition => (definition["methods"] as JsonArray)?.OfType<JsonObject>()
-                ?? Enumerable.Empty<JsonObject>())
-            .ToDictionary(method => method, method => (method["params"] as JsonArray)?.OfType<JsonObject>()
-                .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>());
+        var sourceSignatures = surface.Signatures.BindPhysical();
         foreach (var root in rootList) AlignCapturedInnerBaseValues(root, BirScope.Empty, null, owners, defs, refs);
         foreach (var root in rootList)
             ProjectParameterDeclarations(root, owners, defs, refs, localClrAliases, physicalParameterIndices);
@@ -703,10 +681,9 @@ static partial class FBoundStarProjectionErasure
     // The physical name is intentionally not an ABI oracle: trusted [KotlinType] metadata carries the relation.
     // Allocate against every TypeDef in the emission unit so a user declaration (including a backtick identifier)
     // can never collide with the compiler carrier. The sorted walk makes the chosen suffix deterministic.
-    static void AllocateCarrierNames(IReadOnlyDictionary<string, Owner> owners, IEnumerable<string> declaredNames)
+    static HashSet<string> AllocateCarrierNameState(IReadOnlyDictionary<string, Owner> owners, IEnumerable<string> declaredNames)
     {
         var used = declaredNames.ToHashSet(StringComparer.Ordinal);
-        _usedCarrierNames = used;
         foreach (var owner in owners.Values.OrderBy(o => o.Name, StringComparer.Ordinal))
         {
             var stem = owner.Name + CarrierMark;
@@ -714,6 +691,7 @@ static partial class FBoundStarProjectionErasure
             for (var ordinal = 1; !used.Add(candidate); ordinal++) candidate = stem + "$" + ordinal;
             owner.ErasedName = candidate;
         }
+        return used;
     }
 
     // If G<T>'s existential surface exposes H<T>, substituting object would manufacture the invalid invariant
@@ -734,18 +712,14 @@ static partial class FBoundStarProjectionErasure
                 // factory whose result is the inner classifier's own existential view.  Keep that result carrier in
                 // the same reachability closure as ordinary owner-dependent member results.
                 foreach (var inner in owners.Values.Where(candidate =>
-                             Str(candidate.Def["semanticOwner"]) == owner.Name && IsInner(candidate.Def)))
+                             candidate.SemanticOwner == owner.Name && candidate.Inner))
                     inner.Needed = true;
-                if (owner.Def["methods"] is JsonArray methods)
-                    foreach (var method in methods.OfType<JsonObject>())
-                    {
-                        if (TypeJson.Read(method["ret"]) is TypeNode ret)
-                            MarkDependentResult(ret, owners);
-                        if (method["params"] is JsonArray ps)
-                            foreach (var p in ps.OfType<JsonObject>())
-                                if (TypeJson.Read(p["type"]) is TypeNode pt)
-                                    MarkDependentResult(pt, owners);
-                    }
+                foreach (var (result, parameters) in owner.Signatures)
+                {
+                    if (result != null) MarkDependentResult(result, owners);
+                    foreach (var parameter in parameters)
+                        if (parameter != null) MarkDependentResult(parameter, owners);
+                }
             }
             if (owners.Values.Count(o => o.Needed) == before) return;
         }
@@ -781,19 +755,18 @@ static partial class FBoundStarProjectionErasure
             changed = false;
             foreach (var owner in owners.Values.Where(o => o.Needed).ToList())
             {
-                void Mark(JsonNode slot)
+                void Mark(TypeNode slot)
                 {
-                    if (TypeJson.Read(slot) is TypeNode.Fqn f
+                    if (slot is TypeNode.Fqn f
                         && owners.TryGetValue(f.Name, out var ancestor) && !ancestor.Needed)
                     {
                         ancestor.Needed = true;
                         changed = true;
                     }
                 }
-                Mark(owner.Def["base"]);
-                if (owner.Def["interfaces"] is JsonArray interfaces)
-                    foreach (var i in interfaces) Mark(i);
-                foreach (var (spec, _) in baseContracts[owner.Name]) Mark(TypeJson.Write(spec));
+                Mark(owner.BaseType);
+                foreach (var edge in owner.InterfaceTypes) Mark(edge);
+                foreach (var (spec, _) in baseContracts[owner.Name]) Mark(spec);
             }
         }
     }
@@ -1452,55 +1425,6 @@ static partial class FBoundStarProjectionErasure
         _ => false,
     };
 
-    static void MarkNeeded(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                if (IsOrdinaryKotlinParameter(obj, defs, refs)
-                    && StripSourceNullability(TypeJson.Read(obj["type"])) is TypeNode.Fqn { Args: { Length: > 0 } } parameterType
-                    && owners.TryGetValue(parameterType.Name, out var parameterOwner)
-                    && Str(parameterOwner.Def["kind"]) is "class" or "interface" && !refs.IsValueType(parameterType))
-                    parameterOwner.Needed = true;
-                if (TryVarianceProjectedArrayOwner(obj, defs, refs, out var arrayOwner)
-                    && owners.TryGetValue(arrayOwner.Name, out var projectedOwner))
-                    projectedOwner.Needed = true;
-                if (TryVarianceProjectedArraySpreadOwner(obj, defs, refs, out var spreadOwner)
-                    && owners.TryGetValue(spreadOwner.Name, out var projectedSpreadOwner))
-                    projectedSpreadOwner.Needed = true;
-                if (TryVarianceProjectedArrayInitializerOwner(obj, defs, refs, out var initializerOwner)
-                    && owners.TryGetValue(initializerOwner.Name, out var projectedInitializerOwner))
-                    projectedInitializerOwner.Needed = true;
-                var runtimeClassifier = Str(obj["k"]) is "isInst" or "isInstRef" or "cast"
-                    || Bool(obj[KotlinRuntimeTypeWitness.ClassifierKey]);
-                foreach (var kv in obj)
-                {
-                    if (kv.Value == null || kv.Key == "name") continue;
-                    if (TypeJson.Read(kv.Value) is TypeNode type)
-                    {
-                        MarkNeededType(type, owners, runtimeClassifier && kv.Key == "type");
-                    }
-                    else if (kv.Key is "constraints" or ErasedInnerConstraintKey && kv.Value is JsonArray bounds)
-                    {
-                        // A generic bound supplies the erased classifier of a
-                        // type-variable array cast, including private classifiers.
-                        foreach (var bound in bounds) MarkNeededType(TypeJson.Read(bound), owners, true);
-                    }
-                    else MarkNeeded(kv.Value, owners, defs, refs);
-                }
-                break;
-            case JsonArray arr:
-                foreach (var value in arr)
-                    if (value != null)
-                    {
-                        if (TypeJson.Read(value) is TypeNode type) MarkNeededType(type, owners, false);
-                        else MarkNeeded(value, owners, defs, refs);
-                    }
-                break;
-        }
-    }
-
     // Kotlin can infer `Array<G<Join>>` from values `G<A>`, `G<B>`, ... when G's source variance makes each
     // conversion legal. CLR arrays are covariant only in their immediate reference element; that does not turn the
     // invariant physical constructions G<A>/G<B> into G<Join>. The already type-checked BIR is the authority for the
@@ -1514,51 +1438,15 @@ static partial class FBoundStarProjectionErasure
         out TypeNode.Fqn targetOwner)
     {
         targetOwner = null;
-        if (Str(obj["k"]) != "newArray"
-            || StripSourceNullability(TypeJson.Read(obj["elem"]))
-                is not TypeNode.Fqn { Args: { Length: > 0 } } target
-            || obj["elems"] is not JsonArray elements || elements.Count == 0)
-            return false;
-
-        var targetKey = string.Join("\0", target.Args.Select(SupertypeGraph.TypeKey));
-        var sawTypedElement = false;
-        var sawClrIncompatibleConstruction = false;
-        foreach (var element in elements)
-        {
-            if (element is JsonObject { } expression && Str(expression["k"]) == "const"
-                && expression["value"] == null)
-                continue;
-            if (StripSourceNullability(ExpressionType(element))
-                is not TypeNode.Fqn source)
-                return false;
-            var projected = SameDeclarationOwner(source.Name, target.Name)
-                ? source.Args ?? Array.Empty<TypeNode>()
-                : ProjectConstructedArguments(source, target.Name, defs, refs)?.ToArray();
-            if (projected == null || projected.Length != target.Args.Length)
-                return false;
-            sawTypedElement = true;
-            var projectedKey = string.Join("\0", projected.Select(SupertypeGraph.TypeKey));
-            if (projectedKey != targetKey
-                && !CanUseClrVariance(target, projected, defs, refs))
-                sawClrIncompatibleConstruction = true;
-        }
-        if (!sawTypedElement || !sawClrIncompatibleConstruction) return false;
-        targetOwner = target;
-        return true;
+        if (Str(obj["k"]) != "newArray" || obj["elems"] is not JsonArray elements) return false;
+        return TryVarianceProjectedArrayOwner(TypeJson.Read(obj["elem"]), elements.Select(element =>
+            (element is JsonObject constant && Str(constant["k"]) == "const" && constant["value"] == null,
+                ExpressionType(element))).ToArray(), CarrierTypeContext.ForDom(defs, refs), out targetOwner);
     }
 
     static bool RequiresExistentialConversion(TypeNode sourceType, TypeNode.Fqn target,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
-    {
-        if (StripSourceNullability(sourceType) is not TypeNode.Fqn source) return false;
-        var projected = SameDeclarationOwner(source.Name, target.Name)
-            ? source.Args ?? Array.Empty<TypeNode>()
-            : ProjectConstructedArguments(source, target.Name, defs, refs)?.ToArray();
-        if (projected == null || projected.Length != target.Args.Length) return false;
-        return string.Join("\0", projected.Select(SupertypeGraph.TypeKey))
-                   != string.Join("\0", target.Args.Select(SupertypeGraph.TypeKey))
-               && !CanUseClrVariance(target, projected, defs, refs);
-    }
+        => RequiresExistentialConversion(sourceType, target, CarrierTypeContext.ForDom(defs, refs));
 
     static bool TryVarianceProjectedArraySpreadOwner(JsonObject obj,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
@@ -1604,11 +1492,13 @@ static partial class FBoundStarProjectionErasure
                     "newClosure" => TypeJson.Read(initializer["closureType"]),
                     _ => null,
                 }) is not TypeNode.Fqn owner
-            || !_localMethods.TryGetValue(owner.Name + "\0" + method, out var candidates)
-            || candidates.Count != 1)
+            || !_localMethods.TryGetValue(owner.Name + "\0" + method, out var candidates))
             return null;
-        return candidates[0];
+        return UniqueLocalDelegateTarget(candidates);
     }
+
+    static T UniqueLocalDelegateTarget<T>(IReadOnlyList<T> candidates) where T : class
+        => candidates.Count == 1 ? candidates[0] : null;
 
     static bool TryVarianceProjectedArrayInitializerOwner(JsonObject obj,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
@@ -1770,66 +1660,12 @@ static partial class FBoundStarProjectionErasure
 
     static bool CanUseClrVariance(TypeNode.Fqn target, IReadOnlyList<TypeNode> sourceArguments,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool physicalTypes = false)
-    {
-        if (target.Args == null || sourceArguments.Count != target.Args.Length) return false;
-        for (var index = 0; index < target.Args.Length; index++)
-        {
-            if (SupertypeGraph.TypeKey(sourceArguments[index]) == SupertypeGraph.TypeKey(target.Args[index]))
-                continue;
-            if (!TryClrVariance(target.Name, target.Args.Length, index, defs, refs, out var variance)
-                || variance is not ("in" or "out")
-                || !(variance == "out"
-                    ? IsClrAssignable(sourceArguments[index], target.Args[index], defs, refs, physicalTypes)
-                    : IsClrAssignable(target.Args[index], sourceArguments[index], defs, refs, physicalTypes)))
-                return false;
-        }
-        return true;
-    }
-
-    static bool TryClrVariance(string ownerName, int ownerArity, int index,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, out string variance)
-    {
-        variance = ClrTypeVariance.Get(ownerName, ownerArity, index, defs, refs);
-        return variance != null;
-    }
+        => CanUseClrVariance(target, sourceArguments, CarrierTypeContext.ForDom(defs, refs), physicalTypes);
 
     internal static bool IsClrAssignable(TypeNode source, TypeNode target,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool physicalTypes = false,
         bool allowBoxing = false)
-    {
-        source = StripSourceNullability(source);
-        target = StripSourceNullability(target);
-        if (SupertypeGraph.TypeKey(source) == SupertypeGraph.TypeKey(target)) return true;
-        // Boxing is an optional ROOT value conversion, never an allowance inside CLR generic variance or arrays.
-        if (!(IsDefinitelyClrReferenceType(source, defs, refs, physicalTypes)
-                || allowBoxing && IsBoxableValue(source, defs, refs, physicalTypes))
-            || !IsDefinitelyClrReferenceType(target, defs, refs, physicalTypes)) return false;
-        if (target is TypeNode.Fqn { Args: null, Name: "kotlin.Any" or "System.Object" or "object" })
-            return true;
-        if (source is TypeNode.Array sourceArray && target is TypeNode.Array targetArray)
-            return sourceArray.Rank == targetArray.Rank && sourceArray.SzArray == targetArray.SzArray
-                && IsClrAssignable(sourceArray.Elem, targetArray.Elem, defs, refs, physicalTypes);
-        if (source is not TypeNode.Fqn sourceFqn || target is not TypeNode.Fqn targetFqn) return false;
-
-        var reflectedSource = ResolveClosedReferenceType(sourceFqn, refs, physicalTypes);
-        var reflectedTarget = ResolveClosedReferenceType(targetFqn, refs, physicalTypes);
-        if (reflectedSource != null && reflectedTarget != null)
-            return reflectedTarget.IsAssignableFrom(reflectedSource);
-
-        // A semantic edge out of an alias does not prove a direct CLR conversion to a locally emitted type.
-        // `kotlin.String : CharSequence` is the canonical case: System.String does not implement the synthetic
-        // dotkt$CharSequence interface and needs an adapter. Reflection above remains authoritative when both
-        // endpoints are external; a local target cannot be inferred from the Kotlin hierarchy of an aliased source.
-        if (reflectedSource != null && reflectedTarget == null
-            && refs.TryResolveClrOwner(sourceFqn.Name, out _, out _))
-            return false;
-
-        var projected = ProjectConstructedArguments(sourceFqn, targetFqn.Name, defs, refs);
-        if (projected == null) return false;
-        if (targetFqn.Args == null) return true;
-        return projected.Count == targetFqn.Args.Length
-            && CanUseClrVariance(targetFqn, projected, defs, refs, physicalTypes);
-    }
+        => IsClrAssignable(source, target, CarrierTypeContext.ForDom(defs, refs), physicalTypes, allowBoxing);
 
     static Type ResolveClosedReferenceType(TypeNode.Fqn type, ReferenceMetadataIndex refs, bool physicalTypes = false)
     {
@@ -1846,40 +1682,12 @@ static partial class FBoundStarProjectionErasure
         catch { return null; }
     }
 
-    static bool IsBoxableValue(TypeNode type, IReadOnlyDictionary<string, JsonObject> defs,
-        ReferenceMetadataIndex refs, bool physicalTypes)
-    {
-        if (type is not TypeNode.Fqn named || refs.IsByRefLikeFqn(named)) return false;
-        if (defs.TryGetValue(named.Name, out var local)) return Str(local["kind"]) is "struct" or "enum";
-        var reflected = ResolveClosedReferenceType(named, refs, physicalTypes);
-        return reflected is { IsValueType: true, IsByRefLike: false } && reflected.FullName != "System.Void";
-    }
-
-    static bool IsDefinitelyClrReferenceType(TypeNode type,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool physicalTypes = false) => type switch
-    {
-        TypeNode.Nullable nullable => nullable.Of is TypeNode.Fqn valueFqn
-            ? !refs.IsValueType(valueFqn) && IsDefinitelyClrReferenceType(nullable.Of, defs, refs, physicalTypes)
-            : IsDefinitelyClrReferenceType(nullable.Of, defs, refs, physicalTypes),
-        TypeNode.Oblivious oblivious => IsDefinitelyClrReferenceType(oblivious.Of, defs, refs, physicalTypes),
-        TypeNode.Array or TypeNode.Fn => true,
-        TypeNode.Fqn f when defs.TryGetValue(f.Name, out var local) =>
-            Str(local["kind"]) is not ("struct" or "enum"),
-        TypeNode.Fqn f => (physicalTypes
-                ? refs.PhysicalTypeForProof(f.Name, f.Args?.Length ?? 0)
-                : refs.ResolveNetType(refs.Aliases.TryGetValue(f.Name, out var alias) ? alias : f.Name,
-                    f.Args?.Length ?? 0)) is Type reflected
-            && !reflected.IsValueType,
-        _ => false,
-    };
-
     static bool HasKotlinVariantParameter(TypeNode.Fqn application, JsonArray parameters)
-    {
-        if (application.Args == null || parameters == null
-            || application.Args.Length != parameters.Count) return false;
-        return parameters.OfType<JsonObject>().Any(parameter =>
-            Str(parameter["variance"]) is "in" or "out");
-    }
+        => HasKotlinVariantParameter(application, parameters?.Select(parameter => Str((parameter as JsonObject)?["variance"])).ToArray());
+
+    static bool HasKotlinVariantParameter(TypeNode.Fqn application, IReadOnlyList<string> parameters) =>
+        application.Args != null && parameters != null && application.Args.Length == parameters.Count
+        && parameters.Any(variance => variance is "in" or "out");
 
     static bool ProjectionCanChangeConstruction(TypeNode.Fqn application,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
@@ -2014,9 +1822,8 @@ static partial class FBoundStarProjectionErasure
             case TypeNode.Fqn { Args: { } args } f:
                 if (owners.TryGetValue(f.Name, out var owner)
                     && (runtimeClassifier || args.Any(IsExistentialArgument)
-                        || Str(owner.Def?["kind"]) is "class" or "interface"
-                            && (IsSourceGeneric(owner.Def)
-                                || IsInner(owner.Def) && (Int(owner.Def["outerTypeParamCount"]) ?? 0) > 0)))
+                        || owner.Kind is "class" or "interface"
+                            && (owner.SourceGeneric || owner.Inner && owner.OuterCount > 0)))
                     owner.Needed = true;
                 foreach (var a in args) MarkNeededType(a, owners, false);
                 break;
@@ -2024,15 +1831,15 @@ static partial class FBoundStarProjectionErasure
                 if (StripProjectionShell(p.Of) is TypeNode.Fqn projected
                     && owners.TryGetValue(projected.Name, out var projectedOwner))
                     projectedOwner.Needed |= HasKotlinVariantParameter(
-                        projected, projectedOwner.Def["typeParams"] as JsonArray);
+                        projected, projectedOwner.Variances);
                 MarkNeededType(p.Of, owners, false);
                 break;
             case TypeNode.Nullable n: MarkNeededType(n.Of, owners, runtimeClassifier); break;
             case TypeNode.Oblivious o: MarkNeededType(o.Of, owners, runtimeClassifier); break;
             case TypeNode.Array a:
                 if (StripSourceNullability(a.Elem) is TypeNode.Fqn element
-                    && owners.TryGetValue(element.Name, out var arrayOwner) && arrayOwner.Def != null
-                    && HasKotlinVariantParameter(element, arrayOwner.Def["typeParams"] as JsonArray))
+                    && owners.TryGetValue(element.Name, out var arrayOwner) && arrayOwner.HasDefinition
+                    && HasKotlinVariantParameter(element, arrayOwner.Variances))
                     arrayOwner.Needed = true;
                 MarkNeededType(a.Elem, owners, runtimeClassifier);
                 break;
@@ -2207,62 +2014,6 @@ static partial class FBoundStarProjectionErasure
         if (ownerIfaces == null) owner.Def["interfaces"] = ownerIfaces = new JsonArray();
         if (!ownerIfaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == owner.ErasedName))
             ownerIfaces.Add(TypeJson.Write(new TypeNode.Fqn(owner.ErasedName)));
-    }
-
-    // Field storage remains on the concrete class. Its existential value view exposes ordinary forwarding
-    // slots, including fields for which kotc deliberately emits no Kotlin property accessor.
-    static void AddFieldAccessors(Owner owner)
-    {
-        if (owner.Def["fields"] is not JsonArray fields) return;
-        if (owner.Def["methods"] is not JsonArray methods) owner.Def["methods"] = methods = new JsonArray();
-        var names = methods.OfType<JsonObject>().Select(method => Str(method["name"]))
-            .ToHashSet(StringComparer.Ordinal);
-        foreach (var field in fields.OfType<JsonObject>())
-        {
-            if (Bool(field["static"]) || Bool(field[ExactOuterKey])) continue;
-            var name = Str(field["name"]);
-            var type = TypeJson.Read(field["type"]);
-            if (name == null || type == null) continue;
-            if (methods.OfType<JsonObject>().Any(method => KotlinPropertyAccessors.TryIdentity(method,
-                    out var property, out var role) && property == name && role == "get")) continue;
-            foreach (var kind in new[] { "get", "set" })
-            {
-                // readOnly restricts the projected Kotlin surface, not storage (a var may have an internal setter).
-                if (kind == "set" && Bool(field["initOnly"])) continue;
-                // An authored getter/setter already owns this property role; do not add a competing declaration.
-                if (methods.OfType<JsonObject>().Any(method => KotlinPropertyAccessors.TryIdentity(method,
-                        out var property, out var role) && property == name && role == kind)) continue;
-                var stem = name + "$field$" + kind;
-                var physicalName = stem;
-                for (var ordinal = 1; !names.Add(physicalName); ordinal++) physicalName = stem + "$" + ordinal;
-                var access = new JsonObject
-                {
-                    ["k"] = kind == "get" ? Bool(field["lateinit"]) ? "lateinitGet" : "field" : "setFieldExpr",
-                    ["ownerType"] = TypeJson.Write(new TypeNode.Fqn(owner.Name,
-                        Enumerable.Range(0, owner.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray())),
-                    ["recv"] = new JsonObject { ["k"] = "this" },
-                    ["name"] = name,
-                    ["ret"] = TypeJson.Write(type),
-                };
-                if (kind == "set") access["value"] = new JsonObject { ["k"] = "local", ["name"] = "value" };
-                methods.Add(new JsonObject
-                {
-                    ["name"] = physicalName, ["static"] = false, ["vis"] = "private", ["generated"] = true,
-                    ["override"] = false, ["virtual"] = false, ["abstract"] = false, ["objectOverride"] = false,
-                    [KotlinPropertyAccessors.SourceNameKey] = name,
-                    [KotlinPropertyAccessors.KindKey] = kind,
-                    [KotlinPropertyAccessors.AssociationKey] = owner.Name + ":field:" + name,
-                    [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
-                    ["params"] = kind == "get" ? new JsonArray() : new JsonArray(new JsonObject
-                        { ["name"] = "value", ["type"] = TypeJson.Write(type) }),
-                    ["ret"] = TypeJson.Write(kind == "get" ? type : new TypeNode.Fqn("kotlin.Unit")),
-                    ["body"] = new JsonArray(new JsonObject
-                        { ["k"] = kind == "get" ? "return" : "exprStmt",
-                            [kind == "get" ? "value" : "expr"] = access }),
-                    ["attrs"] = new JsonArray(),
-                });
-            }
-        }
     }
 
     static void AddErasedAncestor(JsonNode slot, JsonArray target, IReadOnlyDictionary<string, Owner> owners,
@@ -4694,54 +4445,7 @@ static partial class FBoundStarProjectionErasure
     // metadata. A unique nearest construction is required, matching local slot binding's ambiguity rule.
     static IReadOnlyList<TypeNode> ProjectConstructedArguments(TypeNode.Fqn source, string targetName,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
-    {
-        var queue = new Queue<(TypeNode.Fqn Type, int Depth)>();
-        queue.Enqueue((source, 0));
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var matches = new Dictionary<string, TypeNode[]>(StringComparer.Ordinal);
-        int? matchDepth = null;
-
-        while (queue.Count > 0)
-        {
-            var (current, depth) = queue.Dequeue();
-            if (matchDepth is int nearest && depth > nearest) break;
-            var currentArguments = current.Args ?? Array.Empty<TypeNode>();
-            var key = current.Name + "|" + new JsonArray(
-                currentArguments.Select(TypeJson.Write).ToArray()).ToJsonString();
-            if (!seen.Add(key)) continue;
-            if (SameDeclarationOwner(current.Name, targetName))
-            {
-                matchDepth = depth;
-                matches.TryAdd(key, currentArguments);
-                continue;
-            }
-
-            IEnumerable<TypeNode.Fqn> Edges()
-            {
-                if (defs.TryGetValue(current.Name, out var definition))
-                {
-                    if (definition["base"] is JsonNode baseNode
-                        && TypeJson.Read(baseNode) is TypeNode.Fqn baseType)
-                        yield return baseType;
-                    if (definition["interfaces"] is JsonArray interfaces)
-                        foreach (var edge in interfaces)
-                            if (TypeJson.Read(edge) is TypeNode.Fqn interfaceType)
-                                yield return interfaceType;
-                    yield break;
-                }
-                foreach (var (spec, _) in refs.ReferencedSupertypes(current)) yield return spec;
-            }
-
-            foreach (var edge in Edges())
-            {
-                if (SubstituteDeclarationTypeArguments(edge, currentArguments, Array.Empty<TypeNode>())
-                    is TypeNode.Fqn projected)
-                    queue.Enqueue((projected, depth + 1));
-            }
-        }
-
-        return matches.Count == 1 ? matches.Values.Single() : null;
-    }
+        => ProjectConstructedArguments(source, targetName, CarrierTypeContext.ForDom(defs, refs));
 
     // Current-format referenced BIR can carry the exact CLR TypeDef spelling while reflection-derived inheritance
     // edges use the semantic Kotlin spelling. They identify the same declaration after arity/nesting normalization.

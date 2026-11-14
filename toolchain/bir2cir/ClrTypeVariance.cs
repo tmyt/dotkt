@@ -31,11 +31,6 @@ static class ClrTypeVariance
         return roots.Select(root => root with { Types = root.Types.Select(Project).ToArray() }).ToArray();
     }
 
-    internal static string Get(string name, int arity, int index,
-        IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs) =>
-        new Analysis(owner => definitions.TryGetValue(owner, out var definition)
-            ? ClrVarianceFacts.FromDom(definition) : null, refs).Get(name, arity, index);
-
     internal sealed class Analysis
     {
         readonly Func<string, ClrVarianceFacts.Declaration> resolve;

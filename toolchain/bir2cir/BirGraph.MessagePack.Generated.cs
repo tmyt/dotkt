@@ -6350,15 +6350,16 @@ internal static class BirGraphMessagePack
         OptionalField<BirTypeParameter[]> field7 = default;
         OptionalField<TypeNode> field8 = default;
         OptionalField<string> field9 = default;
-        OptionalField<IBirExpression> field10 = default;
+        OptionalField<TypeNode> field10 = default;
         OptionalField<IBirExpression> field11 = default;
-        OptionalField<BirMemberReference> field12 = default;
-        OptionalField<bool> field13 = default;
+        OptionalField<IBirExpression> field12 = default;
+        OptionalField<BirMemberReference> field13 = default;
+        OptionalField<bool> field14 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 14); if (IrMessagePack.ReadString(ref reader) != "lateinitGet") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 15); if (IrMessagePack.ReadString(ref reader) != "lateinitGet") throw new FormatException(); break;
                 case "ownerType":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -6399,21 +6400,25 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 9);
                     field9 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "value":
+                case "ret":
                     Seen(ref seen, 1UL << 10);
-                    field10 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    field10 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
-                case "exception":
+                case "value":
                     Seen(ref seen, 1UL << 11);
                     field11 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
-                case "fieldRef":
+                case "exception":
                     Seen(ref seen, 1UL << 12);
-                    field12 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
+                    field12 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    break;
+                case "fieldRef":
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
                 case "volatile":
-                    Seen(ref seen, 1UL << 13);
-                    field13 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    Seen(ref seen, 1UL << 14);
+                    field14 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
                 default: throw new FormatException();
             }
@@ -6431,17 +6436,18 @@ internal static class BirGraphMessagePack
             MemberOwnerTypeParams = field7,
             MemberType = field8,
             LateinitSourceName = field9,
-            Value = field10,
-            Exception = field11,
-            FieldRef = field12,
-            Volatile = field13,
+            Ret = field10,
+            Value = field11,
+            Exception = field12,
+            FieldRef = field13,
+            Volatile = field14,
         };
     }
 
     internal static void WriteBirLateinitGet(ref MessagePackWriter writer, BirLateinitGet value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.OwnerType.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberType.IsPresent ? 1 : 0) + (value.LateinitSourceName.IsPresent ? 1 : 0) + (value.Value.IsPresent ? 1 : 0) + (value.Exception.IsPresent ? 1 : 0) + (value.FieldRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.OwnerType.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberType.IsPresent ? 1 : 0) + (value.LateinitSourceName.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Value.IsPresent ? 1 : 0) + (value.Exception.IsPresent ? 1 : 0) + (value.FieldRef.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("lateinitGet");
         if (value.OwnerType.IsPresent)
@@ -6537,6 +6543,15 @@ internal static class BirGraphMessagePack
             else
             {
                 IrMessagePack.WriteString(ref writer, value.LateinitSourceName.Value);
+            }
+        }
+        if (value.Ret.IsPresent)
+        {
+            writer.Write("ret");
+            if (value.Ret.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.Ret.Value, depth + 1);
             }
         }
         if (value.Value.IsPresent)

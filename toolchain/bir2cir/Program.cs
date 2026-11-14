@@ -44,6 +44,9 @@ static class Bir2Cir
                 DeclarationIdentityBinding.SelfTest();
                 CurrentDeclarationBindingsTests.SelfTest();
                 FBoundStarProjectionErasure.CurrentDeclarationPreparationSelfTest();
+                FBoundStarProjectionErasure.FieldAccessorsSourceSelfTest();
+                FBoundStarProjectionErasure.MethodPreparationSourceSelfTest();
+                FBoundStarProjectionErasure.CarrierDemandSourceSelfTest();
                 SourceDeclarationSignatures.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();
@@ -673,6 +676,9 @@ sealed class Pipeline
         var currentDeclarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(captured, genericRepresentations,
             out var currentDeclarationPreparation);
         var nativeProofs = FBoundStarProjectionErasure.PrepareNativeProofs(currentDeclarations, refs, genericRepresentations);
+        var carrierSurface = FBoundStarProjectionErasure.PrepareCarrierSurface(
+            currentDeclarationPreparation, nativeProofs, refs, genericRepresentations,
+            (owner, appended) => pendingOverrideParameters.AdmitMaterializedMethods(owner, appended, currentDeclarations));
 
         for (var index = 0; index < captured.Length; index++)
         {
@@ -705,7 +711,7 @@ sealed class Pipeline
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums, sharedCells,
-                moduleBindings, overrideSourceParameters, currentDeclarationPreparation, nativeProofs));
+                moduleBindings, overrideSourceParameters, carrierSurface));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -766,7 +772,7 @@ sealed class Pipeline
         var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
-                module.Preparation.CurrentDeclarations, module.Preparation.NativeProofs, genericRepresentations, sharedCells,
+                module.Preparation.CarrierSurface, sharedCells,
                 physicalParameterIndices, physicalDeclarationSources);
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
         // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
@@ -1695,8 +1701,7 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
     IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings,
     IReadOnlyDictionary<JsonObject, TypeNode[]> OverrideSourceParameters,
-    FBoundStarProjectionErasure.CurrentDeclarationPreparation CurrentDeclarations,
-    FBoundStarProjectionErasure.NativeProofPlan NativeProofs);
+    FBoundStarProjectionErasure.CarrierSurfacePreparation CarrierSurface);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);

@@ -6876,19 +6876,22 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<BirTypeParameter[]> MemberOwnerTypeParams { get; set; }
     public OptionalField<TypeNode> MemberType { get; set; }
     public OptionalField<string> LateinitSourceName { get; set; }
+    public OptionalField<TypeNode> Ret { get; set; }
     public OptionalField<IBirExpression> Value { get; set; }
     public OptionalField<IBirExpression> Exception { get; set; }
     public OptionalField<BirMemberReference> FieldRef { get; set; }
     public OptionalField<bool> Volatile { get; set; }
-    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
-    public override TypeNode? ExplicitSourceType => Sty.OrDefault();
+    public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Ret.OrDefault();
+    public override TypeNode? OwnTypeOrReturnStamp => Ret.OrDefault();
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (OwnerType.HasValue) { visit("ownerType", (TypeNode)OwnerType.Value); }
         if (Sty.HasValue) { visit("sty", (TypeNode)Sty.Value); }
         if (MemberType.HasValue) { visit("memberType", (TypeNode)MemberType.Value); }
+        if (Ret.HasValue) { visit("ret", (TypeNode)Ret.Value); }
     }
     public override void RewriteOwnTypeFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite)
@@ -6896,6 +6899,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(rewrite("ownerType", BirGenericFrameRole.Lexical, OwnerType.Value));
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
         if (MemberType.HasValue) MemberType = OptionalField<TypeNode>.Of(rewrite("memberType", BirGenericFrameRole.ReferencedDeclaration, MemberType.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -6906,6 +6910,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (MemberVisibility.HasValue) { visit((string)MemberVisibility.Value); }
         if (MemberType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)MemberType.Value, visit); }
         if (LateinitSourceName.HasValue) { visit((string)LateinitSourceName.Value); }
+        if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
@@ -6913,6 +6918,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (Name.HasValue) visit(Name.Value);
         if (Sty.HasValue) { BirGraphNameFields.VisitType((TypeNode)Sty.Value, visit); }
         if (MemberType.HasValue) { BirGraphNameFields.VisitType((TypeNode)MemberType.Value, visit); }
+        if (Ret.HasValue) { BirGraphNameFields.VisitType((TypeNode)Ret.Value, visit); }
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -6955,6 +6961,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
         MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : MemberOwnerTypeParams,
         MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberType.Value)) : MemberType,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone()) : Value,
         Exception = Exception.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Exception.Value).DeepClone()) : Exception,
         FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)FieldRef.Value).DeepClone()) : FieldRef,
@@ -6964,6 +6971,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
         MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(rewrite(MemberType.Value)) : MemberType,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -6975,6 +6983,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
         MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0)).ToArray()) : MemberOwnerTypeParams,
         MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberType.Value)) : MemberType,
+        Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)) : Ret,
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value)) : Value,
         Exception = Exception.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Exception.Value)) : Exception,
         FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)child(BirGenericFrameRole.Lexical, (BirGraphValue)FieldRef.Value)) : FieldRef,
@@ -6984,6 +6993,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(rewrite(OwnerType.Value));
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite(Sty.Value));
         if (MemberType.HasValue) MemberType = OptionalField<TypeNode>.Of(rewrite(MemberType.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite(Ret.Value));
     }
     public override void VisitGenericFrame(
         Action<BirGenericFrameRole, TypeNode> type,
@@ -6995,6 +7005,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (Sty.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)Sty.Value); }
         if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0); } }
         if (MemberType.HasValue) { type(BirGenericFrameRole.ReferencedDeclaration, (TypeNode)MemberType.Value); }
+        if (Ret.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)Ret.Value); }
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value); }
         if (Exception.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Exception.Value); }
         if (FieldRef.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)FieldRef.Value); }
@@ -7009,6 +7020,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)); }
         if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)item0); } }
         if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, MemberType.Value)); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Ret.Value)); }
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Value.Value); }
         if (Exception.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Exception.Value); }
         if (FieldRef.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)FieldRef.Value); }
@@ -7022,6 +7034,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
         if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.TypeParameterDeclarations, (BirGraphValue)item0); } }
         if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.DeclaredMemberType, MemberType.Value)); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, Ret.Value)); }
         if (Value.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Value.Value); }
         if (Exception.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Exception.Value); }
         if (FieldRef.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)FieldRef.Value); }
@@ -7036,6 +7049,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
         if (MemberOwnerTypeParams.HasValue) { foreach (var item0 in MemberOwnerTypeParams.Value) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)item0); } }
         if (MemberType.HasValue) { MemberType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.MemberDescriptor, MemberType.Value)); }
+        if (Ret.HasValue) { Ret = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Ret.Value)); }
         if (Value.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Value.Value); }
         if (Exception.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Exception.Value); }
         if (FieldRef.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)FieldRef.Value); }
@@ -7057,6 +7071,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
             && EqualField(MemberOwnerTypeParams, value.MemberOwnerTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(MemberType, value.MemberType, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(LateinitSourceName, value.LateinitSourceName, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(Ret, value.Ret, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(Value, value.Value, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(Exception, value.Exception, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(FieldRef, value.FieldRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -7075,6 +7090,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         WriteOptional(writer, "memberOwnerTypeParams", MemberOwnerTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberType", MemberType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "lateinitSourceName", LateinitSourceName, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "ret", Ret, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "value", Value, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "exception", Exception, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "fieldRef", FieldRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -7095,6 +7111,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (MemberOwnerTypeParams.IsPresent) result["memberOwnerTypeParams"] = MemberOwnerTypeParams.IsNull ? null : new JsonArray(MemberOwnerTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (MemberType.IsPresent) result["memberType"] = MemberType.IsNull ? null : TypeNode.Write(MemberType.Value);
         if (LateinitSourceName.IsPresent) result["lateinitSourceName"] = LateinitSourceName.IsNull ? null : JsonValue.Create(LateinitSourceName.Value);
+        if (Ret.IsPresent) result["ret"] = Ret.IsNull ? null : TypeNode.Write(Ret.Value);
         if (Value.IsPresent) result["value"] = Value.IsNull ? null : ((BirGraphValue)Value.Value).ToDom(projected);
         if (Exception.IsPresent) result["exception"] = Exception.IsNull ? null : ((BirGraphValue)Exception.Value).ToDom(projected);
         if (FieldRef.IsPresent) result["fieldRef"] = FieldRef.IsNull ? null : ((BirGraphValue)FieldRef.Value).ToDom(projected);

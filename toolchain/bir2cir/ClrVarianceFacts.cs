@@ -4,7 +4,7 @@ using DotKt.Cir;
 
 // A variance query needs declaration signatures, not executable bodies or an owning IR graph.
 // Keep its snapshot separate from the mutable declarations whose physical flags will be changed.
-static class ClrVarianceFacts
+static partial class ClrVarianceFacts
 {
     internal readonly record struct Occurrence(TypeNode Type, int Context);
     internal sealed record Declaration(string Kind, int CapturedCount,
@@ -31,7 +31,7 @@ static class ClrVarianceFacts
         if (definition.Kind == CirTypeKind.Delegate)
             Signature(definition.Params.OrEmpty(), definition.Ret.OrDefault(), definition.TypeParams.OrEmpty());
         foreach (var method in definition.Methods.OrEmpty())
-            if (!method.Static || method.Virtual || method.Abstract.OrDefault())
+            if (Participates(method.Static, method.Virtual, method.Abstract.OrDefault()))
                 Signature(method.Params, method.Ret, method.TypeParams.OrEmpty());
         return new(kind, captured, variances, occurrences.ToArray());
     }
@@ -60,9 +60,8 @@ static class ClrVarianceFacts
         if (kind == "delegate") methods = methods.Prepend(definition);
         foreach (var method in methods)
         {
-            if (method["static"]?.GetValue<bool>() == true
-                && method["virtual"]?.GetValue<bool>() != true
-                && method["abstract"]?.GetValue<bool>() != true) continue;
+            if (!Participates(method["static"]?.GetValue<bool>() == true,
+                method["virtual"]?.GetValue<bool>() == true, method["abstract"]?.GetValue<bool>() == true)) continue;
             if (method["params"] is JsonArray parameters)
                 foreach (var parameter in parameters.OfType<JsonObject>()) Add(parameter["type"], -1);
             Add(method["ret"], 1);

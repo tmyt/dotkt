@@ -13,7 +13,11 @@ static partial class KotlinOverrideSlotBridge
     internal sealed class PendingSourceParameters
     {
         sealed record MethodRow(BirFunctionDeclaration Method, TypeNode[] Parameters);
-        sealed record OwnerRow(int File, int Position, IBirTypeDeclaration Owner, MethodRow[] Methods);
+        sealed record MaterializedMethod(BirFunctionDeclaration Method, CurrentDeclarationBindings.DeclarationBinding Binding);
+        sealed record OwnerRow(int File, int Position, IBirTypeDeclaration Owner, MethodRow[] Methods)
+        {
+            internal readonly List<MaterializedMethod> Materialized = new();
+        }
         BirFileDeclaration[] files;
         OwnerRow[] owners;
         bool consumed;
@@ -39,6 +43,27 @@ static partial class KotlinOverrideSlotBridge
             owners = selected.Values.ToArray();
         }
 
+        // The physical producer reports its exact append. These records do not
+        // acquire source override eligibility or another parameter snapshot.
+        // false means this actual owner was not selected by the original
+        // last-declaration-wins inventory; do not match another owner by name.
+        internal bool AdmitMaterializedMethods(IBirTypeDeclaration owner, IReadOnlyList<BirFunctionDeclaration> appended,
+            CurrentDeclarationBindings bindings)
+        {
+            if (consumed) throw Mismatch();
+            var row = owners.SingleOrDefault(row => ReferenceEquals(row.Owner, owner));
+            if (row == null) return false;
+            var current = files[row.File].Types.OrEmpty();
+            if (row.Position >= current.Length || !ReferenceEquals(current[row.Position], owner)) throw Mismatch();
+            var expected = row.Methods.Select(method => method.Method).Concat(row.Materialized.Select(method => method.Method))
+                .Concat(appended).ToArray();
+            if (expected.Distinct(ReferenceEqualityComparer.Instance).Count() != expected.Length
+                || !owner.Methods.OrEmpty().SequenceEqual(expected, ReferenceEqualityComparer.Instance)) throw Mismatch();
+            var continuations = appended.Select(method => new MaterializedMethod(method, bindings.GetSource(method))).ToArray();
+            row.Materialized.AddRange(continuations);
+            return true;
+        }
+
         // The coordinator supplies the one actual projection. Associate by the
         // retained occurrence and ordinal, never by a renamed member or its body.
         internal IReadOnlyDictionary<JsonObject, TypeNode[]> BindDom(IReadOnlyList<JsonNode> roots)
@@ -49,7 +74,8 @@ static partial class KotlinOverrideSlotBridge
             {
                 var current = files[row.File].Types.OrEmpty();
                 if (row.Position >= current.Length || !ReferenceEquals(current[row.Position], row.Owner)
-                    || !row.Owner.Methods.OrEmpty().SequenceEqual(row.Methods.Select(method => method.Method),
+                    || !row.Owner.Methods.OrEmpty().SequenceEqual(row.Methods.Select(method => method.Method)
+                        .Concat(row.Materialized.Select(method => method.Method)),
                         ReferenceEqualityComparer.Instance)
                     || roots[row.File] is not JsonObject file
                     || (file["fileClass"] as JsonValue)?.GetValue<string>() != files[row.File].FileClass.OrDefault()
@@ -57,7 +83,7 @@ static partial class KotlinOverrideSlotBridge
                     || types[row.Position] is not JsonObject owner
                     || (owner["name"] as JsonValue)?.GetValue<string>() != row.Owner.Name.OrDefault()) throw Mismatch();
                 var methods = owner["methods"] as JsonArray;
-                if ((methods?.Count ?? 0) != row.Methods.Length) throw Mismatch();
+                if ((methods?.Count ?? 0) != row.Methods.Length + row.Materialized.Count) throw Mismatch();
                 for (var index = 0; index < row.Methods.Length; index++)
                 {
                     var source = row.Methods[index];
@@ -67,6 +93,9 @@ static partial class KotlinOverrideSlotBridge
                         throw Mismatch();
                     result.Add(method, source.Parameters);
                 }
+                for (var index = 0; index < row.Materialized.Count; index++)
+                    if (!ReferenceEquals(methods[row.Methods.Length + index], row.Materialized[index].Binding.Physical))
+                        throw Mismatch();
             }
             consumed = true;
             files = null;

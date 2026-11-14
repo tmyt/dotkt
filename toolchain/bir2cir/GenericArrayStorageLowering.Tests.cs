@@ -102,11 +102,22 @@ static partial class GenericArrayStorageLowering
             var sources = new[] { File("FirstArrayFile", "$arrayIndex$0"), File("SecondArrayFile", "$arrayStorage$1") };
             var values = GenericRepresentationPolicy.CreateSource(sources, refs.Aliases, refs);
             values.PrepareDomLocations(sources);
-            var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(sources, values, out var preparation);
-            var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, values);
-            var first = sources[0].ToDom(declarations.ObserveProjection);
-            var second = sources[1].ToDom(declarations.ObserveProjection);
-            declarations.BindProjected();
+            JsonObject first, second;
+            FBoundStarProjectionErasure.CarrierSurfacePreparation surface = null;
+            if (physical)
+            {
+                first = sources[0].ToDom();
+                second = sources[1].ToDom();
+            }
+            else
+            {
+                var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(sources, values, out var preparation);
+                var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, values);
+                surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, values);
+                first = sources[0].ToDom(declarations.ObserveProjection);
+                second = sources[1].ToDom(declarations.ObserveProjection);
+                declarations.BindProjected();
+            }
             var roots = new JsonNode[] { first, second };
             values.BindDomDeclarations(roots);
             if (physical)
@@ -114,7 +125,7 @@ static partial class GenericArrayStorageLowering
                     () => throw new InvalidOperationException("Unexpected array Unit conversion"),
                     type => type.Name == "System.Int32", references: refs);
             else
-                FBoundStarProjectionErasure.ApplyAll(roots, refs, preparation, proofs, values);
+                FBoundStarProjectionErasure.ApplyAll(roots, refs, surface);
             var firstBody = first["methods"]?[0]?["body"]?[0]?["body"];
             var secondBody = second["methods"]?[0]?["body"]?[0]?["body"];
             if (Text(firstBody?[0]?["name"]) != "$arrayStorage$0"

@@ -42,6 +42,108 @@ static partial class KotlinOverrideSlotBridge
         try { replaced.BindDom(files.Select(file => (JsonNode)file.ToDom()).ToArray()); }
         catch (InvalidOperationException) { detached = true; }
         if (!detached) throw new InvalidOperationException("Source override parameters rebound a copied declaration by name or identity");
-        Console.WriteLine("[source override parameter snapshots] self-test OK (last owner, pre-projection types, exact continuation, one-time handoff)");
+        MaterializedSourceParameterSnapshotSelfTest();
+        Console.WriteLine("[source override parameter snapshots] self-test OK (last owner, pre-projection types, exact continuation, producer appends, one-time handoff)");
+    }
+
+    static void MaterializedSourceParameterSnapshotSelfTest()
+    {
+        static void Require(bool value, string message)
+        { if (!value) throw new InvalidOperationException("Override snapshot materialization: " + message); }
+        static void Refused(Action action)
+        {
+            try { action(); } catch (InvalidOperationException) { return; }
+            throw new InvalidOperationException("Override snapshot accepted an unreported or changed method occurrence");
+        }
+        var own = new TypeNode.Fqn("Own");
+        var outer = new TypeNode.Fqn("Outer");
+        var sourceType = new TypeNode.Fqn("Container.Inner", new TypeNode[] { own, outer });
+        var physicalType = new TypeNode.Fqn(sourceType.Name, new TypeNode[] { outer, own });
+        (BirFileDeclaration File, BirClassDefinition Owner, PendingSourceParameters Pending,
+            CurrentDeclarationBindings Bindings, IReadOnlyList<BirFunctionDeclaration> Appended) Fixture(bool report = true, bool produce = true)
+        {
+            BirFunctionDeclaration Method(string name) => new() { Name = name, DeclarationId = name,
+                Params = new[] { new BirParameter { Name = "value", Type = sourceType } }, Ret = sourceType,
+                Body = Array.Empty<IBirStatement>() };
+            var owner = new BirClassDefinition { Name = "Storage", Kind = "class",
+                TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Methods = new[] { Method("first"), Method("second") },
+                Fields = new[] { new BirFieldDeclaration { Name = "value", Type = new TypeNode.Tv("type", 0) } } };
+            var file = new BirFileDeclaration { FileClass = "StorageFile", Types = new IBirTypeDeclaration[] { owner } };
+            var pending = CaptureSourceParameters(new[] { file });
+            owner.Methods.Value[0].Params.Value[0].Type = physicalType;
+            var bindings = new CurrentDeclarationBindings(new[] { file });
+            var appended = produce ? FBoundStarProjectionErasure.AddFieldAccessorsSource("Storage", 1, owner, bindings)
+                : Array.Empty<BirFunctionDeclaration>();
+            if (produce) Require(appended.Count == 2, "actual field producer did not author both accessors");
+            if (report && produce) Require(pending.AdmitMaterializedMethods(owner, appended, bindings), "selected owner lost its original snapshot row");
+            return (file, owner, pending, bindings, appended);
+        }
+        static JsonObject Project(BirFileDeclaration file, CurrentDeclarationBindings bindings)
+        {
+            var result = file.ToDom(bindings.ObserveProjection);
+            bindings.BindProjected();
+            return result;
+        }
+        var valid = Fixture();
+        Refused(() => valid.Pending.AdmitMaterializedMethods(valid.Owner, valid.Appended, valid.Bindings));
+        var projected = Project(valid.File, valid.Bindings);
+        var methods = projected["types"][0]["methods"].AsArray();
+        var snapshots = valid.Pending.BindDom(new JsonNode[] { projected });
+        Require(snapshots.Count == 2 && snapshots[methods[0].AsObject()] is [TypeNode.Fqn { Args: [var first, var second] }]
+            && first == own && second == outer && TypeJson.Read(methods[0]["params"][0]["type"]) == physicalType
+            && !snapshots.ContainsKey(methods[2].AsObject()) && !snapshots.ContainsKey(methods[3].AsObject()),
+            "appended accessors acquired source eligibility or changed original parameter capture");
+
+        var unreported = Fixture(false);
+        var unreportedProjection = Project(unreported.File, unreported.Bindings);
+        Refused(() => unreported.Pending.BindDom(new JsonNode[] { unreportedProjection }));
+        var replaced = Fixture();
+        var replacedProjection = Project(replaced.File, replaced.Bindings);
+        replaced.Owner.Methods.Value[0] = (BirFunctionDeclaration)replaced.Owner.Methods.Value[0].DeepClone();
+        Refused(() => replaced.Pending.BindDom(new JsonNode[] { replacedProjection }));
+        var reordered = Fixture();
+        var reorderedProjection = Project(reordered.File, reordered.Bindings);
+        (reordered.Owner.Methods.Value[0], reordered.Owner.Methods.Value[1]) =
+            (reordered.Owner.Methods.Value[1], reordered.Owner.Methods.Value[0]);
+        Refused(() => reordered.Pending.BindDom(new JsonNode[] { reorderedProjection }));
+        var changedTail = Fixture();
+        var changedTailProjection = Project(changedTail.File, changedTail.Bindings);
+        changedTail.Owner.Methods.Value[2] = (BirFunctionDeclaration)changedTail.Appended[0].DeepClone();
+        Refused(() => changedTail.Pending.BindDom(new JsonNode[] { changedTailProjection }));
+        var reorderedTail = Fixture();
+        var reorderedTailProjection = Project(reorderedTail.File, reorderedTail.Bindings);
+        (reorderedTail.Owner.Methods.Value[2], reorderedTail.Owner.Methods.Value[3]) =
+            (reorderedTail.Owner.Methods.Value[3], reorderedTail.Owner.Methods.Value[2]);
+        Refused(() => reorderedTail.Pending.BindDom(new JsonNode[] { reorderedTailProjection }));
+        var projectedCopy = Fixture();
+        var projectedCopyRoot = Project(projectedCopy.File, projectedCopy.Bindings);
+        var projectedMethods = projectedCopyRoot["types"][0]["methods"].AsArray();
+        projectedMethods[2] = projectedMethods[2].DeepClone();
+        Refused(() => projectedCopy.Pending.BindDom(new JsonNode[] { projectedCopyRoot }));
+        var unauthorized = Fixture();
+        var unauthorizedProjection = Project(unauthorized.File, unauthorized.Bindings);
+        unauthorized.Owner.Methods = unauthorized.Owner.Methods.Value.Append(new BirFunctionDeclaration { Name = "unreported" }).ToArray();
+        Refused(() => unauthorized.Pending.BindDom(new JsonNode[] { unauthorizedProjection }));
+
+        // The discarded same-name occurrence is not made source-eligible by a
+        // physical append report. Its producer still owns the exact continuation.
+        var earlier = Fixture(false, false);
+        var selected = Fixture(false, false);
+        earlier.Owner.Methods.Value[0].DeclarationId = "earlier-first";
+        earlier.Owner.Methods.Value[1].DeclarationId = "earlier-second";
+        var duplicateFiles = new[] { earlier.File, selected.File };
+        var lastWins = CaptureSourceParameters(duplicateFiles);
+        var duplicateBindings = new CurrentDeclarationBindings(duplicateFiles);
+        earlier.Owner.Fields = earlier.Owner.Fields.Value.Append(new BirFieldDeclaration {
+            Name = "later", Type = new TypeNode.Tv("type", 0) }).ToArray();
+        var earlierAppend = FBoundStarProjectionErasure.AddFieldAccessorsSource("Storage", 1, earlier.Owner, duplicateBindings);
+        Require(!lastWins.AdmitMaterializedMethods(earlier.Owner, earlierAppend, duplicateBindings),
+            "nonselected actual owner matched a selected row by name");
+        var duplicateProjection = duplicateFiles.Select(file => (JsonNode)file.ToDom(duplicateBindings.ObserveProjection)).ToArray();
+        duplicateBindings.BindProjected();
+        var lastSnapshots = lastWins.BindDom(duplicateProjection);
+        Require(lastSnapshots.Count == selected.Owner.Methods.Value.Length
+            && !lastSnapshots.ContainsKey(duplicateProjection[0]["types"][0]["methods"][0].AsObject()),
+            "last-owner snapshot membership changed after a noneligible occurrence append");
     }
 }

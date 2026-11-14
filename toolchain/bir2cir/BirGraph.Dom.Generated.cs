@@ -1253,6 +1253,7 @@ internal static class BirGraphDom
                 case "memberOwnerTypeParams": break;
                 case "memberType": break;
                 case "lateinitSourceName": break;
+                case "ret": break;
                 case "value": break;
                 case "exception": break;
                 case "fieldRef": break;
@@ -1271,6 +1272,7 @@ internal static class BirGraphDom
             MemberOwnerTypeParams = Field<BirTypeParameter[]>(fields, "memberOwnerTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             MemberType = Field<TypeNode>(fields, "memberType", value => TypeNode.Read(value) ?? throw new FormatException()),
             LateinitSourceName = Field<string>(fields, "lateinitSourceName", value => value!.GetValue<string>()),
+            Ret = Field<TypeNode>(fields, "ret", value => TypeNode.Read(value) ?? throw new FormatException()),
             Value = Field<IBirExpression>(fields, "value", value => ReadBirExpression(value!)),
             Exception = Field<IBirExpression>(fields, "exception", value => ReadBirExpression(value!)),
             FieldRef = Field<BirMemberReference>(fields, "fieldRef", value => ReadBirMemberReference(value!)),
