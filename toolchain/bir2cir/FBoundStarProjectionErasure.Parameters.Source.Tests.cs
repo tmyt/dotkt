@@ -115,17 +115,28 @@ static partial class FBoundStarProjectionErasure
             && generatedOwner.Methods.Value[0].Params.Value[0].Type.Value is TypeNode.Fqn { Name: "Box" }
             && aliasOwner.Methods.Value[0].Params.Value[0].Type.Value is TypeNode.Fqn { Name: "Box" },
             "accessor, generated, intrinsic, native, binding-alias or identity-less exclusion changed");
-        Require(ctorInner.Type.Value is TypeNode.Fqn ci && ci.Name == innerCarrier
-            && ctorOuter.Type.Value is TypeNode.Fqn { Name: "Inner" }
-            && generatedCtorParameter.Type.Value is TypeNode.Fqn { Name: "Inner" } && !generatedCtorParameter.KotlinType.IsPresent
-            && lambda.Type.Value is TypeNode.Fqn lp && lp.Name == innerCarrier
-            && inline.Type.Value is TypeNode.Fqn ip && ip.Name == innerCarrier
-            && generatedNested.Type.Value is TypeNode.Fqn gn && gn.Name == innerCarrier
-            && suspend.Type.Value is TypeNode.ByRef { Of: TypeNode.Fqn sp } && sp.Name == boxCarrier
-            && definitionParameter.Type.Value is TypeNode.ByRef { Of: TypeNode.Fqn dp } && dp.Name == boxCarrier
-            && owner.InheritedClassMethods.Value[0].Params.Value[0].Type.Value is TypeNode.ByRef { Of: TypeNode.Fqn ir }
-                && ir.Name == boxCarrier,
-            "constructor/outer, generated ctor-only exclusion, lambda or other declaration params role was skipped");
+        Require(ctorInner.Type.Value is TypeNode.Fqn ci && ci.Name == innerCarrier,
+            "captured-inner constructor parameter was not projected");
+        Require(ctorOuter.Type.Value is TypeNode.Fqn { Name: "Inner" },
+            "explicit outer constructor parameter lost its exact lexical head");
+        Require(generatedCtorParameter.Type.Value is TypeNode.Fqn { Name: "Inner" } && !generatedCtorParameter.KotlinType.IsPresent,
+            "direct generated-owner constructor parameter was not excluded");
+        Require(lambda.Type.Value is TypeNode.Fqn lp && lp.Name == innerCarrier,
+            "closure definition parameter was not projected");
+        Require(inline.Type.Value is TypeNode.Fqn ip && ip.Name == innerCarrier,
+            "inline lambda parameter was not projected");
+        Require(generatedNested.Type.Value is TypeNode.Fqn gn && gn.Name == innerCarrier,
+            "generated constructor exclusion leaked into a nested lambda parameter");
+        // A managed-reference pointee is a native invariant witness, not an
+        // ordinary value carrier. The shared rewrite preserves this closed
+        // head in every parameter-owning role, including lambda declarations.
+        Require(suspend.Type.Value is TypeNode.ByRef { Of: TypeNode.Fqn { Name: "Box", Args: [TypeNode.Fqn { Name: "System.String" }] } },
+            "suspend lambda byref parameter lost its exact invariant pointee");
+        Require(definitionParameter.Type.Value is TypeNode.ByRef { Of: TypeNode.Fqn { Name: "Box", Args: [TypeNode.Fqn { Name: "System.String" }] } },
+            "type declaration byref parameter lost its exact invariant pointee");
+        Require(owner.InheritedClassMethods.Value[0].Params.Value[0].Type.Value is TypeNode.ByRef {
+                Of: TypeNode.Fqn { Name: "Box", Args: [TypeNode.Fqn { Name: "System.String" }] } },
+            "inherited class method byref parameter lost its exact invariant pointee");
         Require(ReferenceEquals(file.Types.Value, declarations) && ReferenceEquals(owner.Methods.Value, methods)
             && ReferenceEquals(ordinary.Params.Value, methodVector) && ReferenceEquals(ctor.Params.Value, ctorVector)
             && ReferenceEquals(ordinary.Body.Value, body) && ReferenceEquals(closure.Params.Value[0], lambda)
