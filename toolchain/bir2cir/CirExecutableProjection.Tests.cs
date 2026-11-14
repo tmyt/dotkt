@@ -97,8 +97,14 @@ static partial class CirDeclarationProjection
                 ["args"] = method == "Equals" ? new JsonArray(Local("other")) : new JsonArray(),
                 ["argTypes"] = method == "Equals" ? new JsonArray(TypeJson.Fqn("System.Object")) : new JsonArray(),
             };
-            EnumMemberBinding.Apply(enumCall, new HashSet<string> { "SampleEnum" });
-            var enumSlot = (CirObjectMethod)ReadCirNode(enumCall);
+            var statement = new BirExpressionStatement {
+                Expr = OptionalField<IBirExpression>.Of(BirGraphDom.ReadBirExpression(enumCall)),
+            };
+            var enumFile = new BirFileDeclaration { Methods = new[] {
+                new BirFunctionDeclaration { Name = "use", Body = new IBirStatement[] { statement } },
+            } };
+            EnumMemberBinding.Apply(enumFile, new HashSet<string> { "SampleEnum" });
+            var enumSlot = (CirObjectMethod)ReadCirNode(((BirGraphValue)statement.Expr.Value).ToDom());
             if (enumSlot.Method != method || enumSlot.Recv is not CirLocal { Name: "receiver" }
                 || (method == "Equals" && enumSlot.Arg.Value is not CirLocal { Name: "other" }))
                 throw new InvalidOperationException("Enum object-slot binding changed an operand or retained call-only facts");

@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -29,15 +27,6 @@ static partial class ObjectSlotRename
         ["hashCode"] = "GetHashCode",
         ["equals"] = "Equals",
     };
-
-    public static void Apply(JsonNode root)
-    {
-        Walk(root);
-        // Resolve semantic equality before generic frame consumers inspect the
-        // apparent collection owner of an inherited Any slot. Payload entry uses
-        // this same normalization, including for inline/default bodies.
-        KotlinEqualityLowering.Apply(root, preserveSuperIntent: true);
-    }
 
     public static BirGraphValue Apply(BirGraphValue root)
     {
@@ -89,50 +78,6 @@ static partial class ObjectSlotRename
     static bool RetainAnySlot(string kind, string method, bool virtualToString, string owner) =>
         method is "Equals" or "GetHashCode" || virtualToString
         || kind == "callInstance" && AliasHelperHoist.UsesNativeArrayObjectSlot(owner, true);
-
-    static void Walk(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            // A CALL carrying the `anySlot` fact (its callee is a kotlin.Any override) — rename `method`.
-            // Keyed on the flag, NOT the node kind, so it covers callInstance/callStatic AND the (M4.4) bound-delegate
-            // nodes uniformly and survives any node-kind change.
-            if ((obj["anySlot"] as JsonValue)?.GetValue<bool>() == true)
-            {
-                RenameField(obj, "method");
-                // This semantic override now names the CLR Object slot, not the
-                // reference-surface declaration (whose owner can have a different
-                // representation). Its source MethodDef identity is consumed here.
-                obj.Remove(DeclarationIdentityBinding.Key);
-                // Equality and hashing keep their semantic facts until KotlinEqualityLowering consumes them.
-                // Virtual ToString calls retain the fact until enum/reference dispatch is bound; native
-                // array calls need it until member substitution. Reference-build bodies are squashed.
-                if (!RetainAnySlot((obj["k"] as JsonValue)?.GetValue<string>(), obj["method"]?.GetValue<string>(),
-                    AnySlotRebind.IsVirtualToString(obj), TypeJson.OwnerName(obj["ownerType"])))
-                    obj.Remove("anySlot");
-            }
-            // An `objMethod` node is UNAMBIGUOUSLY a System.Object virtual call — rename its `method` by bare name.
-            else if ((obj["k"] as JsonValue)?.GetValue<string>() == "objMethod")
-                RenameField(obj, "method");
-
-            // A method DECLARATION overriding a kotlin.Any universal method — rename its `name` slot so the emitted
-            // method reuses the correct System.Object virtual (ilemit binds the override by name via objectOverride).
-            if ((obj["objectOverride"] as JsonValue)?.GetValue<bool>() == true)
-                RenameField(obj, "name");
-
-            foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value);
-        }
-        else if (node is JsonArray arr)
-            foreach (var it in arr) if (it != null) Walk(it);
-    }
-
-    // Map a Kotlin Object-method name at `key` to its BCL slot. A value not in the map (an already-BCL spelling from a
-    // bir2cir-internal producer, or any other member) is left untouched — idempotent and safe.
-    static void RenameField(JsonObject obj, string key)
-    {
-        if ((obj[key] as JsonValue)?.GetValue<string>() is string cur)
-            obj[key] = RenameName(cur);
-    }
 
     static string RenameName(string name) => name != null && Slot.TryGetValue(name, out var slot) ? slot : name;
     static OptionalField<string> RenameField(OptionalField<string> value) =>
