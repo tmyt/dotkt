@@ -24,6 +24,10 @@ static partial class KotlinOverrideSlotBridge
         var files = new[] { first, second };
         var pending = CaptureSourceParameters(files);
         retained.Params.Value[0].Type = physicalType;
+        var source = pending.ReadSourceParameters();
+        if (source.Count != 1 || !source.TryGetValue(retained, out var frozen)
+            || source.ContainsKey(discarded) || frozen is not [var original] || original != sourceType)
+            throw new InvalidOperationException("Typed source override parameters lost their original shapes or selected occurrences");
         var projected = files.Select(file => (JsonNode)file.ToDom()).ToArray();
         var associated = pending.BindDom(projected);
         var actual = (JsonObject)projected[1]["types"][0]["methods"][0];
@@ -35,6 +39,9 @@ static partial class KotlinOverrideSlotBridge
         var repeated = false;
         try { pending.BindDom(projected); } catch (InvalidOperationException) { repeated = true; }
         if (!repeated) throw new InvalidOperationException("Source override parameters were bound twice");
+        var released = false;
+        try { pending.ReadSourceParameters(); } catch (InvalidOperationException) { released = true; }
+        if (!released) throw new InvalidOperationException("Source override parameters remained readable after the frontier");
 
         var replaced = CaptureSourceParameters(files);
         second.Types.Value[0].Methods.Value[0] = (BirFunctionDeclaration)retained.DeepClone();
@@ -85,6 +92,11 @@ static partial class KotlinOverrideSlotBridge
             return result;
         }
         var valid = Fixture();
+        var source = valid.Pending.ReadSourceParameters();
+        Require(source.Count == 2 && source.ContainsKey(valid.Owner.Methods.Value[0])
+            && !source.ContainsKey(valid.Appended[0]) && !source.ContainsKey(valid.Appended[1])
+            && source[valid.Owner.Methods.Value[0]] is [var original] && original == sourceType,
+            "typed read recaptured physical parameters or made appended accessors source-eligible");
         Refused(() => valid.Pending.AdmitMaterializedMethods(valid.Owner, valid.Appended, valid.Bindings));
         var projected = Project(valid.File, valid.Bindings);
         var methods = projected["types"][0]["methods"].AsArray();

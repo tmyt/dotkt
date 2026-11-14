@@ -64,20 +64,41 @@ static partial class KotlinOverrideSlotBridge
             return true;
         }
 
-        // The coordinator supplies the one actual projection. Associate by the
-        // retained occurrence and ordinal, never by a renamed member or its body.
-        internal IReadOnlyDictionary<JsonObject, TypeNode[]> BindDom(IReadOnlyList<JsonNode> roots)
+        // The next owning passes read the same frozen source shapes before
+        // projection. Producer-reported physical appends deliberately have no
+        // entry; their current parameters remain the caller's physical input.
+        internal IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> ReadSourceParameters()
         {
-            if (consumed || roots.Count != files.Length) throw Mismatch();
-            var result = new Dictionary<JsonObject, TypeNode[]>(ReferenceEqualityComparer.Instance);
+            ValidateSourceRows();
+            var result = new Dictionary<BirFunctionDeclaration, TypeNode[]>(ReferenceEqualityComparer.Instance);
+            foreach (var row in owners)
+                foreach (var method in row.Methods) result.Add(method.Method, method.Parameters);
+            return result;
+        }
+
+        void ValidateSourceRows()
+        {
+            if (consumed) throw Mismatch();
             foreach (var row in owners)
             {
                 var current = files[row.File].Types.OrEmpty();
                 if (row.Position >= current.Length || !ReferenceEquals(current[row.Position], row.Owner)
                     || !row.Owner.Methods.OrEmpty().SequenceEqual(row.Methods.Select(method => method.Method)
-                        .Concat(row.Materialized.Select(method => method.Method)),
-                        ReferenceEqualityComparer.Instance)
-                    || roots[row.File] is not JsonObject file
+                        .Concat(row.Materialized.Select(method => method.Method)), ReferenceEqualityComparer.Instance))
+                    throw Mismatch();
+            }
+        }
+
+        // The coordinator supplies the one actual projection. Associate by the
+        // retained occurrence and ordinal, never by a renamed member or its body.
+        internal IReadOnlyDictionary<JsonObject, TypeNode[]> BindDom(IReadOnlyList<JsonNode> roots)
+        {
+            if (consumed || roots.Count != files.Length) throw Mismatch();
+            ValidateSourceRows();
+            var result = new Dictionary<JsonObject, TypeNode[]>(ReferenceEqualityComparer.Instance);
+            foreach (var row in owners)
+            {
+                if (roots[row.File] is not JsonObject file
                     || (file["fileClass"] as JsonValue)?.GetValue<string>() != files[row.File].FileClass.OrDefault()
                     || file["types"] is not JsonArray types || row.Position >= types.Count
                     || types[row.Position] is not JsonObject owner

@@ -7,6 +7,31 @@ static partial class StringCharSequenceBridge
     internal sealed record SourceBridgeResult(IReadOnlyList<BirClassDefinition> AppendedTypes,
         IReadOnlyList<ClosureSynthesis.MaterializedOccurrence> DelegateAdapters);
 
+    internal static IReadOnlyList<BirClassDefinition> ApplyMaterializedReturns(
+        BirFileDeclaration file, BirFunctionDeclaration method)
+    {
+        if (!IsCharSeqT(method.Ret.OrDefault()) || !method.Body.HasValue)
+            return Array.Empty<BirClassDefinition>();
+        _fired = false;
+        var position = file.Pos.OrDefault();
+        var context = new ClosureSynthesis.CaptureContext("<file>", position?.F.OrDefault(),
+            position?.L.HasValue == true ? position.L.Value : null);
+        WalkSourceBridge(new BirGraphSlot(() => method,
+            _ => throw new InvalidOperationException("Return adaptation cannot replace its method")),
+            new SourceBridgeEnv(context), new(), returnsOnly: true);
+        MaterializedExecutable.NormalizeSource(method);
+        return _fired ? EmitSourceAdapter(file) : Array.Empty<BirClassDefinition>();
+    }
+
+    static IReadOnlyList<BirClassDefinition> EmitSourceAdapter(BirFileDeclaration file)
+    {
+        if (_adapterEmitted) return Array.Empty<BirClassDefinition>();
+        var adapter = BuildAdapterDeclaration();
+        file.Types = file.Types.OrEmpty().Append(adapter).ToArray();
+        _adapterEmitted = true;
+        return new[] { adapter };
+    }
+
     // This entry owns the continuing source graph. Newly authored callback
     // ingredients are returned by their actual slots, not detached snapshots.
     internal static SourceBridgeResult Apply(BirFileDeclaration file, ReferenceMetadataIndex refs,
@@ -23,13 +48,7 @@ static partial class StringCharSequenceBridge
         WalkSourceBridge(new BirGraphSlot(() => file, _ => throw new InvalidOperationException("A bridge cannot replace its file")),
             new SourceBridgeEnv(context), materialized);
         IReadOnlyList<BirClassDefinition> appended = Array.Empty<BirClassDefinition>();
-        if (!_adapterEmitted && (_fired || SourceUsesCharSequenceView(file)))
-        {
-            var adapter = BuildAdapterDeclaration();
-            file.Types = file.Types.OrEmpty().Append(adapter).ToArray();
-            _adapterEmitted = true;
-            appended = new[] { adapter };
-        }
+        if (!_adapterEmitted && (_fired || SourceUsesCharSequenceView(file))) appended = EmitSourceAdapter(file);
         return new SourceBridgeResult(appended, materialized);
     }
 
@@ -78,12 +97,12 @@ static partial class StringCharSequenceBridge
     }
 
     static void WalkSourceBridge(BirGraphSlot slot, SourceBridgeEnv env,
-        List<ClosureSynthesis.MaterializedOccurrence> materialized)
+        List<ClosureSynthesis.MaterializedOccurrence> materialized, bool returnsOnly = false)
     {
         var node = slot.Value;
         if (node == null || node is IBirExecutablePayload) return;
         var childEnv = env.WithDecl(node);
-        node.VisitSourceChildren(child => WalkSourceBridge(child, childEnv, materialized), region => {
+        node.VisitSourceChildren(child => WalkSourceBridge(child, childEnv, materialized, returnsOnly), region => {
             // Preserve the original valueBlock-only snapshot: its result sees
             // all declared local types, but a variable's initializer does not
             // see itself. Other regions do not acquire this sibling scope.
@@ -97,12 +116,13 @@ static partial class StringCharSequenceBridge
             {
                 var at = index;
                 WalkSourceBridge(new BirGraphSlot(() => (BirGraphValue)region.Statements[at],
-                    value => region.Statements[at] = (IBirStatement)value), current, materialized);
+                    value => region.Statements[at] = (IBirStatement)value), current, materialized, returnsOnly);
                 if (region.Statements[index] is BirVariable { Name.HasValue: true, Type.HasValue: true } variable)
                     current = current.WithVar(variable.Name.Value, variable.Type.Value);
             }
-            if (region.Result is { } result) WalkSourceBridge(result, resultEnv, materialized);
+            if (region.Result is { } result) WalkSourceBridge(result, resultEnv, materialized, returnsOnly);
         });
+        if (returnsOnly && node is not BirReturn) return;
         if (node is BirConstructor constructor) SourceWrapDelegationArgs(constructor, childEnv);
         var replacement = SourceBridgeTransform(node, env, materialized);
         if (!ReferenceEquals(replacement, node)) slot.Replace(replacement);

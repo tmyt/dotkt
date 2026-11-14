@@ -142,6 +142,25 @@ static partial class StringCharSequenceBridge
             Require(ReferenceEquals(((BirInlinePayload)payload).Body.Value, opaqueBody)
                 && ((BirCallStatic)((BirExpressionStatement)opaqueBody[0]).Expr.Value).Args.Value[0] is BirConstant,
                 "executable carrier must remain opaque");
+
+            _adapterEmitted = false;
+            var lateValue = Local("lateText");
+            var untouched = Text("argument");
+            var lateCall = Call(untouched, T(CharSeq));
+            var lateReturn = new BirReturn { Value = lateValue };
+            var lateMethod = new BirFunctionDeclaration { Name = "exactBridge", Ret = T(CharSeq),
+                Params = Array.Empty<BirParameter>(), Body = new IBirStatement[] {
+                    new BirVariable { Name = "lateText", Type = T("kotlin.String"), Init = Text("value") },
+                    Statement(lateCall), lateReturn,
+                } };
+            var lateFile = new BirFileDeclaration { Methods = new[] { lateMethod }, Types = Array.Empty<IBirTypeDeclaration>() };
+            var lateAdapters = ApplyMaterializedReturns(lateFile, lateMethod);
+            Require(lateAdapters is [var lateAdapter] && ReferenceEquals(lateFile.Types.Value[0], lateAdapter)
+                && lateReturn.Value.Value is BirNew { Args.Value: [var moved] } && ReferenceEquals(moved, lateValue)
+                && ReferenceEquals(lateCall.Args.Value[0], untouched) && ReferenceEquals(lateFile.Methods.Value[0], lateMethod),
+                "materialized bridge must adapt only returns, preserve scope/operands and report its actual appended adapter");
+            Require(ApplyMaterializedReturns(lateFile, lateMethod).Count == 0 && lateFile.Types.Value.Length == 1,
+                "late bridge adapter must share the process-wide emission authority");
             Console.WriteLine("[selftest] Owning String/CharSequence bridge: OK");
         }
     }
