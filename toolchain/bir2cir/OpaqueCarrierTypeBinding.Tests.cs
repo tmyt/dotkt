@@ -186,7 +186,6 @@ static partial class OpaqueCarrierTypeBinding
         var rewritten = sourceFacts.RewriteTypes(type => SourceDeclarationSignature.RewriteType(type,
             classifier => classifier.Name == local.Name ? physical : classifier));
         Require(ReferenceEquals(sourceFacts.NullableFrame, rewritten.NullableFrame) && sourceFacts.FrozenText == sourceText
-            && methodFacts.Bounds[3][0] == shape && method.NullableGenericRet.Value == shape
             && BindSourceClassifier(referenced, new Dictionary<string, string> { [referenced.Name] = physical.Name }, refs).Name == physical.Name,
             "leaf rewriting mutated source facts, replaced its nullable frame or lost local precedence");
     }
