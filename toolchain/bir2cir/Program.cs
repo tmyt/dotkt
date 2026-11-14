@@ -71,6 +71,7 @@ static class Bir2Cir
                 LocalStaticOwnerBinding.SelfTestSource();
                 NullableTvErasureCallRealign.SelfTestSourceFixedSlots();
                 ValueSlotNullableWrite.SelfTestSource();
+                NullableGenericErasure.SourceSelfTest();
                 RoundtripMetadata.SourceSuspendResultSelfTest();
                 InheritedMemberOwnerBinding.SourceProjectionSelfTest();
                 TypedExecutableFrames.SelfTest();

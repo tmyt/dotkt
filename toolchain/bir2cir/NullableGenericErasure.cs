@@ -495,7 +495,6 @@ static partial class NullableGenericErasure
             case JsonObject obj:
                 var retSlotErased = false;
                 var k = Str(obj["k"]);
-                var elemPos = IsArgumentElementKind(k) ? Pos.Argument : Pos.Slot;
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var child = obj[key];
@@ -507,17 +506,7 @@ static partial class NullableGenericErasure
                     // Physical bridge consumers derive their own slot types from the selected declaration; this
                     // marker is not one of those slots.
                     if (key == "overrides") continue;
-                    var keyPos = key switch
-                    {
-                        "elem" => elemPos,
-                        "typeArgs" => Pos.Argument,
-                        // `resolvedMemberParams` is always a resolved .NET declaration; `argTypes` is the SAME vector under
-                        // another name once a call is `clr*`-bound (NetInteropBinding writes the callee's declared
-                        // signature there), while on a Kotlin `new` it is the caller's own substituted view.
-                        "resolvedMemberParams" => Pos.Bound,
-                        "argTypes" when ClrBoundNode.IsAny(k) => Pos.Bound,
-                        _ => pos,
-                    };
+                    var keyPos = PositionForField(key, k, pos);
                     if (TypeJson.Read(child) is TypeNode tn)
                     {
                         var erased = Erase(tn, keyPos, isValue);
@@ -539,6 +528,17 @@ static partial class NullableGenericErasure
                 break;
         }
     }
+
+    // Shared by the owning typed sweep and genuine late DOM consumers. A CLR
+    // argTypes vector describes an external declaration; a Kotlin construction's
+    // vector is its own substituted view and follows the ordinary slot rule.
+    static Pos PositionForField(string field, string kind, Pos inherited) => field switch {
+        "elem" => IsArgumentElementKind(kind) ? Pos.Argument : Pos.Slot,
+        "typeArgs" => Pos.Argument,
+        "resolvedMemberParams" => Pos.Bound,
+        "argTypes" when ClrBoundNode.IsAny(kind) => Pos.Bound,
+        _ => inherited,
+    };
 
     // The node kinds whose `elem` is a REIFIED ARGUMENT — an array allocation's `newarr` token, a `ldelem`/`stelem`
     // token, the element a `for (x in arr)` binds, the element an inline iteration over a collection yields, and a
