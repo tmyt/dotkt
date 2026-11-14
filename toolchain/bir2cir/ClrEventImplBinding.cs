@@ -30,7 +30,7 @@ using DotKt.Cir;
 static partial class ClrEventImplBinding
 {
     const string RaiseDeclarationKey = "eventRaiseDeclarationId";
-    sealed record RaiseBinding(string Name, JsonArray Signature, string DeclarationId, bool IsStatic);
+    sealed record RaiseBinding(string Name, TypeNode[] Signature, string DeclarationId, bool IsStatic);
 
     // Event accessors adopt their native delegate slot later. Keep Kotlin's complete handler type first,
     // including nominal nullability and covariant Nothing overrides, not only ordinary function shapes.
@@ -149,8 +149,8 @@ static partial class ClrEventImplBinding
     sealed record LocalEventBinding(
         TypeNode DelegateType,
         TypeNode.Fqn AccessorOwner,
-        JsonArray AddSignature,
-        JsonArray RemoveSignature,
+        TypeNode[] AddSignature,
+        TypeNode[] RemoveSignature,
         string AddIdentity,
         string RemoveIdentity,
         string AddVisibility,
@@ -176,7 +176,7 @@ static partial class ClrEventImplBinding
                         if (identity == null) continue; // Interface delegation supplies add/remove, not a raiser.
                         var method = methods.OfType<JsonObject>().Single(m => Str(m[DeclarationIdentityBinding.Key]) == identity);
                         signatures[(owner, Str(declaration["name"]))] = new RaiseBinding(
-                            Str(method["name"]), FunctionSignatureIdentity.Signature((JsonArray)method["params"]), identity,
+                            Str(method["name"]), EventSlotSignature((JsonArray)method["params"]), identity,
                             method["static"]?.GetValue<bool>() == true);
                         declaration.Remove(RaiseDeclarationKey);
                     }
@@ -219,104 +219,23 @@ static partial class ClrEventImplBinding
                 foreach (var type in types.OfType<JsonObject>()) IndexType(type);
         }
 
-        (JsonArray Signature, string Identity, string Visibility) AccessorSignature(SupertypeGraph.Def definition, string name)
-        {
-            var candidates = definition.Methods.OfType<JsonObject>()
-                .Where(method => Str(method["name"]) == name
-                    && method["specialName"] is JsonValue special
-                    && special.TryGetValue<bool>(out var isSpecial) && isSpecial
-                    && method["params"] is JsonArray)
-                .ToList();
-            if (candidates.Count != 1)
-                throw new InvalidOperationException(
-                    $"bir2cir: synthesized local event accessor '{definition.Name}.{name}' resolves to "
-                    + $"{candidates.Count} declarations");
-            var selected = candidates[0];
-            // These are compiler-authored physical accessors, not additional
-            // Kotlin callable declarations. State their identity at selection
-            // so subsequent carrier/collision projection preserves this edge.
-            selected[DeclarationIdentityBinding.Key] ??= DeclarationIdentityBinding.PhysicalOnlyId(
-                "clr-event-accessor:" + EventAccessorIdentity(definition.Name, name), "accessor");
-            return (FunctionSignatureIdentity.Signature((JsonArray)selected["params"]),
-                Str(selected[DeclarationIdentityBinding.Key]), Str(selected["vis"]) ?? "public");
-        }
+        var resolver = new LocalEventResolver(definitions,
+            definition => (definition.Node["clrEvents"] as JsonArray)?.OfType<JsonObject>()
+                .Select(declaration => new LocalEventRow(Str(declaration["k"]), Str(declaration["name"]),
+                    TypeJson.Read(declaration["delegateType"]))) ?? Enumerable.Empty<LocalEventRow>(),
+            definition => definition.Methods.OfType<JsonObject>().Select(method => new LocalAccessorRow(
+                Str(method["name"]), method["specialName"] is JsonValue special && special.TryGetValue<bool>(out var value) && value,
+                method["params"] is JsonArray, () => EventSlotSignature((JsonArray)method["params"]),
+                () => Str(method[DeclarationIdentityBinding.Key]), identity => method[DeclarationIdentityBinding.Key] = identity,
+                Str(method["vis"]))));
 
-        LocalEventBinding ResolveFromOwner(TypeNode.Fqn owner, string eventName)
-        {
-            if (!definitions.ContainsKey(owner.Name)) return null;
-            var pending = new Queue<TypeNode.Fqn>();
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            pending.Enqueue(owner);
-            while (pending.Count > 0)
-            {
-                var levelCount = pending.Count;
-                var matches = new List<LocalEventBinding>();
-                for (var i = 0; i < levelCount; i++)
-                {
-                    var spec = pending.Dequeue();
-                    if (!seen.Add(SupertypeGraph.TypeKey(spec))
-                        || !definitions.TryGetValue(spec.Name, out var definition)) continue;
-                    var ownerArgs = SupertypeGraph.EffectiveArgs(spec, definition.Arity);
-                    if (ownerArgs == null)
-                        throw new InvalidOperationException(
-                            $"bir2cir: local clrEvent owner '{spec.Name}' has {definition.Arity} type parameter(s), "
-                            + "but the subscription owner does not carry that constructed argument vector");
-                    var declarations = definition.Node["clrEvents"] as JsonArray;
-                    foreach (var declaration in declarations?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
-                    {
-                        if (Str(declaration["k"]) != "clrEventDecl"
-                            || Str(declaration["name"]) != eventName) continue;
-                        var declaredDelegate = TypeJson.Read(declaration["delegateType"])
-                            ?? throw new InvalidOperationException(
-                                $"bir2cir: local clrEvent '{spec.Name}.{eventName}' has no concrete delegate type");
-                        var add = AccessorSignature(definition, "add_" + eventName);
-                        var remove = AccessorSignature(definition, "remove_" + eventName);
-                        matches.Add(new LocalEventBinding(
-                            SupertypeGraph.SubstOwnerTvs(declaredDelegate, ownerArgs),
-                            spec,
-                            add.Signature, remove.Signature, add.Identity, remove.Identity,
-                            add.Visibility, remove.Visibility));
-                    }
-                    foreach (var parent in definition.Interfaces)
-                        if (SupertypeGraph.SubstOwnerTvs(parent, ownerArgs) is TypeNode.Fqn constructed)
-                            pending.Enqueue(constructed);
-                    if (definition.Base != null
-                        && SupertypeGraph.SubstOwnerTvs(definition.Base, ownerArgs) is TypeNode.Fqn constructedBase)
-                        pending.Enqueue(constructedBase);
-                }
-                if (matches.Count == 0) continue;
-                var distinct = matches.GroupBy(match => SupertypeGraph.TypeKey(match.AccessorOwner), StringComparer.Ordinal)
-                    .Select(group => group.First()).ToList();
-                if (distinct.Count != 1)
-                    throw new InvalidOperationException(
-                        $"bir2cir: local clrEvent '{owner.Name}.{eventName}' resolves to {distinct.Count} "
-                        + "different accessor declarations at the same inheritance depth");
-                return distinct[0];
-            }
-            return null;
-        }
-
-        LocalEventBinding Resolve(JsonObject node, JsonArray typeParams, JsonArray methodParams)
-        {
-            var eventName = Str(node["event"]);
-            if (eventName == null) return null;
-            var owner = TypeJson.Read(node["type"]);
-            if (owner is TypeNode.Fqn fqn) return ResolveFromOwner(fqn, eventName);
-            if (owner is not TypeNode.Tv tv) return null;
-            var frame = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
-            if (frame == null || tv.I < 0 || tv.I >= frame.Count || frame[tv.I] is not JsonObject descriptor
-                || descriptor["constraints"] is not JsonArray constraints) return null;
-            var matches = constraints.Select(TypeJson.Read).OfType<TypeNode.Fqn>()
-                .Select(constraint => ResolveFromOwner(constraint, eventName))
-                .Where(binding => binding != null)
-                .GroupBy(binding => SupertypeGraph.TypeKey(binding.AccessorOwner), StringComparer.Ordinal)
-                .Select(group => group.First()).ToList();
-            if (matches.Count > 1)
-                throw new InvalidOperationException(
-                    $"bir2cir: local clrEvent '{eventName}' on '{tv.Scope}' type parameter {tv.I} resolves to "
-                    + $"{matches.Count} different accessor declarations");
-            return matches.SingleOrDefault();
-        }
+        LocalEventBinding Resolve(JsonObject node, JsonArray typeParams, JsonArray methodParams) =>
+            resolver.Resolve(TypeJson.Read(node["type"]), Str(node["event"]), variable => {
+                var frame = variable.Scope == "type" ? typeParams : variable.Scope == "method" ? methodParams : null;
+                return frame != null && variable.I >= 0 && variable.I < frame.Count
+                    && frame[variable.I] is JsonObject descriptor && descriptor["constraints"] is JsonArray constraints
+                    ? constraints.Select(TypeJson.Read) : null;
+            });
 
         void Stamp(JsonNode node, JsonArray typeParams, JsonArray methodParams)
         {
@@ -342,8 +261,8 @@ static partial class ClrEventImplBinding
                             ["k"] = "cast", ["type"] = TypeJson.Write(binding.DelegateType),
                             ["e"] = obj["handler"]?.DeepClone(),
                         };
-                        obj["sig"] = (kind == "clrEventAdd"
-                            ? binding.AddSignature : binding.RemoveSignature).DeepClone();
+                        obj["sig"] = new JsonArray((kind == "clrEventAdd"
+                            ? binding.AddSignature : binding.RemoveSignature).Select(TypeJson.Write).ToArray());
                         obj["localAccessor"] = true;
                         // A type-parameter receiver requires an address plus constrained. dispatch.  A concrete local
                         // owner uses the synthesized public-virtual accessor normally.
@@ -384,6 +303,11 @@ static partial class ClrEventImplBinding
 
         foreach (var root in rootList) Stamp(root, empty, empty);
     }
+
+    // Existing DOM declaration readers are adapters at their actual owner
+    // boundary; signature allocation remains FunctionSignatureIdentity's rule.
+    static TypeNode[] EventSlotSignature(JsonArray parameters) => parameters.OfType<JsonObject>()
+        .Select(parameter => TypeJson.Read(FunctionSignatureIdentity.SignatureType(parameter))).ToArray();
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
@@ -643,20 +567,12 @@ static partial class ClrEventImplBinding
                     call = new JsonObject {
                         ["k"] = local.IsStatic ? "callStatic" : "callInstance",
                         [local.IsStatic ? "owner" : "ownerType"] = TypeJson.Write(owner), ["method"] = local.Name,
-                        ["sig"] = local.Signature.DeepClone(), [DeclarationIdentityBinding.Key] = local.DeclarationId,
+                        ["sig"] = new JsonArray(local.Signature.Select(TypeJson.Write).ToArray()), [DeclarationIdentityBinding.Key] = local.DeclarationId,
                         ["virtual"] = !local.IsStatic, ["recv"] = recv, ["args"] = args,
                     };
                 else
                 {
-                    var referenced = ClrMemberResolution.ResolveOwnerType(owner, refs);
-                    if (referenced == null || !refs.HasDotKtOwner(owner.Name))
-                        throw new InvalidOperationException(
-                            $"bir2cir: cannot raise the .NET event '{name}' on '{owner.Name}' — you can only raise an "
-                            + "event you DECLARE in Kotlin (`override val E by clrEvent()`), not a consumed foreign .NET event");
-                    var declaration = referenced.GetEvent(name, BindingFlags.Public | BindingFlags.NonPublic
-                        | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly);
-                    var raise = declaration?.GetRaiseMethod(true)
-                        ?? throw new InvalidOperationException($"bir2cir: referenced Kotlin event '{owner.Name}.{name}' has no raise declaration");
+                    var raise = ReferencedRaise(owner, name, refs);
                     call = raise.IsStatic
                         ? ClrMemberResolution.ExactStaticCall(refs, raise, owner, args)
                         : ClrMemberResolution.ExactInstanceCall(refs, raise, owner, recv, args);
