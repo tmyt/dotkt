@@ -38,6 +38,16 @@ static partial class FBoundStarProjectionErasure
                     .Select(parameter => BirGraphValue.CopyType(parameter.Type.OrDefault())).ToArray());
         }
 
+        // Read the captured row, not the declaration's now-projected Params.
+        // Consumers treat this signature as immutable; the same row is handed
+        // to the remaining physical consumers at BindPhysical, without replay.
+        internal TypeNode[] GetSourceSignature(CurrentDeclarationBindings.DeclarationBinding declaration)
+        {
+            if (signatures == null) throw new InvalidOperationException("Source method signatures already handed off");
+            return declaration != null && signatures.TryGetValue(declaration, out var signature) ? signature
+                : throw new InvalidOperationException("The declaration has no captured source signature");
+        }
+
         internal IReadOnlyDictionary<JsonObject, TypeNode[]> BindPhysical()
         {
             if (signatures == null) throw new InvalidOperationException("Source method signatures already handed off");

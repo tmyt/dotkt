@@ -80,6 +80,15 @@ static partial class OwnerConstrainedMethodLowering
             var signatures = FBoundStarProjectionErasure.CaptureSourceSignatures(bindings);
             Require(Methods.Count == 6 && accessors.Count == 2 && bindings.SourceLocalDeclarations.Count == 6,
                 "accessor preparation widened the original registration/index membership");
+            var signatureBinding = bindings.GetCapturedSource(ownerBound);
+            var sourceSignature = signatures.GetSourceSignature(signatureBinding);
+            Require(ReferenceEquals(sourceSignature, signatures.GetSourceSignature(signatureBinding))
+                && sourceSignature is [TypeNode.Fqn { Name: "Box", Args: [TypeNode.Tv { Scope: "type", I: 0 }] }]
+                && !ReferenceEquals(((TypeNode.Fqn)sourceSignature[0]).Args, inputType.Args),
+                "typed signature lookup recaptured a row or retained its mutable source arguments");
+            // The facade method is captured for other authorities but was not
+            // part of this type-method signature snapshot. Never infer a row.
+            Reject(() => signatures.GetSourceSignature(bindings.GetCapturedSource(top)));
             ownerBound.Params.Value[0].Type = new TypeNode.Fqn("AfterCapture");
             inputType.Args[0] = new TypeNode.Fqn("MutatedArgument");
             var projected = root.ToDom(bindings.ObserveProjection);
@@ -88,12 +97,14 @@ static partial class OwnerConstrainedMethodLowering
             var actualMethod = actualOwner["methods"][0].AsObject();
             var mappedSignatures = signatures.BindPhysical();
             Require(mappedSignatures.Count == definition.Methods.Value.Length
+                && ReferenceEquals(mappedSignatures[actualMethod], sourceSignature)
                 && !mappedSignatures.ContainsKey(projected["methods"][0].AsObject())
                 && mappedSignatures[actualMethod] is [TypeNode.Fqn { Name: "Box", Args: [TypeNode.Tv { Scope: "type", I: 0 }] }]
                 && mappedSignatures[actualOwner["methods"][5].AsObject()].Length == 0
                 && mappedSignatures[actualOwner["methods"][6].AsObject()] is [TypeNode.Fqn { Name: "Box", Args: [TypeNode.Tv { I: 0 }] }],
                 "signature capture was late, aliased mutable type vectors, included facade methods or lost appended records");
             Reject(() => signatures.BindPhysical());
+            Reject(() => signatures.GetSourceSignature(signatureBinding));
             var queried = new List<JsonObject>();
             ConfigurePreparedMethods(bindings, refs, _ => null, (method, _) => { queried.Add(method); return Array.Empty<TypeNode>(); });
             Require(Methods.Count == 6 && ReferenceEquals(Methods[0].Method, actualMethod)
