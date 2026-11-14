@@ -150,6 +150,7 @@ static class Bir2Cir
                 GenericArrayStorageLowering.SelfTest();
                 ErasedElementValues.SelfTest();
                 RoundtripMetadata.RuntimeLinkageSelfTest();
+                RoundtripMetadata.SourceTypeAliasSelfTest();
                 SuspendColdLowering.DeclarationRegistrySelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 MetadataDeclaredMembersTests.SelfTest();
@@ -494,8 +495,8 @@ sealed class Pipeline
             captured[index] = null;
             // The remaining passes still own DOM graphs. Construct that frontier
             // directly; never serialize/reparse the typed input between passes.
-            var root = (source with { TypeAliases = default }).ToDom();
-            RoundtripMetadata.FreezeTypeAliases(root, source.TypeAliases.OrDefault() ?? []);
+            RoundtripMetadata.FreezeTypeAliases(source);
+            var root = source.ToDom();
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
                 root,
