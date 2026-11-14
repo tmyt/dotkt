@@ -436,6 +436,7 @@ sealed class Pipeline
             foreach (var source in captured) NetInteropBinding.Apply(source, refs);
         // Property-reference adaptation appends declarations. Capture the
         // consumers' original module clock before any file creates an adapter.
+        // Function-typed field stores may target a sibling file's declaration.
         var propertyFunctionFields = PropertyReferenceFunctionLowering.CollectFieldSlots(captured);
         var localStatics = LocalStaticOwnerBinding.Collect(captured);
         var moduleBindings = new ModuleBindingSnapshots(

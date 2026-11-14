@@ -185,6 +185,8 @@ static partial class PropertyReferenceFunctionLowering
                 RewriteArguments(arguments.Args, arguments.Parameters, arguments.Owner, arguments.MethodArguments, context);
                 foreach (var argument in arguments.Args) targeted.Add((BirGraphValue)argument);
             }
+            // Targeted children already saw their slot. Revisiting without it
+            // could consume a property marker before its enclosing adaptation.
             node.VisitChildSlots(slot => {
                 if (!targeted.Contains(slot.Value)) slot.Replace(ProcessNode(slot.Value, context));
             });
@@ -252,6 +254,8 @@ static partial class PropertyReferenceFunctionLowering
 
         static BirDelegateInvoke FunctionSlotInvoke(BirCallInstance call, Context context)
         {
+            // Flow narrowing may expose KProperty here; the declared function
+            // storage remains authoritative for the actual invocation ABI.
             if (call.Method.OrDefault() != "invoke") return null;
             var local = call.Recv.OrDefault() switch {
                 BirLocal value => value,
