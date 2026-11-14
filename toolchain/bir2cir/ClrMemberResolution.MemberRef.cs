@@ -35,8 +35,8 @@ using DotKt.Toolchain;
 
 static partial class ClrMemberResolution
 {
-    // Temporary bir2cir-only carrier consumed by ExternalGenericConstraintValidation immediately after member
-    // resolution. The selected MethodDef is the sole authority for these CLR flags/rows; ilemit never sees them.
+    // Temporary bir2cir-only carrier consumed by ExternalGenericConstraintValidation at the owning typed frontier,
+    // after member resolution. The selected MethodDef alone owns these CLR flags/rows; ilemit never sees them.
     internal const string ResolvedMethodTypeParamsKey = "_resolvedMethodTypeParams";
 
     internal static void StampResolvedMethodTypeParameters(JsonObject node, MethodInfo method)
