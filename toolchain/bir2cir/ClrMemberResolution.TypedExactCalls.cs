@@ -31,9 +31,9 @@ static partial class ClrMemberResolution
         var plan = PlanExactDispatch(refs, method, declaringOwner, isStatic: false);
         var call = new BirCallInstance {
             OwnerType = BirGraphValue.CopyType(plan.Reference.DeclaringType), Method = plan.Name, Virtual = true,
-            Recv = plan.Visibility == "protected" && receiver is BirThis
+            Recv = OptionalField<IBirExpression>.Of(plan.Visibility == "protected" && receiver is BirThis
                 ? (IBirExpression)((BirGraphValue)receiver).DeepClone()
-                : new BirCast { Type = BirGraphValue.CopyType(plan.Reference.DeclaringType), E = receiver },
+                : new BirCast { Type = BirGraphValue.CopyType(plan.Reference.DeclaringType), E = OptionalField<IBirExpression>.Of(receiver) }),
             Sig = plan.Reference.ParameterTypes.Select(BirGraphValue.CopyType).ToArray(),
             Ret = BirGraphValue.CopyType(plan.Result), Sty = BirGraphValue.CopyType(plan.Result),
             Args = ExactArguments(plan, arguments), MemberRef = BirMemberReference.FromPhysical(plan.Reference),
@@ -51,7 +51,7 @@ static partial class ClrMemberResolution
     static IBirExpression[] ExactArguments(ExactDispatchPlan plan, IReadOnlyList<IBirExpression> arguments)
         => arguments.Select((argument, index) => (IBirExpression)new BirCast {
             Type = BirGraphValue.CopyType(plan.Arguments[index]),
-            E = (IBirExpression)((BirGraphValue)argument).DeepClone(),
+            E = OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)argument).DeepClone()),
         }).ToArray();
 
     static OptionalField<BirTypeParameter[]> ExactOwnerParameters(ExactDispatchPlan plan)
