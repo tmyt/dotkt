@@ -1945,11 +1945,12 @@ internal static class BirGraphMessagePack
         ulong seen = 0;
         OptionalField<TypeNode> field0 = default;
         OptionalField<IBirExpression[]> field1 = default;
+        OptionalField<TypeNode> field2 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 2); if (IrMessagePack.ReadString(ref reader) != "newArray") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 3); if (IrMessagePack.ReadString(ref reader) != "newArray") throw new FormatException(); break;
                 case "elem":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -1957,6 +1958,10 @@ internal static class BirGraphMessagePack
                 case "elems":
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TryReadNil() ? OptionalField<IBirExpression[]>.Null : OptionalField<IBirExpression[]>.Of(ReadArray<IBirExpression>(ref reader, (ref MessagePackReader reader) => ReadBirExpression(ref reader)));
+                    break;
+                case "sty":
+                    Seen(ref seen, 1UL << 2);
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -1966,13 +1971,14 @@ internal static class BirGraphMessagePack
         {
             Elem = field0,
             Elems = field1,
+            Sty = field2,
         };
     }
 
     internal static void WriteBirNewArray(ref MessagePackWriter writer, BirNewArray value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Elem.IsPresent ? 1 : 0) + (value.Elems.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Elem.IsPresent ? 1 : 0) + (value.Elems.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("newArray");
         if (value.Elem.IsPresent)
@@ -1996,6 +2002,15 @@ internal static class BirGraphMessagePack
                 {
                     WriteBirExpression(ref writer, item0, depth + 1 + 1);
                 }
+            }
+        }
+        if (value.Sty.IsPresent)
+        {
+            writer.Write("sty");
+            if (value.Sty.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.Sty.Value, depth + 1);
             }
         }
     }
@@ -14240,7 +14255,8 @@ internal static class BirGraphMessagePack
         OptionalField<string> field5 = default;
         OptionalField<TypeNode> field6 = default;
         OptionalField<string> field7 = default;
-        OptionalField<TypeNode> field8 = default;
+        OptionalField<string> field8 = default;
+        OptionalField<TypeNode> field9 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -14277,9 +14293,13 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 7);
                     field7 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "delegateType":
+                case "eventRaiseDeclarationId":
                     Seen(ref seen, 1UL << 8);
-                    field8 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    field8 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "delegateType":
+                    Seen(ref seen, 1UL << 9);
+                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -14295,14 +14315,15 @@ internal static class BirGraphMessagePack
             Modality = field5,
             ClassOverrideOwner = field6,
             PolicyField = field7,
-            DelegateType = field8,
+            EventRaiseDeclarationId = field8,
+            DelegateType = field9,
         };
     }
 
     internal static void WriteBirClrEventBacking(ref MessagePackWriter writer, BirClrEventBacking value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.K.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.PropertyAssociation.IsPresent ? 1 : 0) + (value.HandlerType.IsPresent ? 1 : 0) + (value.Modality.IsPresent ? 1 : 0) + (value.ClassOverrideOwner.IsPresent ? 1 : 0) + (value.PolicyField.IsPresent ? 1 : 0) + (value.DelegateType.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.K.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.PropertyAssociation.IsPresent ? 1 : 0) + (value.HandlerType.IsPresent ? 1 : 0) + (value.Modality.IsPresent ? 1 : 0) + (value.ClassOverrideOwner.IsPresent ? 1 : 0) + (value.PolicyField.IsPresent ? 1 : 0) + (value.EventRaiseDeclarationId.IsPresent ? 1 : 0) + (value.DelegateType.IsPresent ? 1 : 0));
         if (value.K.IsPresent)
         {
             writer.Write("k");
@@ -14373,6 +14394,15 @@ internal static class BirGraphMessagePack
             else
             {
                 IrMessagePack.WriteString(ref writer, value.PolicyField.Value);
+            }
+        }
+        if (value.EventRaiseDeclarationId.IsPresent)
+        {
+            writer.Write("eventRaiseDeclarationId");
+            if (value.EventRaiseDeclarationId.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.EventRaiseDeclarationId.Value);
             }
         }
         if (value.DelegateType.IsPresent)

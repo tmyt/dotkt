@@ -493,7 +493,7 @@ sealed partial class TypedCirProjection
 
     internal CirEvent ProjectCirEvent(BirClrEventBacking value)
     {
-        if (value.ClassOverrideOwner.IsPresent || value.HandlerType.IsPresent || value.Modality.IsPresent || value.PolicyField.IsPresent || value.PropertyAssociation.IsPresent || value.Static.IsPresent)
+        if (value.ClassOverrideOwner.IsPresent || value.EventRaiseDeclarationId.IsPresent || value.HandlerType.IsPresent || value.Modality.IsPresent || value.PolicyField.IsPresent || value.PropertyAssociation.IsPresent || value.Static.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirClrEventBacking");
         return new CirEvent
         {
@@ -842,6 +842,8 @@ sealed partial class TypedCirProjection
 
     internal CirNewArray ProjectCirNewArray(BirNewArray value)
     {
+        if (value.Sty.IsPresent)
+            throw new InvalidOperationException("Unconsumed lowering fact on BirNewArray");
         return new CirNewArray
         {
             Elem = Require(value.Elem),

@@ -248,7 +248,7 @@
       "required": ["k", "array"], "additionalProperties": false
     },
     "birNewArray": {
-      "type": "object", "x-dotkt-model": { "name": "BirNewArray", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirNewArray", "domain": "birCore", "role": "expression", "loweringProperties": { "sty": { "x-dotkt-representation-role": "ResultStamp", "$ref": "#/$defs/type" } } },
       "properties": { "k": { "const": "newArray" }, "elem": { "x-dotkt-representation-role": "Element", "$ref": "#/$defs/type" }, "elems": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } } },
       "required": ["k", "elem", "elems"], "additionalProperties": false
     },
@@ -770,7 +770,7 @@
       "required": ["member", "params", "ret", "inheritedImplementation"], "additionalProperties": false
     },
     "birClrEventBacking": {
-      "type": "object", "x-dotkt-model": { "name": "BirClrEventBacking", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirClrEventBacking", "domain": "birCoreValues", "loweringProperties": { "eventRaiseDeclarationId": { "type": "string" } } },
       "properties": {
         "k": { "const": "clrEventBacking" }, "name": { "type": "string" }, "static": { "type": "boolean", "x-dotkt-kotlin-name": "isStatic" },
         "propertyAssociation": { "type": "string" }, "handlerType": { "$ref": "#/$defs/type" }, "modality": { "type": "string" },

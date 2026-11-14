@@ -2465,22 +2465,32 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     public override string Tag => "newArray";
     public OptionalField<TypeNode> Elem { get; set; }
     public OptionalField<IBirExpression[]> Elems { get; set; }
+    public OptionalField<TypeNode> Sty { get; set; }
+    public override TypeNode? ResultTypeStamp => Sty.OrDefault();
+    public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
+    public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
+    public override TypeNode? ExplicitSourceType => Sty.OrDefault();
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (Elem.HasValue) { visit("elem", (TypeNode)Elem.Value); }
+        if (Sty.HasValue) { visit("sty", (TypeNode)Sty.Value); }
     }
     public override void RewriteOwnTypeFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite)
     {
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
+        if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
     }
+    public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
+        if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
+        if (Sty.HasValue) { BirGraphNameFields.VisitType((TypeNode)Sty.Value, visit); }
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -2503,10 +2513,12 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
         Elems = Elems.HasValue ? OptionalField<IBirExpression[]>.Of(Elems.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone()).ToArray()) : Elems,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -2514,10 +2526,12 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)) : Elem,
         Elems = Elems.HasValue ? OptionalField<IBirExpression[]>.Of(Elems.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Elems,
+        Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)) : Sty,
     };
     public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
     {
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite(Elem.Value));
+        if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite(Sty.Value));
     }
     public override void VisitGenericFrame(
         Action<BirGenericFrameRole, TypeNode> type,
@@ -2525,6 +2539,7 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Elem.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)Elem.Value); }
         if (Elems.HasValue) { foreach (var item0 in Elems.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
+        if (Sty.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)Sty.Value); }
     }
     public override void RewriteGenericFrameInPlace(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -2532,6 +2547,7 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Elem.Value)); }
         if (Elems.HasValue) { foreach (var item0 in Elems.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Sty.Value)); }
     }
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
@@ -2539,6 +2555,7 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Element, Elem.Value)); }
         if (Elems.HasValue) { foreach (var item0 in Elems.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ResultStamp, Sty.Value)); }
     }
     public override void RewriteOwnershipInPlace(
         Func<BirOwnershipRole, TypeNode, TypeNode> type,
@@ -2546,17 +2563,20 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Elem.HasValue) { Elem = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Elem.Value)); }
         if (Elems.HasValue) { foreach (var item0 in Elems.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (Sty.HasValue) { Sty = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Sty.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirNewArray value
             && EqualField(Elem, value.Elem, (left, right) => TypeNodeDataEquality.Equal(left, right))
-            && EqualField(Elems, value.Elems, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
+            && EqualField(Elems, value.Elems, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(Sty, value.Sty, (left, right) => TypeNodeDataEquality.Equal(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
         writer.WriteString("k", "newArray");
         WriteOptional(writer, "elem", Elem, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "elems", Elems, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "sty", Sty, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -2565,6 +2585,7 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
         result["k"] = "newArray";
         if (Elem.IsPresent) result["elem"] = Elem.IsNull ? null : TypeNode.Write(Elem.Value);
         if (Elems.IsPresent) result["elems"] = Elems.IsNull ? null : new JsonArray(Elems.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
+        if (Sty.IsPresent) result["sty"] = Sty.IsNull ? null : TypeNode.Write(Sty.Value);
         return result;
     }
 }
@@ -13199,6 +13220,7 @@ internal sealed record BirClrEventBacking : BirGraphValue
     public OptionalField<string> Modality { get; set; }
     public OptionalField<TypeNode> ClassOverrideOwner { get; set; }
     public OptionalField<string> PolicyField { get; set; }
+    public OptionalField<string> EventRaiseDeclarationId { get; set; }
     public OptionalField<TypeNode> DelegateType { get; set; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -13222,6 +13244,7 @@ internal sealed record BirClrEventBacking : BirGraphValue
         if (Modality.HasValue) { visit((string)Modality.Value); }
         if (ClassOverrideOwner.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ClassOverrideOwner.Value, visit); }
         if (PolicyField.HasValue) { visit((string)PolicyField.Value); }
+        if (EventRaiseDeclarationId.HasValue) { visit((string)EventRaiseDeclarationId.Value); }
         if (DelegateType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)DelegateType.Value, visit); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
@@ -13312,6 +13335,7 @@ internal sealed record BirClrEventBacking : BirGraphValue
             && EqualField(Modality, value.Modality, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(ClassOverrideOwner, value.ClassOverrideOwner, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(PolicyField, value.PolicyField, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(EventRaiseDeclarationId, value.EventRaiseDeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(DelegateType, value.DelegateType, (left, right) => TypeNodeDataEquality.Equal(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -13324,6 +13348,7 @@ internal sealed record BirClrEventBacking : BirGraphValue
         WriteOptional(writer, "modality", Modality, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "classOverrideOwner", ClassOverrideOwner, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "policyField", PolicyField, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "eventRaiseDeclarationId", EventRaiseDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "delegateType", DelegateType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         writer.WriteEndObject();
     }
@@ -13338,6 +13363,7 @@ internal sealed record BirClrEventBacking : BirGraphValue
         if (Modality.IsPresent) result["modality"] = Modality.IsNull ? null : JsonValue.Create(Modality.Value);
         if (ClassOverrideOwner.IsPresent) result["classOverrideOwner"] = ClassOverrideOwner.IsNull ? null : TypeNode.Write(ClassOverrideOwner.Value);
         if (PolicyField.IsPresent) result["policyField"] = PolicyField.IsNull ? null : JsonValue.Create(PolicyField.Value);
+        if (EventRaiseDeclarationId.IsPresent) result["eventRaiseDeclarationId"] = EventRaiseDeclarationId.IsNull ? null : JsonValue.Create(EventRaiseDeclarationId.Value);
         if (DelegateType.IsPresent) result["delegateType"] = DelegateType.IsNull ? null : TypeNode.Write(DelegateType.Value);
         return result;
     }
