@@ -42,7 +42,6 @@ static partial class RoundtripMetadata
     static SourceTypeFacts HeaderSupertypes(IBirTypeDeclaration type) => type switch {
         BirClassDefinition value => value.RoundtripSupertypesPre.OrDefault(),
         BirInterfaceDefinition value => value.RoundtripSupertypesPre.OrDefault(),
-        BirEnumDefinition value => value.RoundtripSupertypesPre.OrDefault(),
         _ => null,
     };
 
@@ -52,7 +51,6 @@ static partial class RoundtripMetadata
         {
             case BirClassDefinition value: value.RoundtripSupertypesPre = default; break;
             case BirInterfaceDefinition value: value.RoundtripSupertypesPre = default; break;
-            case BirEnumDefinition value: value.RoundtripSupertypesPre = default; break;
         }
     }
 
@@ -77,6 +75,8 @@ static partial class RoundtripMetadata
             AppendHeader(type, HeaderCarrier(AKManagedReferenceContract, contract.ManagedReferenceContract.Value));
             contract.ManagedReferenceContract = default;
         }
+        // Preserve producer-owned ordinals before the CLR-enum early return;
+        // downstream consumers must not infer them from FieldDef ordering.
         StampBasicEnumHeader(type);
         if (type.Kind.OrDefault() == "enum") return;
 
@@ -87,6 +87,8 @@ static partial class RoundtripMetadata
         var mods = type.Mods.OrDefault();
         if (mods?.Fun.OrDefault() == true) AppendHeader(type, HeaderMarker(AKFunInterface));
         if (mods?.Sealed.OrDefault() == true) AppendHeader(type, HeaderMarker(AKSealed));
+        // KotlinValue carries source value-class identity independently of a
+        // backend annotation or the erased CLR representation.
         if (mods?.Value.OrDefault() == true) AppendHeader(type, HeaderMarker(AKValue));
         if (mods?.Object.OrDefault() == true) AppendHeader(type, HeaderMarker(AKObject));
         if (mods?.Inner.OrDefault() == true)
@@ -118,6 +120,8 @@ static partial class RoundtripMetadata
         if (frame != null && offset + parameters.Length > frame.PhysicalArity)
             throw new InvalidOperationException($"Type '{type.Name.OrDefault()}' has {offset + parameters.Length} physical generic parameters "
                 + $"but its declaration frame describes only {frame.PhysicalArity}");
+        // CLR class variance is weaker than Kotlin's. Preserve authored
+        // variance by source-frame index, not emitted GenericParam layout.
         var variances = new Dictionary<int, string>();
         for (var index = 0; index < parameters.Length; index++)
             if (parameters[index].Variance.OrDefault() is "in" or "out" &&
@@ -128,6 +132,8 @@ static partial class RoundtripMetadata
         {
             if (frame != null && frame.PhysicalArity != offset + parameters.Length)
                 throw new InvalidOperationException("Nullable representation frame does not match emitted declaration arity");
+            // KotlinSupertypes restores pre-erasure edges, bounds and variance;
+            // physical signature rewriting must not reinterpret this payload.
             AppendHeader(type, PlacementCarrier(AKSupertypes,
                 BirCarrier.EncodeBody(BirCarrier.JsonV1, source, (writer, value) => value.WritePayload(writer))));
             ClearHeaderSupertypes(type);
@@ -155,6 +161,8 @@ static partial class RoundtripMetadata
     static void StampRepresentationTypeHeader(IBirTypeDeclaration type)
     {
         if (type is not BirInterfaceDefinition { KotlinType.HasValue: true } representation) return;
+        // KotlinType associates a compiler-synthesized physical declaration
+        // with its logical Kotlin type (for example an existential interface).
         AppendHeader(type, PlacementCarrier(AKType, BirCarrier.EncodeBody(BirCarrier.JsonV1,
             representation.KotlinType.Value, TypeNode.WriteJson)));
         representation.KotlinType = default;
@@ -176,6 +184,8 @@ static partial class RoundtripMetadata
         if (type is BirInterfaceDefinition representation) representation.KotlinType = default;
         if (type is BirClassDefinition { RichEnum.HasValue: true } rich)
         {
+            // Generic enum operations also need this exact API map at runtime,
+            // including for stdlib-owned enums; it is not reference-only metadata.
             AppendHeader(type, HeaderCarrier(AKRichEnum, rich.RichEnum.Value));
         }
         if (type is BirClassDefinition runtimeClass)

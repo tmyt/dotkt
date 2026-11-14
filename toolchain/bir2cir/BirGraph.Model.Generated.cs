@@ -10956,7 +10956,6 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
     public OptionalField<BirStaticCarrier> StaticCarrier { get; set; }
     public OptionalField<BirCompanionCarrier> CompanionCarrier { get; set; }
     public OptionalField<BirBasicEnumCarrier> BasicEnum { get; set; }
-    public OptionalField<SourceTypeFacts> RoundtripSupertypesPre { get; set; }
     public OptionalField<bool> RoundtripTypeHeaderPending { get; set; }
     public OptionalField<bool> Generated { get; set; }
     public OptionalField<bool> Abstract { get; set; }
@@ -11292,7 +11291,6 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
             && EqualField(StaticCarrier, value.StaticCarrier, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(CompanionCarrier, value.CompanionCarrier, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(BasicEnum, value.BasicEnum, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
-            && EqualField(RoundtripSupertypesPre, value.RoundtripSupertypesPre, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(RoundtripTypeHeaderPending, value.RoundtripTypeHeaderPending, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Generated, value.Generated, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Abstract, value.Abstract, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
@@ -11330,7 +11328,6 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         WriteOptional(writer, "staticCarrier", StaticCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "companionCarrier", CompanionCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "basicEnum", BasicEnum, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
-        WriteOptional(writer, "roundtripSupertypesPre", RoundtripSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
         WriteOptional(writer, "roundtripTypeHeaderPending", RoundtripTypeHeaderPending, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "generated", Generated, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "abstract", Abstract, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -11370,7 +11367,6 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         if (StaticCarrier.IsPresent) result["staticCarrier"] = StaticCarrier.IsNull ? null : ((BirGraphValue)StaticCarrier.Value).ToDom();
         if (CompanionCarrier.IsPresent) result["companionCarrier"] = CompanionCarrier.IsNull ? null : ((BirGraphValue)CompanionCarrier.Value).ToDom();
         if (BasicEnum.IsPresent) result["basicEnum"] = BasicEnum.IsNull ? null : ((BirGraphValue)BasicEnum.Value).ToDom();
-        if (RoundtripSupertypesPre.IsPresent) result["roundtripSupertypesPre"] = RoundtripSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(RoundtripSupertypesPre.Value);
         if (RoundtripTypeHeaderPending.IsPresent) result["roundtripTypeHeaderPending"] = RoundtripTypeHeaderPending.IsNull ? null : JsonValue.Create(RoundtripTypeHeaderPending.Value);
         if (Generated.IsPresent) result["generated"] = Generated.IsNull ? null : JsonValue.Create(Generated.Value);
         if (Abstract.IsPresent) result["abstract"] = Abstract.IsNull ? null : JsonValue.Create(Abstract.Value);

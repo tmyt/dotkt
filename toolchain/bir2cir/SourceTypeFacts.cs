@@ -205,36 +205,36 @@ sealed class SourceTypeFacts
 
     internal void WritePayload(Utf8JsonWriter writer)
     {
-            writer.WriteStartObject();
-            // Keep insertion order at this frozen-text boundary; it is transport
-            // bookkeeping, not dynamic property-based semantic dispatch.
-            foreach (var part in order)
-                switch (part)
-                {
-                    case Part.Base:
-                        writer.WritePropertyName("base"); TypeNode.WriteJson(writer, Base); break;
-                    case Part.Interfaces:
-                        writer.WriteStartArray("interfaces");
-                        foreach (var edge in Interfaces) TypeNode.WriteJson(writer, edge);
-                        writer.WriteEndArray(); break;
-                    case Part.NullableFrame:
-                        writer.WritePropertyName("nullableFrame"); NullableFrame.WriteJson(writer); break;
-                    case Part.Variances:
-                        writer.WriteStartObject("variances");
-                        foreach (var (index, variance) in Variances)
-                            writer.WriteString(index.ToString(CultureInfo.InvariantCulture), variance);
-                        writer.WriteEndObject(); break;
-                    case Part.Bounds:
-                        writer.WriteStartObject("bounds");
-                        foreach (var (index, constraints) in Bounds)
-                        {
-                            writer.WriteStartArray(index.ToString(CultureInfo.InvariantCulture));
-                            foreach (var constraint in constraints) TypeNode.WriteJson(writer, constraint);
-                            writer.WriteEndArray();
-                        }
-                        writer.WriteEndObject(); break;
-                }
-            writer.WriteEndObject();
+        writer.WriteStartObject();
+        // Keep insertion order at this frozen-text boundary; it is transport
+        // bookkeeping, not dynamic property-based semantic dispatch.
+        foreach (var part in order)
+            switch (part)
+            {
+                case Part.Base:
+                    writer.WritePropertyName("base"); TypeNode.WriteJson(writer, Base); break;
+                case Part.Interfaces:
+                    writer.WriteStartArray("interfaces");
+                    foreach (var edge in Interfaces) TypeNode.WriteJson(writer, edge);
+                    writer.WriteEndArray(); break;
+                case Part.NullableFrame:
+                    writer.WritePropertyName("nullableFrame"); NullableFrame.WriteJson(writer); break;
+                case Part.Variances:
+                    writer.WriteStartObject("variances");
+                    foreach (var (index, variance) in Variances)
+                        writer.WriteString(index.ToString(CultureInfo.InvariantCulture), variance);
+                    writer.WriteEndObject(); break;
+                case Part.Bounds:
+                    writer.WriteStartObject("bounds");
+                    foreach (var (index, constraints) in Bounds)
+                    {
+                        writer.WriteStartArray(index.ToString(CultureInfo.InvariantCulture));
+                        foreach (var constraint in constraints) TypeNode.WriteJson(writer, constraint);
+                        writer.WriteEndArray();
+                    }
+                    writer.WriteEndObject(); break;
+            }
+        writer.WriteEndObject();
     }
 
     internal string FrozenText => ToJson();

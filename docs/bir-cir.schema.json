@@ -640,7 +640,7 @@
       "properties": { "underlying": { "$ref": "#/$defs/type" } }, "required": ["underlying"], "additionalProperties": false
     },
     "birEnumDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirEnumDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["entries"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" }, "basicEnum": { "$ref": "#/$defs/basicEnumCarrier" }, "roundtripSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText", "x-dotkt-frame-role": "FrozenSourceFact" }, "roundtripTypeHeaderPending": { "type": "boolean" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirEnumDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringSourceFields": ["entries"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" }, "basicEnum": { "$ref": "#/$defs/basicEnumCarrier" }, "roundtripTypeHeaderPending": { "type": "boolean" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "enum" }, "semanticOwner": { "type": "string" }, "vis": { "type": "string" },
         "clrEnum": { "$ref": "#/$defs/birClrEnumDeclaration" }, "entries": { "type": "array", "items": { "$ref": "#/$defs/birEnumEntryDeclaration" } },

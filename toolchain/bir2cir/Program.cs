@@ -1404,11 +1404,11 @@ sealed class Pipeline
         bool runtimeRepresentationTypes = false;
         foreach (var (lowered, outputName) in loweredRoots)
         {
-            // ROUNDTRIP METADATA (#71 S2): GENERATE every [Kotlin*]/[Nullable]/[NullableContext] attribute as ordinary
-            // CIR `attrs`/`retAttrs` entries (ilemit then only STAMPS them via its generic BuildCab path — no Kotlin
-            // knowledge left in ilemit). Runs on the fully-lowered decls so the materialized facts (nullableFlags,
+            // ROUNDTRIP METADATA (#71 S2): stamp member/parameter attributes here and grant type-header obligations
+            // for StampTypeHeaders at the typed seam. All become ordinary CIR attrs/retAttrs emitted by ilemit's
+            // generic BuildCab path, with no Kotlin knowledge there. Materialized facts (nullableFlags,
             // suspendFnType, inlineBir, mods, suspendBridge, readOnly) are all present. SKIPPED in the runtime build
-            // (`!SubstituteStdlibBuild`) except for runtime linkage and representation-type associations. Placed after
+            // (`SubstituteStdlibBuild`) except for runtime linkage and representation-type associations. Placed after
             // the earlier reference-body squash, which preserves all captured metadata. The attribute-class DEFS
             // are emitted ONCE below (SynthDefsFile), not per-file.
             if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
