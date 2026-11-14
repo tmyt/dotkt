@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // Kotlin/JVM leaves an unchecked `Any? as T` at the erased Object boundary.  CLR generics are reified, so emitting
 // the source signature literally as `T Read(...)` moves the cast into the callee (`unbox.any !T`).  That is too early:
@@ -34,6 +35,7 @@ static partial class UncheckedGenericCastReturnErasure
         public bool Static;
         public TypeNode.Tv Return;
         public JsonObject Method;
+        internal BirFunctionDeclaration SourceMethod;
     }
 
     static bool IsNullableOrObjectSource(TypeNode type) => type switch
@@ -49,61 +51,6 @@ static partial class UncheckedGenericCastReturnErasure
         && !KotlinTypeWitness.NeedsWitness(kind, reifiedOperand)
         && castType is TypeNode.Tv variable && variable == expected
         && IsNullableOrObjectSource(sourceType);
-
-    public static void Apply(JsonNode root, DeclIndex index)
-    {
-        if (root is not JsonObject obj) return;
-        RetypeProjectedReturnBodies(obj);
-
-        // The global index owns cross-file ABI facts, not permission to lower a later root early.
-        // Mutate only declarations currently owned by this root, after its semantic guards have been bound.
-        // The fact is the PRE-lowering Kotlin TypeNode; RoundtripMetadata
-        // consumes it after type lowering and dll2klib restores the source signature for downstream Kotlin.
-        foreach (var decl in index.ByIdentity.Values)
-        {
-            if (!OwnedBy(decl.Method, root) || TypeJson.Read(decl.Method["ret"]) is not TypeNode.Tv) continue;
-            // The index is collected after nullable representation materialization. Its Tv addresses the
-            // physical body and can be a storage companion; the earlier declaration snapshot owns Kotlin's Tv.
-            decl.Method["retKotlinType"] ??= Str(decl.Method["nullableGenericRet"])
-                ?? TypeNode.ToJson(decl.Return);
-            decl.Method["ret"] = TypeJson.Fqn("object");
-            RetypeReturnedCasts(decl.Method["body"], decl.Return);
-        }
-
-        RewriteMethods(obj["methods"], index);
-        if (obj["types"] is JsonArray types)
-            foreach (var type in types)
-                if (type != null) ApplyCallsOnly(type, index);
-    }
-
-    // Signature projection can already have erased a scalar return before this
-    // pass's index snapshot. Its body still owns the same deferred unchecked cast;
-    // consume source metadata in the exact materialized owner/method frame.
-    static void RetypeProjectedReturnBodies(JsonObject owner)
-    {
-        foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-        {
-            if (!IsObject(TypeJson.Read(method["ret"]))
-                || Str(method["retKotlinType"]) is not string encoded
-                || TypeNode.Parse(encoded) is not TypeNode.Tv source) continue;
-            var frame = source.Scope == "method"
-                ? NullableRepresentationTypes.DeclarationMethodFrame(method)
-                : KotlinSupertypesRecord.ReadNullableFrame(owner);
-            var physical = frame == null ? source : frame.Variable(source,
-                frame.StorageIndices.Contains(source.I) ? NullableRepresentationFrame.Role.Storage
-                    : NullableRepresentationFrame.Role.Ordinary);
-            RetypeReturnedCasts(method["body"], physical);
-        }
-        foreach (var type in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-            RetypeProjectedReturnBodies(type);
-    }
-
-    static bool OwnedBy(JsonNode declaration, JsonNode root)
-    {
-        for (var owner = declaration; owner != null; owner = owner.Parent)
-            if (ReferenceEquals(owner, root)) return true;
-        return false;
-    }
 
     // Consumer-side half of the object-return ABI.  dll2klib has already restored the Kotlin expression type into
     // BIR's `sty`, while the reference index sees the producer's physical Object return and trusted [KotlinType]
@@ -318,11 +265,16 @@ static partial class UncheckedGenericCastReturnErasure
     }
 
     static bool TryResolve(JsonObject call, DeclIndex index, out TypeNode logicalReturn)
+        => TryResolve(Str(call["k"]), Str(call[DeclarationIdentityBinding.Key]), TypeJson.Read(call["ownerType"]),
+            new[] { "owner", "calleeOwner", "ownerType" }.Where(key => call[key] != null)
+                .Select(key => TypeJson.Read(call[key])).ToArray(), ReadTypes(call["typeArgs"]), index, out logicalReturn);
+
+    static bool TryResolve(string kind, string identity, TypeNode instanceOwner, TypeNode[] staticOwners,
+        TypeNode[] methodArguments, DeclIndex index, out TypeNode logicalReturn)
     {
         logicalReturn = null;
-        var kind = Str(call["k"]);
         if (kind is not ("callInstance" or "callStatic")
-            || Str(call[DeclarationIdentityBinding.Key]) is not string identity
+            || identity == null
             || !index.ByIdentity.TryGetValue(identity, out var decl)
             || decl.Static != (kind == "callStatic"))
             return false;
@@ -330,7 +282,7 @@ static partial class UncheckedGenericCastReturnErasure
         TypeNode[] ownerArgs = Array.Empty<TypeNode>();
         if (kind == "callInstance")
         {
-            if (TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner
+            if (instanceOwner is not TypeNode.Fqn owner
                 || owner.Name != decl.Owner)
                 return false;
             ownerArgs = owner.Args ?? Array.Empty<TypeNode>();
@@ -341,18 +293,17 @@ static partial class UncheckedGenericCastReturnErasure
             // earlier lowerings still select a LOCAL declaration by frontend identity, never by a bare method name
             // or substituted signature. An attributed owner is an exact fact, not evidence of an external call.
             var hasOwner = false;
-            foreach (var key in new[] { "owner", "calleeOwner", "ownerType" })
-                if (call[key] != null)
+            foreach (var selectedOwner in staticOwners)
                 {
                     hasOwner = true;
-                    if (TypeJson.Read(call[key]) is not TypeNode.Fqn owner || owner.Name != decl.Owner)
+                    if (selectedOwner is not TypeNode.Fqn owner || owner.Name != decl.Owner)
                         return false;
                     ownerArgs = owner.Args ?? Array.Empty<TypeNode>();
                 }
             if (!hasOwner && !decl.TopLevel) return false;
         }
 
-        logicalReturn = Substitute(decl.Return, ownerArgs, ReadTypes(call["typeArgs"]));
+        logicalReturn = Substitute(decl.Return, ownerArgs, methodArguments);
         return logicalReturn != null;
     }
 
@@ -379,34 +330,6 @@ static partial class UncheckedGenericCastReturnErasure
         _ => type,
     };
 
-    static void RetypeReturnedCasts(JsonNode node, TypeNode.Tv ret)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                if (ReturnedValue(obj) is JsonObject value
-                    && value["e"] is JsonObject source
-                    && IsUncheckedReturnCast(Str(value["k"]), Bool(value["reifiedTypeOperand"]),
-                        TypeJson.Read(value["type"]), ret, ExplicitSourceType(source)))
-                    value["type"] = TypeJson.Fqn("object");
-                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList())
-                    RetypeReturnedCasts(child, ret);
-                break;
-            case JsonArray arr:
-                foreach (var child in arr.Where(v => v != null).ToList())
-                    RetypeReturnedCasts(child, ret);
-                break;
-        }
-    }
-
-    static JsonObject ReturnedValue(JsonObject statement)
-        => ReturnedValue(Str(statement["k"]), statement["value"] as JsonObject,
-            value => Str(value["k"]), value => TypeJson.Read(value["type"]),
-            value => value["e"] as JsonObject, value => value["result"] as JsonObject);
-
-    static TypeNode ExplicitSourceType(JsonObject source) =>
-        TypeJson.Read(source["sty"]) ?? TypeJson.Read(source["type"]) ?? TypeJson.Read(source["ret"]);
-
     static T ReturnedValue<T>(string statementKind, T value, Func<T, string> kind, Func<T, TypeNode> type,
         Func<T, T> castOperand, Func<T, T> blockResult) where T : class
     {
@@ -427,4 +350,5 @@ static partial class UncheckedGenericCastReturnErasure
 
     static bool Bool(JsonNode node) =>
         node is JsonValue value && value.TryGetValue<bool>(out var result) && result;
+
 }

@@ -84,26 +84,73 @@ static partial class NullableTvErasureCallRealign
     // and frontend-resolved signature, so their overload candidates remain separate.
     public sealed class DeclIndex
     {
+        readonly DeclIndex _canonical;
+        readonly Dictionary<string, int> _admittedOwners;
+        readonly int? _visibleThrough;
+        int _admission;
+
+        public DeclIndex()
+        {
+            _canonical = this;
+            _admittedOwners = new(StringComparer.Ordinal);
+            ByDeclarationOwner = new(StringComparer.Ordinal);
+            ByOwner = new(StringComparer.Ordinal);
+            PropertiesByOwner = new(StringComparer.Ordinal);
+            TopLevel = new(StringComparer.Ordinal);
+            TopLevelPropertiesByOwner = new(StringComparer.Ordinal);
+            FileClasses = new(StringComparer.Ordinal);
+            Ctors = new(StringComparer.Ordinal);
+            Slots = new(StringComparer.Ordinal);
+        }
+
+        DeclIndex(DeclIndex index)
+        {
+            _canonical = index._canonical;
+            _admittedOwners = _canonical._admittedOwners;
+            _visibleThrough = index._visibleThrough ?? _canonical._admission;
+            SourceApplicationOrder = index.SourceApplicationOrder?.CaptureView();
+            ByDeclarationOwner = index.ByDeclarationOwner;
+            ByOwner = index.ByOwner;
+            PropertiesByOwner = index.PropertiesByOwner;
+            TopLevel = index.TopLevel;
+            TopLevelPropertiesByOwner = index.TopLevelPropertiesByOwner;
+            FileClasses = index.FileClasses;
+            Ctors = index.Ctors;
+            Slots = index.Slots;
+        }
+
+        // A view owns no declaration table. It pins visibility of the same
+        // captured facts while the canonical index admits later files' types.
+        internal DeclIndex BindSourceVisibility() => new(this);
+        internal bool IsVisibleOwner(string owner) => _visibleThrough is not { } through
+            || owner == null || !_admittedOwners.TryGetValue(owner, out var admitted) || admitted <= through;
+        internal void AdvanceSourceAdmission()
+        {
+            if (!ReferenceEquals(_canonical, this))
+                throw new InvalidOperationException("A declaration visibility view cannot admit source facts");
+            _admission++;
+        }
+        internal void RecordOwnerAdmission(string owner) => _canonical._admittedOwners.Add(owner, _canonical._admission);
+
         internal InnerApplicationOrder SourceApplicationOrder;
-        public readonly Dictionary<string, Dictionary<string, DeclSig>> ByDeclarationOwner = new(StringComparer.Ordinal);
-        public readonly Dictionary<string, Dictionary<string, DeclSig>> ByOwner = new(StringComparer.Ordinal);
-        public readonly Dictionary<string, Dictionary<string, List<DeclSig>>> PropertiesByOwner = new(StringComparer.Ordinal);
-        public readonly Dictionary<string, DeclSig> TopLevel = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, Dictionary<string, DeclSig>> ByDeclarationOwner;
+        public readonly Dictionary<string, Dictionary<string, DeclSig>> ByOwner;
+        public readonly Dictionary<string, Dictionary<string, List<DeclSig>>> PropertiesByOwner;
+        public readonly Dictionary<string, DeclSig> TopLevel;
         // file facade -> property identity/signature -> candidates. A top-level call already carries the exact
         // frontend-resolved calleeOwner; retaining that axis prevents equally-shaped properties in another source
         // file/package from poisoning or supplying this call's declaration.
-        public readonly Dictionary<string, Dictionary<string, List<DeclSig>>> TopLevelPropertiesByOwner =
-            new(StringComparer.Ordinal);
+        public readonly Dictionary<string, Dictionary<string, List<DeclSig>>> TopLevelPropertiesByOwner;
         // The file classes THIS compilation declares. A `callStatic` naming one of them is a same-module top-level
         // call — its declaration is in `TopLevel`, keyed by bare name+arity — and a `callStatic` naming any other
         // owner is a call into a referenced assembly. kotc names the owner in both cases, and MemberCallSubstitution
         // fills it in for the referenced calls that arrived without one, so the owner alone cannot tell them apart.
-        public readonly HashSet<string> FileClasses = new(StringComparer.Ordinal);
+        public readonly HashSet<string> FileClasses;
         // owner -> ctor arity -> parameter vector. A `new`'s args/argTypes are typed against it, the same way a
         // call's are typed against a method's — a ctor param is a declaration slot like any other (`Cell<T>(x: T?)`).
-        public readonly Dictionary<string, Dictionary<int, TypeNode[]>> Ctors = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, Dictionary<int, TypeNode[]>> Ctors;
         // owner -> field/property name -> declared type. The target of a `setField` and the result of a `field` read.
-        public readonly Dictionary<string, Dictionary<string, TypeNode>> Slots = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, Dictionary<string, TypeNode>> Slots;
     }
 
     // The declaration snapshot outlives source application order. Transition its constructed slots with
@@ -370,9 +417,9 @@ static partial class NullableTvErasureCallRealign
     // The frontend has already selected this overload. Keep its source declaration slot,
     // rather than dropping it when another overload shares the name and argument count.
     // The owner axis prevents applying a base declaration's generic frame as a derived frame.
-    static DeclSig LookupDeclarationIdentity(JsonObject call, TypeNode.Fqn owner, DeclIndex index)
+    static DeclSig LookupDeclarationIdentity(string identity, TypeNode.Fqn owner, DeclIndex index)
     {
-        if (owner == null || Str(call[DeclarationIdentityBinding.Key]) is not string identity
+        if (owner == null || identity == null || !index.IsVisibleOwner(owner.Name)
             || !index.ByDeclarationOwner.TryGetValue(owner.Name, out var declarations)) return null;
         return declarations.GetValueOrDefault(identity);
     }
@@ -399,7 +446,7 @@ static partial class NullableTvErasureCallRealign
     static TypeNode[] OwnerArguments(TypeNode.Fqn owner) =>
         _sourceApplicationOrder?.DeclarationArguments(owner) ?? owner?.Args;
 
-    public static void ApplySourceUses(JsonNode root, DeclIndex idx, ValueTypeOracle isValue,
+    static void ApplyDeclaredUses(JsonNode root, DeclIndex idx, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs)
     {
         _isValue = isValue ?? (_ => false);
@@ -412,7 +459,7 @@ static partial class NullableTvErasureCallRealign
     // bodies only when that capability changed; this is a distinct phase transition, not a repair for a forgotten
     // producer.
     public static void ApplyAfterDelegateSlotAlignment(JsonNode root, DeclIndex idx, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs) => ApplySourceUses(root, idx, isValue, refs);
+        ReferenceMetadataIndex refs) => ApplyDeclaredUses(root, idx, isValue, refs);
 
     // A producer that creates a self-contained executable subtree after the file pass supplies that exact subtree.
     // The source pass keeps every visited local-read stamp aligned with its flowed declaration type, so a cloned read
@@ -435,7 +482,7 @@ static partial class NullableTvErasureCallRealign
     // difference plus the object-erasure relation, so re-deriving a slot the first run already corrected is a no-op.
     public static void ApplyAfterReferencedOwnerBinding(
         JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
-        => ApplySourceUses(root, idx, isValue, refs);
+        => ApplyDeclaredUses(root, idx, isValue, refs);
 
     // The SAME-MODULE inherited-member half. A call emitted against its Kotlin receiver owner can only be matched to
     // the declaration that owns its nullable-generic slot after InheritedMemberOwnerBinding closes the base-chain
@@ -487,7 +534,7 @@ static partial class NullableTvErasureCallRealign
         if (to["ctors"] is not JsonArray ctors) return;
         var ownerArgs = OwnTypeArgs(to);
         var baseType = TypeJson.Read(to["base"]) as TypeNode.Fqn;
-        var baseParams = baseType != null && idx.Ctors.TryGetValue(baseType.Name, out var byArity) ? byArity : null;
+        TryVisibleConstructors(baseType?.Name, idx, out var baseParams);
         var ownName = Str(to["name"]);
         foreach (var c in ctors)
         {
@@ -498,8 +545,8 @@ static partial class NullableTvErasureCallRealign
                     if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
                         ctx.Env[pn] = pt;
             DelegationArgs(co, "baseArgs", baseParams, OwnerArguments(baseType), ctx);
-            DelegationArgs(co, "thisArgs",
-                ownName != null && idx.Ctors.TryGetValue(ownName, out var own) ? own : null, ownerArgs, ctx);
+            TryVisibleConstructors(ownName, idx, out var ownParams);
+            DelegationArgs(co, "thisArgs", ownParams, ownerArgs, ctx);
             if (co["body"] is JsonNode body) Eval(body, ctx);
         }
     }
@@ -798,17 +845,13 @@ static partial class NullableTvErasureCallRealign
 
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
         var argCount = (obj["args"] as JsonArray)?.Count ?? 0;
-        var propertyDecl = LookupPropertyDecl(obj, owner, argCount, methodArgs?.Length ?? 0,
-            isStatic: false, idx);
-        var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _);
-        var decl = hasPropertyIdentity
-            ? propertyDecl
-            : LookupDeclarationIdentity(obj, owner, idx)
-                ?? LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: false, idx, obj);
+        var selected = SelectUseDeclaration(ReadUseSelection(obj), owner, method, argCount,
+            methodArgs?.Length ?? 0, false, idx);
+        var decl = selected.Declaration;
         // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
         // declaration the call's own descriptor stands in (see RealignArgs).
-        RealignArgs(obj, decl?.Params, decl?.ParamsRefused, OwnerArguments(owner), methodArgs, ctx,
-            exactPropertyTarget: propertyDecl != null);
+        RealignArgs(obj, decl?.Params, decl?.ParamsRefused, selected.OwnerArguments, methodArgs, ctx,
+            exactPropertyTarget: selected.ExactProperty);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
 
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
@@ -826,41 +869,14 @@ static partial class NullableTvErasureCallRealign
         // file class means the same-module `TopLevel` index (keyed by bare name+arity), anything else means a call into
         // a referenced assembly. Both re-derive the generic function's declaration from its pre-erasure form, just as
         // EvalCallInstance does for a generic class member.
-        NullableTvErasureCallRealign.DeclSig decl = null;
-        NullableTvErasureCallRealign.DeclSig propertyDecl = null;
-        TypeNode[] ownerArgs = null;
-        if (Str(obj["method"]) is string method)
-        {
-            var owner = StaticOwner(obj) as TypeNode.Fqn;
-            if (owner != null && !ctx.Idx.FileClasses.Contains(owner.Name))
-            {
-                propertyDecl = LookupPropertyDecl(obj, owner, argCount, methodArgs?.Length ?? 0,
-                    isStatic: true, ctx.Idx);
-                var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _);
-                decl = hasPropertyIdentity
-                    ? propertyDecl
-                    : LookupDeclarationIdentity(obj, owner, ctx.Idx)
-                        ?? LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: true, ctx.Idx, obj);
-                ownerArgs = OwnerArguments(owner);
-            }
-            else
-            {
-                propertyDecl = LookupLocalPropertyDecl(obj, owner: null, argCount,
-                    methodArgs?.Length ?? 0, isStatic: true, ctx.Idx);
-                decl = propertyDecl;
-                // A semantic property call must never fall back to the ordinary method index. Its exact declaration
-                // owner/association is authoritative; an absent match is a refusal, not permission to re-resolve by
-                // the newly allocated MethodDef name.
-                if (!KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _) && decl == null)
-                {
-                    decl = LookupDeclarationIdentity(obj, owner, ctx.Idx);
-                    if (decl == null && Str(obj[DeclarationIdentityBinding.Key]) == null)
-                        ctx.Idx.TopLevel.TryGetValue(method + "|" + argCount, out decl);
-                }
-            }
-        }
+        var selected = Str(obj["method"]) is string method
+            ? SelectUseDeclaration(ReadUseSelection(obj), StaticOwner(obj) as TypeNode.Fqn,
+                method, argCount, methodArgs?.Length ?? 0, true, ctx.Idx)
+            : default;
+        var decl = selected.Declaration;
+        var ownerArgs = selected.OwnerArguments;
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, ownerArgs, methodArgs, ctx,
-            exactPropertyTarget: propertyDecl != null);
+            exactPropertyTarget: selected.ExactProperty);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
         var derived = Subst(erasedRet, ownerArgs, methodArgs);
@@ -889,63 +905,23 @@ static partial class NullableTvErasureCallRealign
     static TypeNode ApplyDerivedRet(JsonObject obj, TypeNode derived, TypeNode stampedRet, bool erasureApplied,
         bool nullableErasureOwnershipKnown = false, bool nullableCompanionResult = false)
     {
-        if (derived == null) return stampedRet;
-        // Substitution through a materialized frame can return its companion directly (Box<N>.value). That is
-        // a real generic stack slot, not the object-erased source T? stamp. Keep the physical result explicit so
-        // consumers such as equality emit the required generic boxing instead of treating an unboxed N as object.
-        if (nullableCompanionResult)
+        var plan = SelectDerivedResult(derived, stampedRet, erasureApplied,
+            nullableErasureOwnershipKnown, nullableCompanionResult);
+        switch (plan.Action)
         {
-            obj["ret"] = TypeJson.Write(derived);
-            if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
-            RestampSty(obj, derived);
-            return derived;
+            case DerivedResultAction.Return:
+                obj["ret"] = TypeJson.Write(plan.Type);
+                if (plan.Dynamic && obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(plan.Type);
+                RestampSty(obj, plan.Type);
+                break;
+            case DerivedResultAction.Stamp:
+                RestampSty(obj, plan.Type);
+                break;
+            case DerivedResultAction.Cast:
+                WrapResultCast(obj, derived, plan.Type);
+                break;
         }
-        if (stampedRet == null)
-        {
-            if (!erasureApplied) return null;
-            obj["ret"] = TypeJson.Write(derived);
-            RestampSty(obj, derived);
-            return derived;
-        }
-        if (derived.Equals(stampedRet))
-        {
-            // The exact imported descriptor can already state the erased return while the frontend stamp
-            // still states the closed Kotlin result. Proven scalar erasure owns both claims about this node.
-            if (erasureApplied) RestampSty(obj, derived);
-            return stampedRet;
-        }
-        if (!IsObjectErasureOf(derived, stampedRet)) return stampedRet;
-
-        // This pass owns only nullable-generic erasure. A late generated declaration can legitimately return object
-        // for another ABI (notably deferred unchecked `Any? as T`) while its call retains a concrete use-site stamp.
-        // Without a pre-erasure nullable declaration that actually changes under Erase, preserving that stamp is the
-        // other lowering's contract; rewriting it to object here destroys the consumer's required unbox/cast.
-        if (nullableErasureOwnershipKnown && !erasureApplied) return stampedRet;
-
-        // An open `Array<T?>` return has the one declaration shape that can serve both CLR instantiations:
-        // `object[]`.  At a concrete REFERENCE instantiation, however, the Kotlin value it denotes is still the
-        // reified reference array (`Array<String?>` is `string[]`).  Compiler-produced values uphold that contract:
-        // a generic body cannot manufacture an arbitrary `Array<T?>`; a concrete reference construction keeps its
-        // typed runtime array while filling an open slot (the write axis below), and every other supported producer
-        // forwards such an array or allocates from a reified/runtime element type.  The physical declaration slot
-        // accepts that value through CLR reference-array covariance, but a following use needs the inverse checked
-        // projection stated explicitly in CIR. An explicit unchecked cast can still violate the runtime element type;
-        // as on other reified CLR casts, the checked projection then fails at the semantic use boundary.
-        //
-        // Keep this at the RESULT boundary, where both facts are authoritative: `derived` is
-        // `Subst(Erase(declaration))`, while `stampedRet` is the frontend's concrete Kotlin result.  It is neither an
-        // array-member/name special case nor a general nested-generic conversion.  A VALUE element and an open type
-        // variable deliberately stay on the object-erased path — `object[]` cannot be cast to either
-        // `Nullable<V>[]` or `T[]` generally.
-        if (CanNarrowReferenceArrayProjection(derived, stampedRet))
-        {
-            WrapResultCast(obj, derived, stampedRet);
-            return stampedRet;
-        }
-        obj["ret"] = TypeJson.Write(derived);
-        if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
-        RestampSty(obj, derived);
-        return derived;
+        return plan.Type;
     }
 
     static bool CanNarrowReferenceArrayProjection(TypeNode physical, TypeNode semantic)
@@ -1008,21 +984,8 @@ static partial class NullableTvErasureCallRealign
     {
         var type = TypeJson.Read(obj["type"]);
         var argCount = (obj["args"] as JsonArray)?.Count ?? 0;
-        TypeNode[] declParams = null;
-        bool[] declRefused = null;
-        if (type is TypeNode.Fqn owner)
-        {
-            if (ctx.Idx.Ctors.TryGetValue(owner.Name, out var byArity)) byArity.TryGetValue(argCount, out declParams);
-            // A REFERENCED owner's constructor is a declaration like any other (#86 D1): `Slot<T>(value: T)` erases to
-            // `.ctor(!0)`, so a `Slot<object>` retyped by the caller's argument realignment must BOX its argument.
-            else if (_refs != null
-                     && _refs.TryNullableGenericCtorSlot(owner.Name, argCount, out var refParams, out var refRefused))
-            {
-                declParams = refParams;
-                declRefused = refRefused;
-            }
-        }
-        RealignArgs(obj, declParams, declRefused, OwnerArguments(type as TypeNode.Fqn), null, ctx);
+        var selected = SelectConstructorUse(type as TypeNode.Fqn, argCount, ctx.Idx);
+        RealignArgs(obj, selected.Parameters, selected.Refusals, OwnerArguments(type as TypeNode.Fqn), null, ctx);
         // The construction may have been RETYPED by the caller's argument realignment before this ran.
         return TypeJson.Read(obj["type"]);
     }
@@ -1038,26 +1001,24 @@ static partial class NullableTvErasureCallRealign
     // `Iterable<E>.iterator()`, `Iterator<E>.next()` and `List<E>.get(i)` on a receiver corrected to its erased
     // instantiation, which a hardcoded member table used to approximate.
     static DeclSig LookupDecl(TypeNode.Fqn owner, string method, int argCount, int methodArity, bool isStatic,
-        DeclIndex idx, JsonObject call)
+        DeclIndex idx, UseSelection selection)
     {
-        if (idx.ByOwner.TryGetValue(owner.Name, out var sigs))
+        if (idx.IsVisibleOwner(owner.Name) && idx.ByOwner.TryGetValue(owner.Name, out var sigs))
         {
             // An inherited call can still carry the derived owner before owner binding runs. A missing exact
             // identity there must not select a derived sibling; the later flow pass uses the bound base owner.
-            if (Str(call[DeclarationIdentityBinding.Key]) != null) return null;
+            if (selection.Identity != null) return null;
             return sigs.TryGetValue(method + "|" + argCount, out var local) ? local : null;
         }
-        return LookupReferencedDecl(owner, method, argCount, methodArity, isStatic, call);
+        return LookupReferencedDecl(owner, method, argCount, methodArity, isStatic, selection);
     }
 
     static DeclSig LookupReferencedDecl(TypeNode.Fqn owner, string method, int argCount, int methodArity,
-        bool isStatic, JsonObject call)
+        bool isStatic, UseSelection selection)
     {
-        var descriptor = call["shapeTypes"] as JsonArray ?? call["sig"] as JsonArray
-            ?? call["argTypes"] as JsonArray;
-        var signature = descriptor?.Select(TypeJson.Read).ToArray();
+        var signature = selection.Signature;
         if (signature == null || signature.Length != argCount || signature.Any(type => type == null)) signature = null;
-        var identity = Str(call[DeclarationIdentityBinding.Key]);
+        var identity = selection.Identity;
         // Exact closed parameter slots can consume an object-erased argument. This does not grant ownership of
         // unchanged returns: runtime helpers may already carry another lowering's semantic result projection.
         // Keep return facts limited to nullable-erasure carriers or open physical declarations.
@@ -1075,18 +1036,16 @@ static partial class NullableTvErasureCallRealign
     // name would discard the exact Property/MethodSemantics association and collapse same-name accessor overloads back
     // to name+arity — precisely the reverse inference #397 removes. `shapeTypes` is the generic declaration vector
     // before MemberCallSubstitution; `sig` is the same exact vector after binding.
-    static DeclSig LookupPropertyDecl(JsonObject call, TypeNode.Fqn owner, int argCount, int methodArity,
+    static DeclSig LookupPropertyDecl(UseSelection selection, TypeNode.Fqn owner, int argCount, int methodArity,
         bool isStatic, DeclIndex idx)
     {
-        if (!KotlinPropertyAccessors.TryCallIdentity(call, out var propertyName, out var accessorKind))
-            return null;
-        var local = LookupLocalPropertyDecl(call, owner, argCount, methodArity, isStatic, idx);
+        if (!selection.Property) return null;
+        var propertyName = selection.PropertyName;
+        var accessorKind = selection.AccessorKind;
+        var local = LookupLocalPropertyDecl(selection, owner, argCount, methodArity, isStatic, idx);
         if (local != null) return local;
         if (_refs == null || owner == null) return null;
-        var signatureNode = call["shapeTypes"] as JsonArray
-            ?? call["sig"] as JsonArray
-            ?? call["argTypes"] as JsonArray;
-        var signature = signatureNode?.Select(TypeJson.Read).ToArray();
+        var signature = selection.Signature;
         if (signature == null || signature.Length != argCount || signature.Any(type => type == null))
             signature = null;
         return _refs.TryNullableGenericPropertySlot(owner.Name, propertyName, accessorKind, isStatic,
@@ -1096,35 +1055,31 @@ static partial class NullableTvErasureCallRealign
             : null;
     }
 
-    static DeclSig LookupLocalPropertyDecl(JsonObject call, TypeNode.Fqn owner, int argCount, int methodArity,
+    static DeclSig LookupLocalPropertyDecl(UseSelection selection, TypeNode.Fqn owner, int argCount, int methodArity,
         bool isStatic, DeclIndex idx)
     {
-        if (!KotlinPropertyAccessors.TryCallIdentity(call, out var propertyName, out var accessorKind))
-            return null;
-        var key = PropertyKey(propertyName, accessorKind, argCount, methodArity, isStatic);
+        if (!selection.Property) return null;
+        var key = PropertyKey(selection.PropertyName, selection.AccessorKind, argCount, methodArity, isStatic);
         IReadOnlyList<DeclSig> candidates = null;
-        if (owner != null
+        if (owner != null && idx.IsVisibleOwner(owner.Name)
             && idx.PropertiesByOwner.TryGetValue(owner.Name, out var ownedProperties)
             && ownedProperties.TryGetValue(key, out var owned))
             candidates = owned;
         else if (isStatic)
         {
-            var topLevelOwner = owner?.Name ?? TypeJson.OwnerName(call["calleeOwner"]);
+            var topLevelOwner = owner?.Name ?? selection.CalleeOwner;
             if (topLevelOwner != null
                 && idx.TopLevelPropertiesByOwner.TryGetValue(topLevelOwner, out var properties)
                 && properties.TryGetValue(key, out var topLevel))
                 candidates = topLevel;
         }
-        else if (owner != null
+        else if (owner != null && idx.IsVisibleOwner(owner.Name)
             && idx.PropertiesByOwner.TryGetValue(owner.Name, out var properties)
             && properties.TryGetValue(key, out var members))
             candidates = members;
         if (candidates == null || candidates.Count == 0) return null;
 
-        var signatureNode = call["shapeTypes"] as JsonArray
-            ?? call["sig"] as JsonArray
-            ?? call["argTypes"] as JsonArray;
-        var signature = signatureNode?.Select(TypeJson.Read).ToArray();
+        var signature = selection.Signature;
         if (signature == null || signature.Length != argCount || signature.Any(type => type == null))
             signature = null;
         var matches = candidates.Where(candidate => signature == null

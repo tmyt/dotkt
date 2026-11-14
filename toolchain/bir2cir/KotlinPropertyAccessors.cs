@@ -84,17 +84,22 @@ static partial class KotlinPropertyAccessors
         || Str(call["method"]) == sourceName && Str(call["prop"]) == kind;
 
     internal static bool TryCallIdentity(JsonObject call, out string sourceName, out string kind)
+        => TryCallIdentity(Str(call[SourceNameKey]), Str(call[KindKey]), Str(call["method"]), Str(call["prop"]),
+            out sourceName, out kind);
+
+    internal static bool TryCallIdentity(string preservedName, string preservedKind, string method, string prop,
+        out string sourceName, out string kind)
     {
-        sourceName = Str(call[SourceNameKey]);
-        kind = Str(call[KindKey]);
+        sourceName = preservedName;
+        kind = preservedKind;
         if (sourceName != null || kind != null)
         {
             if (sourceName == null || kind is not ("get" or "set"))
                 throw new InvalidOperationException("incomplete preserved Kotlin property call identity");
             return true;
         }
-        sourceName = Str(call["method"]);
-        kind = Str(call["prop"]);
+        sourceName = method;
+        kind = prop;
         if (sourceName != null && kind is "get" or "set") return true;
         sourceName = null;
         kind = null;

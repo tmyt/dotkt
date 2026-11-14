@@ -26,6 +26,7 @@ static partial class NullableTvErasureCallRealign
 
     internal static void ApplyNewSyntheticTypes(SyntheticTypesSnapshot snapshot, DeclIndex index)
     {
+        index.AdvanceSourceAdmission();
         index.SourceApplicationOrder?.Add(snapshot.InnerOrder);
         foreach (var recipe in snapshot.Types) AdmitNewType(index, recipe.Name, () => CloneRecipe(recipe));
     }
@@ -76,6 +77,7 @@ static partial class NullableTvErasureCallRealign
     {
         if (index.ByOwner.ContainsKey(owner)) return;
         var recipe = read();
+        index.RecordOwnerAdmission(owner);
         var signatures = new Dictionary<string, DeclSig>(StringComparer.Ordinal);
         var properties = new Dictionary<string, List<DeclSig>>(StringComparer.Ordinal);
         foreach (var method in recipe.Methods) AddMethodSnapshot(index, owner, method, signatures, properties);
