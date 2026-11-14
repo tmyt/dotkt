@@ -426,6 +426,9 @@ static partial class NullableRepresentationDemand
             new Dictionary<string, string> { ["frame-test-method"] = "physical" }, new HashSet<string>(),
             signatures, new Dictionary<string, int[]>(), null);
         RoundtripMetadata.Stamp(root);
+        var stamped = BirGraphDom.ReadBirFileDeclaration(root);
+        RoundtripMetadata.StampTypeHeaders(stamped, runtimeMode: false);
+        owner = ((BirGraphValue)stamped.Types.Value[0]).ToDom();
 
         static JsonNode Payload(JsonObject declaration, string name)
         {
@@ -444,7 +447,9 @@ static partial class NullableRepresentationDemand
             || owner[KotlinSupertypesRecord.PreKey] != null || method[NullableRepresentationTypes.MethodFrameKey] != null)
             throw new InvalidOperationException("Nullable representation metadata lost source facts or leaked transient frames");
         RoundtripMetadata.StripRuntimeAttrs(runtime);
-        if (runtime["types"][0][KotlinSupertypesRecord.PreKey] != null
+        var stripped = BirGraphDom.ReadBirFileDeclaration(runtime);
+        RoundtripMetadata.StampTypeHeaders(stripped, runtimeMode: true);
+        if (((BirGraphValue)stripped.Types.Value[0]).ToDom()[KotlinSupertypesRecord.PreKey] != null
             || runtime["methods"][0][NullableRepresentationTypes.MethodFrameKey] != null)
             throw new InvalidOperationException("Runtime metadata stripping leaked nullable representation facts");
     }

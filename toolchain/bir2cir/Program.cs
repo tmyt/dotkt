@@ -149,6 +149,7 @@ static class Bir2Cir
                 GenericArrayStorageLowering.SelfTest();
                 ErasedElementValues.SelfTest();
                 RoundtripMetadata.RuntimeLinkageSelfTest();
+                RoundtripMetadata.TypeHeaderSelfTest();
                 RoundtripMetadata.SourceTypeAliasSelfTest();
                 SuspendColdLowering.DeclarationRegistrySelfTest();
                 ReferenceMetadataIndex.SelfTest();
@@ -1414,7 +1415,6 @@ sealed class Pipeline
             else
             {
                 RoundtripMetadata.StripRuntimeAttrs(lowered);
-                runtimeRepresentationTypes |= RoundtripMetadata.HasRepresentationTypeAssociations(lowered);
             }
             // The Kotlin `suspend` modifier has no CLR meaning and every consumer of it is a bir2cir pass: the cold
             // lowering, and the [KotlinFunction(Suspend)] stamp just written (which is how a referenced module still
@@ -1450,6 +1450,15 @@ sealed class Pipeline
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         loweredRoots.Clear();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Only declarations marked at the original metadata phase own a header
+        // obligation. Later synthesized types do not acquire source metadata;
+        // pending source facts are opaque to the intervening physical binders.
+        foreach (var root in physicalDocuments)
+        {
+            RoundtripMetadata.StampTypeHeaders(root, _options.SubstituteStdlibBuild);
+            if (_options.SubstituteStdlibBuild)
+                runtimeRepresentationTypes |= RoundtripMetadata.HasRepresentationTypeAssociations(root);
+        }
         // Interface obligations resolve against the complete final declaration
         // graph, using the same owning records as the following consumers.
         ClrMemberResolution.ResolveInterfaceSlots(physicalDocuments, refs);

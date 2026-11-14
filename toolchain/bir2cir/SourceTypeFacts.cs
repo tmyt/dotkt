@@ -13,13 +13,14 @@ using DotKt.Bir;
 // Text is emitted only for the frozen metadata leaf at the remaining DOM frontier.
 sealed class SourceTypeFacts
 {
-    enum Part { Base, Interfaces, Bounds, NullableFrame }
+    enum Part { Base, Interfaces, Bounds, NullableFrame, Variances }
     readonly Part[] order;
     internal static readonly SourceTypeFacts Empty = new(null, null, new Dictionary<int, TypeNode[]>(), Array.Empty<Part>());
     internal TypeNode Base { get; }
     internal IReadOnlyList<TypeNode> Interfaces { get; }
     internal IReadOnlyDictionary<int, TypeNode[]> Bounds { get; }
     internal NullableRepresentationFrame NullableFrame { get; }
+    internal IReadOnlyDictionary<int, string> Variances { get; }
     internal bool IsBoundsOnly => order.Length == 1 && order[0] == Part.Bounds;
 
     internal SourceTypeFacts(IReadOnlyDictionary<int, TypeNode[]> bounds)
@@ -27,13 +28,15 @@ sealed class SourceTypeFacts
 
     SourceTypeFacts(TypeNode baseType, IReadOnlyList<TypeNode> interfaces,
         IReadOnlyDictionary<int, TypeNode[]> bounds, IReadOnlyList<Part> order,
-        NullableRepresentationFrame nullableFrame = null)
+        NullableRepresentationFrame nullableFrame = null, IReadOnlyDictionary<int, string> variances = null)
     {
         Base = baseType;
         Interfaces = interfaces?.ToArray();
         Bounds = new ReadOnlyDictionary<int, TypeNode[]>(bounds.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray()));
         this.order = order.ToArray();
         NullableFrame = nullableFrame;
+        Variances = new ReadOnlyDictionary<int, string>(variances?.ToDictionary(pair => pair.Key, pair => pair.Value)
+            ?? new Dictionary<int, string>());
     }
 
     internal SourceTypeFacts Merge(IReadOnlyDictionary<int, TypeNode[]> bounds) => Merge(null, null, bounds);
@@ -42,7 +45,7 @@ sealed class SourceTypeFacts
     // authored field order, source frame or the presence of empty vectors.
     internal SourceTypeFacts RewriteTypes(Func<TypeNode, TypeNode> rewrite)
         => new(Base == null ? null : rewrite(Base), Interfaces?.Select(rewrite).ToArray(),
-            Bounds.ToDictionary(pair => pair.Key, pair => pair.Value.Select(rewrite).ToArray()), order, NullableFrame);
+            Bounds.ToDictionary(pair => pair.Key, pair => pair.Value.Select(rewrite).ToArray()), order, NullableFrame, Variances);
 
     // A concretized synthetic declaration no longer owns generic bounds or a
     // nullable companion frame. Its source supertypes retain their authored order.
@@ -59,7 +62,16 @@ sealed class SourceTypeFacts
             || !prior.PhysicalOrder.SequenceEqual(frame.PhysicalOrder)))
             throw new InvalidOperationException("Conflicting declaration-owned nullable representation frames");
         return new SourceTypeFacts(Base, Interfaces, Bounds,
-            NullableFrame == null ? order.Append(Part.NullableFrame).ToArray() : order, frame);
+            NullableFrame == null ? order.Append(Part.NullableFrame).ToArray() : order, frame, Variances);
+    }
+
+    internal SourceTypeFacts MergeVariances(IReadOnlyDictionary<int, string> additions)
+    {
+        if (additions.Count == 0) return this;
+        var merged = Variances.ToDictionary(pair => pair.Key, pair => pair.Value);
+        foreach (var pair in additions) merged.TryAdd(pair.Key, pair.Value);
+        return new SourceTypeFacts(Base, Interfaces, Bounds,
+            order.Contains(Part.Variances) ? order : order.Append(Part.Variances).ToArray(), NullableFrame, merged);
     }
 
     // Capturing an owner changes the source-index correspondence itself. Unlike
@@ -85,8 +97,12 @@ sealed class SourceTypeFacts
         var parts = order.ToList();
         if (owner != null && order.Contains(Part.Bounds) == false && owner.order.Contains(Part.Bounds)) parts.Add(Part.Bounds);
         if (owner != null) foreach (var pair in owner.Bounds) bounds[pair.Key] = pair.Value;
+        var variances = Variances.ToDictionary(pair => sourceMap[pair.Key], pair => pair.Value);
+        if (owner != null && !parts.Contains(Part.Variances) && owner.order.Contains(Part.Variances)) parts.Add(Part.Variances);
+        if (owner != null) foreach (var pair in owner.Variances) variances[pair.Key] = pair.Value;
         if (!parts.Contains(Part.NullableFrame)) parts.Add(Part.NullableFrame);
-        return new SourceTypeFacts(Base == null ? null : Remap(Base), Interfaces?.Select(Remap).ToArray(), bounds, parts, frame);
+        return new SourceTypeFacts(Base == null ? null : Remap(Base), Interfaces?.Select(Remap).ToArray(), bounds, parts, frame,
+            variances);
     }
 
     internal SourceTypeFacts Merge(TypeNode baseType, IReadOnlyList<TypeNode> interfaces,
@@ -110,7 +126,7 @@ sealed class SourceTypeFacts
             if (!parts.Contains(Part.Bounds)) parts.Add(Part.Bounds);
             foreach (var pair in bounds) mergedBounds.TryAdd(pair.Key, pair.Value);
         }
-        return new SourceTypeFacts(Base ?? baseType, mergedInterfaces, mergedBounds, parts, NullableFrame);
+        return new SourceTypeFacts(Base ?? baseType, mergedInterfaces, mergedBounds, parts, NullableFrame, Variances);
     }
 
     internal static SourceTypeFacts Read(ref Utf8JsonReader reader)
@@ -125,6 +141,7 @@ sealed class SourceTypeFacts
         TypeNode[] interfaces = null;
         var bounds = new Dictionary<int, TypeNode[]>();
         NullableRepresentationFrame nullableFrame = null;
+        var variances = new Dictionary<int, string>();
         var parts = new List<Part>();
         while (inner.Read() && inner.TokenType != JsonTokenType.EndObject)
         {
@@ -132,6 +149,7 @@ sealed class SourceTypeFacts
             var part = inner.GetString() switch {
                 "base" => Part.Base, "interfaces" => Part.Interfaces, "bounds" => Part.Bounds,
                 "nullableFrame" => Part.NullableFrame,
+                "variances" => Part.Variances,
                 _ => throw new FormatException(),
             };
             if (parts.Contains(part) || !inner.Read()) throw new FormatException();
@@ -141,6 +159,17 @@ sealed class SourceTypeFacts
                 case Part.Base: baseType = TypeNode.ReadJson(ref inner); break;
                 case Part.Interfaces: interfaces = Types(ref inner); break;
                 case Part.NullableFrame: nullableFrame = NullableRepresentationFrame.ReadJson(ref inner); break;
+                case Part.Variances:
+                    if (inner.TokenType != JsonTokenType.StartObject) throw new FormatException();
+                    while (inner.Read() && inner.TokenType != JsonTokenType.EndObject)
+                    {
+                        if (inner.TokenType != JsonTokenType.PropertyName) throw new FormatException();
+                        var index = int.Parse(inner.GetString(), CultureInfo.InvariantCulture);
+                        if (!inner.Read() || inner.TokenType != JsonTokenType.String
+                            || !variances.TryAdd(index, inner.GetString())) throw new FormatException();
+                    }
+                    if (inner.TokenType != JsonTokenType.EndObject) throw new FormatException();
+                    break;
                 case Part.Bounds:
                     if (inner.TokenType != JsonTokenType.StartObject) throw new FormatException();
                     while (inner.Read() && inner.TokenType != JsonTokenType.EndObject)
@@ -154,7 +183,7 @@ sealed class SourceTypeFacts
             }
         }
         if (inner.TokenType != JsonTokenType.EndObject || inner.Read()) throw new FormatException();
-        return new SourceTypeFacts(baseType, interfaces, bounds, parts, nullableFrame);
+        return new SourceTypeFacts(baseType, interfaces, bounds, parts, nullableFrame, variances);
     }
 
     static TypeNode[] Types(ref Utf8JsonReader reader)
@@ -170,7 +199,12 @@ sealed class SourceTypeFacts
     {
         using var output = new MemoryStream();
         using (var writer = new Utf8JsonWriter(output, new JsonWriterOptions { MaxDepth = BirJson.MaxDepth }))
-        {
+            WritePayload(writer);
+        return Encoding.UTF8.GetString(output.ToArray());
+    }
+
+    internal void WritePayload(Utf8JsonWriter writer)
+    {
             writer.WriteStartObject();
             // Keep insertion order at this frozen-text boundary; it is transport
             // bookkeeping, not dynamic property-based semantic dispatch.
@@ -185,6 +219,11 @@ sealed class SourceTypeFacts
                         writer.WriteEndArray(); break;
                     case Part.NullableFrame:
                         writer.WritePropertyName("nullableFrame"); NullableFrame.WriteJson(writer); break;
+                    case Part.Variances:
+                        writer.WriteStartObject("variances");
+                        foreach (var (index, variance) in Variances)
+                            writer.WriteString(index.ToString(CultureInfo.InvariantCulture), variance);
+                        writer.WriteEndObject(); break;
                     case Part.Bounds:
                         writer.WriteStartObject("bounds");
                         foreach (var (index, constraints) in Bounds)
@@ -196,8 +235,6 @@ sealed class SourceTypeFacts
                         writer.WriteEndObject(); break;
                 }
             writer.WriteEndObject();
-        }
-        return Encoding.UTF8.GetString(output.ToArray());
     }
 
     internal string FrozenText => ToJson();
@@ -253,6 +290,17 @@ sealed class SourceTypeFacts
             || !saved.NullableFrame.NullableStorageIndices.SequenceEqual(new[] { 1 })
             || !saved.NullableFrame.PhysicalOrder.SequenceEqual(new[] { 3, 0, 2, 1, 4 }))
             throw new InvalidOperationException("Source type facts lost the saved nullable/storage correspondence");
+        const string variantText = """{"variances":{"1":"out","0":"in"},"interfaces":[],"bounds":{}}""";
+        var variant = ReadFrozenText(variantText);
+        var variantCopy = variant.RewriteTypes(type => type).MergeNullableFrame(new NullableRepresentationFrame(2, Array.Empty<int>()));
+        var addedVariance = variantCopy.MergeVariances(new Dictionary<int, string> { [1] = "in", [2] = "out" });
+        var rebased = variant.RebaseCapturedFrame(new NullableRepresentationFrame(3, Array.Empty<int>()), new[] { 1, 2 },
+            Empty.MergeVariances(new Dictionary<int, string> { [0] = "out" }));
+        if (variant.FrozenText != variantText || variantCopy.Variances[1] != "out"
+            || addedVariance.Variances[1] != "out" || addedVariance.Variances[2] != "out" || variant.Variances.Count != 2
+            || rebased.Variances[2] != "out" || rebased.Variances[1] != "in" || rebased.Variances[0] != "out"
+            || variant.ConcretizeSynthetic(type => type).FrozenText != """{"interfaces":[]}""")
+            throw new InvalidOperationException("Source type variance facts lost order, first-writer policy, isolation or captured-frame correspondence");
         Console.WriteLine("[source type facts] self-test OK (typed edges/bounds, first-writer wins, input isolation, exact leaf codec, saved nullable/storage frames)");
     }
 }
