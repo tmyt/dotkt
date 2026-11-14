@@ -540,59 +540,13 @@ static partial class FBoundStarProjectionErasure
     // its declaration is rewritten by this pass too, so its memberSignature must follow the same existential ABI.
     static bool IsBoundDeclarationType(JsonObject owner, string key, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases)
-    {
-        var kind = Str(owner["k"]);
-        // A final physical adapter selects an already-projected declaration. Its descriptor and narrowing
-        // conversions belong to that declaration, not to a fresh ordinary Kotlin value-slot projection.
-        if (Bool(owner[GenericRepresentationPolicy.PhysicalDeclarationSignatureKey])
-            && (kind == "callInstance" && key is "sig" or "calleeParams" or "ret" or "dynRet" or "sty"
-                || kind == "cast" && key == "type"
-                || kind is "nullableWrap" or "nullableValue" && key == "elem")) return true;
-        if (kind == null && owner["params"] is JsonArray && key is "params" or "ret"
-            && _valueSlots?.HasNativeMethodSignature(owner) == true) return true;
-        if (IsDeclarationOwnerDescriptor(owner) && key is "params" or "ret"
-            && TypeJson.Read(owner["owner"]) is TypeNode.Fqn selectedOwner
-            && IsNativeDescriptorOwner(selectedOwner, refs, localClrAliases)) return true;
-        // Static declarations and lifted delegate targets name an exact MethodDef owner, not a value slot.
-        if (kind is "callStatic" or "newDelegate" && key is "calleeOwner" or "ownerType" or "owner")
-            return true;
-        if (kind == "callInstance" && key == "ownerType" && Bool(owner[ExactBridgeOwnerCallKey])) return true;
-        if (key == "resolvedMemberParams" || key == ClrMemberResolution.ResolvedMemberReturnKey)
-            return true;
-        if (key == "argTypes" && ClrBoundNode.IsAny(kind)) return true;
-        if (key == "memberRef") return true;
-        // Binding factories own their exact allocation-element result. Value slots using that result are separate.
-        if (key == "ret" && (owner["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-            .Any(a => TypeJson.OwnerName(a["attr"]) == "kotlin.clr.ClrArrayFactory")) return true;
-        if (key == "type" && kind is "cast" or "isInst" or "isInstRef" && KotlinTypeWitness.NeedsWitness(owner)) return true;
-        return key == "memberSignature" && kind is "new" or "newClr"
-            && TypeJson.Read(owner["type"]) is TypeNode.Fqn constructed
-            && IsNativeArrayOwner(constructed, refs, localClrAliases);
-    }
+        => BoundTypeSlot(DomTypeSlotFacts(owner, refs, localClrAliases), key);
 
     // Preserve only the selected native array shape. This does not make unrelated
     // Kotlin generic values in a bridge into exact constructed CLR values.
     static bool IsNativeArrayDeclarationSlot(JsonObject owner, string key, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases) =>
-        // Attribute declarations and blobs obey CLR fixed-argument types, not
-        // ordinary Kotlin open-array value storage. Do not propagate this into nested types.
-        key is "attrs" or "retAttrs" or "assemblyAttrs"
-        || key is "ctors" or "fields" or "properties" or "methods" && BirTypeLowering.IsAttributeClass(owner)
-        || key == "typeArgs" && ClrBoundNode.IsAny(Str(owner["k"]))
-        // List constructions allocate a native generic container. Its
-        // element is a CLR argument witness, not an array value slot.
-        // PhysicalValueCoercion authors the conversion at each insertion edge.
-        || key == "elem" && Str(owner["k"]) == "newList"
-        || key is "params" or "ret"
-        && (Bool(owner[KotlinPropertyAccessors.PhysicalSlotBridgeKey])
-                && new[] { "clrInterfaceImpls", "clrBaseImpls" }
-                    .SelectMany(slotKey => (owner[slotKey] as JsonArray)?.OfType<JsonObject>()
-                        ?? Enumerable.Empty<JsonObject>())
-                    .Any(slot => TypeJson.Read(slot["owner"]) is TypeNode.Fqn nativeOwner
-                        && IsNativeDescriptorOwner(nativeOwner, refs, localClrAliases))
-            || IsDeclarationOwnerDescriptor(owner)
-                && TypeJson.Read(owner["owner"]) is TypeNode.Fqn descriptorOwner
-                && IsNativeDescriptorOwner(descriptorOwner, refs, localClrAliases));
+        NativeArrayTypeSlot(DomTypeSlotFacts(owner, refs, localClrAliases), key);
 
     // A trusted binding alias still names a Kotlin declaration surface. Its MethodImpl signature must follow that
     // declaration's value ABI; only the already-selected physical native owner freezes CLR witnesses and arrays.
@@ -612,25 +566,13 @@ static partial class FBoundStarProjectionErasure
     // Operation owners retain their selected head, not recursively exact Kotlin-supplied arguments.
     // Native memberRef/declaration descriptors separately remain fully bound above.
     static bool PreservesConstructionHead(JsonObject node, string key) =>
-        key is "type" or "ownerType" && ClrBoundNode.IsAny(Str(node["k"]))
-        || key == "ownerType" && Bool(node[GenericRepresentationPolicy.FieldAddressKey])
-        // Constraint dispatch still needs its selected semantic owner to bind the allocated physical slot.
-        || key == "iface" && Str(node["k"]) == "constrainedCall"
-        || key == "type"
-        && ((Str(node["k"]) is "new" or "newClr")
-            || Str(node["k"]) == "var" && Bool(node[CallEvalLowering.ValueTemporaryKey])
-                && node["init"] is JsonObject initializer && Str(initializer["k"]) == "new"
-                && TypeJson.Read(initializer["type"]) == TypeJson.Read(node["type"]));
+        ConstructionHeadSlot(DomTypeSlotFacts(node), key);
 
-    static bool IsArrayComponentSlot(JsonObject node, string key) => key == "elem"
-        && Str(node["k"]) is "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat"
-            or "arrayGet" or "arraySet" or "forArray";
+    static bool IsArrayComponentSlot(JsonObject node, string key) =>
+        ArrayComponentTypeSlot(DomTypeSlotFacts(node), key);
 
     static bool IsNativeLocationSlot(JsonObject node, string key) =>
-        _valueSlots?.IsNativeField(node) == true && key is "type" or "elem" or "memberType"
-        || _valueSlots?.IsNativeField(node) == true && key is "ret" or "sty"
-            && Str(node["k"]) is "field" or "staticField" or "lateinitGet"
-        || Str(node["k"]) is "byrefLoad" or "byrefStore" && key == "elem";
+        NativeLocationTypeSlot(DomTypeSlotFacts(node), key);
 
     // Native instantiation witnesses and addressable source locations retain a closed invariant source head.
     // This is not a fully bound foreign descriptor: nested slots still follow their declaration's frame.
@@ -642,10 +584,7 @@ static partial class FBoundStarProjectionErasure
     // Lexical receivers retain their declaring class, with the same projected argument slots as its TypeDef.
     // Consume the producer's role fact, never the spelling of a hidden outer field or temporary.
     static bool IsExactLexicalType(JsonObject node, string key) =>
-        key == "ownerType" && node["recv"] is JsonObject receiver
-            && (Str(receiver["k"]) == "this" || Bool(receiver[ExactOuterKey]))
-        || key is "type" or "sty" or "memberType" or "ret" or "ownerType"
-            && (Bool(node[ExactOuterKey]) || Str(node["k"]) == "this");
+        ExactLexicalTypeSlot(DomTypeSlotFacts(node), key);
 
     static bool IsTypeDefinition(JsonObject node) => IsTypeDefinition(Str(node["kind"]));
 
