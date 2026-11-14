@@ -115,7 +115,18 @@ static partial class PropertyReferenceFunctionLowering
         Require(genericAdapter.Methods.Value[0].Body.Value[0] is BirReturn { Value.HasValue: true } genericResult
             && genericResult.Value.Value is BirCast { Type.HasValue: true } resultCast && resultCast.Type.Value == new TypeNode.Tv("type", 1),
             "generic result adapter retains caller frame separation");
-        Console.WriteLine("[typed property function slots] self-test OK (module fields, declared slots, generic adapters, ordered ownership and invocation)");
+        // A temporary need not repeat its initializer's result type. Its outer
+        // slot must not hide an inner call's fully declared function argument.
+        var nested = new BirCallStatic { Method = "consume", Ret = text, Sig = new TypeNode[] { function },
+            Args = new IBirExpression[] { Property() } };
+        var temporary = new BirVariable { Name = "temporary", Init = nested };
+        var inferred = new BirFileDeclaration { FileClass = "Inferred", Methods = new[] {
+            new BirFunctionDeclaration { Name = "nested", Ret = text, Body = new IBirStatement[] { temporary } },
+        } };
+        Apply(inferred, snapshot);
+        Require(!temporary.Type.IsPresent && nested.Args.Value[0] is BirNewClosure,
+            "untyped enclosing storage stays transparent to a declared inner argument slot");
+        Console.WriteLine("[typed property function slots] self-test OK (module fields, declared slots, generic adapters, ordered ownership, invocation and transparent containers)");
 
         static void Require(bool condition, string site)
         {
