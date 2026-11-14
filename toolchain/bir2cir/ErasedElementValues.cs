@@ -8,7 +8,7 @@ using DotKt.Bir;
 // Their elements are erased values until an actual consuming slot asks for T.
 // Project only body-local value storage here; signatures, allocation witnesses, reified
 // operations and native locations retain their independently owned representations.
-static class ErasedElementValues
+static partial class ErasedElementValues
 {
     sealed record Slot(JsonObject Declaration, string Name, TypeNode Type);
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
@@ -57,8 +57,7 @@ static class ErasedElementValues
     }
 
     internal static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references,
-        ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null,
-        Func<JsonObject, TypeNode.Tv> scalarResults = null, bool scalarCallsOnly = false)
+        ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null)
     {
         var files = roots.OfType<JsonObject>().ToArray();
         var iteratorValues = new KotlinIteratorValueBinding();
@@ -82,10 +81,10 @@ static class ErasedElementValues
         {
             foreach (var method in (container["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Project(method, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues,
-                    captureStorageOnly: scalarCallsOnly, scalarResults: scalarResults, retainSourceVariables: true);
+                    retainSourceVariables: true);
             foreach (var constructor in (container["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Project(constructor, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues,
-                    captureStorageOnly: scalarCallsOnly, scalarResults: scalarResults, retainSourceVariables: true);
+                    retainSourceVariables: true);
             foreach (var type in (container["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 Container(type, type);
         }
@@ -101,7 +100,7 @@ static class ErasedElementValues
     static void Project(JsonObject method, JsonObject owner, Func<TypeNode, bool> isInterface,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
         GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues, bool captureStorageOnly = false,
-        Func<JsonObject, TypeNode.Tv> scalarResults = null, bool retainSourceVariables = false)
+        bool retainSourceVariables = false)
     {
         if (method["k"] == null && method["body"] is JsonArray nativeBody)
         {
@@ -120,7 +119,6 @@ static class ErasedElementValues
         var reads = new Dictionary<JsonObject, TypeNode.Tv>();
         var iteratorReads = new HashSet<JsonObject>();
         var fieldReads = new HashSet<JsonObject>();
-        var scalarReads = new HashSet<JsonObject>();
         var captures = new List<JsonObject>();
         var uses = new Dictionary<JsonObject, Slot>();
         var addressed = new HashSet<Slot>();
@@ -173,11 +171,6 @@ static class ErasedElementValues
                 if (location) addressed.Add(slot);
             }
             if (!captureStorageOnly && kind == "arrayGet" && !location && Element(obj, scope) is { } read) reads[obj] = read;
-            if (!location && scalarResults?.Invoke(obj) is { } scalarResult)
-            {
-                reads[obj] = scalarResult;
-                scalarReads.Add(obj);
-            }
             if (!location && kind == "field" && Text(obj["recv"]?["k"]) == "this"
                 && TypeJson.OwnerName(obj["ownerType"]) == Text(owner?["name"])
                 && Text(obj["name"]) is string fieldName && erasedFields.TryGetValue(fieldName, out var fieldVariable))
@@ -321,12 +314,7 @@ static class ErasedElementValues
                 iteratorValues.Bind(read);
                 continue;
             }
-            if (scalarReads.Contains(read))
-            {
-                read["ret"] = TypeJson.Write(ObjectType);
-                if (read["dynRet"] != null) read["dynRet"] = TypeJson.Write(ObjectType);
-            }
-            else if (!fieldReads.Contains(read)) read["elem"] = TypeJson.Write(ObjectType);
+            if (!fieldReads.Contains(read)) read["elem"] = TypeJson.Write(ObjectType);
             read["sty"] = TypeJson.Write(ObjectType);
         }
         foreach (var (loop, _) in loopSlots) loop["elem"] = TypeJson.Write(ObjectType);
@@ -584,6 +572,7 @@ static class ErasedElementValues
             throw new InvalidOperationException("Array value projection missed executable constructor delegation");
         Console.WriteLine("[open array element values] self-test OK (erased reads/aliases, retained signature)");
         IteratorSelfTest(pristine.AsObject());
+        SourceScalarSelfTest();
     }
 
     static void IteratorSelfTest(JsonObject template)

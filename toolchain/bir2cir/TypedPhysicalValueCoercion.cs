@@ -290,7 +290,8 @@ static class TypedPhysicalValueCoercion
     }
 
     internal static void AllocateNativeLocals(IEnumerable<BirGraphValue> body, BirParameter[] parameters,
-        List<IBirStatement> prologue, TypedGenericArrayStorageLowering.FreshNames arrayNames = null)
+        List<IBirStatement> prologue, TypedGenericArrayStorageLowering.FreshNames arrayNames = null,
+        bool genericParametersOnly = false)
     {
         var required = new Dictionary<BirGraphValue, TypeNode>(ReferenceEqualityComparer.Instance);
         var uses = new Dictionary<BirGraphValue, List<BirGraphValue>>(ReferenceEqualityComparer.Instance);
@@ -327,6 +328,8 @@ static class TypedPhysicalValueCoercion
                     var location = arguments[i] is BirByRefOf address ? address.Inner.OrDefault() : arguments[i];
                     if (location is not BirLocal { Name.HasValue: true } local
                         || !declarations.TryGetValue(local.Name.Value, out var declaration)
+                        || !PhysicalValueCoercion.NativeLocalEligible(genericParametersOnly,
+                            parameterSet.Contains(declaration), reference.Of)
                         || SignatureValueTypes.Of(StorageType(declaration)) is TypeNode.ByRef) continue;
                     var element = SignatureValueTypes.Of(reference.Of);
                     if (required.TryGetValue(declaration, out var previous) && previous != element)

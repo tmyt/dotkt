@@ -438,7 +438,8 @@ def outputs(root, definitions):
             model += ["    public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;"]
         if "typeArgs" in shape["properties"] and cs(shape["properties"]["typeArgs"]) == "TypeNode[]":
             model += ["    public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }"]
-        for field, api in [("suspendFnTypePre", "SuspendFunctionTypeFact"), ("retSuspendFnTypePre", "SuspendFunctionReturnFact")]:
+        for field, api in [("suspendFnTypePre", "SuspendFunctionTypeFact"), ("retSuspendFnTypePre", "SuspendFunctionReturnFact"),
+                           ("_erasedValueVariable", "ErasedValueVariableFact")]:
             if field in shape["properties"]:
                 prop = member(field)
                 model += [f"    public override OptionalField<TypeNode> {api} {{ get => {prop}; set => {prop} = value; }}"]
@@ -537,7 +538,8 @@ def outputs(root, definitions):
             source_regions[statements] = result
             region_results.add(result)
         if any(is_child(value) and cs(value) == "IBirStatement[]" for _, value in fields):
-            model += ["    public override void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)", "    {"]
+            model += ["    public override void VisitSourceChildren(",
+                      "        Action<string, BirGenericFrameRole, BirGraphSlot> child, Action<BirSourceRegion> region)", "    {"]
             for field, value in fields:
                 if not is_child(value) or field in region_results:
                     continue
@@ -549,8 +551,10 @@ def outputs(root, definitions):
                     model += [f"        if ({prop}.HasValue || {result_prop}.HasValue) region(new BirSourceRegion(",
                               f"            {prop}.OrEmpty(), {result_prop}.HasValue ? {result_slot} : (BirGraphSlot?)null, statements => {prop} = statements));"]
                 else:
+                    role = value.get("x-dotkt-frame-role", "Lexical")
+                    prefix = f"{json.dumps(field)}, BirGenericFrameRole.{role}, "
                     body = f"region(new BirSourceRegion({prop}.Value, ReplaceStatements: statements => {prop} = statements));" if cs(value) == "IBirStatement[]" else slots(
-                        value, prop + '.Value', target=prop, optional=True, visitor="child")
+                        value, prop + '.Value', target=prop, optional=True, visitor="child", prefix=prefix)
                     model += [f"        if ({prop}.HasValue) {{ {body} }}"]
             model += ["    }"]
         if "executionFrame" in info:

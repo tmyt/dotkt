@@ -75,6 +75,15 @@ static partial class KotlinGenericScalarSlots
         if (!projection.Parameters.ContainsKey("late") || !projection.Returns.Contains("late")
             || !projection.Parameters.ContainsKey("scalar") || !projection.Returns.Contains("scalar"))
             throw new InvalidOperationException("Late scalar projection replaced the source projection authority");
+        if (projection.Result(new BirCallStatic { DeclarationId = "scalar", Sty = source, DynRet = physical, Ret = integer }, refs) != source
+            || projection.Result(new BirCallInstance { DeclarationId = "late", Sty = OptionalField<TypeNode>.Null, DynRet = physical }, refs) != physical
+            || projection.Result(new BirCallStatic { DeclarationId = "scalar", Ret = source }, refs) != null
+            || projection.Result(new BirCallStatic { DeclarationId = "scalar", Sty = integer, DynRet = source }, refs) != null
+            || projection.Result(new BirCallStatic { DeclarationId = "scalar", Sty = new TypeNode.Nullable(source) }, refs) != null
+            || projection.Result(new BirCallStatic { Method = "scalar", Sty = source }, refs) != null
+            || projection.Result(new BirCallStatic { DeclarationId = "not-recorded", Sty = source }, refs) != null
+            || projection.Result(new BirConstrainedCall { DeclarationId = "scalar", Sty = source }, refs) != null)
+            throw new InvalidOperationException("Owning scalar results lost exact identity, live projection authority, bare-variable or Sty/DynRet precedence");
         Console.WriteLine("[source generic scalar slots] self-test OK (method/property frames, native/query/suspend, call result, one late authority)");
     }
 }

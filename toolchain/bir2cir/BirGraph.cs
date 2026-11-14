@@ -18,6 +18,13 @@ internal abstract record BirGraphValue
     public virtual TypeNode? ExplicitSourceType => null;
     public virtual OptionalField<string> DeclarationIdentityFact => default;
     public virtual bool HasDeclaredDelegateSlot => false;
+    // An erased body value retains its ordinary lexical variable for later
+    // constraint dispatch; consumers must not reconstruct it from storage.
+    public virtual OptionalField<TypeNode> ErasedValueVariableFact
+    {
+        get => default;
+        set => throw new InvalidOperationException("This occurrence cannot carry an erased-value origin");
+    }
     public virtual OptionalField<TypeNode[]> ApplicationTypeArguments
     {
         get => default;
@@ -53,7 +60,9 @@ internal abstract record BirGraphValue
     // statement vector in its own preceding-declaration environment.
     public virtual void VisitSourceParameters(Action<string, TypeNode> visit) { }
     public virtual void VisitSourceChildren(Action<BirGraphSlot> child, Action<BirSourceRegion> region)
-        => VisitChildSlots(child);
+        => VisitSourceChildren((_, _, slot) => child(slot), region);
+    public virtual void VisitSourceChildren(Action<string, BirGenericFrameRole, BirGraphSlot> child,
+        Action<BirSourceRegion> region) => VisitOwnChildSlots(child);
     // Construction operands execute in the caller; a nested declaration's body
     // does not. The maintained frame profile generates the latter overrides.
     public virtual void VisitCurrentFrameSlots(Action<BirGraphSlot> visit) => VisitChildSlots(visit);
