@@ -7,7 +7,7 @@ static partial class ErasedElementValues
     internal static void ClearRetainedVariables(BirGraphValue node)
     {
         if (node is IBirExecutablePayload) return;
-        node.ErasedValueVariableFact = default;
+        if (node.ErasedValueVariableFact.IsPresent) node.ErasedValueVariableFact = default;
         node.VisitChildren(ClearRetainedVariables);
     }
 
