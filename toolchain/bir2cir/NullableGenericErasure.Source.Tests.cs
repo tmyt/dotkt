@@ -47,7 +47,7 @@ static partial class NullableGenericErasure
         var suspendSlot = new BirParameter { Name = "suspendFn", Type = suspended };
         var array = new BirNewArraySized { Elem = nullableInteger };
         var construction = new BirNew { Type = SourceType("Carrier"), ArgTypes = new TypeNode[] { list } };
-        var referent = new BirByrefLoad { Elem = list };
+        var referent = new BirByRefLoad { Elem = list };
         var overrideEdge = new BirOverride { Owner = list, Member = "Use", Kind = "function", Arity = 0 };
         var constructorSlot = new BirParameter { Name = "initial", Type = nullableVariable };
         var field = new BirFieldDeclaration { Name = "value", Type = nullableVariable };
