@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // DECLARATION-SIDE external class override binding. A reference-KLIB-projected CLR base member normally survives Fir2Ir
 // through `overriddenSymbols`; kotc then emits `override:true` + its pure-Kotlin `overrides` closure, and
@@ -18,36 +19,33 @@ using DotKt.Bir;
 // external override"; more than one is malformed and fails loudly rather than choosing a reflection-order winner.
 static partial class ClrMemberResolution
 {
-    static void ResolveExternalClassOverrides(JsonNode root)
+    static void ResolveExternalClassOverrides(BirFileDeclaration root, ReferenceMetadataIndex refs)
     {
-        if (root is not JsonObject ro || ro["types"] is not JsonArray types) return;
-        foreach (var item in types)
+        foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>())
         {
-            if (item is not JsonObject type
-                || (type["kind"] as JsonValue)?.GetValue<string>() != "class"
-                || TypeJson.Read(type["base"]) is not TypeNode.Fqn baseNode
-                || type["methods"] is not JsonArray methods)
+            if (type.Kind.OrDefault() != "class"
+                || type.Base.OrDefault() is not TypeNode.Fqn baseNode
+                || !type.Methods.HasValue)
                 continue;
 
             // ResolveNetType intentionally excludes DotKt-authored dependencies and local types. Their Kotlin override
             // edges must already be present in BIR; this fallback is only for CLR classes loaded from reference KLIBs.
-            var baseType = _refs.ResolveNetType(
+            var baseType = refs.ResolveNetType(
                 ReferenceMetadataIndex.ReflectedOwnerFqn(baseNode.Name),
                 baseNode.Args?.Length ?? 0);
             if (baseType == null || !baseType.IsClass) continue;
 
-            foreach (var entry in methods)
+            foreach (var method in type.Methods.Value)
             {
-                if (entry is not JsonObject method
-                    || BoolValue(method["static"])
-                    || BoolValue(method["override"])
-                    || method["pendingOverrideOwner"] != null
-                    || (method["name"] as JsonValue)?.GetValue<string>() is not string name
-                    || method["params"] is not JsonArray parameters)
+                // Pending accessor overrides are already marked Override by
+                // DeclarationRename before their exact DOM base-slot binding.
+                // This owner changes only otherwise-unbound class declarations.
+                if (method.Static.OrDefault() || method.Override.OrDefault()
+                    || method.Name.OrDefault() is not string name || !method.Params.HasValue)
                     continue;
 
-                var declared = parameters.Select((p, i) =>
-                    TypeJson.Read((p as JsonObject)?["type"])
+                var declared = method.Params.Value.Select((parameter, i) =>
+                    parameter?.Type.OrDefault()
                     ?? throw new InvalidOperationException(
                         $"bir2cir: external override '{baseNode.Name}.{name}' param #{i} has an unreadable type node"))
                     .ToList();
@@ -68,11 +66,9 @@ static partial class ClrMemberResolution
                         $"external override base={baseNode.Name}.{name}({DescArgs(declared)})",
                         matches);
 
-                method["override"] = true;
+                method.Override = true;
             }
         }
     }
 
-    static bool BoolValue(JsonNode node) =>
-        (node as JsonValue)?.TryGetValue<bool>(out var value) == true && value;
 }

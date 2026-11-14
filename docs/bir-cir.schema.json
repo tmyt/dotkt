@@ -1712,7 +1712,7 @@
       }, "required": ["name"], "additionalProperties": false
     },
     "cirMethodImpl": {
-      "type": "object", "x-dotkt-model": { "name": "CirMethodImpl", "domain": "cirDeclarations", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" }, "dotktValueReturn": { "type": "boolean" } } },
+      "type": "object", "x-dotkt-model": { "name": "CirMethodImpl", "domain": "cirDeclarations", "loweringProperties": { "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" }, "dotktValueReturn": { "type": "boolean" }, "referenceMember": { "type": "string" } } },
       "properties": {
         "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "arity": { "type": "integer" },
         "params": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "ret": { "x-dotkt-representation-role": "Return", "$ref": "#/$defs/type" },

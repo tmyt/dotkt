@@ -51,6 +51,7 @@ static class Bir2Cir
                 FunctionValueRepresentation.SelfTestSourceFacts();
                 BirNodeType.SelfTest();
                 CapturedGenericInvocation.SelfTestSourceFacts();
+                CapturedGenericInvocation.SelfTestPhysicalInvocation();
                 SourceModuleIndex.SelfTest();
                 InheritedClassInterfaceBridge.SourceSelfTest();
                 BirFileCodec.SelfTest();
@@ -62,6 +63,8 @@ static class Bir2Cir
                 TypedPhysicalDelegateAdapter.SelfTest();
                 ClrMemberResolution.SelfTestTypedDelegateSlots();
                 ClrMemberResolution.SelfTestTypedInterfaceSlots();
+                ClrMemberResolution.SelfTestTypedBaseConstructors();
+                ClrMemberResolution.DeclarationBindingsSelfTest();
                 BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
@@ -533,10 +536,16 @@ sealed class Pipeline
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
+            // Alias implementations become static rule-3 helpers before call
+            // substitution; reference builds retain the pure Kotlin surface.
             if (!referenceBuild)
                 AliasHelperHoist.Apply(source, refs, genericRepresentations, aliasTransitions, RetireDeclaration);
+            // Bind identity first: rebinding a reference-stub spelling after
+            // CLR override allocation would undo that physical slot decision.
             DeclarationIdentityBinding.BindReferenced(source, refs, sourceIndex.DeclarationIds, deferUnknown: true);
             if (!referenceBuild) DeclarationRename.Apply(source, refs);
+            // Preserve Kotlin classifier identity while selecting physical
+            // membership and star-collection faces before call substitution.
             if (!referenceBuild)
             {
                 KotlinRuntimeTypeWitness.LowerOperations(source, refs);
@@ -656,40 +665,13 @@ sealed class Pipeline
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
             // Initial nullable-use flow already ran on owning source BIR.
             // Subsequent calls below follow only their actual late capability transitions.
-            // CALL substitution (substitute/app builds only): a member call / construction whose OWNER is a CLR-bound
-            // type in the ref.dll (@ClrTypeAlias, or the legacy class-level @ClrIntrinsic) is rewritten to a plain BCL
-            // call/new. This is the bir2cir home of what kotc's clrName() member routing used to do — sourced from the
-            // ref.dll's @ClrIntrinsic labels, NOT from kotc. Runs BEFORE type lowering so it sees the kotlin.* owners.
-            // RULE-3 HOIST (all CLR-bound alias classes): kotc emits EVERY @ClrTypeAlias class with hoistable bodies as a
-            // PLAIN BIR type — alias-only files (String/Char/Boolean) AND the MIXED files (StringBuilder/collections/
-            // Regex/unsigned) alike — and synthesizes NO dotkt$ClrH_* helper itself. This pass reads the ref.dll
-            // @ClrTypeAlias index, turns each such plain type into the static helper + drops it, BEFORE call substitution
-            // so the (already-BCL) member bodies and the rule-3 call routing both see a consistent helper. No-op for ref.
-            // Bound stubs were retired on owning typed source declarations,
-            // before this hoist can turn them into helper implementations.
-            // Inherited interface fake overrides were consumed on owning typed
-            // source records in every build mode, including reference builds.
-            var hoisted = bir.Root;
-            // CLR override allocation: ordinary functions carrying @ClrIntrinsic receive the external slot name;
-            // Kotlin property accessors keep their dedicated name and receive an explicit interface/base MethodImpl
-            // binding instead. Derived from the frontend's `overrides` closure plus reference metadata. Runs before
-            // MemberCallSubstitution so CLR-bound calls can still be shaped from the exact external identity. Never in
-            // ref builds, whose declarations remain a pure Kotlin surface.
-            // Bind the selected reference declaration before mapping its inherited CLR slot. Rebinding a
-            // reference-stub name after DeclarationRename would undo that physical override decision.
-            // Alias placement, selected reference binding and override naming
-            // already ran in that order on the owning source records.
-            // STAR-PROJECTION COLLECTION CLASSIFIERS: use faithful non-generic BCL faces where one exists; otherwise
-            // author the Collection/Set/MutableSet composite classifier plus the following smart-cast member access.
-            // App build only, before MemberCallSubstitution while the Kotlin owner is still visible.
-            // Runtime classifier and star-projection owners have already
-            // consumed these facts on the same owning source records.
+            var working = bir.Root;
             // EVENT HANDLES: materialize each clrEventGet as an ordinary stdlib ClrEvent<H> construction with
             // add/remove callback closures. Subscribe is a normal Kotlin member call, independent of whether its
             // receiver was read directly, stored, returned or passed across a DLL. Run before member substitution
             // so the new construction and callbacks receive the same ordinary physical binding as source code.
-            hoisted = ClrEventSubscriptionBinding.Apply(
-                hoisted, refs, clrEventForwardedOwners, out var materializedEventHandles);
+            working = ClrEventSubscriptionBinding.Apply(
+                working, refs, clrEventForwardedOwners, out var materializedEventHandles);
             foreach (var materialized in materializedEventHandles)
                 FunctionValueRepresentation.Apply(materialized, refs.IsByRefLikeFqn);
             // Event binding has just synthesized receiver locals plus add/remove member accesses. Feed those
@@ -703,7 +685,7 @@ sealed class Pipeline
             // ClosureSynthesis pass ran earlier, before event binding. Give the exact materialized roots to its late
             // entry contract so only these newly-created callback classes are assembled.
             var materializedEventClosureTypes = ClosureSynthesis.ApplyMaterialized(
-                hoisted, materializedEventHandles, refs, scalarSlots.ProjectMethod);
+                working, materializedEventHandles, refs, scalarSlots.ProjectMethod);
             if (DelegateTargetSlotAlignment.ApplyMaterialized(
                     materializedEventHandles, materializedEventClosureTypes, isValueFqn))
                 foreach (var materializedType in materializedEventClosureTypes)
@@ -721,14 +703,16 @@ sealed class Pipeline
             // or routes custom accessors through ordinary calls on the retained Kotlin policy field, plus
             // a type-level `clrEventDecl`. Raise sites bind module-wide after inner owner projection. App/rt only (no .NET events
             // in the ref/rt stdlib self-build).
-            if (!_options.RefBuild) hoisted = ClrEventImplBinding.BindImplementations(hoisted, refs, localEventDeclarations);
+            if (!_options.RefBuild) working = ClrEventImplBinding.BindImplementations(working, refs, localEventDeclarations);
             // Consume CharSequence property semantics while calls still carry the explicit Kotlin property name and
             // accessor role. MemberCallSubstitution is the physical binding boundary for those calls; no later pass may
             // recover `length` from the allocated MethodRef spelling.
             CharSeqStringLowering.CharSeqRetLambdas charSeqRetLambdas = null;
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
-                hoisted = CharSeqStringLowering.Apply(hoisted, localTopLevelFns, out charSeqRetLambdas);
-            var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
+                working = CharSeqStringLowering.Apply(working, localTopLevelFns, out charSeqRetLambdas);
+            // Resolve Kotlin calls through reference-owned bindings before type
+            // lowering removes their Kotlin owner and member vocabulary.
+            var substituted = _options.RefBuild ? working : MemberCallSubstitution.Apply(working, refs,
                 localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations, genericRepresentations,
                 localFactories, localDeclarationIds);
             // Reified-nullability witnesses were prepared while declaration identities and Kotlin type arguments were
@@ -1402,7 +1386,7 @@ sealed class Pipeline
             foreach (var (lowered, _) in loweredRoots)
                 ExactExternalDeclarationIdentity.Apply(lowered, refs);
 
-        CapturedGenericInvocation.PrepareLocalDeclarations(loweredRoots.Select(file => file.Root),
+        var capturedInvocations = CapturedGenericInvocation.PrepareLocalDeclarations(loweredRoots.Select(file => file.Root),
             flattenMissingOwners: _options.SubstituteStdlibBuild);
         // PHASE 3B — metadata, exact external identities, and validation over the now-stable module graph.
         bool runtimeRepresentationTypes = false;
@@ -1434,7 +1418,6 @@ sealed class Pipeline
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
-            CapturedGenericInvocation.Apply(lowered, refs, emittedLocalTypes);
         }
 
         var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
@@ -1444,8 +1427,25 @@ sealed class Pipeline
         // edges; no pass below returns the graph to DOM.
         var physicalRoots = loweredRoots.Select(file =>
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
-        loweredRoots.Clear();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Resolve declaration operands on the continuing physical records before
+        // invocation adaptation can append methods. The ordinary operation walk
+        // has already bound its own call sites; it does not consume these edits.
+        foreach (var root in physicalDocuments)
+        {
+            ClrMemberResolution.ApplyDeclarationBindings(root, refs, emittedLocalTypes);
+            ClrMemberResolution.ResolveBaseConstructors(root, refs, emittedLocalTypes);
+        }
+        // Retain the original prepared declaration membership and exact source
+        // anchors across this one-way frontier. The captured ID keys already
+        // own selection; pending metadata and allocated names are not a new
+        // declaration inventory. Both invocation and receiver materialization
+        // now consume these same owning typed records before dispatch metadata.
+        var physicalCapturedInvocations = CapturedGenericInvocation.BindPhysicalDeclarations(
+            capturedInvocations, loweredRoots.Select(file => file.Root).ToArray(), physicalDocuments);
+        loweredRoots.Clear();
+        foreach (var root in physicalDocuments)
+            physicalCapturedInvocations.Apply(root, refs, emittedLocalTypes);
         // Final resolution distinguished actual accessors from public fields.
         // Consume their receiver-dispatch facts on the same owning typed graph;
         // retain each exact MemberRef and each resolved file's own arity snapshot.

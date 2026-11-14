@@ -28332,6 +28332,7 @@ internal sealed record BirMethodImpl : BirGraphValue
     public OptionalField<BirMemberReference> MemberRef { get; set; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; set; }
     public OptionalField<bool> DotktValueReturn { get; set; }
+    public OptionalField<string> ReferenceMember { get; set; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (Owner.HasValue) { visit("owner", (TypeNode)Owner.Value); }
@@ -28351,6 +28352,7 @@ internal sealed record BirMethodImpl : BirGraphValue
         if (Member.HasValue) { visit((string)Member.Value); }
         if (Params.HasValue) { foreach (var item0 in Params.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
+        if (ReferenceMember.HasValue) { visit((string)ReferenceMember.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
@@ -28459,7 +28461,8 @@ internal sealed record BirMethodImpl : BirGraphValue
             && EqualField(TypeParams, value.TypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(MemberRef, value.MemberRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(MethodTypeParameterBoundsPre, value.MethodTypeParameterBoundsPre, (left, right) => left.FrozenText == right.FrozenText)
-            && EqualField(DotktValueReturn, value.DotktValueReturn, (left, right) => EqualityComparer<bool>.Default.Equals(left, right));
+            && EqualField(DotktValueReturn, value.DotktValueReturn, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
+            && EqualField(ReferenceMember, value.ReferenceMember, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -28472,6 +28475,7 @@ internal sealed record BirMethodImpl : BirGraphValue
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         WriteOptional(writer, "dotktValueReturn", DotktValueReturn, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "referenceMember", ReferenceMember, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom()
@@ -28486,6 +28490,7 @@ internal sealed record BirMethodImpl : BirGraphValue
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom();
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         if (DotktValueReturn.IsPresent) result["dotktValueReturn"] = DotktValueReturn.IsNull ? null : JsonValue.Create(DotktValueReturn.Value);
+        if (ReferenceMember.IsPresent) result["referenceMember"] = ReferenceMember.IsNull ? null : JsonValue.Create(ReferenceMember.Value);
         return result;
     }
 }

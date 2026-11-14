@@ -17,6 +17,9 @@ static class TypeParameterFrame
             foreach (var parameter in declared) yield return parameter;
     }
 
+    internal static IEnumerable<BirTypeParameter> Declarations(IBirTypeDeclaration type) =>
+        type.CapturedTypeParams.OrEmpty().Concat(type.TypeParams.OrEmpty());
+
     public static int Count(JsonObject type) => Count((type?["capturedTypeParams"] as JsonArray)?.Count ?? 0,
         (type?["typeParams"] as JsonArray)?.Count ?? 0);
 
@@ -26,4 +29,7 @@ static class TypeParameterFrame
 
     public static JsonArray CloneDeclarations(JsonObject type) =>
         new(Declarations(type).Select(parameter => parameter?.DeepClone()).ToArray());
+
+    internal static BirTypeParameter[] CloneDeclarations(IBirTypeDeclaration type) =>
+        Declarations(type).Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray();
 }

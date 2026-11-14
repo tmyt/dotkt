@@ -27427,6 +27427,7 @@ internal static class BirGraphMessagePack
         OptionalField<BirMemberReference> field6 = default;
         OptionalField<SourceBoundsSnapshot> field7 = default;
         OptionalField<bool> field8 = default;
+        OptionalField<string> field9 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -27467,6 +27468,10 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
+                case "referenceMember":
+                    Seen(ref seen, 1UL << 9);
+                    field9 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -27482,13 +27487,14 @@ internal static class BirGraphMessagePack
             MemberRef = field6,
             MethodTypeParameterBoundsPre = field7,
             DotktValueReturn = field8,
+            ReferenceMember = field9,
         };
     }
 
     internal static void WriteBirMethodImpl(ref MessagePackWriter writer, BirMethodImpl value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Owner.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Arity.IsPresent ? 1 : 0) + (value.Params.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.MethodTypeParameterBoundsPre.IsPresent ? 1 : 0) + (value.DotktValueReturn.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Owner.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Arity.IsPresent ? 1 : 0) + (value.Params.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.MethodTypeParameterBoundsPre.IsPresent ? 1 : 0) + (value.DotktValueReturn.IsPresent ? 1 : 0) + (value.ReferenceMember.IsPresent ? 1 : 0));
         if (value.Owner.IsPresent)
         {
             writer.Write("owner");
@@ -27578,6 +27584,15 @@ internal static class BirGraphMessagePack
             else
             {
                 writer.Write(value.DotktValueReturn.Value);
+            }
+        }
+        if (value.ReferenceMember.IsPresent)
+        {
+            writer.Write("referenceMember");
+            if (value.ReferenceMember.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.ReferenceMember.Value);
             }
         }
     }
