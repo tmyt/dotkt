@@ -64,9 +64,11 @@ static partial class ClrMemberResolution
                 "selection and MemberRef parameters must remain open while the declaring owner uses the caller frame");
             Check(closure.DotktDelegateSlot.Value is TypeNode.Fqn { Name: "System.Action" }
                 && ReferenceEquals(closure.FuncType.Value, natural) && ReferenceEquals(closure.DelegateCtorRef.Value, delegateConstructor)
-                && genericClosure.DotktDelegateSlot.Value is TypeNode.Fqn { Name: "System.Func", Args.Length: 1 } slot
+                && genericClosure.DotktDelegateSlot.Value is TypeNode.Fqn { Name: "System.Func`1", Args.Length: 1 } slot
                 && slot.Args[0] == callerVariable,
-                "the exact delegate target must close the base frame and win without modifying natural shape or constructor reference");
+                $"the exact delegate target must close the base frame and win without modifying natural shape or constructor reference: "
+                + $"non-generic={closure.DotktDelegateSlot.OrDefault()}, generic={genericClosure.DotktDelegateSlot.OrDefault()}, "
+                + $"natural={ReferenceEquals(closure.FuncType.Value, natural)}, ctor={ReferenceEquals(closure.DelegateCtorRef.Value, delegateConstructor)}");
             Check(ReferenceEquals(thisDelegation.BaseCtorRef.Value, previous) && thisDelegation.DelegationDeclarationId.Value == "this-delegation"
                 && ReferenceEquals(local.BaseCtorRef.Value, previous) && local.DelegationDeclarationId.Value == "local-delegation"
                 && ReferenceEquals(absent.BaseCtorRef.Value, previous),

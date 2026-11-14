@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // DECLARATION-SIDE external class override binding. A reference-KLIB-projected CLR base member normally survives Fir2Ir
 // through `overriddenSymbols`; kotc then emits `override:true` + its pure-Kotlin `overrides` closure, and

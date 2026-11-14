@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // A clrBaseImpls entry is an ECMA-335 MethodImpl declaration operand. Local declarations can be linked directly to
 // their MethodBuilder, but an external declaration must cross CIR as the same complete member identity as a call.
