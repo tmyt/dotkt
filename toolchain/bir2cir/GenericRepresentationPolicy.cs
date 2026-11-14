@@ -73,6 +73,22 @@ sealed partial class GenericRepresentationPolicy
     internal string BindingAlias(string owner) => owner == null ? null
         : _aliases.GetValueOrDefault(ReferenceMetadataIndex.BareOwnerFqn(owner));
 
+    // The late refresh consumes selected declaration vectors, not inferred
+    // operand types. Keep its precedence independent of the early source reader.
+    static T NativeRefreshParameters<T>(T shapes, T signature, T memberSignature, T argumentTypes) where T : class
+        => shapes ?? signature ?? memberSignature ?? argumentTypes;
+
+    static bool NativeRefreshCall(string kind) => kind is "callStatic" or "callInstance" or "constrainedCall"
+        or "callLocal" or "new" || ClrBoundNode.IsAny(kind);
+
+    static bool NativeRefreshAddress(TypeNode parameter) => SignatureValueTypes.Of(parameter) is TypeNode.ByRef;
+
+    static bool NativeRefreshLocation(string kind, out bool isStatic)
+    {
+        isStatic = kind == "staticField";
+        return isStatic || kind == "field";
+    }
+
     // Revisit newly materialized source/capture fields before value projection. Selected managed-reference
     // parameter shapes own these locations; the late value-flow pass separately allocates exact native locals.
     internal void RecordNativeFields(IEnumerable<JsonNode> roots)
@@ -114,19 +130,18 @@ sealed partial class GenericRepresentationPolicy
                 // Decide field layout while source bodies still exist in both
                 // reference and runtime builds, not after reference-body removal.
                 var kind = Text(obj["k"]);
-                if ((kind is "callStatic" or "callInstance" or "constrainedCall" or "callLocal" or "new"
-                        || ClrBoundNode.IsAny(kind))
-                    && (obj["shapeTypes"] ?? obj["sig"] ?? obj["memberSignature"] ?? obj["argTypes"]) is JsonArray parameters
+                if (NativeRefreshCall(kind)
+                    && NativeRefreshParameters(obj["shapeTypes"], obj["sig"], obj["memberSignature"], obj["argTypes"]) is JsonArray parameters
                     && obj["args"] is JsonArray arguments && parameters.Count == arguments.Count)
                     for (var i = 0; i < parameters.Count; i++)
                     {
-                        if (SignatureValueTypes.Of(TypeJson.Read(parameters[i])) is not TypeNode.ByRef
+                        if (!NativeRefreshAddress(TypeJson.Read(parameters[i]))
                             || arguments[i] is not JsonObject argument) continue;
                         var location = Text(argument["k"]) == "byrefOf" ? argument["inner"] as JsonObject : argument;
-                        if (location == null || Text(location["k"]) is not ("field" or "staticField")
+                        if (location == null || !NativeRefreshLocation(Text(location["k"]), out var isStatic)
                             || TypeJson.OwnerName(location["ownerType"] ?? location["owner"]) is not string owner
                             || Text(location["name"]) is not string name) continue;
-                        var key = FieldKey(owner, name, Text(location["k"]) == "staticField", location);
+                        var key = FieldKey(owner, name, isStatic, location);
                         if (fields.TryGetValue(key, out var declaration))
                         {
                             _nativeFields.Add(declaration);
@@ -239,6 +254,7 @@ sealed partial class GenericRepresentationPolicy
     public static void SelfTest()
     {
         SourcePolicySelfTest();
+        NativeRefreshSelfTest();
         var heads = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"types":[
           {"kind":"class","name":"SourceHead","typeParams":[{"name":"T"}]},
