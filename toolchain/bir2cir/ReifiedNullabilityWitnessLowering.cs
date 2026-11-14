@@ -80,10 +80,18 @@ static partial class ReifiedNullabilityWitnessLowering
     static void FinalizeVector(JsonObject call, string key, int argumentCount, int witnessCount)
     {
         if (call[key] is not JsonArray vector) return;
-        if (vector.Count > argumentCount || argumentCount - vector.Count > witnessCount)
+        var missing = MissingWitnessTypes(key, vector.Count, argumentCount, witnessCount);
+        for (var index = 0; index < missing; index++) AppendWitnessType(call, key);
+    }
+
+    // Early owning materialization and the late signature repair have the same
+    // vector contract; neither may silently supply a missing Kotlin argument.
+    static int MissingWitnessTypes(string key, int vectorCount, int argumentCount, int witnessCount)
+    {
+        if (vectorCount > argumentCount || argumentCount - vectorCount > witnessCount)
             throw new InvalidOperationException(
-                $"bir2cir: nullable-sensitive call has inconsistent '{key}' ({vector.Count}) and argument ({argumentCount}) counts");
-        while (vector.Count < argumentCount) AppendWitnessType(call, key);
+                $"bir2cir: nullable-sensitive call has inconsistent '{key}' ({vectorCount}) and argument ({argumentCount}) counts");
+        return argumentCount - vectorCount;
     }
 
     static void AppendWitnessType(JsonObject call, string key)

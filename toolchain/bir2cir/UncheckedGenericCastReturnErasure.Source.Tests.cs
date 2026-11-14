@@ -167,6 +167,7 @@ static partial class UncheckedGenericCastReturnErasure
             Sty = new TypeNode.Fqn("kotlin.String"), Ret = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")),
         })) }), "ret overrode explicit sty precedence");
         SelfTestCallableFlow();
+        SelfTestReferencedUses();
         Console.WriteLine("[unchecked cast ownership] self-test OK (typed capture, exact one-shot binding, both root orders, live bodies, detach, explicit source types)");
     }
 }
