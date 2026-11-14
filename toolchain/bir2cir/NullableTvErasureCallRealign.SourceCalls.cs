@@ -20,12 +20,11 @@ static partial class NullableTvErasureCallRealign
         var selection = ReadUseSelection(call);
         var arguments = call.TypeArgs.OrDefault()?.Select(BirGraphValue.CopyType).ToArray();
         var count = call.Args.OrEmpty().Length;
-        var property = LookupPropertyDecl(selection, owner, count, arguments?.Length ?? 0, false, context.Idx);
-        var declaration = selection.Property ? property
-            : LookupDeclarationIdentity(selection.Identity, owner, context.Idx)
-                ?? LookupDecl(owner, call.Method.Value, count, arguments?.Length ?? 0, false, context.Idx, selection);
-        SourceRealignArguments(call, declaration?.Params, declaration?.ParamsRefused, OwnerArguments(owner), arguments,
-            context, property != null);
+        var selected = SelectUseDeclaration(selection, owner, call.Method.Value, count,
+            arguments?.Length ?? 0, false, context.Idx);
+        var declaration = selected.Declaration;
+        SourceRealignArguments(call, declaration?.Params, declaration?.ParamsRefused, selected.OwnerArguments, arguments,
+            context, selected.ExactProperty);
         if (declaration?.Ret == null) return call;
         var erased = NullableGenericErasure.EraseNullableTv(declaration.Ret, _isValue);
         var derived = Subst(erased, OwnerArguments(owner), arguments);
@@ -39,32 +38,12 @@ static partial class NullableTvErasureCallRealign
         var methodArguments = call.TypeArgs.OrDefault()?.Select(BirGraphValue.CopyType).ToArray();
         var count = call.Args.OrEmpty().Length;
         var selection = ReadUseSelection(call);
-        DeclSig declaration = null, property = null;
-        TypeNode[] ownerArguments = null;
-        if (call.Method.HasValue)
-        {
-            var owner = SourceStaticOwner(call) as TypeNode.Fqn;
-            if (owner != null && !context.Idx.FileClasses.Contains(owner.Name))
-            {
-                property = LookupPropertyDecl(selection, owner, count, methodArguments?.Length ?? 0, true, context.Idx);
-                declaration = selection.Property ? property
-                    : LookupDeclarationIdentity(selection.Identity, owner, context.Idx)
-                        ?? LookupDecl(owner, call.Method.Value, count, methodArguments?.Length ?? 0, true, context.Idx, selection);
-                ownerArguments = OwnerArguments(owner);
-            }
-            else
-            {
-                declaration = property = LookupLocalPropertyDecl(selection, null, count, methodArguments?.Length ?? 0, true, context.Idx);
-                if (!selection.Property && declaration == null)
-                {
-                    declaration = LookupDeclarationIdentity(selection.Identity, owner, context.Idx);
-                    if (declaration == null && selection.Identity == null)
-                        context.Idx.TopLevel.TryGetValue(call.Method.Value + "|" + count, out declaration);
-                }
-            }
-        }
+        var selected = SelectUseDeclaration(selection, SourceStaticOwner(call) as TypeNode.Fqn,
+            call.Method.OrDefault(), count, methodArguments?.Length ?? 0, true, context.Idx);
+        var declaration = selected.Declaration;
+        var ownerArguments = selected.OwnerArguments;
         SourceRealignArguments(call, declaration?.Params, declaration?.ParamsRefused, ownerArguments, methodArguments,
-            context, property != null);
+            context, selected.ExactProperty);
         if (declaration?.Ret == null) return call;
         var erased = NullableGenericErasure.EraseNullableTv(declaration.Ret, _isValue);
         var derived = Subst(erased, ownerArguments, methodArguments);
@@ -99,17 +78,10 @@ static partial class NullableTvErasureCallRealign
 
     static BirGraphValue SourceUseNew(BirNew construction, Ctx context, out TypeNode result)
     {
-        TypeNode[] declaration = null;
-        bool[] refused = null;
         var count = construction.Args.OrEmpty().Length;
-        if (construction.Type.OrDefault() is TypeNode.Fqn owner)
-        {
-            if (context.Idx.IsVisibleOwner(owner.Name) && context.Idx.Ctors.TryGetValue(owner.Name, out var byArity))
-                byArity.TryGetValue(count, out declaration);
-            else if (_refs != null && _refs.TryNullableGenericCtorSlot(owner.Name, count, out var parameters, out var refusals))
-            { declaration = parameters; refused = refusals; }
-        }
-        SourceRealignArguments(construction, declaration, refused, OwnerArguments(construction.Type.OrDefault() as TypeNode.Fqn), null, context);
+        var owner = construction.Type.OrDefault() as TypeNode.Fqn;
+        var selected = SelectConstructorUse(owner, count, context.Idx);
+        SourceRealignArguments(construction, selected.Parameters, selected.Refusals, OwnerArguments(owner), null, context);
         result = construction.Type.OrDefault();
         return construction;
     }

@@ -728,8 +728,9 @@ sealed class Pipeline
             // referenced top-level call to its real file-class owner; bind the trusted physical-Object/logical-T
             // metadata boundary to an explicit CIR return conversion before `sty` is consumed by type lowering.
             if (!_options.RefBuild) UncheckedGenericCastReturnErasure.ApplyReferenced(substituted, refs);
-            // Cross-module half of the nullable-Tv use realignment (#86 D1). The pass above already re-derived every use
-            // whose callee it could name; a REFERENCED top-level fun reaches it as `callStatic owner=null` — kotc has no
+            // Cross-module half of the nullable-Tv use realignment (#86 D1). The initial typed source-use pass in
+            // LoadModule re-derived every use whose callee it could name; a REFERENCED top-level fun reaches it as
+            // `callStatic owner=null` — kotc has no
             // file class for it — and only MemberCallSubstitution has now attributed it to the owner the reference index
             // is keyed by. Same formula, same code, run once more so those calls' returns and arguments are derived from
             // the producing assembly's declaration too. Idempotent on everything the earlier run already corrected.

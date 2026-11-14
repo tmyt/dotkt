@@ -417,9 +417,6 @@ static partial class NullableTvErasureCallRealign
     // The frontend has already selected this overload. Keep its source declaration slot,
     // rather than dropping it when another overload shares the name and argument count.
     // The owner axis prevents applying a base declaration's generic frame as a derived frame.
-    static DeclSig LookupDeclarationIdentity(JsonObject call, TypeNode.Fqn owner, DeclIndex index)
-        => LookupDeclarationIdentity(Str(call[DeclarationIdentityBinding.Key]), owner, index);
-
     static DeclSig LookupDeclarationIdentity(string identity, TypeNode.Fqn owner, DeclIndex index)
     {
         if (owner == null || identity == null || !index.IsVisibleOwner(owner.Name)
@@ -537,8 +534,7 @@ static partial class NullableTvErasureCallRealign
         if (to["ctors"] is not JsonArray ctors) return;
         var ownerArgs = OwnTypeArgs(to);
         var baseType = TypeJson.Read(to["base"]) as TypeNode.Fqn;
-        var baseParams = baseType != null && idx.IsVisibleOwner(baseType.Name)
-            && idx.Ctors.TryGetValue(baseType.Name, out var byArity) ? byArity : null;
+        TryVisibleConstructors(baseType?.Name, idx, out var baseParams);
         var ownName = Str(to["name"]);
         foreach (var c in ctors)
         {
@@ -549,8 +545,8 @@ static partial class NullableTvErasureCallRealign
                     if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
                         ctx.Env[pn] = pt;
             DelegationArgs(co, "baseArgs", baseParams, OwnerArguments(baseType), ctx);
-            DelegationArgs(co, "thisArgs",
-                ownName != null && idx.IsVisibleOwner(ownName) && idx.Ctors.TryGetValue(ownName, out var own) ? own : null, ownerArgs, ctx);
+            TryVisibleConstructors(ownName, idx, out var ownParams);
+            DelegationArgs(co, "thisArgs", ownParams, ownerArgs, ctx);
             if (co["body"] is JsonNode body) Eval(body, ctx);
         }
     }
@@ -849,17 +845,13 @@ static partial class NullableTvErasureCallRealign
 
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
         var argCount = (obj["args"] as JsonArray)?.Count ?? 0;
-        var propertyDecl = LookupPropertyDecl(obj, owner, argCount, methodArgs?.Length ?? 0,
-            isStatic: false, idx);
-        var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _);
-        var decl = hasPropertyIdentity
-            ? propertyDecl
-            : LookupDeclarationIdentity(obj, owner, idx)
-                ?? LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: false, idx, obj);
+        var selected = SelectUseDeclaration(ReadUseSelection(obj), owner, method, argCount,
+            methodArgs?.Length ?? 0, false, idx);
+        var decl = selected.Declaration;
         // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
         // declaration the call's own descriptor stands in (see RealignArgs).
-        RealignArgs(obj, decl?.Params, decl?.ParamsRefused, OwnerArguments(owner), methodArgs, ctx,
-            exactPropertyTarget: propertyDecl != null);
+        RealignArgs(obj, decl?.Params, decl?.ParamsRefused, selected.OwnerArguments, methodArgs, ctx,
+            exactPropertyTarget: selected.ExactProperty);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
 
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
@@ -877,41 +869,14 @@ static partial class NullableTvErasureCallRealign
         // file class means the same-module `TopLevel` index (keyed by bare name+arity), anything else means a call into
         // a referenced assembly. Both re-derive the generic function's declaration from its pre-erasure form, just as
         // EvalCallInstance does for a generic class member.
-        NullableTvErasureCallRealign.DeclSig decl = null;
-        NullableTvErasureCallRealign.DeclSig propertyDecl = null;
-        TypeNode[] ownerArgs = null;
-        if (Str(obj["method"]) is string method)
-        {
-            var owner = StaticOwner(obj) as TypeNode.Fqn;
-            if (owner != null && !ctx.Idx.FileClasses.Contains(owner.Name))
-            {
-                propertyDecl = LookupPropertyDecl(obj, owner, argCount, methodArgs?.Length ?? 0,
-                    isStatic: true, ctx.Idx);
-                var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _);
-                decl = hasPropertyIdentity
-                    ? propertyDecl
-                    : LookupDeclarationIdentity(obj, owner, ctx.Idx)
-                        ?? LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: true, ctx.Idx, obj);
-                ownerArgs = OwnerArguments(owner);
-            }
-            else
-            {
-                propertyDecl = LookupLocalPropertyDecl(obj, owner: null, argCount,
-                    methodArgs?.Length ?? 0, isStatic: true, ctx.Idx);
-                decl = propertyDecl;
-                // A semantic property call must never fall back to the ordinary method index. Its exact declaration
-                // owner/association is authoritative; an absent match is a refusal, not permission to re-resolve by
-                // the newly allocated MethodDef name.
-                if (!KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _) && decl == null)
-                {
-                    decl = LookupDeclarationIdentity(obj, owner, ctx.Idx);
-                    if (decl == null && Str(obj[DeclarationIdentityBinding.Key]) == null)
-                        ctx.Idx.TopLevel.TryGetValue(method + "|" + argCount, out decl);
-                }
-            }
-        }
+        var selected = Str(obj["method"]) is string method
+            ? SelectUseDeclaration(ReadUseSelection(obj), StaticOwner(obj) as TypeNode.Fqn,
+                method, argCount, methodArgs?.Length ?? 0, true, ctx.Idx)
+            : default;
+        var decl = selected.Declaration;
+        var ownerArgs = selected.OwnerArguments;
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, ownerArgs, methodArgs, ctx,
-            exactPropertyTarget: propertyDecl != null);
+            exactPropertyTarget: selected.ExactProperty);
         if (decl?.Ret == null) return stampedRet;   // no declaration, or an ambiguous same-name/same-arity overload set
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
         var derived = Subst(erasedRet, ownerArgs, methodArgs);
@@ -1019,22 +984,8 @@ static partial class NullableTvErasureCallRealign
     {
         var type = TypeJson.Read(obj["type"]);
         var argCount = (obj["args"] as JsonArray)?.Count ?? 0;
-        TypeNode[] declParams = null;
-        bool[] declRefused = null;
-        if (type is TypeNode.Fqn owner)
-        {
-            if (ctx.Idx.IsVisibleOwner(owner.Name) && ctx.Idx.Ctors.TryGetValue(owner.Name, out var byArity))
-                byArity.TryGetValue(argCount, out declParams);
-            // A REFERENCED owner's constructor is a declaration like any other (#86 D1): `Slot<T>(value: T)` erases to
-            // `.ctor(!0)`, so a `Slot<object>` retyped by the caller's argument realignment must BOX its argument.
-            else if (_refs != null
-                     && _refs.TryNullableGenericCtorSlot(owner.Name, argCount, out var refParams, out var refRefused))
-            {
-                declParams = refParams;
-                declRefused = refRefused;
-            }
-        }
-        RealignArgs(obj, declParams, declRefused, OwnerArguments(type as TypeNode.Fqn), null, ctx);
+        var selected = SelectConstructorUse(type as TypeNode.Fqn, argCount, ctx.Idx);
+        RealignArgs(obj, selected.Parameters, selected.Refusals, OwnerArguments(type as TypeNode.Fqn), null, ctx);
         // The construction may have been RETYPED by the caller's argument realignment before this ran.
         return TypeJson.Read(obj["type"]);
     }
@@ -1049,10 +1000,6 @@ static partial class NullableTvErasureCallRealign
     // the real declaration, so the general `Subst(Erase(decl))` rule covers a referenced generic member — including
     // `Iterable<E>.iterator()`, `Iterator<E>.next()` and `List<E>.get(i)` on a receiver corrected to its erased
     // instantiation, which a hardcoded member table used to approximate.
-    static DeclSig LookupDecl(TypeNode.Fqn owner, string method, int argCount, int methodArity, bool isStatic,
-        DeclIndex idx, JsonObject call)
-        => LookupDecl(owner, method, argCount, methodArity, isStatic, idx, ReadUseSelection(call));
-
     static DeclSig LookupDecl(TypeNode.Fqn owner, string method, int argCount, int methodArity, bool isStatic,
         DeclIndex idx, UseSelection selection)
     {
@@ -1089,10 +1036,6 @@ static partial class NullableTvErasureCallRealign
     // name would discard the exact Property/MethodSemantics association and collapse same-name accessor overloads back
     // to name+arity — precisely the reverse inference #397 removes. `shapeTypes` is the generic declaration vector
     // before MemberCallSubstitution; `sig` is the same exact vector after binding.
-    static DeclSig LookupPropertyDecl(JsonObject call, TypeNode.Fqn owner, int argCount, int methodArity,
-        bool isStatic, DeclIndex idx)
-        => LookupPropertyDecl(ReadUseSelection(call), owner, argCount, methodArity, isStatic, idx);
-
     static DeclSig LookupPropertyDecl(UseSelection selection, TypeNode.Fqn owner, int argCount, int methodArity,
         bool isStatic, DeclIndex idx)
     {
@@ -1111,10 +1054,6 @@ static partial class NullableTvErasureCallRealign
             ? new DeclSig { Ret = ret, Params = parameters, ParamsRefused = refused }
             : null;
     }
-
-    static DeclSig LookupLocalPropertyDecl(JsonObject call, TypeNode.Fqn owner, int argCount, int methodArity,
-        bool isStatic, DeclIndex idx)
-        => LookupLocalPropertyDecl(ReadUseSelection(call), owner, argCount, methodArity, isStatic, idx);
 
     static DeclSig LookupLocalPropertyDecl(UseSelection selection, TypeNode.Fqn owner, int argCount, int methodArity,
         bool isStatic, DeclIndex idx)

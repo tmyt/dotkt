@@ -223,6 +223,10 @@ static partial class NullableTvErasureCallRealign
             var application = new TypeNode.Fqn("Future", new TypeNode[] { integer });
             var read = new BirCallInstance { Method = "read", DeclarationId = "read-id", OwnerType = application,
                 Recv = new BirLocal { Name = "receiver", Sty = application }, Args = Array.Empty<IBirExpression>(), Ret = nullable };
+            // The exact-ID read never enters local name/arity fallback. Keep a
+            // separate no-ID use so removing that lookup's ceiling is detected.
+            var nameRead = (BirCallInstance)read.DeepClone();
+            nameRead.DeclarationId = default;
             var property = (BirCallInstance)read.DeepClone();
             property.PropertyName = "value"; property.PropertyAccessor = "get";
             var field = new BirFieldGet { OwnerType = application, Name = "value", Type = nullable };
@@ -234,8 +238,16 @@ static partial class NullableTvErasureCallRealign
                     new BirVariable { Name = "property", Type = erased, Init = property },
                     new BirVariable { Name = "field", Type = erased, Init = field },
                     new BirVariable { Name = "construction", Type = application, Init = construction },
+                    new BirVariable { Name = "nameRead", Type = erased, Init = nameRead },
                 } };
-            var source = new BirFileDeclaration { Methods = new[] { method } };
+            // Test real base-argument flow through the visibility view; this
+            // does not claim a producer for a hidden owner's this-delegation.
+            var delegated = new BirConstructor { Params = new[] { new BirParameter { Name = "value", Type = nullable } },
+                BaseArgs = new IBirExpression[] { new BirLocal { Name = "value", Sty = nullable } },
+                Body = Array.Empty<IBirStatement>() };
+            var derived = new BirClassDefinition { Name = "Derived", Kind = "class", Base = application,
+                Ctors = new[] { delegated } };
+            var source = new BirFileDeclaration { Methods = new[] { method }, Types = new IBirTypeDeclaration[] { derived } };
             // This is the still-live materialized/delegate capability boundary,
             // not an oracle for the retired initial DOM entry.
             var late = source.ToDom();
@@ -243,12 +255,21 @@ static partial class NullableTvErasureCallRealign
             ApplySourceUses(source, binding, type => type.Name == "kotlin.Int", null);
             var visible = !ReferenceEquals(binding, before);
             if ((read.Ret.Value == erased) != visible || (property.Ret.Value == erased) != visible
-                || (field.Type.Value == erased) != visible || (construction.Args.Value[0] is BirCast) != visible)
+                || (field.Type.Value == erased) != visible || (construction.Args.Value[0] is BirCast) != visible
+                || nameRead.Ret.Value != (visible ? erased : nullable)
+                || (delegated.BaseArgs.Value[0] is BirCast) != visible
+                || delegated.BaseArgs.Value[0] is BirCast baseCast && baseCast.Type.Value != erased)
                 throw new InvalidOperationException("Owner/identity/property/constructor/slot visibility differs across phase bindings");
             var lateRead = late["methods"][0]["body"][0]["init"];
             var lateConstructorArgument = late["methods"][0]["body"][3]["init"]["args"][0];
+            var lateNameRead = late["methods"][0]["body"][4]["init"];
+            if (Str(lateNameRead["k"]) == "cast") lateNameRead = lateNameRead["e"];
+            var lateBaseArgument = late["types"][0]["ctors"][0]["baseArgs"][0];
             if ((TypeJson.Read(lateRead["ret"]) == erased) != visible
-                || (lateConstructorArgument["k"]?.GetValue<string>() == "cast") != visible)
+                || (lateConstructorArgument["k"]?.GetValue<string>() == "cast") != visible
+                || TypeJson.Read(lateNameRead["ret"]) != (visible ? erased : nullable)
+                || (Str(lateBaseArgument["k"]) == "cast") != visible
+                || visible && TypeJson.Read(lateBaseArgument["type"]) != erased)
                 throw new InvalidOperationException("Late declared-use capability did not retain its per-file visibility ceiling");
         }
         var order = canonical.SourceApplicationOrder;

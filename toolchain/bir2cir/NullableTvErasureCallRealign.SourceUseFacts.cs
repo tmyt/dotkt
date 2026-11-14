@@ -33,6 +33,62 @@ static partial class NullableTvErasureCallRealign
         internal bool Property => PropertyName != null;
     }
 
+    readonly record struct SelectedUse(DeclSig Declaration, bool ExactProperty, TypeNode[] OwnerArguments);
+
+    // Selection is independent of the graph renderer. A semantic property
+    // never falls back to a method, and an exact identity never permits the
+    // file-class name/arity fallback when its declaration is unavailable.
+    static SelectedUse SelectUseDeclaration(UseSelection selection, TypeNode.Fqn owner, string method,
+        int argumentCount, int methodArity, bool isStatic, DeclIndex index)
+    {
+        if (method == null) return default;
+        if (!isStatic || owner != null && !index.FileClasses.Contains(owner.Name))
+        {
+            var property = LookupPropertyDecl(selection, owner, argumentCount, methodArity, isStatic, index);
+            var declaration = selection.Property ? property
+                : LookupDeclarationIdentity(selection.Identity, owner, index)
+                    ?? LookupDecl(owner, method, argumentCount, methodArity, isStatic, index, selection);
+            return new(declaration, property != null, OwnerArguments(owner));
+        }
+        var localProperty = LookupLocalPropertyDecl(selection, null, argumentCount, methodArity, true, index);
+        var local = localProperty;
+        if (!selection.Property && local == null)
+        {
+            local = LookupDeclarationIdentity(selection.Identity, owner, index);
+            if (local == null && selection.Identity == null)
+                index.TopLevel.TryGetValue(method + "|" + argumentCount, out local);
+        }
+        return new(local, localProperty != null, null);
+    }
+
+    static bool TryVisibleConstructors(string owner, DeclIndex index,
+        out Dictionary<int, TypeNode[]> parameters)
+    {
+        parameters = null;
+        return owner != null && index.IsVisibleOwner(owner) && index.Ctors.TryGetValue(owner, out parameters);
+    }
+
+    static (TypeNode[] Parameters, bool[] Refusals) SelectConstructorUse(TypeNode.Fqn owner,
+        int argumentCount, DeclIndex index)
+    {
+        if (owner == null) return default;
+        if (TryVisibleConstructors(owner.Name, index, out var local))
+        {
+            // A visible local owner is authoritative even when this arity has
+            // no declaration. Only an absent owner may use reference metadata.
+            local.TryGetValue(argumentCount, out var parameters);
+            return (parameters, null);
+        }
+        return _refs != null && _refs.TryNullableGenericCtorSlot(owner.Name, argumentCount,
+            out var referenced, out var refused) ? (referenced, refused) : default;
+    }
+
+    static TypeNode SelectFieldSlot(TypeNode type, string name, DeclIndex index)
+        => type is TypeNode.Fqn owner && name != null && index.IsVisibleOwner(owner.Name)
+            && index.Slots.TryGetValue(owner.Name, out var slots)
+            && slots.TryGetValue(name, out var declaration) && declaration != null
+                ? Subst(NullableGenericErasure.EraseNullableTv(declaration, _isValue), OwnerArguments(owner), null) : null;
+
     static UseSelection ReadUseSelection(JsonObject call)
     {
         KotlinPropertyAccessors.TryCallIdentity(call, out var property, out var accessor);

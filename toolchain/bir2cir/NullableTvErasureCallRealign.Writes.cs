@@ -520,12 +520,7 @@ static partial class NullableTvErasureCallRealign
 
     // The declared type of the field/property a `field`/`setField` node names, substituted with the owner's args.
     static TypeNode SlotType(JsonObject obj, Ctx ctx)
-    {
-        if (TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn owner || Str(obj["name"]) is not string name) return null;
-        if (!ctx.Idx.IsVisibleOwner(owner.Name) || !ctx.Idx.Slots.TryGetValue(owner.Name, out var slots)) return null;
-        if (!slots.TryGetValue(name, out var declared) || declared == null) return null;
-        return Subst(NullableGenericErasure.EraseNullableTv(declared, _isValue), OwnerArguments(owner), null);
-    }
+        => SelectFieldSlot(TypeJson.Read(obj["ownerType"]), Str(obj["name"]), ctx.Idx);
 
     static void EvalArraySet(JsonObject obj, Ctx ctx)
     {
