@@ -7,7 +7,7 @@ using DotKt.Bir;
 // Kotlin keeps @PublishedApi declarations source-internal while making them part of the cross-module inline ABI.
 // BIR retains both facts. This CLR-representation boundary consumes the explicit annotation into public TypeDef
 // accessibility; ilemit then maps the resulting CIR visibility one-to-one.
-static class PublishedApiTypeVisibilityLowering
+static partial class PublishedApiTypeVisibilityLowering
 {
     const string Marker = "kotlin.PublishedApi";
 
@@ -37,8 +37,11 @@ static class PublishedApiTypeVisibilityLowering
     internal static string ResolveVisibility(JsonObject type)
     {
         var visibility = type["vis"]?.GetValue<string>();
-        return visibility == "internal" && HasMarker(type) ? "public" : visibility;
+        return ResolveVisibility(visibility, visibility == "internal" && HasMarker(type));
     }
+
+    internal static string ResolveVisibility(string visibility, bool publishedApi) =>
+        visibility == "internal" && publishedApi ? "public" : visibility;
 
     static bool HasMarker(JsonObject type) =>
         type["attrs"] is JsonArray attrs

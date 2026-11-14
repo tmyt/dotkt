@@ -195,8 +195,7 @@ static partial class TypeOwnershipLowering
                 method.Remove("semanticOwner");
                 if (owner == fileClass) continue;
                 if (!typesByName.TryGetValue(owner, out var ownerType))
-                    throw new InvalidOperationException(
-                        $"Kotlin method '{Str(method["name"])}' has missing semantic owner '{owner}' in this emission unit");
+                    throw MissingMethodOwner(Str(method["name"]), owner);
                 methods.RemoveAt(index);
                 var ownerMethods = ownerType["methods"] as JsonArray;
                 if (ownerMethods == null) ownerType["methods"] = ownerMethods = new JsonArray();
@@ -208,12 +207,7 @@ static partial class TypeOwnershipLowering
         {
             if (Str(type["semanticOwner"]) is string owner)
             {
-                var name = Str(type["name"]) ?? "<unnamed>";
-                if (owner == name)
-                    throw new InvalidOperationException($"Kotlin type '{name}' cannot own itself");
-                if (!declaredTypes.Contains(owner) && !fileClasses.Contains(owner))
-                    throw new InvalidOperationException(
-                        $"Kotlin type '{name}' has missing semantic owner '{owner}' in this emission unit");
+                ValidatePlacementOwner(Str(type["name"]), owner, declaredTypes, fileClasses);
                 type["nestedIn"] ??= owner;
                 type.Remove("semanticOwner");
             }
@@ -225,13 +219,7 @@ static partial class TypeOwnershipLowering
             type.Remove("outerTypeParamCount");
             if (count == 0) continue;
             var typeParams = type["typeParams"] as JsonArray;
-            if (typeParams == null || count > typeParams.Count)
-                throw new InvalidOperationException(
-                    $"Kotlin inner type '{Str(type["name"])}' declares outerTypeParamCount={count} " +
-                    $"but has only {typeParams?.Count ?? 0} type parameter declarations");
-            if (type["nestedIn"] == null)
-                throw new InvalidOperationException(
-                    $"Kotlin inner type '{Str(type["name"])}' has captured outer parameters but no CLR owner");
+            ValidateCapturedParameters(Str(type["name"]), count, typeParams?.Count, type["nestedIn"] != null);
 
             var captured = new JsonArray();
             var usedNames = typeParams
@@ -240,15 +228,11 @@ static partial class TypeOwnershipLowering
                 .ToHashSet(StringComparer.Ordinal);
             for (var i = 0; i < count; i++)
             {
-                var parameter = typeParams[i]?.DeepClone()
-                    ?? throw new InvalidOperationException(
-                        $"Kotlin inner type '{Str(type["name"])}' has a missing captured type parameter at slot {i}");
+                var parameter = typeParams[i]?.DeepClone() ?? throw MissingCapturedParameter(Str(type["name"]), i);
                 // CLR generic parameter names share one namespace across the flattened enclosing+declared slots.
                 // Kotlin permits `Outer<T>.Inner<T>`, so retain slot identity/constraints but give captures a unique,
                 // compiler-owned physical name. dll2klib drops these leading slots via KotlinInnerAttribute.
-                var physicalName = $"dotkt$outer{i}";
-                while (!usedNames.Add(physicalName)) physicalName += "$";
-                parameter["name"] = physicalName;
+                parameter["name"] = CapturedParameterName(i, usedNames);
                 captured.Add(parameter);
             }
             for (var i = 0; i < count; i++)
