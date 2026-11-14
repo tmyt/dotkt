@@ -19,10 +19,7 @@ using DotKt.Cir;
 //
 // Rebind such a CALL to an `objMethod` (a box-free `callvirt instance object::Slot`, i.e. virtual dispatch to the
 // receiver's runtime type) — the exact shape EmitObjMethod services and always-correct Kotlin semantics for a
-// reference receiver. The same dead-end reaches a bound method REFERENCE (`p::hashCode`, a `newBoundDelegate` /
-// `newBoundClrDelegate` ilemit `ldftn`s against the owner); no `objMethod` form exists for a reference, so its
-// `ownerType` is instead RETARGETED to `kotlin.Any` — the universal-owner token the frontend already emits for
-// `(p as Any)::hashCode` — and the standard substitution binds System.Object's slot.
+// reference receiver. Bound-delegate nodes are produced later and do not pass through this source owner.
 //
 // The local path fires where ilemit would throw: the owner is a locally-declared reference type whose own declaration AND
 // resolvable base chain (a local base that declares it, or ANY external/.NET base whose inherited slot ilemit reflects)

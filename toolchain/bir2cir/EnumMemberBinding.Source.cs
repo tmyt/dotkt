@@ -23,6 +23,8 @@ static partial class EnumMemberBinding
             if (owner == "kotlin.Enum" && AnySlotRebind.IsVirtualToString(call))
                 return AnySlotRebind.FromCall(call, consumeAnySlot: true);
             if (owner == "kotlin.Enum" && call.Method.Value == "ordinal" && call.Prop.OrDefault() == "get")
+                // Bind before constrained-member selection: Enum<T>.ordinal is
+                // Kotlin declaration order, not a System.Enum.get_ordinal slot.
                 return new BirCallStatic {
                     Owner = new TypeNode.Fqn(RuntimeOwner), Method = "kotlinEnumOrdinal",
                     Sig = new TypeNode[] { new TypeNode.Fqn("kotlin.Any") }, Ret = new TypeNode.Fqn("kotlin.Int"),

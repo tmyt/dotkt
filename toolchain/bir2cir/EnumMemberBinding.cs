@@ -20,7 +20,7 @@ using DotKt.Cir;
 //      name a concrete CLR receiver or a MethodDef. A semantic Any.toString call uses the CLR Object virtual
 //      slot, regardless of whether its receiver is a native enum or a rich enum with an authored override.
 //
-// Non-ref builds only (the ref/rt stdlib keeps `kotlin.Enum`'s own pure-Kotlin member bodies untouched). Scoped to the
+// Non-ref builds only (the metadata stdlib keeps `kotlin.Enum`'s pure-Kotlin member bodies untouched). Scoped to the
 // `kotlin.Enum` owner and to locally-declared value-type enum owners, so no other call is affected.
 static partial class EnumMemberBinding
 {
