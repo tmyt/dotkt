@@ -37,7 +37,7 @@ static partial class MemberStrip
         var metadata = new ReferenceDotKtMetadata();
         foreach (var name in new[] { "dropPrefix", "dropCaptured", "dropSibling", "dropGetter", "obligation" })
             metadata.MemberBindings.Add(new MemberBinding("Owner", name, 0, "bound", false, true, ParamTypeNodes: Array.Empty<TypeNode>()));
-        metadata.MemberBindings.Add(new MemberBinding("Owner", "incomplete", 1, "bound", false, true, ParamTypeNodes: new TypeNode[] { integer }));
+        metadata.MemberBindings.Add(new MemberBinding("Owner", "incomplete", 1, "bound", false, true, ParamTypeNodes: new TypeNode[] { new TypeNode.Fqn("kotlin.Any") }));
         metadata.MemberBindings.Add(new MemberBinding("Interface", "dropInterface", 0, "bound", false, true, ParamTypeNodes: Array.Empty<TypeNode>()));
         var refs = ReferenceMetadataIndex.DefaultDemandTestIndex(metadata);
         var roots = new[] { source };

@@ -47,7 +47,8 @@ static partial class MemberStrip
             var method = methods[i];
             if (!method.Name.HasValue) continue;
             var name = method.Name.Value;
-            var keys = method.Params.OrEmpty().Select(parameter => ReferenceMetadataIndex.ParamKey(parameter.Type.OrDefault())).ToList();
+            var keys = method.Params.OrEmpty().Select(parameter => parameter.Type.HasValue
+                ? ReferenceMetadataIndex.ParamKey(parameter.Type.Value) : null).ToList();
             // MemberStrip is not the declaration-shape validator. Leave an incomplete current parameter untouched so
             // the owning lowering can report the missing required type with its declaration context.
             if (keys.Any(key => key == null)) continue;
