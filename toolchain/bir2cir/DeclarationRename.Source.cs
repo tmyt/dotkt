@@ -1,6 +1,7 @@
 using System.Reflection;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class DeclarationRename
 {

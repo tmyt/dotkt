@@ -391,6 +391,7 @@ sealed class Pipeline
             valuePolicy, valueSources, genericRepresentations);
         var retiredDeclarations = new HashSet<BirFunctionDeclaration>(ReferenceEqualityComparer.Instance);
         var aliasTransitions = new AliasDeclarationTransitions();
+        var sourceUseViews = new NullableTvErasureCallRealign.DeclIndex[captured.Length];
         void RetireDeclaration(BirFunctionDeclaration method)
         {
             valueRepresentations.RetireSourceDeclaration(method);
@@ -501,6 +502,7 @@ sealed class Pipeline
             // initial nullable-use flow merely because preparation is module-wide.
             NullableTvErasureCallRealign.ApplyNewSyntheticTypes(syntheticTypes[index], nullableDeclarations);
             var sourceUses = nullableDeclarations.BindSourceVisibility();
+            sourceUseViews[index] = sourceUses;
             NullableTvErasureCallRealign.ApplySourceUses(source, sourceUses, isValueFqn, refs);
             // Function constructions now state their consuming slots. Align
             // their owned targets, then reflow only when a declaration changed.
@@ -540,7 +542,7 @@ sealed class Pipeline
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
                 root,
-                inputsWithSources[index].Suspend, sourceUses));
+                inputsWithSources[index].Suspend, sourceUseViews[index]));
         }
 
         localEventDeclarations.BindDomRecipes();

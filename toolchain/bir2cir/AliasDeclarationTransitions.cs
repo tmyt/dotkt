@@ -10,7 +10,8 @@ sealed class AliasDeclarationTransitions
     internal sealed record Replacement(IBirTypeDeclaration Source, BirClassDefinition Host,
         BirClassDefinition Helper);
     sealed record FileTransition(BirFileDeclaration File, IBirTypeDeclaration[] Original,
-        IBirTypeDeclaration[] Continuing, Replacement[] Replacements);
+        IBirTypeDeclaration[] Continuing, Replacement[] Replacements,
+        (string Owner, BirFieldDeclaration Field)[] RetiredFields);
     readonly List<FileTransition> files = new();
 
     internal void Record(BirFileDeclaration file, IBirTypeDeclaration[] original,
@@ -30,7 +31,13 @@ sealed class AliasDeclarationTransitions
         }
         if (replacements.Any(row => !original.Any(value => ReferenceEquals(value, row.Source)))
             || !Same(expected, continuing)) throw Mismatch();
-        files.Add(new(file, original, continuing, replacements.ToArray()));
+        // Disposition belongs to the representation decision, not a later read
+        // of the mutable host. A lost retained field must not become a retirement.
+        var retiredFields = replacements.SelectMany(replacement => replacement.Source.Fields.OrEmpty()
+            .Where(declaration => replacement.Host == null || !replacement.Host.Fields.OrEmpty()
+                .Any(value => ReferenceEquals(value, declaration)))
+            .Select(declaration => (replacement.Source.Name.OrDefault(), declaration))).ToArray();
+        files.Add(new(file, original, continuing, replacements.ToArray(), retiredFields));
     }
 
     static bool Same(IEnumerable<IBirTypeDeclaration> left, IEnumerable<IBirTypeDeclaration> right)
@@ -98,10 +105,9 @@ sealed class AliasDeclarationTransitions
     {
         get
         {
-            foreach (var replacement in files.SelectMany(file => file.Replacements))
-                foreach (var field in replacement.Source.Fields.OrEmpty())
-                    if (replacement.Host == null || !replacement.Host.Fields.OrEmpty().Any(value => ReferenceEquals(value, field)))
-                        yield return (replacement.Source.Name.OrDefault(), field);
+            foreach (var entry in files)
+                foreach (var declaration in entry.RetiredFields)
+                    yield return declaration;
         }
     }
 
