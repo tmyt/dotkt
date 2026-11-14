@@ -286,7 +286,7 @@ static partial class ErasedElementValues
                 case BirCallInstance call when scalarReads.Contains(read):
                     call.Ret = ObjectType; if (call.DynRet.HasValue) call.DynRet = ObjectType; call.Sty = ObjectType; break;
                 case BirFieldGet field: field.Sty = ObjectType; break;
-                case BirArrayGet array: array.Elem = ObjectType; array.Sty = ObjectType; break;
+                case BirArrayGet array: array.Elem = ObjectType; break;
                 default: throw new InvalidOperationException("Unknown scalar value read occurrence");
             }
         }

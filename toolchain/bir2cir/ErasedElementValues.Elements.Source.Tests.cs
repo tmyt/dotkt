@@ -55,9 +55,9 @@ static partial class ErasedElementValues
         ApplyAll(new[] { root, declarations }, null);
         Require(ReferenceEquals(root.Methods.Value[0], method) && ReferenceEquals(method.Body.Value, body)
             && ReferenceEquals(method.Params.Value, parameters) && parameters[0].Type.Value == new TypeNode.Array(variable)
-            && read.Elem.Value == ObjectType && read.Sty.Value == ObjectType && value.Type.Value == ObjectType
+            && read.Elem.Value == ObjectType && BirNodeType.Of(read) == ObjectType && value.Type.Value == ObjectType
             && alias.Type.Value == ObjectType && addressed.Type.Value == variable && read.ErasedValueVariableFact.Value == variable
-            && addressRead.Elem.Value == variable && !addressRead.Sty.IsPresent
+            && addressRead.Elem.Value == variable && BirNodeType.Of(addressRead) == variable
             && !objectRead.ErasedValueVariableFact.IsPresent,
             "array reads/aliases changed signatures, native addresses or continuing declarations");
         Require(loop.Elem.Value == ObjectType && ((BirVariable)loop.Body.Value[0]).Type.Value == ObjectType
@@ -66,7 +66,7 @@ static partial class ErasedElementValues
             && cast.Type.Value == new TypeNode.Nullable(new TypeNode.Fqn("Bound"))
             && suspension.CapValues.Value[0] is BirCast { Type.Value: TypeNode.Fqn { Name: "object" } }
             && suspension.TypeParams.Value.Length == 3 && ((BirVariable)suspension.Body.Value[0]).Type.Value == innerVariable
-            && innerRead.Elem.IsPresent == false && innerRead.Sty.IsPresent == false,
+            && innerRead.Elem.IsPresent == false && BirNodeType.Of(innerRead) == innerVariable,
             "module bounds, loop scope, captures or independent suspend frame changed");
 
         var ownerVariable = new TypeNode.Tv("type", 0);
