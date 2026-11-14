@@ -47,38 +47,38 @@ static partial class UncheckedGenericCastReturnErasure
             }).ToArray();
             var source = new[] { first, second };
             var pending = CaptureSource(source);
+            var capturedRow = pending.SourceDeclarations.ByIdentity[second.Methods.Value[0].DeclarationId.Value];
+            var other = second.Methods.Value[0];
+            Apply(first, pending);
+            Assert(first.Methods.Value[0].Ret.Value == new TypeNode.Fqn("object")
+                && ((BirVariable)first.Methods.Value[1].Body.Value[0]).Type.Value == new TypeNode.Fqn("object")
+                && other.Ret.Value == sourceReturn
+                && ((BirCast)((BirReturn)other.Body.Value[0]).Value.Value).Type.Value == sourceReturn,
+                "lowering crossed root ownership or lost cross-file ABI facts");
+            // Read the current owning body, never a capture-time body clone.
+            var currentReturn = new BirReturn { Value = OptionalField<IBirExpression>.Of(Cast()) };
+            other.Body = new IBirStatement[] { currentReturn };
+            Apply(second, pending);
             var roots = Project(source);
             var index = BindDomDeclarations(pending, roots);
-            var other = roots[1]["methods"][0].AsObject();
-            Apply(roots[0], index);
-            Assert(TypeJson.Read(roots[0]["methods"][0]["ret"]) == new TypeNode.Fqn("object")
-                && TypeJson.Read(roots[0]["methods"][1]["body"][0]["type"]) == new TypeNode.Fqn("object")
-                && TypeJson.Read(other["ret"]) == sourceReturn
-                && TypeJson.Read(other["body"][0]["value"]["type"]) == sourceReturn,
-                "lowering crossed root ownership or lost cross-file ABI facts");
-            // Use a new current body after binding, not any captured body clone.
-            var currentReturn = new BirReturn { Value = OptionalField<IBirExpression>.Of(Cast()) }.ToDom();
-            other["body"] = new JsonArray(currentReturn);
-            Apply(roots[1], index);
-            Assert(TypeJson.Read(other["ret"]) == new TypeNode.Fqn("object")
-                && TypeJson.Read(currentReturn["value"]["type"]) == new TypeNode.Fqn("object")
-                && index.ByIdentity[Str(other[DeclarationIdentityBinding.Key])].Return == sourceReturn,
+            Assert(other.Ret.Value == new TypeNode.Fqn("object")
+                && ((BirCast)currentReturn.Value.Value).Type.Value == new TypeNode.Fqn("object")
+                && index.ByIdentity[other.DeclarationId.Value].Return == sourceReturn
+                && ReferenceEquals(capturedRow, index.ByIdentity[other.DeclarationId.Value]) && capturedRow.SourceMethod == null,
                 "bound body edit or frozen pre-lowering return was lost");
             Refuses(() => BindDomDeclarations(pending, roots), "a pending association bound twice");
         }
 
         var detachedSource = new[] { Root("Detached", "detached") };
         var detachedPending = CaptureSource(detachedSource);
-        var detachedRoots = Project(detachedSource);
-        var detachedIndex = BindDomDeclarations(detachedPending, detachedRoots);
-        var bound = detachedRoots[0]["methods"][0].AsObject();
-        var replacement = (JsonObject)bound.DeepClone();
-        detachedRoots[0]["methods"].AsArray().Clear();
-        detachedRoots[0]["methods"].AsArray().Add(replacement);
-        Apply(detachedRoots[0], detachedIndex);
-        Assert(TypeJson.Read(bound["ret"]) == Tv() && TypeJson.Read(replacement["ret"]) == Tv()
-            && ReferenceEquals(detachedIndex.ByIdentity["detached"].Method, bound),
+        var bound = detachedSource[0].Methods.Value[0];
+        var replacement = (BirFunctionDeclaration)bound.DeepClone();
+        detachedSource[0].Methods.Value[0] = replacement;
+        Apply(detachedSource[0], detachedPending);
+        Assert(bound.Ret.Value == Tv() && replacement.Ret.Value == Tv()
+            && ReferenceEquals(detachedPending.SourceDeclarations.ByIdentity["detached"].SourceMethod, bound),
             "detached occurrence was mutated or its replacement was chased by identity");
+        Refuses(() => BindDomDeclarations(detachedPending, Project(detachedSource)), "a replacement rebound by its copied identity");
 
         // Witness synthesis explicitly retires actual generated targets. Only
         // those reports may shift a later captured declaration's owning slot.
@@ -91,6 +91,7 @@ static partial class UncheckedGenericCastReturnErasure
             Methods = new[] { prefix, retiredTarget, survivor } } };
         var retirementPending = CaptureSource(retirementSource);
         retirementSource[0].Methods = new[] { survivor, new BirFunctionDeclaration { Name = "appended-helper" } };
+        Apply(retirementSource[0], retirementPending);
         var retirementRoots = Project(retirementSource);
         var retiredProjection = retiredTarget.ToDom();
         var retirements = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance) {
@@ -100,7 +101,6 @@ static partial class UncheckedGenericCastReturnErasure
         Assert(ReferenceEquals(retirementIndex.ByIdentity["survivor"].Method, retirementRoots[0]["methods"][0])
             && ReferenceEquals(retirementIndex.ByIdentity["retired-target"].Method, retiredProjection)
             && retiredProjection.Parent == null, "reported retirement lost its shared detached projection or shifted by scalar identity");
-        Apply(retirementRoots[0], retirementIndex);
         Assert(TypeJson.Read(retirementRoots[0]["methods"][0]["ret"]) == new TypeNode.Fqn("object")
             && TypeJson.Read(retiredProjection["ret"]) == Tv(),
             "explicit retired declaration was mutated despite lacking continuing root ownership");
@@ -166,6 +166,7 @@ static partial class UncheckedGenericCastReturnErasure
         Assert(!Captures(new BirReturn { Value = OptionalField<IBirExpression>.Of(Cast(new BirCallStatic {
             Sty = new TypeNode.Fqn("kotlin.String"), Ret = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")),
         })) }), "ret overrode explicit sty precedence");
+        SelfTestCallableFlow();
         Console.WriteLine("[unchecked cast ownership] self-test OK (typed capture, exact one-shot binding, both root orders, live bodies, detach, explicit source types)");
     }
 }
