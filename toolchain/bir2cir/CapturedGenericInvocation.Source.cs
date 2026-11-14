@@ -129,12 +129,21 @@ static partial class CapturedGenericInvocation
             captureSlots = captureSlots.Select(index => witnessFrame?.SourcePosition(index) ?? index).ToArray();
             if (captureIndices.Any(index => index < 0 || index >= arguments.Length) || declarationParameters.Length != arguments.Length)
                 throw new InvalidOperationException("Captured invocation argument does not match selected declaration");
+            // This value transport does not change managed-address storage.
+            // Leave other transports on their existing physical path; a compiler
+            // limitation here must not introduce a new refusal.
             if (declarationParameters.Any(HasAddress) || HasAddress(declaredReturn)
                 || declarationParameters.Any(type => ByRefLike(type, refs)) || ByRefLike(declaredReturn, refs)) return call.Node;
+            // Closing the method cannot convert an already-created invariant
+            // construction into the captured construction. Do not replace that
+            // existing edge with a verifier-green but uncallable thunk.
             if (declarationParameters.Where((_, index) => !captureIndices.Contains(index)).Any(type => ContainsCapturedSlot(type, captureSlots))) return call.Node;
 
             if (call.Super)
             {
+                // A nonvirtual base call must consume this lexical method's own
+                // this. The thunk therefore uses a private instance forwarder,
+                // never a base invocation on an arbitrary receiver.
                 if (!definitions.TryGetValue(lexicalOwner, out var definition)) throw new InvalidOperationException("Captured super invocation has no lexical owner");
                 TypeNode CloseSuper(TypeNode type) => Map(type, variable => variable.Scope == "type"
                     ? owner.Args?[variable.I] ?? throw new InvalidOperationException("Captured super invocation has no base frame") : variable);
@@ -184,6 +193,9 @@ static partial class CapturedGenericInvocation
             var parameterTypes = declarationParameters.Select(CloseDeclaration).ToList();
             if (call.Instance)
             {
+                // The declaring owner and receiver storage need not be the same
+                // type. Retaining the actual receiver also preserves lexical
+                // family access for a thunk nested in its caller.
                 var receiverType = call.Receiver is BirThis ? new TypeNode.Fqn(lexicalOwner, ownerFrame.Length == 0 ? null
                     : Enumerable.Range(0, ownerFrame.Length).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray())
                     : physicalType((BirGraphValue)call.Receiver, scope);
@@ -197,8 +209,11 @@ static partial class CapturedGenericInvocation
             var body = Body(forwardCall, returnsVoid, objectResult: true);
             var receiverPlan = call.Instance && !local && refs.IsValueType(owner)
                 ? CapturedValueReceiverInvocation.Create(name, lexicalOwner, ownerFrame, methodFrame, fullFrame, owner, liftedOwner, forwardCall, returnsVoid) : null;
+            // Receiver-plan Invoke is a frame-closing factory; the live managed
+            // address travels separately and must never enter object[].
             if (receiverPlan != null)
             { parameterTypes[0] = Object; body = receiverPlan.FactoryBody; generated.Add(receiverPlan.Contract); generated.Add(receiverPlan.Adapter); }
+            // Nesting retains caller access, not an additional TypeDef frame.
             generated.Add(new BirClassDefinition { Name = name, Kind = "class", Generated = true, Vis = "internal", NestedIn = lexicalOwner,
                 TypeParams = Array.Empty<BirTypeParameter>(), Interfaces = Array.Empty<TypeNode>(), Fields = Array.Empty<BirFieldDeclaration>(),
                 Ctors = Array.Empty<BirConstructor>(), Attrs = Array.Empty<BirAttribute>(), Methods = new[] {
@@ -229,6 +244,8 @@ static partial class CapturedGenericInvocation
             var result = unit ? new TypeNode.Fqn("void") : Object;
             if (local.Length == 1) return new BirCallStatic { Owner = new TypeNode.Fqn(RuntimeOwner), Method = name, Args = arguments, Ret = result,
                 Sig = local[0].Method.Params.Value.Select(parameter => BirGraphValue.CopyType(parameter.Type.Value)).ToArray(), CalleeRet = BirGraphValue.CopyType(local[0].Method.Ret.Value) };
+            // Select through the trusted reference twin's alias vocabulary;
+            // the runtime twin's physical storage is not a new overload policy.
             var runtimeType = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
             var signature = new TypeNode[] { runtimeType, new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.String"), new TypeNode.Array(new TypeNode.Fqn("kotlin.String")),
                 new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.IntArray"),
@@ -261,6 +278,7 @@ static partial class CapturedGenericInvocation
             var type = definitions[name].Type;
             var arity = type.TypeParams.OrEmpty().Length;
             var parent = type.NestedIn.OrDefault();
+            // Flattening is an explicit build contract, not legacy-name inference.
             if (parent != null && !definitions.ContainsKey(parent) && flattenMissingOwners) parent = null;
             var simple = parent == null ? name : name[(name.LastIndexOf('.') + 1)..];
             var physical = type.Kind.OrDefault() == "delegate" || arity == 0 ? simple : simple + "`" + arity;

@@ -1,6 +1,7 @@
 import NUnit.Framework.TestAttribute
 import StructReceivers.Counter
 import StructReceivers.GenericCounter
+import StructReceivers.GenericReceiverBase
 import StructReceivers.Holder
 import StructReceivers.Key
 import StructReceivers.TextKey
@@ -23,7 +24,21 @@ private class GenericStructReceiverCaller<A>(val token: A) {
     }
 }
 
+private class NativeGenericSuperReceiverCaller : GenericReceiverBase() {
+    override fun <T> Read(key: Key<T>): Int = 999
+    fun readBase(key: Key<*>): Int = super.Read(key)
+}
+
 class StructReceiverTests {
+    @TestAttribute
+    fun capturedNativeSuperKeepsNonVirtualDispatch() {
+        val caller = NativeGenericSuperReceiverCaller()
+        val key: Key<*> = TextKey()
+        check(caller.Read(key) == 999)
+        check(caller.readBase(key) == 101)
+        check(caller.BaseReads == 1)
+    }
+
     @TestAttribute
     fun typedLocalKeepsItsMutableReceiver() {
         var counter = Counter(0)
