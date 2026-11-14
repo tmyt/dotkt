@@ -20,59 +20,40 @@ static partial class MaterializedBirPayload
         });
     }
 
-    public static void Normalize(JsonNode payload)
-    {
-        if (payload == null) return;
-        ObjectSlotRename.Apply(payload);
-    }
-
     public static void SelfTest()
     {
-        JsonObject AnyCall(string name, bool superCall = false) => new()
-        {
-            ["k"] = "callInstance", ["method"] = name, ["anySlot"] = true, ["super"] = superCall,
-            ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "value" },
-            ["args"] = name == "equals"
-                ? new JsonArray(new JsonObject { ["k"] = "local", ["name"] = "other" }) : new JsonArray(),
+        BirReturn AnyCall(string name, bool superCall = false) => new() {
+            Value = new BirCallInstance {
+                Method = name, AnySlot = true, Super = superCall,
+                Recv = new BirLocal { Name = "value" },
+                Args = name == "equals" ? new IBirExpression[] { new BirLocal { Name = "other" } }
+                    : Array.Empty<IBirExpression>(),
+            },
         };
-        var payload = new JsonObject
-        {
-            ["body"] = new JsonArray
-            {
+        var payload = new BirInlinePayload {
+            Body = new IBirStatement[] {
                 AnyCall("toString"), AnyCall("equals"), AnyCall("hashCode"), AnyCall("equals", superCall: true),
             },
-            ["lifted"] = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["name"] = "hashCode",
-                    ["objectOverride"] = true,
-                },
+            Lifted = new[] {
+                new BirFunctionDeclaration { Name = "hashCode", ObjectOverride = true },
             },
         };
 
         Normalize(payload);
-        var call = payload["body"]?[0] as JsonObject;
-        var lifted = payload["lifted"]?[0] as JsonObject;
-        bool IsEqualityHelper(int index, string method)
-        {
-            var result = payload["body"]?[index];
-            return result?["k"]?.GetValue<string>() == "callStatic"
-                && TypeJson.OwnerName(result["owner"]) == "DotKt.Runtime.CompilerServices.KotlinEqualityKt"
-                && result["method"]?.GetValue<string>() == method && result["anySlot"] == null;
-        }
-        var superCall = payload["body"]?[3];
-        if (call?["method"]?.GetValue<string>() != "ToString"
-            || call["anySlot"]?.GetValue<bool>() != true
-            || lifted?["name"]?.GetValue<string>() != "GetHashCode"
+        IBirExpression Result(int index) => ((BirReturn)payload.Body.Value[index]).Value.OrDefault();
+        bool IsEqualityHelper(int index, string method) => Result(index) is BirCallStatic result
+            && result.Owner.OrDefault() is TypeNode.Fqn { Name: "DotKt.Runtime.CompilerServices.KotlinEqualityKt" }
+            && result.Method.OrDefault() == method && !result.AnySlot.IsPresent;
+        if (Result(0) is not BirCallInstance call || call.Method.OrDefault() != "ToString"
+            || !call.AnySlot.OrDefault() || payload.Lifted.Value[0].Name.OrDefault() != "GetHashCode"
             || !IsEqualityHelper(1, "kotlinInstanceEquals") || !IsEqualityHelper(2, "kotlinInstanceHashCode")
-            || superCall?["k"]?.GetValue<string>() != "callInstance" || superCall["method"]?.GetValue<string>() != "Equals"
-            || superCall["anySlot"]?.GetValue<bool>() != true || superCall["super"]?.GetValue<bool>() != true)
+            || Result(3) is not BirCallInstance superCall || superCall.Method.OrDefault() != "Equals"
+            || !superCall.AnySlot.OrDefault() || !superCall.Super.OrDefault())
             throw new InvalidOperationException("materialized BIR payload normalization self-test failed");
 
         var first = payload.DeepClone();
         Normalize(payload);
-        if (!JsonNode.DeepEquals(first, payload))
+        if (!payload.StructurallyEquals(first))
             throw new InvalidOperationException("materialized BIR payload normalization is not idempotent");
     }
 }
