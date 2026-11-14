@@ -589,22 +589,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
     static TypeNode.Fqn ConstraintAtPhysical(
         TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams,
         ReferenceMetadataIndex refs, out bool erased)
-    {
-        erased = false;
-        var matches = ConstraintDeclarations(tv, typeParams, methodParams).Where(candidate =>
-        {
-            if (candidate.Constraint.Name == ownerName) return true;
-            // Imported inline bodies retain semantic owner tokens, while the consumer's bound
-            // may already name the referenced physical TypeDef. Compare their metadata identities.
-            if (refs.ExactReflectedOwner(candidate.Constraint.Name, refs.OwnerArity(candidate.Constraint.Name))
-                == refs.ExactReflectedOwner(ownerName, refs.OwnerArity(ownerName))) return true;
-            return refs.TryResolveClrOwner(candidate.Constraint.Name, out var physical, out _)
-                && physical == ownerName;
-        }).ToList();
-        if (matches.Count != 1) return null;
-        erased = matches[0].Erased;
-        return matches[0].Constraint;
-    }
+        => ConstraintAtPhysical(tv, ownerName, ConstraintFrame(typeParams), ConstraintFrame(methodParams), refs, out erased);
 
     static bool ConstraintDispatchWasErased(
         TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams)

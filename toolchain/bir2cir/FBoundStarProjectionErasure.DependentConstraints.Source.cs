@@ -17,7 +17,7 @@ static partial class FBoundStarProjectionErasure
             if (!parameter.Constraints.HasValue) continue;
             parameter.Constraints = parameter.Constraints.Value.Select(bound =>
                 OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index, frame, context.References)
-                    && PhysicalBoundClassifier(bound, context.Owners, context.References) is { } classifier
+                    && PhysicalBoundClassifier(bound, context.Projection) is { } classifier
                         ? classifier : bound).ToArray();
             var proofs = context.NativeProofs.Bounds(
                 context.Bindings.GetCapturedSource((BirGraphValue)declaration), index);

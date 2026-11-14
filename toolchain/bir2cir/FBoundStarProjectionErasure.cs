@@ -2643,6 +2643,11 @@ static partial class FBoundStarProjectionErasure
 
     static TypeNode ProjectOwnerMethodBound(TypeNode bound, IReadOnlyDictionary<string, Owner> owners,
         ReferenceMetadataIndex refs, bool physical = true, int ownerCount = int.MaxValue)
+        => ProjectOwnerMethodBound(bound, CarrierProjectionContext.ForDom(owners, refs, _valueSlots, _nativeProofs),
+            physical, ownerCount);
+
+    static TypeNode ProjectOwnerMethodBound(TypeNode bound, CarrierProjectionContext context,
+        bool physical = true, int ownerCount = int.MaxValue)
     {
         TypeNode Project(TypeNode node) => node switch
         {
@@ -2657,7 +2662,7 @@ static partial class FBoundStarProjectionErasure
         // receiver: Kotlin variance does not imply the same closed CLR generic construction for value arguments.
         if (bound is TypeNode.Tv) return bound;
         var projected = Project(bound);
-        return physical && projected is TypeNode.Fqn named && TryExistentialCarrier(named.Name, owners, refs, out var carrier)
+        return physical && projected is TypeNode.Fqn named && context.TryExistentialCarrier(named.Name, out var carrier)
             ? new TypeNode.Fqn(carrier) : projected;
     }
 
@@ -2665,9 +2670,13 @@ static partial class FBoundStarProjectionErasure
     // arguments. Every compiler-owned closure and its value carrier implements this same nominal classifier.
     // Foreign/native heads have no such compiler-owned proof and retain their existing exact constraint policy.
     static TypeNode PhysicalBoundClassifier(TypeNode bound, IReadOnlyDictionary<string, Owner> owners,
-        ReferenceMetadataIndex refs) => StripSourceNullability(bound) is TypeNode.Fqn { Args: { Length: > 0 } } named
-            && !refs.TryResolveClrOwner(named.Name, out _, out _)
-            && TryExistentialCarrier(named.Name, owners, refs, out var carrier)
+        ReferenceMetadataIndex refs) => PhysicalBoundClassifier(bound,
+            CarrierProjectionContext.ForDom(owners, refs, _valueSlots, _nativeProofs));
+
+    static TypeNode PhysicalBoundClassifier(TypeNode bound, CarrierProjectionContext context) =>
+        StripSourceNullability(bound) is TypeNode.Fqn { Args: { Length: > 0 } } named
+            && !context.References.TryResolveClrOwner(named.Name, out _, out _)
+            && context.TryExistentialCarrier(named.Name, out var carrier)
                 ? new TypeNode.Fqn(carrier) : null;
 
     static bool ProjectsCapturedBound(JsonObject declaration, int index, TypeNode bound) =>

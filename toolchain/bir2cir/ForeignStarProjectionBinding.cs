@@ -55,6 +55,12 @@ static partial class ForeignStarProjectionBinding
 
     internal static void RequireRuntimeFallback() => UsedRuntimeFallback = true;
 
+    // Late binding shares the selected policy but no longer owns source graph
+    // capabilities. Replace that reader once at the actual owning frontier;
+    // do not replay initial binding or reset its usage/name state.
+    internal static void ContinueWithProjection(Func<TypeNode, bool, TypeNode> projectValueType)
+        => _projectValueType = projectValueType;
+
     public static void ApplyAll(IEnumerable<JsonNode> roots,
         IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases, Func<TypeNode, bool, TypeNode> projectValueType)

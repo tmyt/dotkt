@@ -557,47 +557,19 @@ static partial class OwnerConstrainedMethodLowering
     static void RewriteConstraints(JsonObject method, JsonObject owner, JsonArray parameters, Func<TypeNode, bool> dependsOnOwner,
         Func<TypeNode, TypeNode> projectedBound)
     {
-        var frame = ReadMethodFrame(method);
-        var inherited = ReadOverrideBounds(method)?.Rows ?? Array.Empty<OwnerConstraintOverrideBounds.Row>();
-        for (var index = 0; index < parameters.Count; index++)
+        static TypeNode[][] Rows(JsonArray vector) => vector?.Select(row =>
+            (row as JsonObject)?["constraints"] is JsonArray constraints
+                ? constraints.Select(TypeJson.Read).ToArray() : null).ToArray();
+        var plan = PlanConstraintRewrite(Rows(parameters), Rows(owner["typeParams"] as JsonArray),
+            ReadMethodFrame(method), ReadOverrideBounds(method), References, dependsOnOwner,
+            projectedBound, PhysicalClassifier, index => NativeProofs(method, index));
+        for (var index = 0; index < plan.Length; index++)
         {
-            if (parameters[index] is not JsonObject parameter) continue;
-            if (parameter["constraints"] is not JsonArray constraints) continue;
-            var retained = new JsonArray();
-            var removed = new JsonArray();
-            foreach (var constraint in constraints)
-            {
-                var bound = TypeJson.Read(constraint);
-                var slot = inherited.FirstOrDefault(row => row.Index == index && row.Bound.Equals(bound));
-                if (slot != null)
-                {
-                    removed.Add(TypeJson.Write(SupertypeGraph.SubstOwnerTvs(
-                        projectedBound(slot.Template), slot.OwnerArgs)));
-                    if (PhysicalClassifier(bound) is TypeNode classifier)
-                        retained.Add(TypeJson.Write(classifier));
-                    foreach (var consequence in slot.Consequences.Select(TypeJson.Write))
-                        if (!retained.Any(row => JsonNode.DeepEquals(row, consequence)))
-                            retained.Add(consequence);
-                }
-                else if (ProjectsBound(method, index, bound, dependsOnOwner))
-                {
-                    removed.Add(TypeJson.Write(projectedBound(ProjectMethodVariables(bound, index, frame))));
-                    // The source relation may not be an exact CLR construction (the actual argument can itself
-                    // be an existential carrier). Its declaration-owned classifier remains a valid physical proof.
-                    if (PhysicalClassifier(bound) is TypeNode classifier)
-                        retained.Add(TypeJson.Write(classifier));
-                    foreach (var consequence in dependsOnOwner(bound)
-                        ? IndependentBounds(bound, owner["typeParams"] as JsonArray) : Enumerable.Empty<TypeNode>())
-                        if (!retained.Any(row => TypeJson.Read(row).Equals(consequence)))
-                            retained.Add(TypeJson.Write(consequence));
-                }
-                else retained.Add(constraint.DeepClone());
-            }
-            foreach (var proof in NativeProofs(method, index))
-                if (!retained.Any(row => TypeJson.Read(row).Equals(proof))) retained.Add(TypeJson.Write(proof));
-            parameter["constraints"] = new JsonArray(retained.Select(TypeJson.Read).Distinct().Select(TypeJson.Write).ToArray());
-            if (removed.Count > 0)
-                parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] = removed;
+            if (plan[index] is not { } row || parameters[index] is not JsonObject parameter) continue;
+            parameter["constraints"] = new JsonArray(row.Retained.Select(TypeJson.Write).ToArray());
+            if (row.Removed.Length > 0)
+                parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] =
+                    new JsonArray(row.Removed.Select(TypeJson.Write).ToArray());
         }
     }
 

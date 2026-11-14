@@ -14,55 +14,7 @@ static class TypedGenericArrayStorageLowering
 
         internal void Reserve(BirGraphValue root)
         {
-            root?.Visit(value => {
-                var name = value switch {
-                    EventPropertySourceFacts item => item.Name.OrDefault(),
-                    BirFieldGet item => item.Name.OrDefault(),
-                    BirStaticFieldGet item => item.Name.OrDefault(),
-                    BirFieldSetExpression item => item.Name.OrDefault(),
-                    BirStaticFieldSet item => item.Name.OrDefault(),
-                    BirLateinitGet item => item.Name.OrDefault(),
-                    BirAttributeNamedArgument item => item.Name.OrDefault(),
-                    BirParameter item => item.Name.OrDefault(),
-                    BirFunctionDeclaration item => item.Name.OrDefault(),
-                    BirFieldDeclaration item => item.Name.OrDefault(),
-                    BirRefTypeDeclaration item => item.Name.OrDefault(),
-                    BirPropertyDeclaration item => item.Name.OrDefault(),
-                    BirInterfaceDefinition item => item.Name.OrDefault(),
-                    BirEnumEntryDeclaration item => item.Name.OrDefault(),
-                    BirEnumDefinition item => item.Name.OrDefault(),
-                    BirClassDefinition item => item.Name.OrDefault(),
-                    BirKotlinCompanion item => item.Name.OrDefault(),
-                    BirRichEnumEntry item => item.Name.OrDefault(),
-                    BirRichEnumDeclaration item => item.Name.OrDefault(),
-                    BirClrEventBacking item => item.Name.OrDefault(),
-                    BirClrEventForwarder item => item.Name.OrDefault(),
-                    BirCaptureDescriptor item => item.Name.OrDefault(),
-                    BirClosureDefinition item => item.Name.OrDefault(),
-                    BirEventGet item => item.Name.OrDefault(),
-                    BirLambdaParameter item => item.Name.OrDefault(),
-                    BirInlineCapture item => item.Name.OrDefault(),
-                    BirCompanionValue item => item.Name.OrDefault(),
-                    BirSetLocal item => item.Name.OrDefault(),
-                    BirSetField item => item.Name.OrDefault(),
-                    BirCatch item => item.Var.OrDefault(),
-                    BirForArray item => item.Var.OrDefault(),
-                    BirForIn item => item.Var.OrDefault(),
-                    BirVariable item => item.Name.OrDefault(),
-                    BirLocal item => item.Name.OrDefault(),
-                    BirFor item => item.Var.OrDefault(),
-                    BirForRange item => item.Var.OrDefault(),
-                    BirEventAccessorBody item => item.Name.OrDefault(),
-                    BirPropertyGet item => item.Name.OrDefault(),
-                    BirPropertySet item => item.Name.OrDefault(),
-                    BirForEach item => item.Var.OrDefault(),
-                    BirRepeat item => item.Var.OrDefault(),
-                    BirTypeParameter item => item.Name.OrDefault(),
-                    BirMemberReference item => item.Name.OrDefault(),
-                    _ => null,
-                };
-                if (name != null) names.Add(name);
-            });
+            root?.Visit(value => value.VisitNameFields(name => names.Add(name)));
         }
 
         internal string Next(string stem)
@@ -144,7 +96,7 @@ static class TypedGenericArrayStorageLowering
         if (receiverType is TypeNode.Nullable nullable) receiverType = nullable.Of;
         if (receiverType is not TypeNode.Fqn { Name: "System.Array" }) return node;
         return node switch {
-            BirArrayGet value => Read(refs, receiver, value.Index.Value, value.Elem.Value),
+            BirArrayGet value => Read(refs, receiver, value.Index.Value, value.Sty.OrDefault() ?? value.Elem.Value),
             BirArraySet value => Store(value, receiver, refs, names),
             BirArrayLength => (BirGraphValue)Call(refs, "get_Length", receiver, "System.Int32", Array.Empty<string>()),
             BirForArray value => Loop(value, receiver, refs, names),
@@ -252,6 +204,12 @@ static class TypedGenericArrayStorageLowering
         lazy.Fields = new[] { new BirFieldDeclaration { Name = "$arrayValue$0", Type = element } };
         if (lazyNames.Next("$arrayValue$") != "$arrayValue$1")
             throw new InvalidOperationException("Typed array names seeded before their first allocation");
+        var structural = new BirVariable { Name = "declared", Type = new TypeNode.Fqn("$arrayStorage$0"),
+            Init = new BirCast { Type = new TypeNode.Array(new TypeNode.Fqn("$arrayStorage$1")),
+                E = new BirLocal { Name = "$arrayStorage$2" } } };
+        if (new FreshNames(structural).Next("$arrayStorage$") != "$arrayStorage$3"
+            || new GenericArrayStorageLowering.FreshNames(structural.ToDom()).Next("$arrayStorage$") != "$arrayStorage$3")
+            throw new InvalidOperationException("Array allocation names omitted a structured type/name field");
         var callables = new List<BirFunctionDeclaration>();
         BirValueBlock Operand(TypeNode type)
         {
