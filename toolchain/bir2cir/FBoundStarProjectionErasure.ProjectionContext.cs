@@ -93,7 +93,8 @@ static partial class FBoundStarProjectionErasure
         internal bool ProjectionCanChangeConstruction(TypeNode.Fqn application) =>
             LocalDeclaration(application.Name) is { } local
                 ? HasKotlinVariantParameter(application, local.Variances)
-                : HasKotlinVariantParameter(application, References.OwnerTypeParamDeclarations(application.Name));
+                : HasKotlinVariantParameter(application, References.OwnerTypeParametersInPhysicalFrame(application.Name)
+                    ?.Select(parameter => parameter.Variance.OrDefault()).ToArray());
 
         internal bool RequiresOpaqueVariantAlias(TypeNode.Fqn application)
         {
