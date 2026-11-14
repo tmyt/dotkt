@@ -60,14 +60,32 @@ sealed partial class GenericRepresentationPolicy
         policy.PrepareDomLocations(new[] { root });
         // The selected source cell becomes real storage before the same owning
         // handoff; its native role must move to the actual generated field.
-        SharedSyntheticSynthesis.Apply(root, ReferenceMetadataIndex.Build(Array.Empty<string>()));
+        BirFieldDeclaration materializedCell = null;
+        SharedSyntheticSynthesis.Apply(root, ReferenceMetadataIndex.Build(Array.Empty<string>()),
+            materializedStorage: (origin, physical) => {
+                if (!ReferenceEquals(origin, cell))
+                    throw new InvalidOperationException("Ref-cell materialization did not report its exact source occurrence");
+                materializedCell = physical;
+                policy.RegisterNativeStorageMaterialization(origin, physical);
+            });
+        var actualCell = root.Types.Value.OfType<BirClassDefinition>().Single(type => type.Name.OrDefault() == "SourceCell");
+        if (materializedCell == null || !ReferenceEquals(actualCell.Fields.Value[0], materializedCell)
+            || !ReferenceEquals(policy._nativeStorageMaterializations[cell], materializedCell))
+            throw new InvalidOperationException("Ref-cell materialization did not retain the actual authored storage field");
+        var duplicateMaterialization = false;
+        try { policy.RegisterNativeStorageMaterialization(cell, materializedCell); }
+        catch (InvalidOperationException) { duplicateMaterialization = true; }
+        if (!duplicateMaterialization || policy._nativeStorageMaterializations.Count != 1)
+            throw new InvalidOperationException("Selected native source storage accepted a second materialization notification");
+        policy.RefreshPhysicalNativeLocations(new[] { root });
         continuation = root.ToDom();
         policy.BindDomDeclarations(new JsonNode[] { continuation });
         var boundOwner = continuation["types"][0].AsObject();
         var boundField = boundOwner["fields"][1].AsObject();
         var cellOwner = continuation["types"].AsArray().OfType<JsonObject>()
             .Single(type => type["name"]?.GetValue<string>() == "SourceCell");
-        if (root.RefTypes.IsPresent || !policy.IsNativeField(cellOwner["fields"][0].AsObject())
+        if (root.RefTypes.IsPresent || policy._nativeStorageMaterializations.Count != 0
+            || !policy.IsNativeField(cellOwner["fields"][0].AsObject())
             || cellOwner["fields"][0][NativeLocationKey]?.GetValue<bool>() != true)
             throw new InvalidOperationException("Selected native ref-cell storage lost its actual synthesized field at handoff");
         if (!ReferenceEquals(policy.LocalDeclaration("SourceFrame"), boundOwner) || !policy.IsNativeField(boundField))

@@ -247,6 +247,8 @@ sealed partial class GenericRepresentationPolicy
             }
         if (!matched.SetEquals(expected))
             throw new InvalidOperationException("A selected native source declaration is absent from its DOM continuation");
+        BindRefreshedNativeLocations(roots);
+        _nativeStorageMaterializations.Clear();
         _sourceNativeStorage.Clear();
         _pendingNativePhysicalBindings = null;
         _pendingNativeOrigins = null;

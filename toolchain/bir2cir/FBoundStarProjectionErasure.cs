@@ -61,11 +61,7 @@ static partial class FBoundStarProjectionErasure
             (method, index) => _nativeProofs.Bounds(method, index));
         var rootList = roots.OfType<JsonObject>().ToList();
         _valueSlots = valueSlots ?? new GenericRepresentationPolicy(refs.Aliases, refs, rootList);
-        // A type-variable receiver's bound still names its constructed Kotlin owner here. Close that owner before
-        // value projection replaces the bound with a non-generic carrier and loses the original application.
-        ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(rootList);
         foreach (var root in rootList) Collect(root, root, owners, defs);
-        foreach (var root in rootList) NormalizeRedundantProjections(root, defs, refs);
         var localClrAliases = CollectLocalClrAliases(defs);
         _valueSlots.RegisterLocalDefinitions(defs, localClrAliases);
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
@@ -429,7 +425,7 @@ static partial class FBoundStarProjectionErasure
             if (arguments[index] is JsonObject argument
                 && TypeJson.Read(argument) is TypeNode.Projection projection
                 && parameters[index] is JsonObject parameter
-                && Str(parameter["variance"]) == projection.Variance)
+                && !ReferenceEquals(NormalizeProjectionArgument(projection, Str(parameter["variance"])), projection))
                 arguments[index] = argument["of"]!.DeepClone();
     }
 
