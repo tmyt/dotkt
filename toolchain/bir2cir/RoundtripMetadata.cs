@@ -23,14 +23,8 @@ using DotKt.Cir;
 // (SynthDefsFile). The standard NullableAttribute/NullableContextAttribute types are target-BCL declarations and each
 // application is marked external; duplicating those TypeDefs in every output would create a second CLR authority.
 //
-// ATTR ORDER (per emitted member) keeps the established order and inserts each newer carrier beside its slot peers:
-//   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?, KotlinValue?]
-//   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType?, KotlinExtensionFunctionType?, KotlinNothing? ]
-//   param:  [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType?,
-//             KotlinContextParameter?, KotlinExtensionReceiver? ]
-//   field:  [ Nullable?, KotlinReadOnly?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user,
-//             KotlinExtensionFunctionType? ]
-//   prop:   [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType? ]
+// Attribute ordering and fact consumption belong to CompleteMetadata in Callables.Source.cs and StampTypeHeaders
+// in TypeHeaders.Source.cs. Their direct tests cover the distinct slot-prefix orders and return-vector replacement.
 static partial class RoundtripMetadata
 {
     const string Ns = "DotKt.Runtime.CompilerServices.";
@@ -92,7 +86,7 @@ static partial class RoundtripMetadata
             BytesArg(Convert.ToBase64String(VisibilityContent(visibility)))));
 
     // ---------------------------------------------------------------------------------------------------------------
-    // STAMP one lowered CIR file: add `attrs`/`retAttrs` entries derived from the decls' round-trip facts.
+    // Validate logical suspend-result facts before physical representation discards their source modifier.
     // ---------------------------------------------------------------------------------------------------------------
     public static void RequireSuspendResults(IEnumerable<JsonNode> roots)
     {

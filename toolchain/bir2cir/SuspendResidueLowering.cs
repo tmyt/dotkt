@@ -86,8 +86,8 @@ static class SuspendResidueLowering
         }
     }
 
-    // Remove the Kotlin-only `suspend` modifier from every declaration of a lowered file. Called once per file, after
-    // RoundtripMetadata has stamped the Kotlin round-trip attributes that carry the fact into metadata.
+    // Remove the Kotlin-only `suspend` modifier from every method of a lowered file. Called after PrepareMetadata
+    // grants declaration obligations; eligible methods transfer the exact scalar to the typed metadata completion.
     public static void DropModifier(JsonNode root)
     {
         if (root is not JsonObject file) return;

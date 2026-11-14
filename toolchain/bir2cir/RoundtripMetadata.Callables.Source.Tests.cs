@@ -29,15 +29,32 @@ static partial class RoundtripMetadata
         var second = RuntimeMethod("second", "Probe.Second");
         var slots = first.Params.Value;
         var signature = slots[0].Type.Value;
+        var constructorSlot = new BirParameter { Name = "value", Type = signature };
+        var constructorSlots = new[] { constructorSlot };
         var constructor = new BirConstructor { RoundtripMetadataPending = true,
             RoundtripDeclarationIdentity = new BirRoundtripDeclarationIdentity {
-                DeclarationId = "constructor", DeclarationSourceName = ".ctor", DeclarationSignatureAllocation = true,
-            }, Params = Array.Empty<BirParameter>() };
+                DeclarationId = "constructor", DeclarationSourceName = "sourceConstructor", DeclarationSignatureAllocation = true,
+            }, Params = constructorSlots };
+        var normalConstructor = (BirConstructor)constructor.DeepClone();
+        var normalSlots = normalConstructor.Params.Value;
+        var normalSlot = normalSlots[0];
+        var normalSignature = normalSlot.Type.Value;
+        CompleteMetadata(new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Name = "Probe.Normal", Kind = "class", Ctors = new[] { normalConstructor } },
+        } }, runtimeMode: false);
+        var normalPayload = AttributePayload(normalConstructor.Attrs.Value.Single());
+        if (normalPayload["id"].GetValue<string>() != "constructor" || normalPayload["name"].GetValue<string>() != ".ctor"
+            || normalPayload["signatureAllocation"].GetValue<bool>() != true || normalPayload.AsObject().Count != 3
+            || !ReferenceEquals(normalConstructor.Params.Value, normalSlots) || !ReferenceEquals(normalSlots[0], normalSlot)
+            || !ReferenceEquals(normalSlot.Type.Value, normalSignature) || normalConstructor.RoundtripDeclarationIdentity.IsPresent
+            || normalConstructor.RoundtripMetadataPending.IsPresent)
+            throw new InvalidOperationException("Normal constructor metadata lost .ctor naming, allocation ownership or exact parameter objects");
         var owner = new BirClassDefinition { Name = "Probe", Methods = new[] { first, second }, Ctors = new[] { constructor } };
         var file = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { owner } };
         CompleteMetadata(file, runtimeMode: true);
         var firstPayload = AttributePayload(first.Attrs.Value.Single(attribute => AttributeName(attribute) == AKDeclarationIdentity));
         var secondPayload = AttributePayload(second.Attrs.Value.Single(attribute => AttributeName(attribute) == AKDeclarationIdentity));
+        var constructorPayload = AttributePayload(constructor.Attrs.Value.Single());
         if (firstPayload["id"].GetValue<string>() != "first" || secondPayload["id"].GetValue<string>() != "second"
             || firstPayload.AsObject().Count != 3 || secondPayload.AsObject().Count != 2
             || !ReferenceEquals(first, ReferenceMetadataIndex.SelectDeclarationTwin(new[] { second, first },
@@ -46,7 +63,10 @@ static partial class RoundtripMetadata
             || !slots[0].NullableGeneric.HasValue || slots[0].Mods.IsPresent || slots[0].Attrs.Value.Length != 1
             || !ReferenceEquals(slots[0].Attrs.Value[0], user) || first.RoundtripDeclarationIdentity.IsPresent
             || !first.Mods.HasValue || !first.Mods.Value.StructurallyEquals(new BirModifiers())
-            || AttributePayload(constructor.Attrs.Value.Single())["signatureAllocation"].GetValue<bool>() != true)
+            || constructorPayload["id"].GetValue<string>() != "constructor" || constructorPayload["name"].GetValue<string>() != "sourceConstructor"
+            || constructorPayload["signatureAllocation"].GetValue<bool>() != true || constructorPayload.AsObject().Count != 3
+            || !ReferenceEquals(constructor.Params.Value, constructorSlots) || !ReferenceEquals(constructorSlots[0], constructorSlot)
+            || !ReferenceEquals(constructorSlot.Type.Value, signature) || constructor.RoundtripDeclarationIdentity.IsPresent)
             throw new InvalidOperationException("Typed runtime metadata lost exact declaration linkage, opaque slots, or nullable source facts");
         CallableMetadataSelfTest(user);
         Console.WriteLine("[typed callable metadata] self-test OK (runtime linkage, source payloads/order, exact eligibility and clock handoffs)");

@@ -7,7 +7,7 @@ using DotKt.Cir;
 
 static partial class RoundtripMetadata
 {
-    // Stamp/StripRuntimeAttrs grant this capability at their original phase.
+    // PrepareMetadata grants this capability at the declaration metadata phase.
     // In particular, types synthesized by CapturedGenericInvocation afterwards
     // must not acquire a source header from their mere presence at this seam.
     internal static void StampTypeHeaders(BirFileDeclaration file, bool runtimeMode)

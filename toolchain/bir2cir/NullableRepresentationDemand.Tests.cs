@@ -450,8 +450,12 @@ static partial class NullableRepresentationDemand
         RoundtripMetadata.PrepareMetadata(runtime, runtimeMode: true);
         var stripped = BirGraphDom.ReadBirFileDeclaration(runtime);
         RoundtripMetadata.CompleteMetadata(stripped, runtimeMode: true);
-        if (((BirGraphValue)stripped.Types.Value[0]).ToDom()[KotlinSupertypesRecord.PreKey] != null
-            || runtime["methods"][0][NullableRepresentationTypes.MethodFrameKey] != null)
+        var runtimeOwner = (BirClassDefinition)stripped.Types.Value[0];
+        var runtimeMethod = stripped.Methods.Value[0];
+        if (runtimeOwner.KotlinSupertypesPre.IsPresent || runtimeOwner.RoundtripSupertypesPre.IsPresent
+            || runtimeOwner.RoundtripTypeHeaderPending.IsPresent || runtimeMethod.NullableRepresentationFrame.IsPresent
+            || runtimeMethod.RoundtripDeclarationIdentity.IsPresent || runtimeMethod.DeclarationId.IsPresent
+            || runtimeMethod.DeclarationSourceName.IsPresent || runtimeMethod.RoundtripMetadataPending.IsPresent)
             throw new InvalidOperationException("Runtime metadata stripping leaked nullable representation facts");
     }
 }

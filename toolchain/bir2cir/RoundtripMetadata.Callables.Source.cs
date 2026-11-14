@@ -51,9 +51,8 @@ static partial class RoundtripMetadata
                     method.SuspendResult = default;
                     method.ExistentialInnerConstructorFactory = default;
                     method.KotlinPropertyAccessorCarrier = default;
-                    // Runtime role stripping used to precede DropModifier.
-                    // Any authored suspend key kept this object nonempty at
-                    // that clock; DropModifier then deliberately left it empty.
+                    // An authored suspend key preserves a mods object made
+                    // empty by DropModifier, regardless of the scalar's value.
                     method.Mods = RemoveExtensionRole(method.Mods, preserveEmpty: method.RoundtripSuspend.IsPresent);
                     method.Attrs = RuntimeAttributes(method.Attrs);
                     method.RetAttrs = RuntimeAttributes(method.RetAttrs);
