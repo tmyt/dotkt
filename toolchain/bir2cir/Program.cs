@@ -562,6 +562,7 @@ sealed class Pipeline
             var sourceUses = sourceUseViews[index];
             NullableTvErasureCallRealign.ApplyMaterialized(materializedEventHandles, sourceUses, isValueFqn, refs);
             var eventClosures = ClosureSynthesis.ApplyMaterialized(source, materializedEventHandles, refs, scalarSlots.ProjectMethod);
+            aliasTransitions.AdmitMaterializedTypes(source, eventClosures.AppendedTypes);
             if (DelegateTargetSlotAlignment.ApplyMaterialized(materializedEventHandles, eventClosures.AppendedTypes, isValueFqn))
                 foreach (var owner in eventClosures.AppendedTypes)
                     NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(owner, sourceUses, isValueFqn, refs);
