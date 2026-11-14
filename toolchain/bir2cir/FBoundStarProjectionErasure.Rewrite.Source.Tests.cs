@@ -125,6 +125,6 @@ static partial class FBoundStarProjectionErasure
                 "whole body rewriting replaced owning declarations/arrays or entered executable carrier bytes");
             Console.WriteLine("[owning carrier body rewriting] self-test OK (selected fields/members, constraint frames, event edges, array projection, live operands and opaque carriers)");
         }
-        finally { OwnerConstrainedMethodLowering.Reset(refs, _ => null); }
+        finally { OwnerConstrainedMethodLowering.Reset(refs); }
     }
 }

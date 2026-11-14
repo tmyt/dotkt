@@ -14,36 +14,24 @@ static partial class OwnerConstrainedMethodLowering
         internal DeclarationBinding OwnerBinding => owner;
         internal JsonObject Method => method.Physical;
         internal JsonObject Owner => owner.Physical;
-        public void Deconstruct(out JsonObject methodNode, out JsonObject ownerNode)
-        { methodNode = Method; ownerNode = Owner; }
     }
     static CurrentDeclarationBindings MethodBindings;
     static bool PreparedMethods;
-    static IEnumerable<(JsonObject Method, JsonObject Owner)> PhysicalMethods => Methods.Select(row => (row.Method, row.Owner));
-
-    static void Configure(ReferenceMetadataIndex references, Func<TypeNode, TypeNode> physicalClassifier,
-        Func<JsonObject, int, IEnumerable<TypeNode>> nativeProofs)
-    {
-        References = references;
-        PhysicalClassifier = physicalClassifier;
-        NativeProofs = nativeProofs ?? ((_, _) => Enumerable.Empty<TypeNode>());
-    }
 
     internal static void BeginSourceMethodPreparation(CurrentDeclarationBindings bindings, ReferenceMetadataIndex references)
     {
         Methods.Clear();
         MethodBindings = bindings;
         PreparedMethods = true;
-        Configure(references, _ => null, null);
+        References = references;
     }
 
-    internal static void ConfigurePreparedMethods(CurrentDeclarationBindings bindings, ReferenceMetadataIndex references,
-        Func<TypeNode, TypeNode> physicalClassifier, Func<JsonObject, int, IEnumerable<TypeNode>> nativeProofs = null)
+    internal static void ConfigurePreparedMethods(CurrentDeclarationBindings bindings, ReferenceMetadataIndex references)
     {
         if (!PreparedMethods || !ReferenceEquals(bindings, MethodBindings) || !ReferenceEquals(references, References))
             throw new InvalidOperationException("Method preparation does not own this physical continuation");
         foreach (var row in Methods) { _ = row.Method; _ = row.Owner; }
-        Configure(references, physicalClassifier, nativeProofs);
+        References = references;
         PreparedMethods = false;
     }
 
@@ -71,21 +59,5 @@ static partial class OwnerConstrainedMethodLowering
             .ToDictionary(row => row.index, row => row.parameter.Constraints.Value);
         var bounds = CaptureMethodBounds(method.MethodTypeParameterBoundsPre.OrDefault(), additions);
         if (bounds.Bounds.Count > 0) method.MethodTypeParameterBoundsPre = bounds;
-    }
-
-    // Record is an explicit producer admission. An independently configured late
-    // consumer using Reset has physical-only rows, not an inferred source map.
-    static MethodRegistration AdmitPhysicalRegistration(JsonObject method, JsonObject owner)
-    {
-        var row = new MethodRegistration(MethodBindings != null ? MethodBindings.RegisterPhysical(method) : new DeclarationBinding(method),
-            MethodBindings != null ? MethodBindings.RegisterPhysical(owner) : new DeclarationBinding(owner));
-        Methods.Add(row);
-        return row;
-    }
-
-    static void RemovePhysicalRegistration(JsonObject method, JsonObject owner)
-    {
-        var index = Methods.FindIndex(row => ReferenceEquals(row.Method, method) && ReferenceEquals(row.Owner, owner));
-        if (index >= 0) Methods.RemoveAt(index);
     }
 }

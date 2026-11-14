@@ -26,9 +26,7 @@ static partial class FBoundStarProjectionErasure
         ForeignStarProjectionBinding.ContinueWithProjection((type, shape) =>
             RewriteType(type, owners, references, localClrAliases: aliases, preserveArrayShape: shape));
         _ = context.Surface.Signatures.BindPhysical();
-        OwnerConstrainedMethodLowering.ConfigurePreparedMethods(preparation.Bindings, context.References,
-            bound => PhysicalBoundClassifier(bound, context.Owners, context.References),
-            (method, index) => _nativeProofs.Bounds(method, index));
+        OwnerConstrainedMethodLowering.ConfigurePreparedMethods(preparation.Bindings, context.References);
         var sources = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var owner in context.Owners.Values.Where(owner => owner.Needed))
         foreach (var row in context.Declarations.Slots(owner).Values)

@@ -479,9 +479,9 @@ static partial class FBoundStarProjectionErasure
                     {"kind":"class","name":"Construction","typeParams":[{"name":"T"}]},
                     {"kind":"class","name":"Variant","typeParams":[{"name":"T"}]}]}
           """) });
-        OwnerConstrainedMethodLowering.Reset(refs, bound => PhysicalBoundClassifier(bound, owners, refs));
+        OwnerConstrainedMethodLowering.Reset(refs);
         SourceProjectionContractSelfTest();
-        OwnerConstrainedMethodLowering.Reset(refs, _ => null);
+        OwnerConstrainedMethodLowering.Reset(refs);
         if (RewriteType(inner, owners, refs) != new TypeNode.Fqn("InnerView")
             || RewriteType(exact, owners, refs) != new TypeNode.Fqn("BoundView")
             || RewriteType(inner, owners, refs, boundDeclaration: true) != inner

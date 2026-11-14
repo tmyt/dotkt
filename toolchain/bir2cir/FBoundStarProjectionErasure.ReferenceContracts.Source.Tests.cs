@@ -81,7 +81,7 @@ static partial class FBoundStarProjectionErasure
                 == context.Owners["RefOwner"].DefinitionBinding, "reference synthesis broke exact original owner binding");
             context.Declarations.ReleaseSourceRows();
         }
-        finally { OwnerConstrainedMethodLowering.Reset(references, _ => null); }
+        finally { OwnerConstrainedMethodLowering.Reset(references); }
         Console.WriteLine("[owning managed-reference contracts] self-test OK (invariant pointee frame, actual interface slot and raw ref invoker)");
     }
 }
