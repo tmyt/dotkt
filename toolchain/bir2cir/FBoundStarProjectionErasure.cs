@@ -1537,6 +1537,8 @@ static partial class FBoundStarProjectionErasure
         _ => false,
     };
 
+    static bool IsExistentialArgument(TypeNode type) => type is TypeNode.Star or TypeNode.Projection;
+
     static TypeNode StripProjectionShell(TypeNode type) => type switch
     {
         TypeNode.Nullable n => StripProjectionShell(n.Of),
