@@ -43,6 +43,7 @@ static class Bir2Cir
                 InheritedDefaultFakeOverrideElision.SelfTestSource();
                 DeclarationIdentityBinding.SelfTest();
                 CurrentDeclarationBindingsTests.SelfTest();
+                FBoundStarProjectionErasure.CurrentDeclarationPreparationSelfTest();
                 SourceDeclarationSignatures.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();
@@ -669,8 +670,8 @@ sealed class Pipeline
         genericRepresentations.RefreshPhysicalNativeLocations(captured);
         ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(captured);
         FBoundStarProjectionErasure.NormalizeRedundantProjections(captured, refs);
-        var currentDeclarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(captured, genericRepresentations);
-        var currentDeclarationPreparation = FBoundStarProjectionErasure.PrepareDeclarationContinuation(currentDeclarations);
+        var currentDeclarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(captured, genericRepresentations,
+            out var currentDeclarationPreparation);
         var nativeProofs = FBoundStarProjectionErasure.PrepareNativeProofs(currentDeclarations, refs, genericRepresentations);
 
         for (var index = 0; index < captured.Length; index++)

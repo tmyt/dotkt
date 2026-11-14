@@ -101,8 +101,7 @@ static partial class GenericArrayStorageLowering
         {
             var sources = new[] { File("FirstArrayFile", "$arrayIndex$0"), File("SecondArrayFile", "$arrayStorage$1") };
             var values = GenericRepresentationPolicy.CreateSource(sources, refs.Aliases, refs);
-            var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(sources, values);
-            var preparation = FBoundStarProjectionErasure.PrepareDeclarationContinuation(declarations);
+            var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(sources, values, out var preparation);
             var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, values);
             var first = sources[0].ToDom(declarations.ObserveProjection);
             var second = sources[1].ToDom(declarations.ObserveProjection);

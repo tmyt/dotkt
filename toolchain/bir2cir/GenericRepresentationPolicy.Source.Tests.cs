@@ -131,8 +131,7 @@ sealed partial class GenericRepresentationPolicy
         root.Types = new IBirTypeDeclaration[] { source, carrier, payload };
         policy.PrepareDomLocations(new[] { root });
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
-        var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { root }, policy);
-        var preparation = FBoundStarProjectionErasure.PrepareDeclarationContinuation(declarations);
+        var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { root }, policy, out var preparation);
         var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
         var continuation = root.ToDom(declarations.ObserveProjection);
         declarations.BindProjected();
