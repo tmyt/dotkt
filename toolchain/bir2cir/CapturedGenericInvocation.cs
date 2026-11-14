@@ -153,23 +153,6 @@ static partial class CapturedGenericInvocation
         Console.WriteLine("[captured source facts] self-test OK (local/reference variance, permuted frame, exact IDs/stamps, shape precedence, source isolation)");
     }
 
-    // Snapshot allocated constructor arguments before ordinary value slots become existential carriers.
-    public static void CaptureParameterWitnesses(IEnumerable<JsonNode> roots)
-    {
-        void Visit(JsonObject owner)
-        {
-            foreach (var method in (owner["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Str(method[DeclarationIdentityBinding.Key]) is string identity)
-                {
-                    _parameterWitnesses[identity] = ((JsonArray)method["params"]).OfType<JsonObject>()
-                        .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
-                    _methodWitnessFrames[identity] = NullableRepresentationTypes.DeclarationMethodFrame(method);
-                }
-            foreach (var child in (owner["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Visit(child);
-        }
-        foreach (var root in roots.OfType<JsonObject>()) Visit(root);
-    }
-
     static bool IsObject(TypeNode type) => type is TypeNode.Fqn { Name: "object" or "System.Object" } || type is TypeNode.Nullable n && IsObject(n.Of);
     static bool HasAddress(TypeNode type) => type is TypeNode.ByRef or TypeNode.Ptr || type is TypeNode.Mod m && HasAddress(m.Of);
     static bool ByRefLike(TypeNode type, ReferenceMetadataIndex refs) => type is TypeNode.Fqn f && refs.IsByRefLikeFqn(f);

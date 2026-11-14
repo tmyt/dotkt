@@ -371,17 +371,21 @@ sealed partial class GenericRepresentationPolicy
         if (arguments.Length != 2 || arguments.Any(argument => argument is not TypeNode.Fqn { Name: "kotlin.collections.Collection" }))
             throw new InvalidOperationException("Frame expansion changed a collection's source declaration identity");
 
-        var sourceOverride = TypeJson.Write(new TypeNode.Fqn("Outer.Inner", new TypeNode[] { new TypeNode.Tv("type", 0) }));
-        var innerRoot = new JsonObject { ["fileClass"] = "InnerRoles", ["types"] = new JsonArray(new JsonObject {
-            ["kind"] = "class", ["name"] = "Outer.Inner", ["semanticOwner"] = "Outer",
-            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "$storage0" }),
-            ["outerTypeParamCount"] = 2, ["mods"] = new JsonObject { ["inner"] = true },
-            ["methods"] = new JsonArray(new JsonObject { ["overrides"] = new JsonArray(new JsonObject {
-                ["owner"] = sourceOverride.DeepClone(), ["member"] = "run",
-            }) }),
-        }) };
+        var sourceOverride = new TypeNode.Fqn("Outer.Inner", new TypeNode[] { new TypeNode.Tv("type", 0) });
+        var overrideEdge = new BirOverride { Owner = sourceOverride, Member = "run", Kind = "method", Arity = 0 };
+        BirTypeParameter[] OwnerParameters() => new[] {
+            new BirTypeParameter { Name = "T" }, new BirTypeParameter { Name = "$storage0" },
+        };
+        var innerRoot = new BirFileDeclaration { FileClass = "InnerRoles", Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Kind = "class", Name = "Outer", TypeParams = OwnerParameters() },
+            new BirClassDefinition { Kind = "class", Name = "Outer.Inner", SemanticOwner = "Outer",
+                TypeParams = OwnerParameters(), OuterTypeParamCount = 2, Mods = new BirModifiers { Inner = true },
+                Methods = new[] { new BirFunctionDeclaration { Name = "run", Params = Array.Empty<BirParameter>(),
+                    Ret = new TypeNode.Fqn("kotlin.Unit"), Overrides = new[] { overrideEdge } } } },
+        } };
         TypeOwnershipLowering.ProjectInnerApplications(new[] { innerRoot }, null);
-        if (!JsonNode.DeepEquals(innerRoot["types"][0]["methods"][0]["overrides"][0]["owner"], sourceOverride))
+        if (!ReferenceEquals(overrideEdge.Owner.Value, sourceOverride)
+            || overrideEdge.Owner.Value is not TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "type", I: 0 }] })
             throw new InvalidOperationException("Physical inner capture projection rewrote a source override edge");
         Console.WriteLine("[generic binding roles] self-test OK (array root, map storage, exact source override frames)");
     }

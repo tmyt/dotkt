@@ -862,6 +862,7 @@ internal static partial class BirGraphJson
         OptionalField<IBirExpression> field0 = default;
         OptionalField<IBirExpression> field1 = default;
         OptionalField<TypeNode> field2 = default;
+        OptionalField<TypeNode> field3 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -869,7 +870,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 3); if (ReadString(ref reader) != "arrayGet") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 4); if (ReadString(ref reader) != "arrayGet") throw new FormatException(); break;
                 case "array":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
@@ -878,9 +879,13 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
-                case "elem":
+                case "_erasedValueVariable":
                     Seen(ref seen, 1UL << 2);
                     field2 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    break;
+                case "elem":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -890,7 +895,8 @@ internal static partial class BirGraphJson
         {
             Array = field0,
             Index = field1,
-            Elem = field2,
+            _erasedValueVariable = field2,
+            Elem = field3,
         };
     }
 

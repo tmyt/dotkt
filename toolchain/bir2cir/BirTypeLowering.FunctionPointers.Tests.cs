@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
@@ -13,6 +12,14 @@ static partial class BirTypeLowering
         var callback = Named(FunctionPointerVocabulary.Pointer, convention,
             new TypeNode.Fn(false, methodVariable, [typeVariable, methodVariable]));
         TypeNode Lower(TypeNode type) => LowerPhysicalType(type, new Dictionary<string, string>(), _ => false, null, false);
+        void Validate(TypeNode type, string file)
+        {
+            var field = new BirFieldDeclaration { Name = "pointer", Type = type };
+            var root = new BirFileDeclaration { Fields = new[] { field } };
+            ValidatePointerVocabulary(root, file);
+            if (!ReferenceEquals(root.Fields.Value[0], field) || !ReferenceEquals(field.Type.Value, type))
+                throw new Exception("Pointer validation rewrote its owning source declarations");
+        }
         var expected = new TypeNode.FnPtr(0, 0, 2, methodVariable, [typeVariable, methodVariable]);
         if (Lower(callback) != expected) throw new Exception("Function pointer lost its exact generic frame");
         var nullableConstructor = Named("System.Nullable`1", methodVariable);
@@ -56,11 +63,11 @@ static partial class BirTypeLowering
             Named("System.Collections.Generic.List", callback),
         })
         {
-            try { ValidatePointerVocabulary(TypeNode.Write(invalid), "function-pointer-selftest"); }
+            try { Validate(invalid, "function-pointer-selftest"); }
             catch (InvalidDataException) { continue; }
             throw new Exception("Inexact or generic-argument function-pointer signature was accepted");
         }
-        ValidatePointerVocabulary(TypeNode.Write(new TypeNode.Array(callback)), "function-pointer-array-selftest");
+        Validate(new TypeNode.Array(callback), "function-pointer-array-selftest");
         foreach (var invalid in new[] {
             expected with { CallingConvention = 5 },
             expected with { GenericArity = 1 },

@@ -1748,11 +1748,12 @@ internal static class BirGraphMessagePack
         OptionalField<IBirExpression> field0 = default;
         OptionalField<IBirExpression> field1 = default;
         OptionalField<TypeNode> field2 = default;
+        OptionalField<TypeNode> field3 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 3); if (IrMessagePack.ReadString(ref reader) != "arrayGet") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 4); if (IrMessagePack.ReadString(ref reader) != "arrayGet") throw new FormatException(); break;
                 case "array":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
@@ -1761,9 +1762,13 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
-                case "elem":
+                case "_erasedValueVariable":
                     Seen(ref seen, 1UL << 2);
                     field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
+                case "elem":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -1773,14 +1778,15 @@ internal static class BirGraphMessagePack
         {
             Array = field0,
             Index = field1,
-            Elem = field2,
+            _erasedValueVariable = field2,
+            Elem = field3,
         };
     }
 
     internal static void WriteBirArrayGet(ref MessagePackWriter writer, BirArrayGet value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Array.IsPresent ? 1 : 0) + (value.Index.IsPresent ? 1 : 0) + (value.Elem.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Array.IsPresent ? 1 : 0) + (value.Index.IsPresent ? 1 : 0) + (value._erasedValueVariable.IsPresent ? 1 : 0) + (value.Elem.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("arrayGet");
         if (value.Array.IsPresent)
@@ -1799,6 +1805,15 @@ internal static class BirGraphMessagePack
             else
             {
                 WriteBirExpression(ref writer, value.Index.Value, depth + 1);
+            }
+        }
+        if (value._erasedValueVariable.IsPresent)
+        {
+            writer.Write("_erasedValueVariable");
+            if (value._erasedValueVariable.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value._erasedValueVariable.Value, depth + 1);
             }
         }
         if (value.Elem.IsPresent)

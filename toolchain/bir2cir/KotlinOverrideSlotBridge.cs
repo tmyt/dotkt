@@ -88,15 +88,6 @@ static partial class KotlinOverrideSlotBridge
         IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters) =>
         ApplyAll(roots, isValue, refs, representations, Phase.SuspendValueBridges, localTypeNames, covariantBridgedSlots, refBuild, sourceParameters);
 
-    internal static IReadOnlyDictionary<JsonObject, TypeNode[]> CaptureSourceParameters(IEnumerable<JsonNode> roots)
-    {
-        var facts = new Dictionary<JsonObject, TypeNode[]>(ReferenceEqualityComparer.Instance);
-        foreach (var definition in SupertypeGraph.Collect(roots).Values)
-            foreach (var method in definition.Methods.OfType<JsonObject>())
-                facts[method] = ReadParameterTypes(method);
-        return facts;
-    }
-
     internal static TypeNode[] ReadParameterTypes(JsonObject method) =>
         (method["params"] as JsonArray)?.OfType<JsonObject>()
             .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>();
