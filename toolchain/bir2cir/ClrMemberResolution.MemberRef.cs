@@ -31,6 +31,7 @@
 using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 using DotKt.Toolchain;
 
 static partial class ClrMemberResolution
@@ -94,41 +95,55 @@ static partial class ClrMemberResolution
     static JsonObject ExactCall(ReferenceMetadataIndex refs, MethodInfo method,
         TypeNode.Fqn declaringOwner, JsonNode receiver, JsonArray arguments, bool isStatic)
     {
+        var plan = PlanExactDispatch(refs, method, declaringOwner, isStatic);
+        var reference = plan.Reference;
+        var adapted = new JsonArray(arguments.Select((argument, index) => (JsonNode)new JsonObject {
+            ["k"] = "cast", ["type"] = TypeJson.Write(plan.Arguments[index]), ["e"] = argument.DeepClone(),
+        }).ToArray());
+        var call = new JsonObject {
+            ["k"] = isStatic ? "callStatic" : "callInstance",
+            [isStatic ? "owner" : "ownerType"] = TypeJson.Write(reference.DeclaringType),
+            ["method"] = plan.Name, ["virtual"] = !isStatic,
+            ["recv"] = isStatic ? null : new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(reference.DeclaringType), ["e"] = receiver },
+            ["sig"] = new JsonArray(reference.ParameterTypes.Select(TypeJson.Write).ToArray()),
+            ["ret"] = TypeJson.Write(plan.Result), ["sty"] = TypeJson.Write(plan.Result),
+            ["args"] = adapted, ["memberRef"] = reference.Write(), [DeclarationIdentityBoundKey] = true,
+        };
+        if (isStatic) call.Remove("recv");
+        if (plan.Visibility != null)
+        {
+            call["memberVisibility"] = plan.Visibility;
+            call["memberOwnerTypeParams"] = plan.OwnerParameters == null ? null
+                : new JsonArray(plan.OwnerParameters.Select(parameter => (JsonNode)parameter.ToDom()).ToArray());
+            call["memberReturnType"] = TypeJson.Write(reference.ReturnType);
+            if (plan.Visibility == "protected" && receiver?["k"]?.GetValue<string>() == "this")
+                call["recv"] = receiver.DeepClone();
+        }
+        return call;
+    }
+
+    sealed record ExactDispatchPlan(string Name, MemberRefNode Reference, TypeNode[] Arguments,
+        TypeNode Result, string Visibility, IReadOnlyList<BirTypeParameter> OwnerParameters);
+
+    // Both actual graph renderers consume one selected MethodDef and the same
+    // physical signature, argument adaptation and lexical-access metadata.
+    static ExactDispatchPlan PlanExactDispatch(ReferenceMetadataIndex refs, MethodInfo method,
+        TypeNode.Fqn declaringOwner, bool isStatic)
+    {
         if (method.IsStatic != isStatic || method.IsGenericMethod)
             throw new InvalidOperationException("Exact dispatch requires a non-generic MethodDef with matching staticness");
         _refs = refs;
         var reference = MemberRefOf(method, MemberRefNode.Kinds.Method, method.DeclaringType, declaringOwner.Args);
-        var parameters = method.GetParameters();
-        var adapted = new JsonArray(arguments.Select((argument, index) => (JsonNode)new JsonObject {
-            ["k"] = "cast", ["type"] = TypeJson.Write(PhysicalTypeOf(parameters[index].ParameterType,
-                declaringOwner.Args, typeArg: false)), ["e"] = argument.DeepClone(),
-        }).ToArray());
+        var parameters = method.GetParameters().Select(parameter => PhysicalTypeOf(parameter.ParameterType,
+            declaringOwner.Args, typeArg: false)).ToArray();
+        // This result is already closed in the caller's owner frame. Both
+        // renderers stamp ret AND sty to prevent a second substitution; the
+        // MemberRef retains the selected MethodDef's open signature.
         var result = PhysicalTypeOf(method.ReturnType, declaringOwner.Args, typeArg: false);
-        var call = new JsonObject {
-            ["k"] = isStatic ? "callStatic" : "callInstance",
-            [isStatic ? "owner" : "ownerType"] = TypeJson.Write(reference.DeclaringType),
-            ["method"] = method.Name, ["virtual"] = !isStatic,
-            ["recv"] = isStatic ? null : new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(reference.DeclaringType), ["e"] = receiver },
-            ["sig"] = new JsonArray(reference.ParameterTypes.Select(TypeJson.Write).ToArray()),
-            // This producer has already closed the result in the caller's frame. The matching exact stamp
-            // discharges ConstructedMemberReturnSubstitution's contract and prevents a second substitution.
-            ["ret"] = TypeJson.Write(result), ["sty"] = TypeJson.Write(result),
-            ["args"] = adapted, ["memberRef"] = reference.Write(), [DeclarationIdentityBoundKey] = true,
-        };
-        if (isStatic) call.Remove("recv");
         var visibility = method.IsPrivate ? "private" : method.IsAssembly ? "internal"
             : method.IsFamily || method.IsFamilyOrAssembly || method.IsFamilyAndAssembly ? "protected" : null;
-        if (visibility != null)
-        {
-            call["memberVisibility"] = visibility;
-            call["memberOwnerTypeParams"] = refs.OwnerTypeParamDeclarations(((TypeNode.Fqn)reference.DeclaringType).Name)?.DeepClone();
-            call["memberReturnType"] = TypeJson.Write(reference.ReturnType);
-            // Keep the verifier-visible derived `this` for a legal direct family call. Lifted receivers still
-            // use lexical-access lowering; no protected target or backing storage is widened.
-            if (visibility == "protected" && receiver?["k"]?.GetValue<string>() == "this")
-                call["recv"] = receiver.DeepClone();
-        }
-        return call;
+        return new(method.Name, reference, parameters, result, visibility, visibility == null ? null
+            : refs.OwnerTypeParametersInPhysicalFrame(((TypeNode.Fqn)reference.DeclaringType).Name));
     }
 
     /// <summary>The scalar reference for a resolved field.</summary>
