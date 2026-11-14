@@ -111,6 +111,16 @@ static partial class ClrEventSubscriptionBinding
         roots[1].Slot.Replace(replacement);
         Require(ReferenceEquals(returned.Value.Value, replacement), "published owning slot does not update the current source graph");
 
+        var built = ClosureSynthesis.ApplyMaterialized(file, roots, refs);
+        Require(built.AppendedTypes.Select(type => type.Name.Value).SequenceEqual(new[] {
+            "dotkt$Subscriptions$EventAdd0", "dotkt$Subscriptions$EventRemove0",
+            "dotkt$Subscriptions$EventAdd1", "dotkt$Subscriptions$EventRemove1",
+            "dotkt$Subscriptions$EventAdd2", "dotkt$Subscriptions$EventRemove2",
+        }), "non-overlapping frontier lost nested callbacks or changed their bottom-up append order");
+        var remainingIngredients = 0;
+        file.Visit(node => { if (node is BirNewClosure { SynthClass.IsPresent: true }) remainingIngredients++; });
+        Require(remainingIngredients == 0, "nested callback ingredients survived materialized closure synthesis");
+
         var metadata = new ReferenceDotKtMetadata();
         var frame = new NullableRepresentationFrame(1, Array.Empty<int>(), new[] { 1, 0 }, storageIndices: new[] { 0 });
         metadata.NullableFrames["kotlin.clr.ClrEvent"] = frame;

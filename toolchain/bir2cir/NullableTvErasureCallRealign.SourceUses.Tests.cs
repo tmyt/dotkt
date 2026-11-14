@@ -249,9 +249,14 @@ static partial class NullableTvErasureCallRealign
             var derived = new BirClassDefinition { Name = "Derived", Kind = "class", Base = application,
                 Ctors = new[] { delegated } };
             var source = new BirFileDeclaration { Methods = new[] { method }, Types = new IBirTypeDeclaration[] { derived } };
-            // This is the still-live materialized/delegate capability boundary,
-            // not an oracle for the retired initial DOM entry.
-            var late = source.ToDom();
+            // The exact late capability reflows newly synthesized owners, not
+            // the enclosing file. Exercise its actual typed entry independently.
+            var late = (BirClassDefinition)derived.DeepClone();
+            late.Methods = new[] { (BirFunctionDeclaration)method.DeepClone() };
+            var lateBody = late.Methods.Value[0].Body.Value;
+            var lateRead = (BirCallInstance)((BirVariable)lateBody[0]).Init.Value;
+            var lateConstruction = (BirNew)((BirVariable)lateBody[3]).Init.Value;
+            var lateNameRead = (BirCallInstance)((BirVariable)lateBody[4]).Init.Value;
             ApplyAfterDelegateSlotAlignment(late, binding, type => type.Name == "kotlin.Int", null);
             ApplySourceUses(source, binding, type => type.Name == "kotlin.Int", null);
             var visible = !ReferenceEquals(binding, before);
@@ -261,16 +266,12 @@ static partial class NullableTvErasureCallRealign
                 || (delegated.BaseArgs.Value[0] is BirCast) != visible
                 || delegated.BaseArgs.Value[0] is BirCast baseCast && baseCast.Type.Value != erased)
                 throw new InvalidOperationException("Owner/identity/property/constructor/slot visibility differs across phase bindings");
-            var lateRead = late["methods"][0]["body"][0]["init"];
-            var lateConstructorArgument = late["methods"][0]["body"][3]["init"]["args"][0];
-            var lateNameRead = late["methods"][0]["body"][4]["init"];
-            if (Str(lateNameRead["k"]) == "cast") lateNameRead = lateNameRead["e"];
-            var lateBaseArgument = late["types"][0]["ctors"][0]["baseArgs"][0];
-            if ((TypeJson.Read(lateRead["ret"]) == erased) != visible
-                || (lateConstructorArgument["k"]?.GetValue<string>() == "cast") != visible
-                || TypeJson.Read(lateNameRead["ret"]) != (visible ? erased : nullable)
-                || (Str(lateBaseArgument["k"]) == "cast") != visible
-                || visible && TypeJson.Read(lateBaseArgument["type"]) != erased)
+            var lateBaseArgument = late.Ctors.Value[0].BaseArgs.Value[0];
+            if ((lateRead.Ret.Value == erased) != visible
+                || (lateConstruction.Args.Value[0] is BirCast) != visible
+                || lateNameRead.Ret.Value != (visible ? erased : nullable)
+                || (lateBaseArgument is BirCast) != visible
+                || lateBaseArgument is BirCast lateBaseCast && lateBaseCast.Type.Value != erased)
                 throw new InvalidOperationException("Late declared-use capability did not retain its per-file visibility ceiling");
         }
         var order = canonical.SourceApplicationOrder;

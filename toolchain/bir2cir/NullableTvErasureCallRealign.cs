@@ -455,12 +455,6 @@ static partial class NullableTvErasureCallRealign
         ApplyRec(root, idx);
     }
 
-    // DelegateTargetSlotAlignment changes declaration slots rather than materializing a subtree. Re-flow the method
-    // bodies only when that capability changed; this is a distinct phase transition, not a repair for a forgotten
-    // producer.
-    public static void ApplyAfterDelegateSlotAlignment(JsonNode root, DeclIndex idx, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs) => ApplyDeclaredUses(root, idx, isValue, refs);
-
     // The CROSS-MODULE half (#86 D1) — the same formula after a distinct capability transition. It exists because of
     // WHEN a referenced callee acquires an owner: kotc emits a referenced top-level call
     // as `callStatic owner=null`, and only MemberCallSubstitution attributes it to the file class the reference index
