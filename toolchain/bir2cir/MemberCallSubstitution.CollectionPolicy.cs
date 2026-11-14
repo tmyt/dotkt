@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -264,22 +263,4 @@ static partial class MemberCallSubstitution
             ? new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), new TypeNode.Nullable(ObjType), new TypeNode.Fqn("kotlin.Int") }
             : CollectionHelperTypes(plan.Owner, plan.Method);
 
-    static JsonObject RenderCollectionOperation(CollectionOperationPlan plan, JsonObject node, JsonArray args,
-        ReferenceMetadataIndex refs, CollectionOperationPhase phase)
-    {
-        if (plan == null) return null;
-        var operands = new JsonArray();
-        if (node["recv"] != null) operands.Add(node["recv"].DeepClone());
-        if (plan.NativePreference != null) operands.Add(StaticCollectionPreference(plan.PreferenceView, refs, plan.NativePreference, phase));
-        if (plan.Family is int family) operands.Add(new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = family });
-        foreach (var argument in args) operands.Add(argument?.DeepClone());
-        if (plan.DefaultIndex) operands.Add(new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("int"), ["value"] = 0 });
-        var call = new JsonObject {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(plan.Owner), ["method"] = plan.Method,
-            ["sig"] = new JsonArray(CollectionOperationTypes(plan).Select(TypeJson.Write).ToArray()),
-            ["typeArgs"] = plan.Element == null ? new JsonArray() : new JsonArray(TypeJson.Write(plan.Element)), ["args"] = operands,
-        };
-        if (plan.Result != null) call["ret"] = TypeJson.Write(plan.Result);
-        return call;
-    }
 }

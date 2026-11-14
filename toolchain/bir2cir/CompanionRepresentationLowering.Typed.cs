@@ -4,6 +4,18 @@ using DotKt.Cir;
 
 static partial class CompanionRepresentationLowering
 {
+    // Member substitution consumes physical singleton/member operands. No
+    // semantic companion value may survive into that capability boundary.
+    internal static void AssertNoCompanionValues(BirGraphValue root)
+    {
+        root.Visit(node => {
+            if (node is BirCompanionValue value)
+                throw new InvalidOperationException("companionValue survived CLR companion use binding: "
+                    + "owner=" + (value.OwnerType.OrDefault() as TypeNode.Fqn)?.Name
+                    + " semantic=" + (value.CompanionType.OrDefault() as TypeNode.Fqn)?.Name);
+        });
+    }
+
     public static LocalIndex Apply(IReadOnlyList<BirFileDeclaration> roots)
     {
         var types = roots.SelectMany(root => root.Types.OrEmpty()).ToArray();

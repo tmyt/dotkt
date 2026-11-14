@@ -44,7 +44,9 @@ static partial class MemberCallSubstitution
                 Method = "pi", DeclarationId = "selected-pi", Sig = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>(), Ret = real };
             var propertyResult = TransformCall(property, refs, context);
             Require(propertyResult is BirValueBlock block
-                && block.Stmts.Value.Single() is BirExpressionStatement { Expr.Value: BirCallStatic { Method.Value: "CompanionOnce" } }
+                && block.Stmts.Value.Single() is BirVariable {
+                    Init.Value: BirCallStatic { Method.Value: "CompanionOnce" } saved, _callEvalTemporary.Value: true }
+                && !ReferenceEquals(saved, receiver)
                 && block.Result.Value is BirPropertyGet { Name.Value: "PI", Static.Value: true, Ret.Value: TypeNode.Fqn { Name: "kotlin.Double" } },
                 "mapping a companion must preserve its unread receiver before the native property read");
 

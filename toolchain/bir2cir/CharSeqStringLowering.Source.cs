@@ -76,7 +76,6 @@ static partial class CharSeqStringLowering
         BirNewSuspendLambda value => value.Params.HasValue,
         BirInlineLambda value => value.Params.HasValue,
         BirMethodImpl value => value.Params.HasValue,
-        BirMemberReference value => value.Params.HasValue,
         _ => false,
     };
 

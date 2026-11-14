@@ -128,8 +128,8 @@ static partial class CollectionHelperBinding
         JsonObject Helper(string name) => new() {
             ["name"] = name, [DeclarationIdentityBinding.Key] = name, ["static"] = true,
             ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
-            ["params"] = new JsonArray(MemberCallSubstitution.CollectionHelperSig(helperOwner, name)
-                .Select((type, index) => (JsonNode)new JsonObject { ["name"] = "p" + index, ["type"] = type.DeepClone() }).ToArray()),
+            ["params"] = new JsonArray(MemberCallSubstitution.CollectionHelperTypes(helperOwner, name)
+                .Select((type, index) => (JsonNode)new JsonObject { ["name"] = "p" + index, ["type"] = TypeJson.Write(type) }).ToArray()),
             ["ret"] = TypeJson.Write(boolType), ["body"] = new JsonArray(),
         };
         JsonObject Call(string owner, TypeNode element, string member, params JsonNode[] arguments) => new() {
@@ -177,53 +177,58 @@ static partial class CollectionHelperBinding
         innerQuery["overrides"][0]["owner"]["args"][0] = TypeJson.Write(new TypeNode.Tv("type", 1));
         var innerIndex = body.Count;
         body.Add(innerQuery);
-        var nestedIterator = JsonNode.Parse("""
-        {"k":"newObject","synthClass":{"name":"kotlin.collections.NestedIteratorProbe","methods":[
-          {"name":"iterator","abstract":false,"params":[],"body":[]}]}}
-        """)!;
-        var iteratorOwner = new TypeNode.Fqn("kotlin.collections.NestedIteratorProbe", new TypeNode[] { variable });
-        var iteratorCall = Call(iteratorOwner.Name, variable, "iterator");
-        iteratorCall["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.Iterator", new[] { variable }));
-        iteratorCall["sty"] = iteratorCall["ret"].DeepClone();
-        var abstractIterator = nestedIterator.DeepClone();
-        abstractIterator["synthClass"]["name"] = "kotlin.collections.AbstractIteratorProbe";
-        abstractIterator["synthClass"]["methods"][0]["abstract"] = true;
-        var iteratorProperty = nestedIterator.DeepClone();
-        iteratorProperty["synthClass"]["name"] = "probe.IteratorProperty";
-        iteratorProperty["synthClass"]["methods"][0][KotlinPropertyAccessors.SourceNameKey] = "iterator";
-        iteratorProperty["synthClass"]["methods"][0][KotlinPropertyAccessors.KindKey] = "get";
-        var declaredIterators = MemberCallSubstitution.CollectDeclaredIteratorTypes(
-            new JsonArray(nestedIterator, abstractIterator, iteratorProperty));
+        BirClassDefinition IteratorOwner(string name, bool abstractSlot = false, bool propertySlot = false) => new() {
+            Name = name, Kind = "class", Methods = new[] { new BirFunctionDeclaration {
+                Name = "iterator", Abstract = abstractSlot, Params = Array.Empty<BirParameter>(), Body = Array.Empty<IBirStatement>(),
+                PropertyName = propertySlot ? OptionalField<string>.Of("iterator") : default,
+                PropertyAccessor = propertySlot ? OptionalField<string>.Of("get") : default,
+            } },
+        };
+        var iteratorOwner = new TypeNode.Fqn("kotlin.collections.NestedIteratorProbe", new[] { variable });
+        var declarations = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+            IteratorOwner(iteratorOwner.Name), IteratorOwner("kotlin.collections.AbstractIteratorProbe", true),
+            IteratorOwner("probe.IteratorProperty", propertySlot: true),
+        } };
+        var declaredIterators = MemberCallSubstitution.CollectDeclaredIteratorTypes(declarations);
+        var iteratorCall = new BirCallInstance {
+            OwnerType = iteratorOwner, Method = "iterator", Recv = new BirLocal { Name = "receiver" },
+            Args = Array.Empty<IBirExpression>(),
+            Ret = new TypeNode.Fqn("kotlin.collections.Iterator", new[] { variable }),
+            Sty = new TypeNode.Fqn("kotlin.collections.Iterator", new[] { variable }),
+        };
+        BirCallStatic Missing(BirCallInstance call, bool declared)
+        {
+            var property = KotlinPropertyAccessors.TryCallIdentity(call.PropertyName.OrDefault(), call.PropertyAccessor.OrDefault(),
+                call.Method.OrDefault(), call.Prop.OrDefault(), out _, out _);
+            var plan = MemberCallSubstitution.SelectMissingCollectionIterator(call.Method.OrDefault(), call.Args.OrEmpty().Length,
+                declared, property, call.TypeArgs.OrEmpty().Length, call.Sty.OrDefault() ?? call.Ret.OrDefault());
+            return plan == null ? null : RenderCollectionOperation(plan, call, null, MemberCallSubstitution.CollectionOperationPhase.Physical);
+        }
         if (!declaredIterators.Contains(iteratorOwner.Name)
             || !declaredIterators.Contains("kotlin.collections.AbstractIteratorProbe")
             || declaredIterators.Contains("probe.IteratorProperty")
-            || MemberCallSubstitution.MissingCollectionIteratorCall(iteratorCall, new JsonArray(), true) != null
-            || MemberCallSubstitution.MissingCollectionIteratorCall(iteratorCall, new JsonArray(), false) == null)
-            throw new InvalidOperationException("Source iterator binding lost an unhoisted iterator declaration");
-        var mutableCall = (JsonObject)iteratorCall.DeepClone();
-        mutableCall["ownerType"] = TypeJson.Write(new TypeNode.Fqn("probe.OtherOwner", new TypeNode[] { boolType, variable }));
-        mutableCall["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.MutableIterator",
-            new TypeNode[] { new TypeNode.Tv("type", 0) }));
-        mutableCall["sty"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.MutableIterator", new[] { variable }));
-        var mutableHelper = MemberCallSubstitution.MissingCollectionIteratorCall(mutableCall, new JsonArray(), false);
-        var readonlyCall = (JsonObject)mutableCall.DeepClone();
-        readonlyCall["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.Iterator",
-            new TypeNode[] { new TypeNode.Tv("type", 0) }));
-        readonlyCall["sty"] = iteratorCall["sty"].DeepClone();
-        var readonlyHelper = MemberCallSubstitution.MissingCollectionIteratorCall(readonlyCall, new JsonArray(), false);
-        var genericIteratorCall = (JsonObject)mutableCall.DeepClone();
-        genericIteratorCall["typeArgs"] = new JsonArray(TypeJson.Write(variable));
-        var propertyCall = (JsonObject)mutableCall.DeepClone();
-        propertyCall["prop"] = "get";
-        var preservedPropertyCall = (JsonObject)mutableCall.DeepClone();
-        KotlinPropertyAccessors.PreserveCallIdentity(preservedPropertyCall, "iterator", "get");
-        if (Text(mutableHelper?["method"]) != "clrMutableIterator"
-            || TypeJson.Read(mutableHelper?["typeArgs"]?[0]) != variable
-            || Text(readonlyHelper?["method"]) != "iteratorOverEnumerable"
-            || TypeJson.Read(readonlyHelper?["typeArgs"]?[0]) != variable
-            || MemberCallSubstitution.MissingCollectionIteratorCall(genericIteratorCall, new JsonArray(), false) != null
-            || MemberCallSubstitution.MissingCollectionIteratorCall(propertyCall, new JsonArray(), false) != null
-            || MemberCallSubstitution.MissingCollectionIteratorCall(preservedPropertyCall, new JsonArray(), false) != null)
+            || Missing(iteratorCall, true) != null || Missing(iteratorCall, false) == null)
+            throw new InvalidOperationException("Source iterator binding lost a concrete or abstract source iterator declaration");
+        var mutableCall = (BirCallInstance)iteratorCall.DeepClone();
+        mutableCall.OwnerType = new TypeNode.Fqn("probe.OtherOwner", new TypeNode[] { boolType, variable });
+        mutableCall.Ret = new TypeNode.Fqn("kotlin.collections.MutableIterator", new TypeNode[] { new TypeNode.Tv("type", 0) });
+        mutableCall.Sty = new TypeNode.Fqn("kotlin.collections.MutableIterator", new[] { variable });
+        var mutableHelper = Missing(mutableCall, false);
+        var readonlyCall = (BirCallInstance)mutableCall.DeepClone();
+        readonlyCall.Ret = new TypeNode.Fqn("kotlin.collections.Iterator", new TypeNode[] { new TypeNode.Tv("type", 0) });
+        readonlyCall.Sty = iteratorCall.Sty;
+        var readonlyHelper = Missing(readonlyCall, false);
+        var genericIteratorCall = (BirCallInstance)mutableCall.DeepClone();
+        genericIteratorCall.TypeArgs = new[] { variable };
+        var propertyCall = (BirCallInstance)mutableCall.DeepClone();
+        propertyCall.Prop = "get";
+        var preservedPropertyCall = (BirCallInstance)mutableCall.DeepClone();
+        preservedPropertyCall.PropertyName = "iterator";
+        preservedPropertyCall.PropertyAccessor = "get";
+        if (mutableHelper.Method.Value != "clrMutableIterator" || mutableHelper.TypeArgs.Value[0] != variable
+            || readonlyHelper.Method.Value != "iteratorOverEnumerable" || readonlyHelper.TypeArgs.Value[0] != variable
+            || Missing(genericIteratorCall, false) != null || Missing(propertyCall, false) != null
+            || Missing(preservedPropertyCall, false) != null)
             throw new InvalidOperationException("Undeclared iterator binding lost its source protocol or element");
         var iteratorDefinitions = new Dictionary<string, SupertypeGraph.Def> {
             ["probe.Derived"] = new() { Base = iteratorOwner },
