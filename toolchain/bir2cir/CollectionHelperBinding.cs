@@ -185,8 +185,12 @@ static partial class CollectionHelperBinding
             } },
         };
         var iteratorOwner = new TypeNode.Fqn("kotlin.collections.NestedIteratorProbe", new[] { variable });
-        var declarations = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
-            IteratorOwner(iteratorOwner.Name), IteratorOwner("kotlin.collections.AbstractIteratorProbe", true),
+        var declarations = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
+            Name = "nestedIterator", Body = new IBirStatement[] {
+                new BirExpressionStatement { Expr = new BirNewSam { SynthClass = IteratorOwner(iteratorOwner.Name) } },
+            },
+        } }, Types = new IBirTypeDeclaration[] {
+            IteratorOwner("kotlin.collections.AbstractIteratorProbe", true),
             IteratorOwner("probe.IteratorProperty", propertySlot: true),
         } };
         var declaredIterators = MemberCallSubstitution.CollectDeclaredIteratorTypes(declarations);

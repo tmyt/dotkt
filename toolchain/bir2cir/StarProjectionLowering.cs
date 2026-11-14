@@ -11,7 +11,6 @@ using static KotlinRuntimeTypeWitness;
 // classifiers while keeping independent List and Set contracts intact.
 static partial class StarProjectionLowering
 {
-    internal const string ProjectedCollectionMarker = "dotktProjectedCollection";
     const string RuntimeOwner = "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt";
     static readonly TypeNode Any = new TypeNode.Fqn("kotlin.Any");
     static readonly TypeNode AnyN = new TypeNode.Nullable(Any);

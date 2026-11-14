@@ -16,9 +16,6 @@ static partial class NetInteropBinding
     // A projected static on a generic CLR TypeDef has no enclosing type argument in Kotlin syntax, but its CIL
     // MemberRef parent must still be a TypeSpec. Close the selected exact reflected owner, rather than using a
     // name-only arity table (Task and Task<T>, for example, deliberately share the same source FQN).
-    internal static JsonNode CloseStaticOwner(JsonNode ownerJson, Type netType)
-        => TypeJson.Write(CloseStaticOwner(TypeJson.Read(ownerJson), netType));
-
     internal static TypeNode CloseStaticOwner(TypeNode ownerType, Type netType)
     {
         if (ownerType is not TypeNode.Fqn { Args: null } owner ||
