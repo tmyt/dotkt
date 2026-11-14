@@ -50,30 +50,35 @@ static partial class FBoundStarProjectionErasure
     }
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
+        CurrentDeclarationPreparation preparation, NativeProofPlan nativeProofs, GenericRepresentationPolicy valueSlots,
         IReadOnlyList<SharedSyntheticSynthesis.CellStorage> sharedCells = null,
         IDictionary<string, int[]> physicalParameterIndices = null,
-        IDictionary<string, string> physicalDeclarationSources = null,
-        GenericRepresentationPolicy valueSlots = null)
+        IDictionary<string, string> physicalDeclarationSources = null)
     {
-        var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        var defs = preparation.BindDefinitions();
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         OwnerConstrainedMethodLowering.Reset(refs, bound => PhysicalBoundClassifier(bound, owners, refs),
             (method, index) => _nativeProofs.Bounds(method, index));
         var rootList = roots.OfType<JsonObject>().ToList();
-        _valueSlots = valueSlots ?? new GenericRepresentationPolicy(refs.Aliases, refs, rootList);
-        foreach (var root in rootList) Collect(root, root, owners, defs);
-        var localClrAliases = CollectLocalClrAliases(defs);
+        _valueSlots = valueSlots;
+        foreach (var owner in preparation.GenericOwners)
+            owners.Add(owner.Name, new Owner {
+                Name = owner.Name, Def = owner.Definition.Physical, Root = owner.Root.Physical,
+                Arity = owner.Arity, Needed = owner.Needed,
+            });
+        var localClrAliases = preparation.LocalClrAliases;
         _valueSlots.RegisterLocalDefinitions(defs, localClrAliases);
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
         foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
-        var supertypeDefs = SupertypeGraph.Collect(rootList);
+        var supertypeDefs = preparation.BindSourceSupertypes();
         _sourceSupertypes = supertypeDefs;
         // Snapshot declaration-owned edges before synthesis attaches carrier interfaces to the live definitions.
         var baseContracts = owners.Values.ToDictionary(owner => owner.Name, owner => SupertypeGraph.Reachable(
             new SupertypeGraph.Def { Base = TypeJson.Read(owner.Def["base"]) as TypeNode.Fqn },
             supertypeDefs, refs).ToArray(), StringComparer.Ordinal);
-        _localMethods = IndexLocalMethods(rootList);
-        _nativeProofs = new NativeProofPlan(rootList, defs, refs);
+        _localMethods = preparation.BindLocalMethods();
+        _localDeclarations = preparation.BindLocalDeclarations();
+        _nativeProofs = nativeProofs;
         AllocateCarrierNames(owners, defs.Keys);
         foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
         MarkNeededClosure(owners, baseContracts);
@@ -670,8 +675,9 @@ static partial class FBoundStarProjectionErasure
         || key is "type" or "sty" or "memberType" or "ret" or "ownerType"
             && (Bool(node[ExactOuterKey]) || Str(node["k"]) == "this");
 
-    static bool IsTypeDefinition(JsonObject node) =>
-        Str(node["kind"]) is "class" or "interface" or "enum" or "struct" or "delegate";
+    static bool IsTypeDefinition(JsonObject node) => IsTypeDefinition(Str(node["kind"]));
+
+    static bool IsTypeDefinition(string kind) => kind is "class" or "interface" or "enum" or "struct" or "delegate";
 
     static bool IsInterfaceDeclarationList(JsonArray entries) =>
         entries.Parent is JsonObject definition && IsTypeDefinition(definition)
@@ -1247,7 +1253,7 @@ static partial class FBoundStarProjectionErasure
         WeakenOwnerDependentInnerConstraints(new[] { projectedOwner }, dependencyPlan);
         if (((JsonArray)projectedInner["typeParams"][1]["constraints"]).Count != 0)
             throw new InvalidOperationException("Value projection resurrected a constraint on a bottom-fixed inner slot");
-        NativeProofSelfTest();
+        NativeProofSourceSelfTest();
         LocalAliasDeclarationSelfTest();
         Console.WriteLine("[constraint projections] self-test OK (star, variance, annotation, exact bound, physical/source separation, native proof demand)");
     }
@@ -1586,32 +1592,6 @@ static partial class FBoundStarProjectionErasure
         if (!ContainsIncompatibleElement(parts)) return false;
         targetOwner = target;
         return true;
-    }
-
-    static Dictionary<string, List<JsonObject>> IndexLocalMethods(IEnumerable<JsonObject> roots)
-    {
-        var result = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
-        _localDeclarations = new();
-        void AddMethods(JsonObject owner, string ownerName)
-        {
-            if (owner["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                    if (Str(method["name"]) is string name)
-                    {
-                        var key = ownerName + "\0" + name;
-                        if (!result.TryGetValue(key, out var candidates))
-                            result[key] = candidates = new List<JsonObject>();
-                        candidates.Add(method);
-                        if (Str(method[DeclarationIdentityBinding.Key]) is string identity)
-                            _localDeclarations.Add((ownerName, identity), method);
-                    }
-            if (owner["types"] is JsonArray nested)
-                foreach (var type in nested.OfType<JsonObject>())
-                    if (Str(type["name"]) is string typeName) AddMethods(type, typeName);
-        }
-        foreach (var root in roots)
-            if (Str(root["fileClass"]) is string fileClass) AddMethods(root, fileClass);
-        return result;
     }
 
     static JsonObject LocalDelegateTarget(JsonObject arrayInitializer)
@@ -3097,9 +3077,15 @@ static partial class FBoundStarProjectionErasure
                 ? new TypeNode.Fqn(carrier) : null;
 
     static bool ProjectsCapturedBound(JsonObject declaration, int index, TypeNode bound) =>
-        ContainsOwnerPrefixTv(bound, Int(declaration["outerTypeParamCount"]) ?? 0)
-        || OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index,
+        ProjectsCapturedBound(bound, index, Int(declaration["outerTypeParamCount"]) ?? 0,
             KotlinSupertypesRecord.ReadNullableFrame(declaration));
+
+    static bool ProjectsCapturedBound(TypeNode bound, int index, int outerTypeParamCount,
+        NullableRepresentationFrame frame, ReferenceMetadataIndex references = null) =>
+        ContainsOwnerPrefixTv(bound, outerTypeParamCount)
+        || (references == null
+            ? OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index, frame)
+            : OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index, frame, references));
 
     static void ProjectDependentTypeConstraints(JsonObject declaration,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)

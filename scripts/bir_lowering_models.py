@@ -276,7 +276,7 @@ def outputs(root, definitions):
             if key == "type": return f"TypeNode.Write({value})"
             if key == "literalValue": return f"LiteralToDom({value})"
             if key == "birSourceTypeAlias": return "throw new InvalidOperationException(\"Extract aliases before the temporary DOM boundary\")"
-            return f"((BirGraphValue){value}).ToDom()"
+            return f"((BirGraphValue){value}).ToDom(projected)"
         if field.get("type") == "array":
             item = f"item{depth}"
             expr = dom(field["items"], item, depth + 1)
@@ -695,7 +695,7 @@ def outputs(root, definitions):
             prop = member(field)
             body = " ".join(line.strip() for line in write(value, "value"))
             model += [f"        WriteOptional(writer, {json.dumps(field)}, {prop}, (writer, value) => {{ {body} }});"]
-        model += ["        writer.WriteEndObject();", "    }", "    public override JsonObject ToDom()", "    {", "        var result = new JsonObject();"]
+        model += ["        writer.WriteEndObject();", "    }", "    public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)", "    {", "        var result = new JsonObject();"]
         if node: model += [f'        result["k"] = {json.dumps(tag)};']
         for field, value in fields:
             prop = member(field)
@@ -703,7 +703,7 @@ def outputs(root, definitions):
                 model += [f"        if ({prop}.IsPresent) throw new InvalidOperationException(\"Extract aliases before the temporary DOM boundary\");"]
             else:
                 model += [f"        if ({prop}.IsPresent) result[{json.dumps(field)}] = {prop}.IsNull ? null : {dom(value, prop + '.Value')};"]
-        model += ["        return result;", "    }", "}", ""]
+        model += ["        projected?.Invoke(this, result);", "        return result;", "    }", "}", ""]
         codec += [f"    internal static {name} Read{name}(ref Utf8JsonReader reader)", "    {",
                   "        Require(reader, JsonTokenType.StartObject);", f"        {seen_type} seen = 0;"]
         codec += [f"        OptionalField<{cs(value)}> field{index} = default;" for index, (_, value) in enumerate(fields)]

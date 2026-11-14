@@ -64,8 +64,15 @@ sealed partial class GenericRepresentationPolicy
         foreach (var (name, declaration) in declarations)
         {
             _localDeclarations[name] = declaration;
-            _localOwners.Add(name);
         }
+        RegisterCurrentPhysicalOwners(declarations.Keys, aliases);
+    }
+
+    // The current physical inventory can grow without granting source carrier
+    // eligibility. Source preparation and its DOM continuation share this set.
+    internal void RegisterCurrentPhysicalOwners(IEnumerable<string> names, IReadOnlyDictionary<string, string> aliases)
+    {
+        foreach (var name in names) _localOwners.Add(name);
         foreach (var (name, target) in aliases) _aliases[name] = target;
     }
 

@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 static partial class GenericArrayStorageLowering
 {
@@ -84,28 +85,36 @@ static partial class GenericArrayStorageLowering
 
     static void EntryPointFreshNamesSelfTest(ReferenceMetadataIndex refs)
     {
-        JsonObject File(string fileClass, string lateName) => new() {
-            ["fileClass"] = fileClass, ["types"] = new JsonArray(),
-            ["methods"] = new JsonArray(new JsonObject {
-                ["name"] = "probe", ["ret"] = Type("void"),
-                ["params"] = new JsonArray(new JsonObject { ["name"] = "array", ["type"] = Type("System.Array") }),
-                ["body"] = new JsonArray(new JsonObject {
-                    ["k"] = "forArray", ["array"] = Local("array", new TypeNode.Fqn("System.Array")),
-                    ["var"] = "element", ["elem"] = Type("System.Object"), ["body"] = new JsonArray(),
-                }, Var(lateName, new TypeNode.Fqn("System.Int32"), Int(0))),
-            }),
+        BirFileDeclaration File(string fileClass, string lateName) => new() {
+            FileClass = fileClass, Types = Array.Empty<IBirTypeDeclaration>(),
+            Methods = new[] { new BirFunctionDeclaration {
+                Name = "probe", Ret = new TypeNode.Fqn("void"),
+                Params = new[] { new BirParameter { Name = "array", Type = new TypeNode.Fqn("System.Array") } },
+                Body = new IBirStatement[] { new BirForArray {
+                    Array = new BirLocal { Name = "array", Sty = new TypeNode.Fqn("System.Array") },
+                    Var = "element", Elem = new TypeNode.Fqn("System.Object"), Body = Array.Empty<IBirStatement>(),
+                }, new BirVariable { Name = lateName, Type = new TypeNode.Fqn("System.Int32"),
+                    Init = new BirConstant { Type = new TypeNode.Fqn("System.Int32"), Value = new BirLiteral.IntegerLiteral(0) } } },
+            } },
         };
         foreach (var physical in new[] { false, true })
         {
-            var first = File("FirstArrayFile", "$arrayIndex$0");
-            var second = File("SecondArrayFile", "$arrayStorage$1");
+            var sources = new[] { File("FirstArrayFile", "$arrayIndex$0"), File("SecondArrayFile", "$arrayStorage$1") };
+            var values = GenericRepresentationPolicy.CreateSource(sources, refs.Aliases, refs);
+            values.PrepareDomLocations(sources);
+            var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(sources, values, out var preparation);
+            var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, values);
+            var first = sources[0].ToDom(declarations.ObserveProjection);
+            var second = sources[1].ToDom(declarations.ObserveProjection);
+            declarations.BindProjected();
             var roots = new JsonNode[] { first, second };
+            values.BindDomDeclarations(roots);
             if (physical)
                 PhysicalValueCoercion.ApplyFixtureForSelfTest(roots,
                     () => throw new InvalidOperationException("Unexpected array Unit conversion"),
                     type => type.Name == "System.Int32", references: refs);
             else
-                FBoundStarProjectionErasure.ApplyAll(roots, refs);
+                FBoundStarProjectionErasure.ApplyAll(roots, refs, preparation, proofs, values);
             var firstBody = first["methods"]?[0]?["body"]?[0]?["body"];
             var secondBody = second["methods"]?[0]?["body"]?[0]?["body"];
             if (Text(firstBody?[0]?["name"]) != "$arrayStorage$0"

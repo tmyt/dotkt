@@ -107,7 +107,7 @@ internal abstract record BirGraphValue
     public abstract void WriteJson(Utf8JsonWriter writer);
     // Temporary frontier to the not-yet-migrated owning passes. It builds
     // nodes directly: no serialized child, parse, or generic extension-data bag.
-    public abstract JsonObject ToDom();
+    public abstract JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null);
     public BirGraphValue Rewrite(Func<BirGraphValue, BirGraphValue> rewrite)
         => rewrite(RewriteChildren(child => child.Rewrite(rewrite)));
 
