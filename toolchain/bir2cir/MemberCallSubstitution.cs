@@ -1887,36 +1887,53 @@ static partial class MemberCallSubstitution
         var helper = refs.AuthoredKotlinHelper(TypeJson.OwnerName(call["owner"]),
             call["method"].GetValue<string>(), arguments.Length,
             ((JsonArray)call["sig"]).Select(TypeJson.Read).ToArray());
-        TypeNode NullablePhysicalArgument(TypeNode argument)
-        {
-            if (argument is TypeNode.Tv variable)
-            {
-                var frame = variable.Scope == "type" ? ctx.OwnerFrame : ctx.MethodFrame;
-                if (frame == null) throw new InvalidOperationException("Compiler helper requires a missing caller nullable frame");
-                return frame.SemanticVariable(variable) is TypeNode.Nullable
-                    ? variable : frame.NullableVariable((TypeNode.Tv)frame.SemanticVariable(variable));
-            }
-            return NullableGenericErasure.EraseArgument(new TypeNode.Nullable(argument), isValue ?? _isValue);
-        }
-        TypeNode[] physicalArguments;
-        try
-        {
-            physicalArguments = helper.NullableFrame == null ? arguments
-                // Late alias calls already name the binding's CLR storage element.
-                // Close every helper role from that selected element, not a new
-                // projection of the enclosing Kotlin owner's unrelated value slot.
-                : helper.NullableFrame.Close(arguments, argument => argument, NullablePhysicalArgument,
-                    argument => argument, NullablePhysicalArgument);
-        }
-        catch (ArgumentException ex)
-        {
-            throw new InvalidOperationException(
-                $"Compiler helper {TypeJson.OwnerName(call["owner"])}.{call["method"]} frame closure failed: {ex.Message}", ex);
-        }
+        var physicalArguments = CloseAuthoredHelperArguments(arguments, helper.NullableFrame,
+            ctx?.OwnerFrame, ctx?.MethodFrame, isValue ?? _isValue,
+            TypeJson.OwnerName(call["owner"]), call["method"].GetValue<string>());
         call["typeArgs"] = new JsonArray(physicalArguments.Select(TypeJson.Write).ToArray());
         call["sig"] = new JsonArray(helper.ParamTypeNodes
             .Select(BirTypeLowering.CanonicalPhysicalSlotType).Select(TypeJson.Write).ToArray());
         call[DeclarationIdentityBinding.Key] = helper.DeclarationId;
+    }
+
+    internal static void BindAuthoredHelper(BirCallStatic call, ReferenceMetadataIndex refs,
+        CollectionHelperBinding.CollectionSourceContext context, ValueTypeOracle isValue = null)
+    {
+        var owner = ((TypeNode.Fqn)call.Owner.Value).Name;
+        var arguments = call.TypeArgs.Value;
+        var helper = refs.AuthoredKotlinHelper(owner, call.Method.Value, arguments.Length, call.Sig.Value);
+        call.TypeArgs = CloseAuthoredHelperArguments(arguments, helper.NullableFrame, context.OwnerFrame,
+            context.MethodFrame, isValue ?? _isValue, owner, call.Method.Value);
+        call.Sig = helper.ParamTypeNodes.Select(BirTypeLowering.CanonicalPhysicalSlotType).ToArray();
+        call.DeclarationId = helper.DeclarationId;
+    }
+
+    static TypeNode[] CloseAuthoredHelperArguments(TypeNode[] arguments, NullableRepresentationFrame helperFrame,
+        NullableRepresentationFrame ownerFrame, NullableRepresentationFrame methodFrame, ValueTypeOracle isValue,
+        string owner, string method)
+    {
+        TypeNode NullablePhysicalArgument(TypeNode argument)
+        {
+            if (argument is TypeNode.Tv variable)
+            {
+                var frame = variable.Scope == "type" ? ownerFrame : methodFrame;
+                if (frame == null) throw new InvalidOperationException("Compiler helper requires a missing caller nullable frame");
+                return frame.SemanticVariable(variable) is TypeNode.Nullable
+                    ? variable : frame.NullableVariable((TypeNode.Tv)frame.SemanticVariable(variable));
+            }
+            return NullableGenericErasure.EraseArgument(new TypeNode.Nullable(argument), isValue);
+        }
+        try
+        {
+            // Late alias arguments already name the selected storage element;
+            // the helper's roles must close from that same element, not another ABI projection.
+            return helperFrame == null ? arguments : helperFrame.Close(arguments, argument => argument,
+                NullablePhysicalArgument, argument => argument, NullablePhysicalArgument);
+        }
+        catch (ArgumentException error)
+        {
+            throw new InvalidOperationException($"Compiler helper {owner}.{method} frame closure failed: {error.Message}", error);
+        }
     }
 
     internal static JsonNode MissingCollectionIteratorCall(JsonObject node, JsonArray args, bool declaresIterator)

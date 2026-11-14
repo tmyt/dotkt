@@ -43,7 +43,7 @@ static partial class CollectionHelperBinding
                         || operation.Prop.OrDefault() is "get" or "set", operation.TypeArgs.OrEmpty().Length,
                     operation.Sty.OrDefault() ?? operation.Ret.OrDefault());
                 if (plan == null) return operation;
-                call = Render(plan, operation, references);
+                call = RenderCollectionOperation(plan, operation, references, MemberCallSubstitution.CollectionOperationPhase.Source);
             }
             else if (owner.Name is "kotlin.collections.Map" or "kotlin.collections.MutableMap")
             {
@@ -83,7 +83,7 @@ static partial class CollectionHelperBinding
                     ?? MemberCallSubstitution.SelectCollectionDefault(operation.Method.OrDefault(), operation.Prop.OrDefault(), arguments.Length,
                         operation.Recv.HasValue, owner, element, projected, preferred);
                 if (plan == null) return operation;
-                call = Render(plan, operation, references);
+                call = RenderCollectionOperation(plan, operation, references, MemberCallSubstitution.CollectionOperationPhase.Source);
             }
             call.TypeArgs = call.TypeArgs.Value.Select(SourceHelperBinder.SourceArgument).ToArray();
             call.DeclarationId = captured.Helpers.Select(((TypeNode.Fqn)call.Owner.Value).Name,
@@ -98,18 +98,20 @@ static partial class CollectionHelperBinding
         foreach (var root in roots) Walk(root, new CollectionSourceContext());
     }
 
-    static BirCallStatic Render(MemberCallSubstitution.CollectionOperationPlan plan, BirCallInstance operation,
-        ReferenceMetadataIndex references)
+    internal static BirCallStatic RenderCollectionOperation(MemberCallSubstitution.CollectionOperationPlan plan, BirCallInstance operation,
+        ReferenceMetadataIndex references, MemberCallSubstitution.CollectionOperationPhase phase)
     {
+        IBirExpression Operand(IBirExpression expression) => phase == MemberCallSubstitution.CollectionOperationPhase.Source
+            ? expression : (IBirExpression)((BirGraphValue)expression).DeepClone();
         var operands = new List<IBirExpression>();
-        if (operation.Recv.HasValue) operands.Add(operation.Recv.Value);
+        if (operation.Recv.HasValue) operands.Add(Operand(operation.Recv.Value));
         if (plan.NativePreference != null)
             operands.Add(MemberCallSubstitution.CollectionPreferenceType(plan.PreferenceView, references, plan.NativePreference,
-                MemberCallSubstitution.CollectionOperationPhase.Source) is { } preference
+                phase) is { } preference
                 ? new BirClassReference { Type = preference } : UnknownPreference());
         if (plan.Family is int family)
             operands.Add(new BirConstant { Type = new TypeNode.Fqn("kotlin.Int"), Value = new BirLiteral.IntegerLiteral(family) });
-        operands.AddRange(operation.Args.Value);
+        operands.AddRange(operation.Args.OrEmpty().Select(Operand));
         if (plan.DefaultIndex)
             operands.Add(new BirConstant { Type = new TypeNode.Fqn("int"), Value = new BirLiteral.IntegerLiteral(0) });
         return new BirCallStatic {

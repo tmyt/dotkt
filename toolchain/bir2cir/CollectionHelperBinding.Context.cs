@@ -7,13 +7,14 @@ using DotKt.Cir;
 
 static partial class CollectionHelperBinding
 {
-    // This source binding has a declaration-wide capture clock, unlike ordinary
-    // expression recognition's sequential lexical walker. Preserve that contract
-    // until the downstream physical consumer migrates its own context.
-    sealed class CollectionSourceContext
+    // Source and later physical helper binding share declaration-wide capture,
+    // unlike ordinary expression recognition's sequential lexical walker.
+    internal sealed class CollectionSourceContext
     {
         internal readonly Dictionary<string, TypeNode> Variables;
         internal readonly Dictionary<string, List<TypeNode>> Constraints;
+        internal NullableRepresentationFrame OwnerFrame;
+        internal NullableRepresentationFrame MethodFrame;
         internal CollectionSourceContext()
         {
             Variables = new(StringComparer.Ordinal);
@@ -23,6 +24,8 @@ static partial class CollectionHelperBinding
         {
             Variables = new(parent.Variables, StringComparer.Ordinal);
             Constraints = new(parent.Constraints, StringComparer.Ordinal);
+            OwnerFrame = parent.OwnerFrame;
+            MethodFrame = parent.MethodFrame;
         }
 
         static (string Name, TypeNode Type)[] Parameters(BirGraphValue node) => node switch {
@@ -61,6 +64,15 @@ static partial class CollectionHelperBinding
             };
             if (parameters.Length == 0 && typeParameters.Length == 0 && body == null) return this;
             var result = new CollectionSourceContext(this);
+            if (node is IBirTypeDeclaration owner && owner.Kind.OrDefault() is "class" or "interface")
+            {
+                result.OwnerFrame = NullableRepresentationViews.TypeFacts(node)?.NullableFrame;
+                result.MethodFrame = null;
+            }
+            else if (node is BirFunctionDeclaration { Params.HasValue: true } method)
+                result.MethodFrame = method.NullableRepresentationFrame.OrDefault();
+            else if (node is BirConstructor { Params.HasValue: true } or BirClosureDefinition { Params.HasValue: true })
+                result.MethodFrame = null;
             foreach (var (name, type) in parameters)
                 if (name != null && type != null) result.Variables[name] = MemberCallSubstitution.CollectionVariableType(type);
             var typeScope = node switch {

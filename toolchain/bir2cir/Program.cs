@@ -156,6 +156,8 @@ static class Bir2Cir
                 AliasVarianceRepresentation.SelfTest();
                 ExactMutableViewDispatch.SelfTest();
                 KotlinCollectionClassifierLowering.SelfTest();
+                KotlinRuntimeTypeWitness.SourceSelfTest();
+                StarProjectionLowering.SourceSelfTest();
                 GenericArrayStorageLowering.SelfTest();
                 ErasedElementValues.SelfTest();
                 RoundtripMetadata.RuntimeLinkageSelfTest();
@@ -542,6 +544,14 @@ sealed class Pipeline
             // CLR override allocation would undo that physical slot decision.
             DeclarationIdentityBinding.BindReferenced(source, refs, sourceIndex.DeclarationIds, deferUnknown: true);
             if (!referenceBuild) DeclarationRename.Apply(source, refs);
+            // Preserve Kotlin classifier identity while selecting physical
+            // membership and star-collection faces before call substitution.
+            if (!referenceBuild)
+            {
+                KotlinRuntimeTypeWitness.LowerOperations(source, refs);
+                KotlinCollectionClassifierLowering.Apply(source, refs);
+            }
+            if (appBuild) StarProjectionLowering.Apply(source, refs);
             captured[index] = null;
             // The remaining owners still use DOM. Project once after the owning
             // representation and name allocation, never through an old adapter.
@@ -656,15 +666,6 @@ sealed class Pipeline
             // Initial nullable-use flow already ran on owning source BIR.
             // Subsequent calls below follow only their actual late capability transitions.
             var working = bir.Root;
-            // STAR-PROJECTION COLLECTION CLASSIFIERS: use faithful non-generic BCL faces where one exists; otherwise
-            // author the Collection/Set/MutableSet composite classifier plus the following smart-cast member access.
-            // App build only, before MemberCallSubstitution while the Kotlin owner is still visible.
-            if (!_options.RefBuild)
-            {
-                KotlinRuntimeTypeWitness.LowerOperations(working, refs);
-                KotlinCollectionClassifierLowering.Apply(working, refs);
-            }
-            if (attributeTopLevelOwner) StarProjectionLowering.Apply(working, refs);
             // EVENT HANDLES: materialize each clrEventGet as an ordinary stdlib ClrEvent<H> construction with
             // add/remove callback closures. Subscribe is a normal Kotlin member call, independent of whether its
             // receiver was read directly, stored, returned or passed across a DLL. Run before member substitution

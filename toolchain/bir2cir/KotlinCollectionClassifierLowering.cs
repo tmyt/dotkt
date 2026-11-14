@@ -1,187 +1,120 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
+using static KotlinRuntimeTypeWitness;
 
 // A compiler-provided CLR storage face is not evidence of Kotlin MutableCollection membership.
 // Apply the declaration-owned nominal guard while the tested Kotlin classifier is still explicit.
-static class KotlinCollectionClassifierLowering
+static partial class KotlinCollectionClassifierLowering
 {
     const string RuntimeOwner = "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt";
     const string Matches = "kotlinCollectionMatches";
     const string CastCandidate = "kotlinCollectionCastCandidate";
 
-    public static void Apply(JsonNode node, ReferenceMetadataIndex refs)
+    internal static void Apply(BirFileDeclaration root, ReferenceMetadataIndex refs)
     {
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        CollectNames(node, names);
+        var names = ClassifierNames(root);
         var next = 0;
-        Rewrite(node, names, refs.KotlinMapStorageDefinitions(), refs, ref next);
+        var mapStorage = refs.KotlinMapStorageDefinitions();
+        RewriteClassifierOperations(root, operation => Rewrite(operation, names, mapStorage, refs, ref next));
     }
 
-    static void Rewrite(JsonNode node, HashSet<string> names, IReadOnlyList<string> mapStorage,
+    static BirGraphValue Rewrite(ClassifierOperation operation, HashSet<string> names, IReadOnlyList<string> mapStorage,
         ReferenceMetadataIndex refs, ref int next)
     {
-        if (node is JsonArray array)
-        {
-            foreach (var child in array) Rewrite(child, names, mapStorage, refs, ref next);
-            return;
-        }
-        if (node is not JsonObject obj) return;
-        foreach (var child in obj.Select(pair => pair.Value).ToArray()) Rewrite(child, names, mapStorage, refs, ref next);
-        if (Text(obj["k"]) is not ("isInst" or "isInstRef" or "cast") || obj["e"] is not JsonObject operand) return;
-        // Array checks consume the reified component fact in the later physical
-        // array projection. A collection guard does not own that fact.
-        var operandType = TypeJson.Read(obj["type"]);
+        if (!operation.Operand.HasValue) return operation.Node;
+        var operand = operation.Operand.Value;
+        var operandType = operation.Type.OrDefault();
         while (operandType is TypeNode.Nullable or TypeNode.Oblivious)
             operandType = operandType is TypeNode.Nullable n ? n.Of : ((TypeNode.Oblivious)operandType).Of;
-        // An ordinary generic cast still has a later erased-value owner. Do not
-        // discard its explicit source fact merely because it is not a collection.
-        var ordinaryVariable = operandType is TypeNode.Tv
-            && obj["reifiedTypeOperand"] is JsonValue fact
-            && fact.TryGetValue<bool>(out var reified) && !reified;
-        if (operandType is not TypeNode.Array && !ordinaryVariable)
-            obj.Remove("reifiedTypeOperand");
-        var witness = obj[KotlinTypeWitness.OperandKey]?.DeepClone();
-        obj.Remove(KotlinTypeWitness.OperandKey);
+        // Reified array components and ordinary generic erasure belong to later
+        // owners. Consume only the source marker this classifier stage owns.
+        var ordinaryVariable = operandType is TypeNode.Tv && operation.Reified.HasValue && !operation.Reified.Value;
+        if (operandType is not TypeNode.Array && !ordinaryVariable) operation.Reified = default;
+        var witness = operation.Flags.HasValue ? CopyExpression(operation.Flags.Value) : null;
+        operation.Flags = default;
         if (witness == null)
         {
-            var flags = KotlinTypeWitness.Flags(TypeJson.Read(obj["type"]));
-            if ((flags & ~1) == 0) return;
-            witness = KotlinTypeWitness.Constant(flags);
+            var flags = KotlinTypeWitness.Flags(operation.Type.OrDefault());
+            if ((flags & ~1) == 0) return operation.Node;
+            witness = KotlinTypeWitness.ConstantValue(flags);
         }
         var nullableObject = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
         var opaqueAlias = operandType is TypeNode.Fqn alias && AliasVarianceRepresentation.RequiresErasure(alias, refs);
-        // The nominal/storage guard owns Kotlin membership. Its physical value test must agree with the opaque
-        // alias ABI, not reopen the source preference as a required closed native interface.
-        void ProjectPhysicalTest(JsonObject test)
+        // A nominal/storage guard owns Kotlin membership. Its physical test
+        // must use that same opaque alias ABI, not demand a new closed native face.
+        void Project(ClassifierOperation test)
         {
-            if (!opaqueAlias) return;
-            test["type"] = TypeJson.Write(OpaqueTestType(TypeJson.Read(test["type"])));
-            if (test["sty"] != null) test["sty"] = test["type"].DeepClone();
+            if (opaqueAlias) test.ProjectPhysicalType(OpaqueTestType(test.Type.OrDefault()));
         }
         var runtimeType = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
-        JsonObject ClassRef(string name) => new() { ["k"] = "classRef", ["type"] = TypeJson.Fqn(name) };
-        JsonObject Call(string helper, TypeNode result, JsonNode value) => new() {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(RuntimeOwner), ["method"] = helper,
-            ["sig"] = new JsonArray(TypeJson.Write(nullableObject), TypeJson.Fqn("kotlin.Int"),
-                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
-                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
-                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
-                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType)),
-            ["ret"] = TypeJson.Write(result),
-            ["args"] = new JsonArray(value.DeepClone(), witness.DeepClone(),
+        var integer = new TypeNode.Fqn("kotlin.Int");
+        var boolean = new TypeNode.Fqn("kotlin.Boolean");
+        BirClassReference ClassRef(string name) => new() { Type = new TypeNode.Fqn(name) };
+        BirCallStatic Call(string helper, TypeNode result, IBirExpression value) => new() {
+            Owner = new TypeNode.Fqn(RuntimeOwner), Method = helper, Ret = result,
+            Sig = new TypeNode[] { nullableObject, integer }.Concat(Enumerable.Repeat<TypeNode>(runtimeType, 9)).ToArray(),
+            Args = new IBirExpression[] { CopyExpression(value), CopyExpression(witness),
                 ClassRef("System.Collections.Generic.IDictionary`2"), ClassRef("System.Collections.Generic.IReadOnlyDictionary`2"),
                 ClassRef("System.Collections.Generic.ISet`1"), ClassRef("System.Collections.Generic.IReadOnlySet`1"),
                 ClassRef("System.Collections.IList"), ClassRef("System.Collections.Generic.IList`1"),
-                ClassRef("System.Collections.Generic.IReadOnlyList`1"),
-                ClassRef("System.Collections.Generic.ICollection`1"), ClassRef("System.Collections.Generic.IReadOnlyCollection`1")),
+                ClassRef("System.Collections.Generic.IReadOnlyList`1"), ClassRef("System.Collections.Generic.ICollection`1"),
+                ClassRef("System.Collections.Generic.IReadOnlyCollection`1") },
         };
-        JsonObject StorageCall(string helper, TypeNode result, JsonNode value, string storage) => new() {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(RuntimeOwner), ["method"] = helper,
-            ["sig"] = new JsonArray(TypeJson.Write(nullableObject), TypeJson.Fqn("kotlin.Int"),
-                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType), TypeJson.Write(runtimeType),
-                TypeJson.Write(runtimeType), TypeJson.Write(runtimeType), TypeJson.Write(runtimeType)),
-            ["ret"] = TypeJson.Write(result),
-            ["args"] = new JsonArray(value.DeepClone(), witness.DeepClone(), ClassRef(storage),
+        BirCallStatic StorageCall(string helper, TypeNode result, IBirExpression value, string storage) => new() {
+            Owner = new TypeNode.Fqn(RuntimeOwner), Method = helper, Ret = result,
+            Sig = new TypeNode[] { nullableObject, integer }.Concat(Enumerable.Repeat<TypeNode>(runtimeType, 6)).ToArray(),
+            Args = new IBirExpression[] { CopyExpression(value), CopyExpression(witness), ClassRef(storage),
                 ClassRef("System.Collections.IList"), ClassRef("System.Collections.Generic.IList`1"),
-                ClassRef("System.Collections.Generic.IReadOnlyList`1"),
-                ClassRef("System.Collections.Generic.ISet`1"), ClassRef("System.Collections.Generic.IReadOnlySet`1")),
+                ClassRef("System.Collections.Generic.IReadOnlyList`1"), ClassRef("System.Collections.Generic.ISet`1"),
+                ClassRef("System.Collections.Generic.IReadOnlySet`1") },
         };
-        if (Text(obj["k"]) == "cast")
+        if (operation.IsCast)
         {
-            if (Text(operand["k"]) == "callStatic" && Text(operand["method"]) == CastCandidate
-                && TypeJson.OwnerName(operand["owner"]) == RuntimeOwner) return;
-            JsonNode candidate = operand;
+            if (operand is BirCallStatic { Method.Value: CastCandidate, Owner.HasValue: true } candidateCall
+                && candidateCall.Owner.Value is TypeNode.Fqn { Name: RuntimeOwner }) return operation.Node;
+            var candidate = operand;
             foreach (var storage in mapStorage)
                 candidate = StorageCall("kotlinCollectionStorageCastCandidate", nullableObject, candidate, storage);
-            obj["e"] = Call(CastCandidate, nullableObject, candidate);
-            ProjectPhysicalTest(obj);
-            return;
+            operation.Operand = OptionalField<IBirExpression>.Of(Call(CastCandidate, nullableObject, candidate));
+            Project(operation);
+            return operation.Node;
         }
 
-        // A sentinel object would still satisfy an erased reified T=object. Membership must guard the
-        // physical test independently, including nullable tests. Evaluate arbitrary operands exactly once.
+        // A sentinel would itself satisfy erased T=object. Guard membership
+        // separately and spill the original operand so its effects execute once.
         string temp;
         do temp = "dotkt$collectionClassifier$value$" + next++; while (!names.Add(temp));
-        var local = new JsonObject { ["k"] = "local", ["name"] = temp };
-        var physicalTest = (JsonObject)obj.DeepClone();
-        physicalTest["e"] = local.DeepClone();
-        ProjectPhysicalTest(physicalTest);
-        var matches = Call(Matches, new TypeNode.Fqn("kotlin.Boolean"), local);
+        var local = new BirLocal { Name = temp };
+        var physical = operation.CopyWithOperand((IBirExpression)local.DeepClone());
+        Project(physical);
+        IBirExpression matches = Call(Matches, boolean, local);
         foreach (var storage in mapStorage)
-            matches = new JsonObject {
-                ["k"] = "cond",
-                ["cond"] = StorageCall("kotlinCollectionStorageMatches", new TypeNode.Fqn("kotlin.Boolean"), local, storage),
-                ["then"] = matches,
-                ["else"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = false },
+            matches = new BirConditional {
+                Cond = StorageCall("kotlinCollectionStorageMatches", boolean, local, storage),
+                Then = OptionalField<IBirExpression>.Of(matches),
+                Else = new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(false) },
             };
-        var target = TypeJson.Read(physicalTest["type"]);
-        var safeCastResult = target is TypeNode.Nullable ? target : new TypeNode.Nullable(target);
-        // This pass runs after nullable erasure. A newly authored T? result must use its boxed slot too;
-        // a generic T local would unbox null (or merge an unboxed value with a null reference).
-        safeCastResult = NullableGenericErasure.EraseNullableTv(safeCastResult, _ => false);
-        JsonObject result = Text(obj["k"]) == "isInst"
-            ? new JsonObject {
-                ["k"] = "cond", ["cond"] = matches, ["then"] = physicalTest,
-                ["else"] = new JsonObject {
-                    ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = false,
-                },
-            }
-            : new JsonObject {
-                ["k"] = "cond", ["type"] = TypeJson.Write(safeCastResult),
-                ["cond"] = matches, ["then"] = physicalTest,
-                ["else"] = new JsonObject {
-                    ["k"] = "const", ["type"] = TypeJson.Write(nullableObject), ["value"] = null,
-                },
-            };
-        var statements = new JsonArray(new JsonObject {
-            ["k"] = "var", ["name"] = temp, ["type"] = TypeJson.Write(nullableObject),
-            ["init"] = operand.DeepClone(),
-        });
-        obj.Clear();
-        obj["k"] = "valueBlock";
-        obj["stmts"] = statements;
-        obj["result"] = result;
+        var target = physical.Type.OrDefault();
+        var safeResult = target is TypeNode.Nullable ? target : new TypeNode.Nullable(target);
+        // Nullable erasure has already run; a new T? result must use boxed
+        // storage rather than merging an unboxed value with a null reference.
+        safeResult = NullableGenericErasure.EraseNullableTv(safeResult, _ => false);
+        var result = new BirConditional {
+            Type = operation.IsTest ? default : OptionalField<TypeNode>.Of(safeResult),
+            Cond = OptionalField<IBirExpression>.Of(matches), Then = OptionalField<IBirExpression>.Of((IBirExpression)physical.Node),
+            Else = OptionalField<IBirExpression>.Of(operation.IsTest
+                ? new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(false) }
+                : new BirConstant { Type = nullableObject, Value = new BirLiteral.NullLiteral() }),
+        };
+        return new BirValueBlock { Stmts = new IBirStatement[] {
+            new BirVariable { Name = temp, Type = nullableObject, Init = OptionalField<IBirExpression>.Of(CopyExpression(operand)) },
+        }, Result = result };
     }
 
-    static void CollectNames(JsonNode node, HashSet<string> names)
-    {
-        if (node is JsonObject obj)
-        {
-            if (Text(obj["name"]) is string name) names.Add(name);
-            foreach (var child in obj.Select(pair => pair.Value)) CollectNames(child, names);
-        }
-        else if (node is JsonArray array)
-            foreach (var child in array) CollectNames(child, names);
-    }
-
-    // Erasing the collection carrier does not erase the source operation's nullability.
     static TypeNode OpaqueTestType(TypeNode source) => source switch {
         TypeNode.Nullable n => new TypeNode.Nullable(OpaqueTestType(n.Of)),
         TypeNode.Oblivious o => new TypeNode.Oblivious(OpaqueTestType(o.Of)),
         _ => new TypeNode.Fqn("kotlin.Any"),
     };
-
-    internal static void SelfTest()
-    {
-        var alias = new TypeNode.Fqn("VariantAlias", new TypeNode[] { new TypeNode.Star() });
-        var any = new TypeNode.Fqn("kotlin.Any");
-        if (OpaqueTestType(alias) != any
-            || OpaqueTestType(new TypeNode.Nullable(alias)) != new TypeNode.Nullable(any)
-            || OpaqueTestType(new TypeNode.Oblivious(alias)) != new TypeNode.Oblivious(any))
-            throw new InvalidOperationException("Opaque collection classifier lost source nullability");
-        var ordinary = JsonNode.Parse("""
-        {"k":"cast","type":{"t":"tv","scope":"method","i":0},"reifiedTypeOperand":false,
-         "e":{"k":"local","name":"value"}}
-        """).AsObject();
-        var next = 0;
-        Rewrite(ordinary, new HashSet<string>(), Array.Empty<string>(), null, ref next);
-        if (ordinary["reifiedTypeOperand"]?.GetValue<bool>() != false)
-            throw new InvalidOperationException("Collection classification consumed an unrelated ordinary generic cast fact");
-        Console.WriteLine("[collection classifiers] self-test OK (opaque carrier, nullable and oblivious targets)");
-    }
-
-    static string Text(JsonNode node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 }

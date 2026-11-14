@@ -30,7 +30,7 @@ internal sealed record EventPropertySourceFacts : BirGraphValue
         if (Event.HasValue) { visit((string)Event.Value); }
         if (SourceAssociation.HasValue) { visit((string)SourceAssociation.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
     }
@@ -135,7 +135,7 @@ internal sealed record BirRoundtripDeclarationIdentity : BirGraphValue
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
         if (DeclarationSourceName.HasValue) { visit((string)DeclarationSourceName.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -239,7 +239,7 @@ internal sealed record BirInnerConstructorFactory : BirGraphValue
         if (Inner.HasValue) { visit((string)Inner.Value); }
         if (Declaration.HasValue) { visit((string)Declaration.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -327,7 +327,7 @@ internal sealed record CapturedGenericArgument : BirGraphValue
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -411,7 +411,7 @@ internal sealed record BirOpaqueBytes : BirGraphValue, IBirAttributeValue
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -495,7 +495,7 @@ internal sealed record BirStaticCarrier : BirGraphValue
         if (Owner.HasValue) { visit((string)Owner.Value); }
         if (ProtectedNested.HasValue) { foreach (var item0 in ProtectedNested.Value) { visit((string)item0); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -589,7 +589,7 @@ internal sealed record BirCompanionCarrier : BirGraphValue
         if (Visibility.HasValue) { visit((string)Visibility.Value); }
         if (PhysicalOwner.HasValue) { visit((string)PhysicalOwner.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
     }
@@ -692,7 +692,7 @@ internal sealed record BirAttributeLiteral : BirGraphValue, IBirAttributeValue
         if (Value.HasValue && Value.Value is BirLiteral.TextLiteral text) visit(text.Value);
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -805,7 +805,7 @@ internal sealed record BirFileDeclaration : BirGraphValue
     {
         if (FileClass.HasValue) { visit((string)FileClass.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -1006,7 +1006,7 @@ internal sealed record BirBinaryOperation : BirGraphNode, IBirExpression, IBirAt
     {
         if (Op.HasValue) { visit((string)Op.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -1107,6 +1107,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<bool> ReifiedTypeOperand { get; set; }
     public OptionalField<IBirExpression> E { get; set; }
+    public OptionalField<bool> DotktProjectedCollection { get; set; }
     public OptionalField<TypeNode> _erasedValueVariable { get; set; }
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<bool> _physicalDeclarationSignature { get; set; }
@@ -1143,7 +1144,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_erasedValueVariable.Value, visit); }
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitType((TypeNode)_erasedValueVariable.Value, visit); }
@@ -1270,6 +1271,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(ReifiedTypeOperand, value.ReifiedTypeOperand, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(E, value.E, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
+            && EqualField(DotktProjectedCollection, value.DotktProjectedCollection, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(_erasedValueVariable, value._erasedValueVariable, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(SuspendFnTypePre, value.SuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(_physicalDeclarationSignature, value._physicalDeclarationSignature, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
@@ -1286,6 +1288,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "reifiedTypeOperand", ReifiedTypeOperand, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "e", E, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "dotktProjectedCollection", DotktProjectedCollection, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "_erasedValueVariable", _erasedValueVariable, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "_physicalDeclarationSignature", _physicalDeclarationSignature, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -1304,6 +1307,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (ReifiedTypeOperand.IsPresent) result["reifiedTypeOperand"] = ReifiedTypeOperand.IsNull ? null : JsonValue.Create(ReifiedTypeOperand.Value);
         if (E.IsPresent) result["e"] = E.IsNull ? null : ((BirGraphValue)E.Value).ToDom();
+        if (DotktProjectedCollection.IsPresent) result["dotktProjectedCollection"] = DotktProjectedCollection.IsNull ? null : JsonValue.Create(DotktProjectedCollection.Value);
         if (_erasedValueVariable.IsPresent) result["_erasedValueVariable"] = _erasedValueVariable.IsNull ? null : TypeNode.Write(_erasedValueVariable.Value);
         if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (_physicalDeclarationSignature.IsPresent) result["_physicalDeclarationSignature"] = _physicalDeclarationSignature.IsNull ? null : JsonValue.Create(_physicalDeclarationSignature.Value);
@@ -1345,7 +1349,7 @@ internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttribu
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -1526,7 +1530,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -1686,7 +1690,7 @@ internal sealed record BirSafeValueCast : BirGraphNode, IBirExpression, IBirAttr
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -1804,7 +1808,7 @@ internal sealed record BirConcat : BirGraphNode, IBirExpression, IBirAttributeVa
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -1897,7 +1901,7 @@ internal sealed record BirRuntimeClass : BirGraphNode, IBirExpression, IBirAttri
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -1996,7 +2000,7 @@ internal sealed record BirNullableWrap : BirGraphNode, IBirExpression, IBirAttri
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -2122,7 +2126,7 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -2246,7 +2250,7 @@ internal sealed record BirArraySet : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -2377,7 +2381,7 @@ internal sealed record BirArrayLength : BirGraphNode, IBirExpression, IBirAttrib
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -2474,7 +2478,7 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -2583,7 +2587,7 @@ internal sealed record BirNewArraySized : BirGraphNode, IBirExpression, IBirAttr
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -2699,7 +2703,7 @@ internal sealed record BirNewArrayInit : BirGraphNode, IBirExpression, IBirAttri
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
         if (FuncType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)FuncType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
         if (FuncType.HasValue) { BirGraphNameFields.VisitType((TypeNode)FuncType.Value, visit); }
@@ -2842,7 +2846,7 @@ internal sealed record BirSpreadPart : BirGraphValue
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -2944,7 +2948,7 @@ internal sealed record BirSpreadConcat : BirGraphNode, IBirExpression, IBirAttri
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -3109,7 +3113,7 @@ internal sealed record BirDefaultValue : BirGraphNode, IBirExpression, IBirAttri
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -3218,7 +3222,7 @@ internal sealed record BirEnumName : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -3341,7 +3345,7 @@ internal sealed record BirEnumOrdinal : BirGraphNode, IBirExpression, IBirAttrib
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -3476,7 +3480,7 @@ internal sealed record BirEnumParse : BirGraphNode, IBirExpression, IBirAttribut
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -3602,7 +3606,7 @@ internal sealed record BirObjectMethod : BirGraphNode, IBirExpression, IBirAttri
         if (Method.HasValue) { visit((string)Method.Value); }
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Sty.HasValue) { BirGraphNameFields.VisitType((TypeNode)Sty.Value, visit); }
     }
@@ -3740,7 +3744,7 @@ internal sealed record BirCallBinding : BirGraphValue
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
         if (Role.HasValue) { visit((string)Role.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -3878,7 +3882,7 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
         if (SemanticOwner.HasValue) { visit((string)SemanticOwner.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -4006,7 +4010,7 @@ internal sealed record BirDefaultArgument : BirGraphNode, IBirExpression, IBirAt
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -4096,7 +4100,7 @@ internal sealed record BirOverride : BirGraphValue
         if (Kind.HasValue) { visit((string)Kind.Value); }
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Owner.HasValue) { BirGraphNameFields.VisitType((TypeNode)Owner.Value, visit); }
     }
@@ -4219,6 +4223,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<bool> DeclarationReferencedIntrinsic { get; set; }
     public OptionalField<bool> DeclarationReferencedFactory { get; set; }
+    public OptionalField<bool> DotktProjectedCollection { get; set; }
     public OptionalField<BirTypeParameter[]> _resolvedMethodTypeParams { get; set; }
     public OptionalField<int> DotktKotlinSigId { get; set; }
     public OptionalField<int> ProjectedHelperReceiver { get; set; }
@@ -4330,7 +4335,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Owner.HasValue) { BirGraphNameFields.VisitType((TypeNode)Owner.Value, visit); }
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
@@ -4689,6 +4694,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
             && EqualField(RetSuspendFnTypePre, value.RetSuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(DeclarationReferencedIntrinsic, value.DeclarationReferencedIntrinsic, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(DeclarationReferencedFactory, value.DeclarationReferencedFactory, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
+            && EqualField(DotktProjectedCollection, value.DotktProjectedCollection, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(DotktKotlinSigId, value.DotktKotlinSigId, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
             && EqualField(ProjectedHelperReceiver, value.ProjectedHelperReceiver, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
@@ -4744,6 +4750,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "declarationReferencedIntrinsic", DeclarationReferencedIntrinsic, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "declarationReferencedFactory", DeclarationReferencedFactory, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "dotktProjectedCollection", DotktProjectedCollection, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "_resolvedMethodTypeParams", _resolvedMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "dotktKotlinSigId", DotktKotlinSigId, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "projectedHelperReceiver", ProjectedHelperReceiver, (writer, value) => { writer.WriteNumberValue(value); });
@@ -4801,6 +4808,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (DeclarationReferencedIntrinsic.IsPresent) result["declarationReferencedIntrinsic"] = DeclarationReferencedIntrinsic.IsNull ? null : JsonValue.Create(DeclarationReferencedIntrinsic.Value);
         if (DeclarationReferencedFactory.IsPresent) result["declarationReferencedFactory"] = DeclarationReferencedFactory.IsNull ? null : JsonValue.Create(DeclarationReferencedFactory.Value);
+        if (DotktProjectedCollection.IsPresent) result["dotktProjectedCollection"] = DotktProjectedCollection.IsNull ? null : JsonValue.Create(DotktProjectedCollection.Value);
         if (_resolvedMethodTypeParams.IsPresent) result["_resolvedMethodTypeParams"] = _resolvedMethodTypeParams.IsNull ? null : new JsonArray(_resolvedMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (DotktKotlinSigId.IsPresent) result["dotktKotlinSigId"] = DotktKotlinSigId.IsNull ? null : JsonValue.Create(DotktKotlinSigId.Value);
         if (ProjectedHelperReceiver.IsPresent) result["projectedHelperReceiver"] = ProjectedHelperReceiver.IsNull ? null : JsonValue.Create(ProjectedHelperReceiver.Value);
@@ -4967,7 +4975,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
         if (Sig.HasValue) { foreach (var item0 in Sig.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -5514,7 +5522,7 @@ internal sealed record BirCallLocal : BirGraphNode, IBirExpression, IBirAttribut
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Sig.HasValue) { foreach (var item0 in Sig.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
         if (TypeArgs.HasValue) { foreach (var item0 in TypeArgs.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -5742,7 +5750,7 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
         if (Name.HasValue) visit(Name.Value);
@@ -6080,7 +6088,7 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
         if (MemberVisibility.HasValue) { visit((string)MemberVisibility.Value); }
         if (MemberType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)MemberType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Ret.HasValue) { BirGraphNameFields.VisitType((TypeNode)Ret.Value, visit); }
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
@@ -6331,7 +6339,7 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
         if (Name.HasValue) visit(Name.Value);
@@ -6621,7 +6629,7 @@ internal sealed record BirStaticFieldSet : BirGraphNode, IBirExpression, IBirAtt
         if (MemberVisibility.HasValue) { visit((string)MemberVisibility.Value); }
         if (MemberType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)MemberType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
         if (Name.HasValue) visit(Name.Value);
@@ -6820,7 +6828,7 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (MemberType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)MemberType.Value, visit); }
         if (LateinitSourceName.HasValue) { visit((string)LateinitSourceName.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
         if (Name.HasValue) visit(Name.Value);
@@ -7036,7 +7044,7 @@ internal sealed record BirLateinitIsInitialized : BirGraphNode, IBirExpression, 
         if (LateinitDeclarationId.HasValue) { visit((string)LateinitDeclarationId.Value); }
         if (OwnerType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)OwnerType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
     }
@@ -7168,7 +7176,7 @@ internal sealed record BirModifiers : BirGraphValue
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -7324,7 +7332,7 @@ internal sealed record BirDefaultBody : BirGraphValue
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -7428,7 +7436,7 @@ internal sealed record BirConstructorAdapterPayload : BirGraphValue, IBirExecuta
         if (Signature.HasValue) { foreach (var item0 in Signature.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (TerminalSignature.HasValue) { foreach (var item0 in TerminalSignature.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Signature.HasValue) { foreach (var item0 in Signature.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
         if (TerminalSignature.HasValue) { foreach (var item0 in TerminalSignature.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -7587,7 +7595,7 @@ internal sealed record BirInlinePayload : BirGraphValue, IBirExecutablePayload
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Ret.HasValue) { BirGraphNameFields.VisitType((TypeNode)Ret.Value, visit); }
     }
@@ -7780,7 +7788,7 @@ internal sealed record BirAttributeNamedArgument : BirGraphValue
         if (Name.HasValue) { visit((string)Name.Value); }
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
@@ -7911,7 +7919,7 @@ internal sealed record BirAttribute : BirGraphValue
         if (ArgTypes.HasValue) { foreach (var item0 in ArgTypes.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (AttrAssembly.HasValue) { visit((string)AttrAssembly.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Attr.HasValue) { BirGraphNameFields.VisitType((TypeNode)Attr.Value, visit); }
         if (ArgTypes.HasValue) { foreach (var item0 in ArgTypes.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -8102,7 +8110,7 @@ internal sealed record BirParameter : BirGraphValue
     {
         SharedCellType = default;
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
@@ -8354,7 +8362,7 @@ internal sealed record BirDefaultCarrier : BirGraphNode, IBirExpression, IBirAtt
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -8462,7 +8470,7 @@ internal sealed record BirLocalFunction : BirGraphNode, IBirStatement
     {
         if (Id.HasValue) { visit((string)Id.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -8572,7 +8580,7 @@ internal sealed record BirInheritedImplementation : BirGraphValue
         if (Kind.HasValue) { visit((string)Kind.Value); }
         if (Sig.HasValue) { foreach (var item0 in Sig.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Owner.HasValue) { BirGraphNameFields.VisitType((TypeNode)Owner.Value, visit); }
         if (Sig.HasValue) { foreach (var item0 in Sig.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -8704,7 +8712,7 @@ internal sealed record BirDeclarationPosition : BirGraphValue
     {
         if (F.HasValue) { visit((string)F.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -8914,7 +8922,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     {
         _syntheticTypeArgs = default;
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Ret.HasValue) { BirGraphNameFields.VisitType((TypeNode)Ret.Value, visit); }
@@ -9554,7 +9562,7 @@ internal sealed record BirConstructor : BirGraphValue
         if (DeclarationSourceName.HasValue) { visit((string)DeclarationSourceName.Value); }
         if (Vis.HasValue) { visit((string)Vis.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (DelegationSig.HasValue) { foreach (var item0 in DelegationSig.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
     }
@@ -9867,7 +9875,7 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         if (Constant.HasValue && Constant.Value is BirLiteral.TextLiteral text) visit(text.Value);
         if (SuspendFnType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)SuspendFnType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
@@ -10130,7 +10138,7 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
         if (Name.HasValue) { visit((string)Name.Value); }
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
@@ -10298,7 +10306,7 @@ internal sealed record BirPropertyDeclaration : BirGraphValue
         if (Vis.HasValue) { visit((string)Vis.Value); }
         if (Recv.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Recv.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
@@ -10632,7 +10640,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (Underlying.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Underlying.Value, visit); }
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Base.HasValue) { BirGraphNameFields.VisitType((TypeNode)Base.Value, visit); }
@@ -11056,7 +11064,7 @@ internal sealed record BirEnumEntryDeclaration : BirGraphValue
         if (Underlying.HasValue) { visit((string)Underlying.Value); }
         if (PhysicalValue.HasValue) { visit((string)PhysicalValue.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
     }
@@ -11168,7 +11176,7 @@ internal sealed record BirManagedReferenceContract : BirGraphValue
         if (Declaration.HasValue) { visit((string)Declaration.Value); }
         if (Invoke.HasValue) { visit((string)Invoke.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -11261,7 +11269,7 @@ internal sealed record BirClrEnumDeclaration : BirGraphValue
     {
         if (Underlying.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Underlying.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Underlying.HasValue) { BirGraphNameFields.VisitType((TypeNode)Underlying.Value, visit); }
     }
@@ -11400,7 +11408,7 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         if (Underlying.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Underlying.Value, visit); }
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Base.HasValue) { BirGraphNameFields.VisitType((TypeNode)Base.Value, visit); }
@@ -11865,7 +11873,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         if (Underlying.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Underlying.Value, visit); }
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Base.HasValue) { BirGraphNameFields.VisitType((TypeNode)Base.Value, visit); }
@@ -12347,7 +12355,7 @@ internal sealed record BirKotlinCompanion : BirGraphValue
         if (Name.HasValue) { visit((string)Name.Value); }
         if (Visibility.HasValue) { visit((string)Visibility.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
     }
@@ -12437,7 +12445,7 @@ internal sealed record BirRichEnumEntry : BirGraphValue
         if (Name.HasValue) { visit((string)Name.Value); }
         if (Field.HasValue) { visit((string)Field.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
     }
@@ -12529,7 +12537,7 @@ internal sealed record BirRichEnumDeclaration : BirGraphValue
         if (Values.HasValue) { visit((string)Values.Value); }
         if (ValueOf.HasValue) { visit((string)ValueOf.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
     }
@@ -12650,7 +12658,7 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
         if (SignatureOverrideDeclarations.HasValue) { foreach (var item0 in SignatureOverrideDeclarations.Value) { visit((string)item0); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Params.HasValue) { foreach (var item0 in Params.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
         if (Ret.HasValue) { BirGraphNameFields.VisitType((TypeNode)Ret.Value, visit); }
@@ -12819,7 +12827,7 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
         if (SignatureOverrideDeclarations.HasValue) { foreach (var item0 in SignatureOverrideDeclarations.Value) { visit((string)item0); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Params.HasValue) { foreach (var item0 in Params.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
         if (Ret.HasValue) { BirGraphNameFields.VisitType((TypeNode)Ret.Value, visit); }
@@ -12992,7 +13000,7 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         if (PropertyAssociation.HasValue) { visit((string)PropertyAssociation.Value); }
         if (SignatureOverrideDeclarations.HasValue) { foreach (var item0 in SignatureOverrideDeclarations.Value) { visit((string)item0); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Ret.HasValue) { BirGraphNameFields.VisitType((TypeNode)Ret.Value, visit); }
     }
@@ -13216,7 +13224,7 @@ internal sealed record BirClrEventBacking : BirGraphValue
         if (PolicyField.HasValue) { visit((string)PolicyField.Value); }
         if (DelegateType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)DelegateType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (HandlerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)HandlerType.Value, visit); }
@@ -13356,7 +13364,7 @@ internal sealed record BirClrEventForwarder : BirGraphValue
         if (PropertyAssociation.HasValue) { visit((string)PropertyAssociation.Value); }
         if (OwnerType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)OwnerType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
@@ -13469,7 +13477,7 @@ internal sealed record BirClrEventAccessor : BirGraphNode, IBirStatement
         if (Kind.HasValue) { visit((string)Kind.Value); }
         if (Event.HasValue) { visit((string)Event.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -13565,7 +13573,7 @@ internal sealed record BirNewSam : BirGraphNode, IBirExpression, IBirAttributeVa
         if (SamType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)SamType.Value, visit); }
         if (TypeArgs.HasValue) { foreach (var item0 in TypeArgs.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (SamType.HasValue) { BirGraphNameFields.VisitType((TypeNode)SamType.Value, visit); }
         if (TypeArgs.HasValue) { foreach (var item0 in TypeArgs.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -13709,7 +13717,7 @@ internal sealed record BirSamConversion : BirGraphNode, IBirExpression, IBirAttr
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
         if (FuncType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)FuncType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (FuncType.HasValue) { BirGraphNameFields.VisitType((TypeNode)FuncType.Value, visit); }
@@ -13844,7 +13852,7 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
         if (Name.HasValue) { visit((string)Name.Value); }
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
@@ -13988,7 +13996,7 @@ internal sealed record BirClosureDefinition : BirGraphValue
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
         if (SemanticOwner.HasValue) { visit((string)SemanticOwner.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Ret.HasValue) { BirGraphNameFields.VisitType((TypeNode)Ret.Value, visit); }
@@ -14215,7 +14223,7 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
         if (DotktDelegateSlot.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)DotktDelegateSlot.Value, visit); }
         if (CalleeParams.HasValue) { foreach (var item0 in CalleeParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (ClosureType.HasValue) { BirGraphNameFields.VisitType((TypeNode)ClosureType.Value, visit); }
         if (FuncType.HasValue) { BirGraphNameFields.VisitType((TypeNode)FuncType.Value, visit); }
@@ -14445,7 +14453,7 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (FuncType.HasValue) { BirGraphNameFields.VisitType((TypeNode)FuncType.Value, visit); }
         if (Sig.HasValue) { foreach (var item0 in Sig.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -14729,7 +14737,7 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
         if (_suspendDeclarationTypeArgs.HasValue) { foreach (var item0 in _suspendDeclarationTypeArgs.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (SuspendRet.HasValue) { BirGraphNameFields.VisitType((TypeNode)SuspendRet.Value, visit); }
         if (TypeArgs.HasValue) { foreach (var item0 in TypeArgs.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -14995,7 +15003,7 @@ internal sealed record BirEventGet : BirGraphNode, IBirExpression, IBirAttribute
         if (MemberVisibility.HasValue) { visit((string)MemberVisibility.Value); }
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (Name.HasValue) visit(Name.Value);
@@ -15180,7 +15188,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
         if (Event.HasValue) { visit((string)Event.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -15350,7 +15358,7 @@ internal sealed record BirLambdaParameter : BirGraphValue
     {
         SharedCellType = default;
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
@@ -15596,7 +15604,7 @@ internal sealed record BirInlineCapture : BirGraphValue
         SharedCellType = default;
         SharedCellTypeParams = default;
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
@@ -15747,7 +15755,7 @@ internal sealed record BirInlineLambda : BirGraphNode, IBirExpression, IBirAttri
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -15900,7 +15908,7 @@ internal sealed record BirStackAllocation : BirGraphNode, IBirExpression, IBirAt
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -16011,7 +16019,7 @@ internal sealed record BirStackGet : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -16149,7 +16157,7 @@ internal sealed record BirStackSet : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -16298,7 +16306,7 @@ internal sealed record BirStackAsSpan : BirGraphNode, IBirExpression, IBirAttrib
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -16424,7 +16432,7 @@ internal sealed record BirInlineReceivers : BirGraphValue
         if (DispatchTypeArgs.HasValue) { foreach (var item0 in DispatchTypeArgs.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (DispatchOwnerTypeArgs.HasValue) { foreach (var item0 in DispatchOwnerTypeArgs.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (DispatchTypeArgs.HasValue) { foreach (var item0 in DispatchTypeArgs.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
         if (DispatchOwnerTypeArgs.HasValue) { foreach (var item0 in DispatchOwnerTypeArgs.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -16583,7 +16591,7 @@ internal sealed record BirCallInline : BirGraphNode, IBirExpression, IBirAttribu
         if (SemanticOwner.HasValue) { visit((string)SemanticOwner.Value); }
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Callee.HasValue) { BirGraphNameFields.VisitType((TypeNode)Callee.Value, visit); }
         if (Owner.HasValue) { BirGraphNameFields.VisitType((TypeNode)Owner.Value, visit); }
@@ -16857,7 +16865,7 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
         if (TypeArgs.HasValue) { foreach (var item0 in TypeArgs.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -17225,7 +17233,7 @@ internal sealed record BirByRefOf : BirGraphNode, IBirExpression, IBirAttributeV
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -17325,7 +17333,7 @@ internal sealed record BirByRefLoad : BirGraphNode, IBirExpression, IBirAttribut
         if (Local.HasValue) { visit((string)Local.Value); }
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -17444,7 +17452,7 @@ internal sealed record BirByRefStore : BirGraphNode, IBirExpression, IBirAttribu
         if (Local.HasValue) { visit((string)Local.Value); }
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -17568,7 +17576,7 @@ internal sealed record BirReturnExpression : BirGraphNode, IBirExpression, IBirA
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -17662,7 +17670,7 @@ internal sealed record BirUnsupportedExpression : BirGraphNode, IBirExpression, 
     {
         if (Of.HasValue) { visit((string)Of.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -17747,7 +17755,7 @@ internal sealed record BirPropertyFunction : BirGraphValue
     {
         if (Iface.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Iface.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Iface.HasValue) { BirGraphNameFields.VisitType((TypeNode)Iface.Value, visit); }
     }
@@ -17847,7 +17855,7 @@ internal sealed record BirConstant : BirGraphNode, IBirExpression, IBirAttribute
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
         if (Value.HasValue && Value.Value is BirLiteral.TextLiteral text) visit(text.Value);
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -17951,7 +17959,7 @@ internal sealed record BirObjectEquals : BirGraphNode, IBirExpression, IBirAttri
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -18057,7 +18065,7 @@ internal sealed record BirExpressionStatement : BirGraphNode, IBirStatement
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -18150,7 +18158,7 @@ internal sealed record BirThrowExpression : BirGraphNode, IBirExpression, IBirAt
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -18245,7 +18253,7 @@ internal sealed record BirUnaryOperation : BirGraphNode, IBirExpression, IBirAtt
     {
         if (Op.HasValue) { visit((string)Op.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -18358,7 +18366,7 @@ internal sealed record BirConditional : BirGraphNode, IBirExpression, IBirAttrib
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_erasedValueVariable.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitType((TypeNode)_erasedValueVariable.Value, visit); }
@@ -18517,7 +18525,7 @@ internal sealed record BirNullableHasValue : BirGraphNode, IBirExpression, IBirA
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -18641,7 +18649,7 @@ internal sealed record BirNullableValue : BirGraphNode, IBirExpression, IBirAttr
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -18777,7 +18785,7 @@ internal sealed record BirEnumValue : BirGraphNode, IBirExpression, IBirAttribut
         if (Underlying.HasValue) { visit((string)Underlying.Value); }
         if (PhysicalValue.HasValue) { visit((string)PhysicalValue.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -18898,7 +18906,7 @@ internal sealed record BirEnumValues : BirGraphNode, IBirExpression, IBirAttribu
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -19020,7 +19028,7 @@ internal sealed record BirCompanionValue : BirGraphNode, IBirExpression, IBirAtt
         if (CompanionType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)CompanionType.Value, visit); }
         if (Name.HasValue) { visit((string)Name.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
         if (CompanionType.HasValue) { BirGraphNameFields.VisitType((TypeNode)CompanionType.Value, visit); }
@@ -19137,7 +19145,7 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -19244,7 +19252,7 @@ internal sealed record BirNullableNull : BirGraphNode, IBirExpression, IBirAttri
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
@@ -19349,7 +19357,7 @@ internal sealed record BirDefaultParameter : BirGraphNode, IBirExpression, IBirA
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -19433,7 +19441,7 @@ internal sealed record BirDefaultReceiver : BirGraphNode, IBirExpression, IBirAt
     {
         if (Kind.HasValue) { visit((string)Kind.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -19526,7 +19534,7 @@ internal sealed record BirBindingReference : BirGraphNode, IBirExpression, IBirA
         if (Id.HasValue) { visit((string)Id.Value); }
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Sty.HasValue) { BirGraphNameFields.VisitType((TypeNode)Sty.Value, visit); }
     }
@@ -19632,7 +19640,7 @@ internal sealed record BirLocalFunctionReference : BirGraphNode, IBirExpression,
         if (FuncType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)FuncType.Value, visit); }
         if (TypeArgs.HasValue) { foreach (var item0 in TypeArgs.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (FuncType.HasValue) { BirGraphNameFields.VisitType((TypeNode)FuncType.Value, visit); }
         if (TypeArgs.HasValue) { foreach (var item0 in TypeArgs.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -19762,7 +19770,7 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_erasedValueVariable.Value, visit); }
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitType((TypeNode)_erasedValueVariable.Value, visit); }
@@ -19963,7 +19971,7 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (ArgTypes.HasValue) { foreach (var item0 in ArgTypes.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -20222,7 +20230,7 @@ internal sealed record BirThrow : BirGraphNode, IBirStatement
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -20315,7 +20323,7 @@ internal sealed record BirIf : BirGraphNode, IBirStatement
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -20408,7 +20416,7 @@ internal sealed record BirReturn : BirGraphNode, IBirStatement
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -20503,7 +20511,7 @@ internal sealed record BirSetLocal : BirGraphNode, IBirStatement
     {
         if (Name.HasValue) { visit((string)Name.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
     }
@@ -20652,7 +20660,7 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitType((TypeNode)OwnerType.Value, visit); }
         if (Name.HasValue) visit(Name.Value);
@@ -20913,7 +20921,7 @@ internal sealed record BirBlock : BirGraphNode, IBirStatement
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -21014,7 +21022,7 @@ internal sealed record BirBranchIf : BirGraphNode, IBirStatement
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -21121,10 +21129,10 @@ internal sealed record BirCatch : BirGraphValue
         if (ExcType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ExcType.Value, visit); }
         if (Var.HasValue) { visit((string)Var.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (ExcType.HasValue) { BirGraphNameFields.VisitType((TypeNode)ExcType.Value, visit); }
-        if (Var.HasValue) visit(Var.Value);
+        if (includeVariableNames && Var.HasValue) visit(Var.Value);
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -21244,7 +21252,7 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
     }
@@ -21400,9 +21408,9 @@ internal sealed record BirForArray : BirGraphNode, IBirStatement
         if (Var.HasValue) { visit((string)Var.Value); }
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
-        if (Var.HasValue) visit(Var.Value);
+        if (includeVariableNames && Var.HasValue) visit(Var.Value);
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -21548,11 +21556,11 @@ internal sealed record BirForIn : BirGraphNode, IBirStatement
         if (SrcType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)SrcType.Value, visit); }
         if (Var.HasValue) { visit((string)Var.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
         if (SrcType.HasValue) { BirGraphNameFields.VisitType((TypeNode)SrcType.Value, visit); }
-        if (Var.HasValue) visit(Var.Value);
+        if (includeVariableNames && Var.HasValue) visit(Var.Value);
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -21721,7 +21729,7 @@ internal sealed record BirVariable : BirGraphNode, IBirStatement
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
         if (Role.HasValue) { visit((string)Role.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
@@ -21866,7 +21874,7 @@ internal sealed record BirLocal : BirGraphNode, IBirExpression, IBirAttributeVal
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_erasedValueVariable.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Sty.HasValue) { BirGraphNameFields.VisitType((TypeNode)Sty.Value, visit); }
@@ -21986,7 +21994,7 @@ internal sealed record BirThis : BirGraphNode, IBirExpression, IBirAttributeValu
     {
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Sty.HasValue) { BirGraphNameFields.VisitType((TypeNode)Sty.Value, visit); }
     }
@@ -22081,7 +22089,7 @@ internal sealed record BirSourcePoint : BirGraphNode, IBirStatement
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -22177,7 +22185,7 @@ internal sealed record BirBreak : BirGraphNode, IBirStatement
     {
         if (Label.HasValue) { visit((string)Label.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -22269,7 +22277,7 @@ internal sealed record BirContinue : BirGraphNode, IBirStatement
     {
         if (Label.HasValue) { visit((string)Label.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -22359,7 +22367,7 @@ internal sealed record BirGoto : BirGraphNode, IBirStatement
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -22445,7 +22453,7 @@ internal sealed record BirLabel : BirGraphNode, IBirStatement
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -22529,7 +22537,7 @@ internal sealed record BirBasicEnumCarrier : BirGraphValue
     {
         if (Underlying.HasValue) { visit((string)Underlying.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -22626,7 +22634,7 @@ internal sealed record BirBasicEnumCarrierEntry : BirGraphValue
         if (Name.HasValue) { visit((string)Name.Value); }
         if (PhysicalValue.HasValue) { visit((string)PhysicalValue.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
     }
@@ -22718,7 +22726,7 @@ internal sealed record BirSourceSpan : BirGraphValue
     {
         if (F.HasValue) { visit((string)F.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -22815,7 +22823,7 @@ internal sealed record BirWhile : BirGraphNode, IBirStatement
     {
         if (Label.HasValue) { visit((string)Label.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -22943,9 +22951,9 @@ internal sealed record BirFor : BirGraphNode, IBirStatement
         if (Cmp.HasValue) { visit((string)Cmp.Value); }
         if (Label.HasValue) { visit((string)Label.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
-        if (Var.HasValue) visit(Var.Value);
+        if (includeVariableNames && Var.HasValue) visit(Var.Value);
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -23105,9 +23113,9 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         if (Label.HasValue) { visit((string)Label.Value); }
         if (RangeType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)RangeType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
-        if (Var.HasValue) visit(Var.Value);
+        if (includeVariableNames && Var.HasValue) visit(Var.Value);
         if (AccessOwner.HasValue) { BirGraphNameFields.VisitType((TypeNode)AccessOwner.Value, visit); }
         if (RangeType.HasValue) { BirGraphNameFields.VisitType((TypeNode)RangeType.Value, visit); }
     }
@@ -23264,7 +23272,7 @@ internal sealed record BirConvert : BirGraphNode, IBirExpression, IBirAttributeV
     {
         if (To.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)To.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (To.HasValue) { BirGraphNameFields.VisitType((TypeNode)To.Value, visit); }
     }
@@ -23384,7 +23392,7 @@ internal sealed record BirNewList : BirGraphNode, IBirExpression, IBirAttributeV
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
         if (Sty.HasValue) { BirGraphNameFields.VisitType((TypeNode)Sty.Value, visit); }
@@ -23551,7 +23559,7 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (ArgTypes.HasValue) { foreach (var item0 in ArgTypes.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -23792,7 +23800,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         if (_capturedGenericResult.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_capturedGenericResult.Value, visit); }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Iface.HasValue) { BirGraphNameFields.VisitType((TypeNode)Iface.Value, visit); }
         if (RecvType.HasValue) { BirGraphNameFields.VisitType((TypeNode)RecvType.Value, visit); }
@@ -24171,7 +24179,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (TypeArgs.HasValue) { foreach (var item0 in TypeArgs.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -24442,7 +24450,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (TypeArgs.HasValue) { foreach (var item0 in TypeArgs.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -24692,7 +24700,7 @@ internal sealed record BirClrStaticField : BirGraphNode, IBirExpression, IBirAtt
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -24797,7 +24805,7 @@ internal sealed record BirEventAccessorBody : BirGraphNode, IBirStatement
         if (Name.HasValue) { visit((string)Name.Value); }
         if (DelegateType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)DelegateType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (DelegateType.HasValue) { BirGraphNameFields.VisitType((TypeNode)DelegateType.Value, visit); }
@@ -24999,7 +25007,7 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (AccessorOwner.HasValue) { BirGraphNameFields.VisitType((TypeNode)AccessorOwner.Value, visit); }
@@ -25277,7 +25285,7 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (AccessorOwner.HasValue) { BirGraphNameFields.VisitType((TypeNode)AccessorOwner.Value, visit); }
@@ -25572,7 +25580,7 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (Ret.HasValue) { BirGraphNameFields.VisitType((TypeNode)Ret.Value, visit); }
@@ -25935,7 +25943,7 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (Ret.HasValue) { BirGraphNameFields.VisitType((TypeNode)Ret.Value, visit); }
@@ -26293,7 +26301,7 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (AccessorOwner.HasValue) { BirGraphNameFields.VisitType((TypeNode)AccessorOwner.Value, visit); }
@@ -26626,7 +26634,7 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (AccessorOwner.HasValue) { BirGraphNameFields.VisitType((TypeNode)AccessorOwner.Value, visit); }
@@ -26912,7 +26920,7 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         if (FuncType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)FuncType.Value, visit); }
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (FuncType.HasValue) { BirGraphNameFields.VisitType((TypeNode)FuncType.Value, visit); }
         if (Sty.HasValue) { BirGraphNameFields.VisitType((TypeNode)Sty.Value, visit); }
@@ -27066,7 +27074,7 @@ internal sealed record BirEnumBits : BirGraphNode, IBirExpression, IBirAttribute
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
         if (Underlying.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Underlying.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
         if (Underlying.HasValue) { BirGraphNameFields.VisitType((TypeNode)Underlying.Value, visit); }
@@ -27199,10 +27207,10 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
         if (Var.HasValue) { visit((string)Var.Value); }
         if (Label.HasValue) { visit((string)Label.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitType((TypeNode)Elem.Value, visit); }
-        if (Var.HasValue) visit(Var.Value);
+        if (includeVariableNames && Var.HasValue) visit(Var.Value);
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -27460,7 +27468,7 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (FuncType.HasValue) { BirGraphNameFields.VisitType((TypeNode)FuncType.Value, visit); }
         if (ClrType.HasValue) { BirGraphNameFields.VisitType((TypeNode)ClrType.Value, visit); }
@@ -27779,7 +27787,7 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (FuncType.HasValue) { BirGraphNameFields.VisitType((TypeNode)FuncType.Value, visit); }
         if (ClrType.HasValue) { BirGraphNameFields.VisitType((TypeNode)ClrType.Value, visit); }
@@ -28040,9 +28048,9 @@ internal sealed record BirRepeat : BirGraphNode, IBirStatement, IBirExpression, 
     {
         if (Var.HasValue) { visit((string)Var.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
-        if (Var.HasValue) visit(Var.Value);
+        if (includeVariableNames && Var.HasValue) visit(Var.Value);
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -28181,7 +28189,7 @@ internal sealed record BirPInvoke : BirGraphValue
         if (CharSetType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)CharSetType.Value, visit); }
         if (PseudoFields.HasValue) { foreach (var item0 in PseudoFields.Value) { visit((string)item0); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (CallingConventionType.HasValue) { BirGraphNameFields.VisitType((TypeNode)CallingConventionType.Value, visit); }
         if (CharSetType.HasValue) { BirGraphNameFields.VisitType((TypeNode)CharSetType.Value, visit); }
@@ -28346,7 +28354,7 @@ internal sealed record BirMethodImpl : BirGraphValue
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
         if (ReferenceMember.HasValue) { visit((string)ReferenceMember.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Owner.HasValue) { BirGraphNameFields.VisitType((TypeNode)Owner.Value, visit); }
         if (Params.HasValue) { foreach (var item0 in Params.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -28506,7 +28514,7 @@ internal sealed record BirInterfaceSlotSet : BirGraphValue
         if (Owner.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Owner.Value, visit); }
         if (Assembly.HasValue) { visit((string)Assembly.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Owner.HasValue) { BirGraphNameFields.VisitType((TypeNode)Owner.Value, visit); }
     }
@@ -28613,7 +28621,7 @@ internal sealed record BirBranch : BirGraphValue
     public override void VisitStringFields(Action<string> visit)
     {
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -28729,7 +28737,7 @@ internal sealed record BirPhysicalEnumValue : BirGraphValue
         if (Underlying.HasValue) { visit((string)Underlying.Value); }
         if (PhysicalValue.HasValue) { visit((string)PhysicalValue.Value); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
@@ -28829,7 +28837,7 @@ internal sealed record BirTypeParameter : BirGraphValue
         if (ErasedInnerConstraints.HasValue) { foreach (var item0 in ErasedInnerConstraints.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (SpecialConstraints.HasValue) { foreach (var item0 in SpecialConstraints.Value) { visit((string)item0); } }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Name.HasValue) visit(Name.Value);
         if (Constraints.HasValue) { foreach (var item0 in Constraints.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
@@ -28976,7 +28984,7 @@ internal sealed record BirMemberReference : BirGraphValue
         if (ParameterTypes.HasValue) { foreach (var item0 in ParameterTypes.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ReturnType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ReturnType.Value, visit); }
     }
-    public override void VisitNameFields(Action<string> visit)
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (DeclaringType.HasValue) { BirGraphNameFields.VisitType((TypeNode)DeclaringType.Value, visit); }
         if (Name.HasValue) visit(Name.Value);

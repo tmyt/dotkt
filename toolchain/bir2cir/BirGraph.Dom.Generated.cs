@@ -241,6 +241,7 @@ internal static class BirGraphDom
                 case "type": break;
                 case "reifiedTypeOperand": break;
                 case "e": break;
+                case "dotktProjectedCollection": break;
                 case "_erasedValueVariable": break;
                 case "suspendFnTypePre": break;
                 case "_physicalDeclarationSignature": break;
@@ -257,6 +258,7 @@ internal static class BirGraphDom
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             ReifiedTypeOperand = Field<bool>(fields, "reifiedTypeOperand", value => value!.GetValue<bool>()),
             E = Field<IBirExpression>(fields, "e", value => ReadBirExpression(value!)),
+            DotktProjectedCollection = Field<bool>(fields, "dotktProjectedCollection", value => value!.GetValue<bool>()),
             _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             _physicalDeclarationSignature = Field<bool>(fields, "_physicalDeclarationSignature", value => value!.GetValue<bool>()),
@@ -795,6 +797,7 @@ internal static class BirGraphDom
                 case "retSuspendFnTypePre": break;
                 case "declarationReferencedIntrinsic": break;
                 case "declarationReferencedFactory": break;
+                case "dotktProjectedCollection": break;
                 case "_resolvedMethodTypeParams": break;
                 case "dotktKotlinSigId": break;
                 case "projectedHelperReceiver": break;
@@ -850,6 +853,7 @@ internal static class BirGraphDom
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             DeclarationReferencedIntrinsic = Field<bool>(fields, "declarationReferencedIntrinsic", value => value!.GetValue<bool>()),
             DeclarationReferencedFactory = Field<bool>(fields, "declarationReferencedFactory", value => value!.GetValue<bool>()),
+            DotktProjectedCollection = Field<bool>(fields, "dotktProjectedCollection", value => value!.GetValue<bool>()),
             _resolvedMethodTypeParams = Field<BirTypeParameter[]>(fields, "_resolvedMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             DotktKotlinSigId = Field<int>(fields, "dotktKotlinSigId", value => value!.GetValue<int>()),
             ProjectedHelperReceiver = Field<int>(fields, "projectedHelperReceiver", value => value!.GetValue<int>()),

@@ -39,6 +39,11 @@ static class BirGraphNameFieldsTests
             throw new InvalidOperationException("Structural name visitor lost a structured type/name/var field or entered a frozen string");
         if (!root.StructurallyEquals(before) || !ReferenceEquals(parameter, root.Params.Value[0]))
             throw new InvalidOperationException("Structural name visitor changed graph ownership or facts");
+        var exactNames = new List<string>();
+        root.Visit(node => node.VisitNameFields(exactNames.Add, includeVariableNames: false));
+        if (exactNames.Contains("caught")
+            || !exactNames.Order(StringComparer.Ordinal).SequenceEqual(expected.Where(name => name != "caught").Order(StringComparer.Ordinal)))
+            throw new InvalidOperationException("Exact name-field inventory included a var field or lost a structured name");
 
         var absent = new BirLocal();
         absent.VisitNameFields(_ => throw new InvalidOperationException("Absent name was visited"));
