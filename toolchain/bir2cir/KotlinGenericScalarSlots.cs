@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // A non-reified Kotlin scalar parameter/result transports a value, not a request to
 // extract the caller's exact CLR T. Keep that witness in the declaration's generic
@@ -66,9 +67,19 @@ static partial class KotlinGenericScalarSlots
         }
 
         internal TypeNode.Tv Result(JsonObject call, ReferenceMetadataIndex refs) =>
-            call["k"]?.GetValue<string>() is "callStatic" or "callInstance"
-            && TypeJson.Read(call["sty"] ?? call["dynRet"]) is TypeNode.Tv variable
-            && call[DeclarationIdentityBinding.Key]?.GetValue<string>() is string identity
+            SelectResult(call["k"]?.GetValue<string>(), TypeJson.Read(call["sty"] ?? call["dynRet"]),
+                call[DeclarationIdentityBinding.Key]?.GetValue<string>(), refs);
+
+        internal TypeNode.Tv Result(BirGraphValue call, ReferenceMetadataIndex refs) => call switch {
+            BirCallStatic value => SelectResult(value.Tag, value.Sty.OrDefault() ?? value.DynRet.OrDefault(),
+                value.DeclarationId.OrDefault(), refs),
+            BirCallInstance value => SelectResult(value.Tag, value.Sty.OrDefault() ?? value.DynRet.OrDefault(),
+                value.DeclarationId.OrDefault(), refs),
+            _ => null,
+        };
+
+        TypeNode.Tv SelectResult(string kind, TypeNode result, string identity, ReferenceMetadataIndex refs) =>
+            kind is "callStatic" or "callInstance" && result is TypeNode.Tv variable && identity != null
             && (Returns.Contains(identity) || refs.IsGenericScalarReturn(identity)) ? variable : null;
     }
 

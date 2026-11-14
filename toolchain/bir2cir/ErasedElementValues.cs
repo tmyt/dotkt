@@ -8,7 +8,7 @@ using DotKt.Bir;
 // Their elements are erased values until an actual consuming slot asks for T.
 // Project only body-local value storage here; signatures, allocation witnesses, reified
 // operations and native locations retain their independently owned representations.
-static class ErasedElementValues
+static partial class ErasedElementValues
 {
     sealed record Slot(JsonObject Declaration, string Name, TypeNode Type);
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
@@ -584,6 +584,7 @@ static class ErasedElementValues
             throw new InvalidOperationException("Array value projection missed executable constructor delegation");
         Console.WriteLine("[open array element values] self-test OK (erased reads/aliases, retained signature)");
         IteratorSelfTest(pristine.AsObject());
+        SourceScalarSelfTest();
     }
 
     static void IteratorSelfTest(JsonObject template)

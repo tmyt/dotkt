@@ -11,6 +11,32 @@ internal static class BirGraphMutationTests
     {
         TypeNode source = new TypeNode.Tv("method", 0);
         TypeNode target = new TypeNode.Fqn("kotlin.String");
+        foreach (var origin in new BirGraphValue[] {
+            new BirCallStatic(), new BirCallInstance(), new BirFieldGet(), new BirLocal(),
+            new BirCast(), new BirValueBlock(), new BirConditional(),
+        })
+        {
+            origin.ErasedValueVariableFact = source;
+            var originDecoded = (BirGraphValue)BirGraphDom.ReadBirExpression(origin.ToDom());
+            var originCopy = origin.DeepClone();
+            originCopy.ErasedValueVariableFact = target;
+            if (originDecoded.ErasedValueVariableFact.OrDefault() != source
+                || origin.ErasedValueVariableFact.OrDefault() != source)
+                throw new InvalidOperationException("Erased-value origin lost its explicit frame or independent occurrence");
+        }
+        var fieldArgument = new BirLocal { Name = "argument" };
+        var fieldRegionOwner = new BirValueBlock {
+            Stmts = new IBirStatement[] { new BirExpressionStatement { Expr = fieldArgument } },
+            Result = fieldArgument,
+        };
+        var regionCount = 0;
+        fieldRegionOwner.VisitSourceChildren((_, _, _) => throw new InvalidOperationException("A source region escaped grouping"),
+            region => {
+                if (region.Statements.Length != 1 || !ReferenceEquals(region.Result?.Value, fieldArgument))
+                    throw new InvalidOperationException("Field-aware source visitation changed region ownership");
+                regionCount++;
+            });
+        if (regionCount != 1) throw new InvalidOperationException("Field-aware source region was not visited exactly once");
         var explicitType = new BirCallInstance { Sty = source, Ret = target, DynRet = new TypeNode.Fqn("Ignored") };
         Require(explicitType.ExplicitSourceType == source, "explicit source type prefers sty");
         explicitType.Sty = OptionalField<TypeNode>.Null;

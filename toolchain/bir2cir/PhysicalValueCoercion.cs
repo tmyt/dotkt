@@ -145,6 +145,12 @@ static partial class PhysicalValueCoercion
         };
     }
 
+    // The early scalar-dispatch boundary can allocate storage only for an
+    // actual incoming parameter and a bare generic native referent. Full ABI
+    // allocation retains its existing eligibility for all addressed locals.
+    internal static bool NativeLocalEligible(bool genericParametersOnly, bool parameter, TypeNode referent)
+        => !genericParametersOnly || parameter && SignatureValueTypes.Of(referent) is TypeNode.Tv;
+
     internal static void AllocateNativeLocals(IEnumerable<JsonNode> body,
         IEnumerable<JsonObject> parameterDeclarations, JsonArray prologue,
         GenericArrayStorageLowering.FreshNames arrayNames = null, bool genericParametersOnly = false)
@@ -191,8 +197,7 @@ static partial class PhysicalValueCoercion
                         || !declarations.TryGetValue(local, out var declaration)) continue;
                     // The early dispatch boundary knows a bare generic parameter's frame,
                     // but constructed local locations still await full ABI materialization.
-                    if (genericParametersOnly && (!parameters.Contains(declaration)
-                        || SignatureValueTypes.Of(reference.Of) is not TypeNode.Tv)) continue;
+                    if (!NativeLocalEligible(genericParametersOnly, parameters.Contains(declaration), reference.Of)) continue;
                     // A managed-reference local already stores the pointer, not
                     // the addressed value. Never replace it with value storage.
                     if (SignatureValueTypes.Of(TypeJson.Read(declaration["type"])) is TypeNode.ByRef)

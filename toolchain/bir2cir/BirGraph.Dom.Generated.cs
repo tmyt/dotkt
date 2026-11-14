@@ -193,6 +193,7 @@ internal static class BirGraphDom
                 case "type": break;
                 case "reifiedTypeOperand": break;
                 case "e": break;
+                case "_erasedValueVariable": break;
                 case "suspendFnTypePre": break;
                 case "_physicalDeclarationSignature": break;
                 case "_exactBridgeCast": break;
@@ -208,6 +209,7 @@ internal static class BirGraphDom
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             ReifiedTypeOperand = Field<bool>(fields, "reifiedTypeOperand", value => value!.GetValue<bool>()),
             E = Field<IBirExpression>(fields, "e", value => ReadBirExpression(value!)),
+            _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             _physicalDeclarationSignature = Field<bool>(fields, "_physicalDeclarationSignature", value => value!.GetValue<bool>()),
             _exactBridgeCast = Field<bool>(fields, "_exactBridgeCast", value => value!.GetValue<bool>()),
@@ -741,6 +743,7 @@ internal static class BirGraphDom
                 case "memberMethodTypeParams": break;
                 case "memberSignature": break;
                 case "memberReturnType": break;
+                case "_erasedValueVariable": break;
                 case "retSuspendFnTypePre": break;
                 case "dotktKotlinSigId": break;
                 case "projectedHelperReceiver": break;
@@ -792,6 +795,7 @@ internal static class BirGraphDom
             MemberMethodTypeParams = Field<BirTypeParameter[]>(fields, "memberMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             MemberSignature = Field<TypeNode[]>(fields, "memberSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
+            _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             DotktKotlinSigId = Field<int>(fields, "dotktKotlinSigId", value => value!.GetValue<int>()),
             ProjectedHelperReceiver = Field<int>(fields, "projectedHelperReceiver", value => value!.GetValue<int>()),
@@ -852,6 +856,7 @@ internal static class BirGraphDom
                 case "memberMethodTypeParams": break;
                 case "memberSignature": break;
                 case "memberReturnType": break;
+                case "_erasedValueVariable": break;
                 case "retSuspendFnTypePre": break;
                 case "nullableWitnessCount": break;
                 case "nullablePendingWitnesses": break;
@@ -907,6 +912,7 @@ internal static class BirGraphDom
             MemberMethodTypeParams = Field<BirTypeParameter[]>(fields, "memberMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             MemberSignature = Field<TypeNode[]>(fields, "memberSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
+            _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableWitnessCount = Field<int>(fields, "nullableWitnessCount", value => value!.GetValue<int>()),
             NullablePendingWitnesses = Field<IBirExpression[]>(fields, "nullablePendingWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
@@ -979,6 +985,7 @@ internal static class BirGraphDom
                 case "memberVisibility": break;
                 case "memberOwnerTypeParams": break;
                 case "memberType": break;
+                case "_erasedValueVariable": break;
                 case "retSuspendFnTypePre": break;
                 case "_nativeLocation": break;
                 case "_nativeFieldAddress": break;
@@ -1010,6 +1017,7 @@ internal static class BirGraphDom
             MemberVisibility = Field<string>(fields, "memberVisibility", value => value!.GetValue<string>()),
             MemberOwnerTypeParams = Field<BirTypeParameter[]>(fields, "memberOwnerTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             MemberType = Field<TypeNode>(fields, "memberType", value => TypeNode.Read(value) ?? throw new FormatException()),
+            _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             _nativeLocation = Field<bool>(fields, "_nativeLocation", value => value!.GetValue<bool>()),
             _nativeFieldAddress = Field<bool>(fields, "_nativeFieldAddress", value => value!.GetValue<bool>()),
@@ -3257,6 +3265,7 @@ internal static class BirGraphDom
                 case "cond": break;
                 case "then": break;
                 case "else": break;
+                case "_erasedValueVariable": break;
                 case "suspendFnTypePre": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirConditional at {source.GetPath()}");
             }
@@ -3267,6 +3276,7 @@ internal static class BirGraphDom
             Cond = Field<IBirExpression>(fields, "cond", value => ReadBirExpression(value!)),
             Then = Field<IBirExpression>(fields, "then", value => ReadBirExpression(value!)),
             Else = Field<IBirExpression>(fields, "else", value => ReadBirExpression(value!)),
+            _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
         };
     }
@@ -3498,6 +3508,7 @@ internal static class BirGraphDom
                 case "type": break;
                 case "stmts": break;
                 case "result": break;
+                case "_erasedValueVariable": break;
                 case "suspendFnTypePre": break;
                 case "sty": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirValueBlock at {source.GetPath()}");
@@ -3508,6 +3519,7 @@ internal static class BirGraphDom
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             Stmts = Field<IBirStatement[]>(fields, "stmts", value => ((JsonArray)value!).Select(item0 => ReadBirStatement(item0!)).ToArray()),
             Result = Field<IBirExpression>(fields, "result", value => ReadBirExpression(value!)),
+            _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
@@ -3860,6 +3872,7 @@ internal static class BirGraphDom
                 case "name": break;
                 case "outer": break;
                 case "sty": break;
+                case "_erasedValueVariable": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirLocal at {source.GetPath()}");
             }
         return new BirLocal
@@ -3867,6 +3880,7 @@ internal static class BirGraphDom
             Name = Field<string>(fields, "name", value => value!.GetValue<string>()),
             Outer = Field<bool>(fields, "outer", value => value!.GetValue<bool>()),
             Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
+            _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 

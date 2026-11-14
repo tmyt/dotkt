@@ -8,6 +8,7 @@ static partial class PhysicalValueCoercion
     internal static void SelfTest()
     {
         NumericOperandsSelfTest();
+        NativeLocalAllocationSelfTest();
         var root = JsonNode.Parse("""
         {"fileClass":"ValueEdges","methods":[
           {"name":"nativeSlot","typeParams":[{"name":"T"}],"params":[{"name":"value","type":{"t":"tv","scope":"method","i":0}}],
