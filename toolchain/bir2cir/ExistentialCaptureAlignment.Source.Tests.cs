@@ -88,9 +88,9 @@ static partial class ExistentialCaptureAlignment
         var explicitCapture = new BirCaptureDescriptor { Name = "item", Type = logical };
         var implicitCapture = new BirCaptureDescriptor { Name = "raw", Type = variable, KotlinType = OptionalField<TypeNode>.Null };
         var nested = new BirNewSuspendLambda { Captures = new[] { new BirCaptureDescriptor { Name = "item", Type = logical } },
-            CapValues = OptionalField<IBirExpression?[]>.Null, Params = Array.Empty<BirLambdaParameter>(), Body = Array.Empty<IBirStatement>() };
+            CapValues = OptionalField<IBirExpression[]>.Null, Params = Array.Empty<BirLambdaParameter>(), Body = Array.Empty<IBirStatement>() };
         var suspend = new BirNewSuspendLambda { Captures = new[] { explicitCapture, implicitCapture },
-            CapValues = new IBirExpression?[] { explicitValue, null },
+            CapValues = new IBirExpression[] { explicitValue, null },
             Params = new[] { new BirLambdaParameter { Name = "item", Type = carrier } },
             TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Body = new IBirStatement[] { Statement(nested) } };
         var suspendFile = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration { Name = "suspendOwner", Ret = unit,

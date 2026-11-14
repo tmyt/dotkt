@@ -741,7 +741,7 @@ sealed class Pipeline
         var sourceCovariantSlots = CovariantInterfaceReturnBridge.ApplyAll(captured, refs, isValueFqn,
             genericRepresentations, pendingOverrideParameters.ReadSourceParameters(), (file, owner, method) => {
                 AdmitBridgeMethods(owner, new[] { method });
-                if (_options.RefBuild) return;
+                if (referenceBuild) return;
                 var appended = StringCharSequenceBridge.ApplyMaterializedReturns(file, method);
                 foreach (var type in appended)
                 {

@@ -75,7 +75,7 @@ static partial class ErasedElementValues
         var lambda = new BirNewSuspendLambda { Captures = new[] { new BirCaptureDescriptor { Name = "captured", Type = ObjectType, KotlinType = variable } },
             Params = new[] { new BirLambdaParameter { Name = "captured", Type = variable } },
             TypeParams = new[] { new BirTypeParameter { Name = "T", Constraints = new TypeNode[] { new TypeNode.Fqn("SuspendBound") } } },
-            Body = new IBirStatement[] { suspendVariable, Statement(suspendGuard) }, CapValues = OptionalField<IBirExpression?[]>.Null };
+            Body = new IBirStatement[] { suspendVariable, Statement(suspendGuard) }, CapValues = OptionalField<IBirExpression[]>.Null };
         var captures = lambda.Captures.Value;
         var lambdaBody = lambda.Body.Value;
         ApplySuspendBody(lambda, refs, definitions, frames, _ => false, null);
