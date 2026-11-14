@@ -2523,10 +2523,6 @@ sealed partial class ReferenceMetadataIndex
 
     // Proof obligations come from the shipped declaration, not the Kotlin reference surface. In particular,
     // stdlib reference/runtime twins need not carry the same physical GenericParamConstraint rows.
-    internal JsonArray PhysicalOwnerTypeParamDeclarations(string owner)
-        => PhysicalOwnerForParameterFacts(owner) is { } type
-            ? new JsonArray(type.GetGenericArguments().Select(GenericParamDeclaration).ToArray()) : null;
-
     Type PhysicalOwnerForParameterFacts(string owner) => owner == null ? null : PhysicalGenericOwner(owner, OwnerArity(owner));
 
     // Variance is a physical GenericParam fact, including for Kotlin-authored owners. ResolveNetType intentionally
@@ -2567,10 +2563,6 @@ sealed partial class ReferenceMetadataIndex
         if (type == null) return null;
         return PhysicalProofOwner(type);
     }
-
-    internal JsonArray PhysicalMethodTypeParamDeclarations(string declarationIdentity)
-        => PhysicalMethodForParameterFacts(declarationIdentity) is { } method
-            ? new JsonArray(method.GetGenericArguments().Select(GenericParamDeclaration).ToArray()) : null;
 
     MethodBase PhysicalMethodForParameterFacts(string declarationIdentity)
     {
@@ -8014,64 +8006,40 @@ sealed partial class ReferenceMetadataIndex
         var nativeDescriptors = Build(new[] { typeof(object).Assembly.Location });
         nativeDescriptors._ownerAlias["ProofObject"] = "System.Object";
         nativeDescriptors._ownerAlias["kotlin.Int"] = "System.Int32";
-        var aliasCall = JsonNode.Parse("""
-          {"k":"clrGenericStatic","type":{"t":"fqn","name":"System.Runtime.CompilerServices.Unsafe"},
-           "method":"As","typeArgs":[{"t":"tv","scope":"method","i":0}],
-           "resolvedMemberParams":[{"t":"fqn","name":"ProofObject"}]}
-          """).AsObject();
-        var primitiveCall = JsonNode.Parse("""
-          {"k":"clrGenericStatic","type":{"t":"fqn","name":"System.MemoryExtensions"},
-           "method":"AsSpan","typeArgs":[{"t":"tv","scope":"method","i":0}],
-           "resolvedMemberParams":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}},
-             {"t":"fqn","name":"kotlin.Int"},{"t":"fqn","name":"kotlin.Int"}]}
-          """).AsObject();
-        if (ClrMemberResolution.SelectedGenericTypeParameters(aliasCall, nativeDescriptors).Count != 1
-            || ClrMemberResolution.SelectedGenericTypeParameters(primitiveCall, nativeDescriptors).Count != 1)
+        var aliasCall = new BirGenericStatic { Type = new TypeNode.Fqn("System.Runtime.CompilerServices.Unsafe"), Method = "As",
+            TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 0) },
+            ResolvedMemberParams = new TypeNode[] { new TypeNode.Fqn("ProofObject") } };
+        var primitiveCall = new BirGenericStatic { Type = new TypeNode.Fqn("System.MemoryExtensions"), Method = "AsSpan",
+            TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 0) }, ResolvedMemberParams = new TypeNode[] {
+                new TypeNode.Array(new TypeNode.Tv("method", 0)), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") } };
+        var aliasFacts = ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(aliasCall, nativeDescriptors);
+        if (aliasFacts.Length != 1
+            || ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(primitiveCall, nativeDescriptors).Length != 1)
             throw new InvalidOperationException("Native proof selection lost formal alias/primitive physical lowering");
-        var nativeClass = ClrMemberResolution.SelectedGenericTypeParameters(
-            new TypeNode.Fqn("System.Runtime.CompilerServices.Unsafe"), "As", 1, instance: false,
-            new TypeNode[] { new TypeNode.Fqn("ProofObject") }, nativeDescriptors);
-        if (nativeClass[0]["specialConstraints"] is not JsonArray flags
-            || !flags.Any(flag => flag?.GetValue<string>() == "class"))
+        if (!aliasFacts[0].SpecialConstraints.OrEmpty().Contains("class"))
             throw new InvalidOperationException("Native proof selection required a source spelling for a CLR-only flag");
-        var ownerVariable = new TypeNode.Tv("type", 1);
+        // The typed parameter-facts self-test covers open owner variables,
+        // missing descriptors and mismatched override frames. Keep the closed
+        // primitive-alias owner case here beside its formal alias setup.
+        var closedProofArgument = new TypeNode.Fqn("kotlin.String");
         TypeNode[] ConvertParameters(TypeNode argument) => new TypeNode[] {
             new TypeNode.Fqn("System.Converter`2", new TypeNode[] { argument, new TypeNode.Tv("method", 0) }),
         };
-        foreach (var argument in new TypeNode[] { ownerVariable, new TypeNode.Fqn("kotlin.String") })
-        {
-            var owner = new TypeNode.Fqn("System.Collections.Generic.List`1", new[] { argument });
-            if (ClrMemberResolution.SelectedGenericTypeParameters(owner, "ConvertAll", 1, true,
-                    ConvertParameters(argument), nativeDescriptors, new[] { argument }).Count != 1
-                || ClrMemberResolution.SelectedGenericTypeParameters(owner, "ConvertAll", 1, true,
-                    ConvertParameters(new TypeNode.Tv("type", 0)), nativeDescriptors).Count != 1)
-                throw new InvalidOperationException("Native proof selection confused override and open call owner frames");
-        }
-        var rejectedFrame = false;
-        try { ClrMemberResolution.SelectedGenericTypeParameters(
-            new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { ownerVariable }),
-            "ConvertAll", 1, true, ConvertParameters(new TypeNode.Tv("type", 0)), nativeDescriptors,
-            new TypeNode[] { ownerVariable }); }
-        catch (InvalidOperationException) { rejectedFrame = true; }
-        if (!rejectedFrame) throw new InvalidOperationException("A native override descriptor also accepted the unpermuted open frame");
-        var invalidDescriptor = aliasCall.DeepClone().AsObject();
-        invalidDescriptor["resolvedMemberParams"] = new JsonArray(TypeJson.Fqn("System.Int32"));
+        var closedProofOwner = new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { closedProofArgument });
+        var closedProofCall = new BirGenericInstance { Type = closedProofOwner, Method = "ConvertAll",
+            TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 0) },
+            ResolvedMemberParams = ConvertParameters(new TypeNode.Tv("type", 0)) };
+        if (ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(closedProofOwner, "ConvertAll", 1, true,
+                ConvertParameters(closedProofArgument), nativeDescriptors, new TypeNode[] { closedProofArgument }).Length != 1
+            || ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(closedProofCall, nativeDescriptors).Length != 1)
+            throw new InvalidOperationException("Native proof selection confused override and open call owner frames");
+        var invalidDescriptor = aliasCall with { ResolvedMemberParams = new TypeNode[] { new TypeNode.Fqn("System.Int32") } };
         var rejected = false;
-        try { ClrMemberResolution.SelectedGenericTypeParameters(invalidDescriptor, nativeDescriptors); }
+        try { ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(invalidDescriptor, nativeDescriptors); }
         catch (InvalidOperationException) { rejected = true; }
         if (!rejected) throw new InvalidOperationException("Native proof selection guessed from a unique method name");
-        var physicalProofs = Build(new[] { typeof(object).Assembly.Location });
-        physicalProofs._dotKtOwners.Add("System.Collections.Generic.List");
-        if (physicalProofs.PhysicalOwnerTypeParamDeclarations("System.Collections.Generic.List`1") != null)
-            throw new InvalidOperationException("An unadmitted Kotlin implementation type supplied reference proof rows");
-        physicalProofs._dotKtOwners.Add("Published.Nested");
-        physicalProofs._physicalTypeBySemanticName["Published.Nested"] = "System.Collections.Generic.List`1";
-        if (physicalProofs.PhysicalOwnerTypeParamDeclarations("Published.Nested")?.Count != 1
-            || physicalProofs.PhysicalOwnerTypeParamDeclarations("System.Collections.Generic.Dictionary`2")?.Count != 2)
-            throw new InvalidOperationException("Physical proof lookup lost an admitted/foreign declaration identity");
-        physicalProofs.SetLocalEmittedTypes(new HashSet<string> { "Published.Nested" });
-        if (physicalProofs.PhysicalOwnerTypeParamDeclarations("Published.Nested") != null)
-            throw new InvalidOperationException("Reference proof rows replaced a local declaration");
+        // PhysicalParameterFactsSelfTest covers admitted shipped declarations,
+        // foreign rows and local/unadmitted exclusions through the typed getter.
         var returnSource = new TypeNode.Tv("method", 0);
         var returnStorage = new TypeNode.Tv("method", 1);
         var objectReturn = new TypeNode.Fqn("System.Object");

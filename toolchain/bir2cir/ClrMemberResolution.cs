@@ -970,24 +970,6 @@ static partial class ClrMemberResolution
 
     // Proof demand and final MemberRef emission consume the same frontend-selected open descriptor. A lone
     // same-name/arity MethodDef without that exact descriptor is never a selected declaration.
-    internal static JsonArray SelectedGenericTypeParameters(JsonObject node, ReferenceMetadataIndex refs)
-    {
-        if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn owner
-            || node["resolvedMemberParams"] is not JsonArray parameters
-            || parameters.Select(TypeJson.Read).Any(type => type == null))
-            throw new InvalidOperationException("Native generic proof demand lacks its selected declaration descriptor");
-        return SelectedGenericTypeParameters(owner, (node["method"] as JsonValue)?.GetValue<string>(),
-            (node["typeArgs"] as JsonArray)?.Count ?? 0,
-            (node["k"] as JsonValue)?.GetValue<string>() == "clrGenericInstance",
-            parameters.Select(TypeJson.Read).ToArray(), refs);
-    }
-
-    internal static JsonArray SelectedGenericTypeParameters(TypeNode.Fqn owner, string name, int arity,
-        bool instance, IReadOnlyList<TypeNode> parameters, ReferenceMetadataIndex refs,
-        TypeNode[] parameterOwnerArguments = null)
-        => new(SelectedGenericProofDeclaration(owner, name, arity, instance, parameters, refs, parameterOwnerArguments)
-            .GetGenericArguments().Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
-
     static MethodInfo SelectedGenericProofDeclaration(TypeNode.Fqn owner, string name, int arity,
         bool instance, IReadOnlyList<TypeNode> parameters, ReferenceMetadataIndex refs,
         TypeNode[] parameterOwnerArguments = null)
