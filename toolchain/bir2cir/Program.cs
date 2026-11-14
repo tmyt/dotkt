@@ -708,10 +708,16 @@ sealed class Pipeline
         var carrierRealization = new FBoundStarProjectionErasure.CarrierRealizationContext(
             carrierSurface, carrierProjection, refs, carrierSurface.Demand.ReservedNames,
             (owner, appended) => pendingOverrideParameters.AdmitMaterializedMethods(owner, appended, currentDeclarations),
-            (file, type) => aliasTransitions.AdmitMaterializedTypes(file, new[] { type }));
+            (file, type) => {
+                aliasTransitions.AdmitMaterializedTypes(file, new[] { type });
+                genericRepresentations.AdmitMaterializedNativeTypes(file, new[] { type });
+            });
         FBoundStarProjectionErasure.RealizeCarriersSource(captured, carrierRealization, sharedCells,
             (type, actual) => valueRepresentations.ComponentPredicate(type, actual),
-            (file, appended) => aliasTransitions.AdmitMaterializedTypes(file, appended));
+            (file, appended) => {
+                aliasTransitions.AdmitMaterializedTypes(file, appended);
+                genericRepresentations.AdmitMaterializedNativeTypes(file, appended);
+            });
 
         for (var index = 0; index < captured.Length; index++)
         {
