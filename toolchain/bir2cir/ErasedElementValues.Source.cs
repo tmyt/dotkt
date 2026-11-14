@@ -79,26 +79,40 @@ static partial class ErasedElementValues
     static void ProjectSource(BirGraphValue declaration, IBirTypeDeclaration owner, Func<TypeNode, bool> isInterface,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
         GenericRepresentationPolicy policy, Func<BirGraphValue, TypeNode.Tv> scalarResults,
-        KotlinIteratorValueBinding iteratorValues = null)
+        KotlinIteratorValueBinding iteratorValues = null, bool preserveOwnership = false)
     {
         var method = declaration as BirFunctionDeclaration;
         var constructor = declaration as BirConstructor;
-        var parameters = method?.Params.OrEmpty() ?? constructor.Params.OrEmpty();
+        var suspend = declaration as BirNewSuspendLambda;
+        var parameters = method?.Params.OrEmpty() ?? constructor?.Params.OrEmpty() ?? [];
+        IEnumerable<(BirGraphValue Declaration, string Name, TypeNode Type, TypeNode KotlinType)> Parameters()
+        {
+            foreach (var parameter in parameters)
+                yield return (parameter, parameter.Name.OrDefault(), parameter.Type.OrDefault(), parameter.KotlinType.OrDefault());
+            if (suspend != null)
+            {
+                foreach (var parameter in suspend.Params.OrEmpty())
+                    yield return (parameter, parameter.Name.OrDefault(), parameter.Type.OrDefault(), parameter.KotlinType.OrDefault());
+                foreach (var capture in suspend.Captures.OrEmpty())
+                    yield return (capture, capture.Name.OrDefault(), capture.Type.OrDefault(), capture.KotlinType.OrDefault());
+            }
+        }
         var methodFrame = method?.NullableRepresentationFrame.OrDefault();
         var ownerFacts = owner == null ? null : NullableRepresentationViews.TypeFacts((BirGraphValue)owner);
         var methodBounds = new BoundDeclaration(methodFrame,
-            method?.TypeParams.OrEmpty().Select(parameter => parameter.Constraints.OrEmpty()).ToArray() ?? [],
+            (method?.TypeParams.OrEmpty() ?? suspend?.TypeParams.OrEmpty() ?? [])
+                .Select(parameter => parameter.Constraints.OrEmpty()).ToArray(),
             method?.MethodTypeParameterBoundsPre.OrDefault()?.Bounds);
         var ownerBounds = new BoundDeclaration(ownerFacts?.NullableFrame,
-            owner == null ? [] : TypeParameterFrame.Declarations(owner)
+            (owner != null ? TypeParameterFrame.Declarations(owner) : suspend?.TypeParams.OrEmpty() ?? [])
                 .Select(parameter => parameter.Constraints.OrEmpty()).ToArray(), ownerFacts?.Bounds);
         IEnumerable<BirGraphValue> Executable() => constructor != null
             ? constructor.PreStmts.OrEmpty().Cast<BirGraphValue>()
                 .Concat((constructor.ThisArgs.OrDefault() ?? constructor.BaseArgs.OrEmpty()).Cast<BirGraphValue>())
                 .Concat(constructor.Body.OrEmpty().Cast<BirGraphValue>())
-            : method.Body.OrEmpty().Cast<BirGraphValue>();
+            : (method?.Body.OrEmpty() ?? suspend.Body.OrEmpty()).Cast<BirGraphValue>();
 
-        var hasBody = method?.Body.HasValue ?? constructor.Body.HasValue;
+        var hasBody = method?.Body.HasValue ?? constructor?.Body.HasValue ?? false;
         if (hasBody)
         {
             var original = constructor != null ? constructor.PreStmts.OrEmpty() : method.Body.Value;
@@ -129,12 +143,12 @@ static partial class ErasedElementValues
         var erasedFields = (owner?.Fields.OrEmpty() ?? []).Where(field => IsObject(field.Type.OrDefault())
             && SourceVariable(field.KotlinType.OrDefault()) != null).ToDictionary(field => field.Name.OrDefault(),
                 field => SourceVariable(field.KotlinType.OrDefault()), StringComparer.Ordinal);
-        foreach (var parameter in parameters)
-            if (parameter.Name.HasValue)
+        foreach (var parameter in Parameters())
+            if (parameter.Name != null)
             {
-                var slot = new SourceSlot(parameter, parameter.Name.Value, parameter.Type.OrDefault());
+                var slot = new SourceSlot(parameter.Declaration, parameter.Name, parameter.Type);
                 bindings[slot.Name] = slot;
-                if (slot.Type is not TypeNode.Tv && SourceVariable(parameter.KotlinType.OrDefault()) is { } variable)
+                if (slot.Type is not TypeNode.Tv && SourceVariable(parameter.KotlinType) is { } variable)
                     parameterOrigins[slot] = variable;
             }
 
@@ -265,7 +279,10 @@ static partial class ErasedElementValues
         void Plan(BirGraphValue node)
         {
             if (node == null || node is IBirExecutablePayload || SourceNestedDeclaration(node)) return;
-            if (Origin(node) != null && LogicalVariable(node) is { } sourceVariable) node.ErasedValueVariableFact = sourceVariable;
+            // The late capture-only repair never introduced new origin stamps.
+            // Existing stamps remain owned by their early flow pass.
+            if (!preserveOwnership && Origin(node) != null && LogicalVariable(node) is { } sourceVariable)
+                node.ErasedValueVariableFact = sourceVariable;
             if (node is BirCast { ReifiedTypeOperand.HasValue: true, ReifiedTypeOperand.Value: false, Type.HasValue: true } cast
                 && cast.Type.Value is TypeNode.Tv target && Origin(cast.E.OrDefault() as BirGraphValue) == target)
                 casts[cast] = ErasedBound(target, methodBounds, ownerBounds, isInterface, frames, isValue, policy);
@@ -316,8 +333,9 @@ static partial class ErasedElementValues
         foreach (var closure in captures)
             closure.VisitOwnChildSlots((field, _, slot) => {
                 if (field != (closure is BirNewSuspendLambda ? "capValues" : "captures") || Origin(slot.Value) == null) return;
+                var operand = ReplaceValues(slot.Value, lowerConstraints: false);
                 slot.Replace(new BirCast { Type = ObjectType,
-                    E = OptionalField<IBirExpression>.Of((IBirExpression)ReplaceValues(slot.Value, lowerConstraints: false).DeepClone()) });
+                    E = OptionalField<IBirExpression>.Of((IBirExpression)(preserveOwnership ? operand : operand.DeepClone())) });
             });
         foreach (var (cast, bound) in casts)
         {
@@ -332,7 +350,13 @@ static partial class ErasedElementValues
             node.VisitOwnChildSlots((field, _, slot) => {
                 if (!SourceSkip(field, node)) slot.Replace(ReplaceValues(slot.Value, lowerConstraints));
             });
-            return lowerConstraints && node is BirConstrainedCall call && constrained.Contains(call) ? SourceInstance(call) : node;
+            return lowerConstraints && node is BirConstrainedCall call && constrained.Contains(call) ? SourceInstance(call, preserveOwnership) : node;
+        }
+        if (suspend != null)
+        {
+            for (var index = 0; index < suspend.Body.OrEmpty().Length; index++)
+                suspend.Body.Value[index] = (IBirStatement)ReplaceValues((BirGraphValue)suspend.Body.Value[index], lowerConstraints: true);
+            return;
         }
         declaration.VisitOwnChildSlots((field, _, slot) => {
             if (!SourceSkip(field, declaration)) slot.Replace(ReplaceValues(slot.Value, lowerConstraints: true));
@@ -381,14 +405,15 @@ static partial class ErasedElementValues
         };
     }
 
-    static BirCallInstance SourceInstance(BirConstrainedCall call)
+    static BirCallInstance SourceInstance(BirConstrainedCall call, bool preserveOwnership)
     {
         var selected = call.Iface.OrDefault()
             ?? throw new InvalidOperationException("Erased array receiver lost its selected constraint owner");
         return new BirCallInstance {
             OwnerType = BirGraphValue.CopyType(selected), Virtual = true, Method = call.Method,
             Recv = OptionalField<IBirExpression>.Of(new BirCast { Type = BirGraphValue.CopyType(selected),
-                E = OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)call.Recv.Value).DeepClone()) }),
+                E = OptionalField<IBirExpression>.Of(preserveOwnership ? call.Recv.Value
+                    : (IBirExpression)((BirGraphValue)call.Recv.Value).DeepClone()) }),
             CalleeRet = call.CalleeRet, CalleeParams = call.CalleeParams, Sig = call.Sig, TypeArgs = call.TypeArgs,
             MemberRef = call.MemberRef, Ret = call.Ret, Args = call.Args, DeclarationId = call.DeclarationId,
             ArgTypes = call.ArgTypes, NullablePendingWitnesses = call.NullablePendingWitnesses,
