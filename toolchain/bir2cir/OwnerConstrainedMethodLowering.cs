@@ -13,7 +13,7 @@ static partial class OwnerConstrainedMethodLowering
 {
     internal const string DispatchBoundsKey = "_ownerConstraintDispatchBounds";
     internal const string OverrideBoundsKey = "_ownerConstraintOverrideBounds";
-    static readonly List<(JsonObject Method, JsonObject Owner)> Methods = new();
+    static readonly List<MethodRegistration> Methods = new();
     static ReferenceMetadataIndex References;
     static Func<TypeNode, TypeNode> PhysicalClassifier = _ => null;
     static Func<JsonObject, int, IEnumerable<TypeNode>> NativeProofs = (_, _) => Enumerable.Empty<TypeNode>();
@@ -22,16 +22,13 @@ static partial class OwnerConstrainedMethodLowering
         Func<JsonObject, int, IEnumerable<TypeNode>> nativeProofs = null)
     {
         Methods.Clear();
-        References = references;
-        PhysicalClassifier = physicalClassifier;
-        NativeProofs = nativeProofs ?? ((_, _) => Enumerable.Empty<TypeNode>());
+        MethodBindings = null;
+        PreparedMethods = false;
+        Configure(references, physicalClassifier, nativeProofs);
     }
 
     internal static bool HasMethodDependentBounds(JsonObject method) =>
-        method["typeParams"] is JsonArray parameters && parameters.Select((parameter, index) =>
-            parameter is JsonObject declaration && declaration["constraints"] is JsonArray constraints
-                && constraints.Any(bound => HasConstructedDependency(TypeJson.Read(bound), "method", index,
-                    ReadMethodFrame(method)))).Any(found => found);
+        HasMethodDependentBounds(ConstraintVectors(method["typeParams"] as JsonArray), ReadMethodFrame(method), References);
 
     internal static NullableRepresentationFrame ReadMethodFrame(JsonObject method) =>
         method[NullableRepresentationTypes.MethodFrameKey] is JsonValue encoded
@@ -173,7 +170,7 @@ static partial class OwnerConstrainedMethodLowering
             if (!JsonNode.DeepEquals(materializedSourceBounds, materializedMethod[NullableGenericErasure.MethodTypeParameterBoundsPre]))
                 throw new InvalidOperationException("Physical companion constraints leaked into source method bounds");
         }
-        finally { Methods.Remove((materializedMethod, materializedOwner)); }
+        finally { RemovePhysicalRegistration(materializedMethod, materializedOwner); }
         var captured = JsonNode.Parse("""
           {"name":"Capture","generated":true,"typeParams":[{"name":"P"},{"name":"T"}]}
           """).AsObject();
@@ -187,8 +184,7 @@ static partial class OwnerConstrainedMethodLowering
         captured["typeParams"][0] = new JsonObject {
             ["name"] = "P", ["constraints"] = new JsonArray(TypeJson.Write(new TypeNode.Array(new TypeNode.Tv("type", 1)))),
         };
-        var entry = (method, new JsonObject());
-        Methods.Add(entry);
+        var entry = AdmitPhysicalRegistration(method, new JsonObject());
         try
         {
             KotlinSupertypesRecord.Merge(captured, new JsonObject {
@@ -232,8 +228,7 @@ static partial class OwnerConstrainedMethodLowering
                     new TypeNode[] { new TypeNode.Tv("method", 0) })),
             }),
         };
-        var unrelated = (constrainedCaller, new JsonObject());
-        Methods.Add(unrelated);
+        var unrelated = AdmitPhysicalRegistration(constrainedCaller, new JsonObject());
         try
         {
             foreach (var carriesUncapturedVariable in new[] { true, false })
@@ -352,22 +347,18 @@ static partial class OwnerConstrainedMethodLowering
 
     internal static void Record(JsonObject method, JsonObject owner)
     {
-        Methods.Add((method, owner));
+        AdmitPhysicalRegistration(method, owner);
         // Materialization has already preserved this declaration's Kotlin
         // bounds. Its live parameters now include implementation companions;
         // their constraints belong only to the physical dispatch plan.
         if (ReadMethodFrame(method) != null) return;
-        var parameters = method["typeParams"].AsArray();
-        var payload = method[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonValue encoded
-            ? JsonNode.Parse(encoded.GetValue<string>()).AsObject() : new JsonObject();
-        var bounds = payload["bounds"] as JsonObject ?? new JsonObject();
-        if (payload["bounds"] == null) payload["bounds"] = bounds;
-        for (var index = 0; index < parameters.Count; index++)
-            if (parameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints
-                && bounds[index.ToString()] == null)
-                bounds[index.ToString()] = constraints.DeepClone();
-        if (bounds.Count > 0)
-            method[NullableGenericErasure.MethodTypeParameterBoundsPre] = payload.ToJsonString();
+        var prior = method[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonValue encoded
+            ? SourceBoundsSnapshot.ReadFrozenText(encoded.GetValue<string>()) : null;
+        var additions = method["typeParams"].AsArray().Select((parameter, index) => (parameter, index))
+            .Where(row => row.parameter is JsonObject && row.parameter["constraints"] is JsonArray)
+            .ToDictionary(row => row.index, row => row.parameter["constraints"].AsArray().Select(TypeJson.Read).ToArray());
+        var bounds = CaptureMethodBounds(prior, additions);
+        if (bounds.Bounds.Count > 0) method[NullableGenericErasure.MethodTypeParameterBoundsPre] = bounds.FrozenText;
     }
 
     internal static Dictionary<string, HashSet<int>> PropagateCapturedBounds(
@@ -390,7 +381,7 @@ static partial class OwnerConstrainedMethodLowering
         var pending = new Queue<(JsonObject Method, JsonObject Owner, JsonArray Parameters, JsonArray OriginalParameters)>();
         // A captured owner parameter can be used in a nongeneric method or constructor. Such a caller need not have
         // owner-dependent method bounds, but its physical frame is still the authority for the captured row.
-        foreach (var (method, owner) in Methods.Concat(callers).Distinct())
+        foreach (var (method, owner) in PhysicalMethods.Concat(callers).Distinct())
         {
             var parameters = (method["typeParams"] as JsonArray)?.DeepClone().AsArray() ?? new JsonArray();
             var original = (JsonArray)parameters.DeepClone();
