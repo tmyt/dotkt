@@ -37,9 +37,6 @@ static partial class ClrMemberResolution
     {
         _refs = refs;
         _localTypes = localTypes ?? new HashSet<string>();
-        ResolveExternalClassOverrides(root);
-        ResolveExternalBaseMethodImpls(root);
-        ResolveBaseConstructors(root);
         Walk(root);
     }
 
@@ -361,41 +358,6 @@ static partial class ClrMemberResolution
                 foreach (var item in array.ToList()) if (item != null) WalkDelegates(item);
         }
         foreach (var root in rootList) WalkDelegates(root);
-    }
-
-    // A constructor declaration's `baseArgs` is a call site too. Once its base type lowers to an external CLR owner,
-    // resolve that delegation here and carry the PHYSICAL constructor declaration to CIR. This closes the one ctor
-    // path that used to reach ilemit as only (owner, arity), making target reflection enumeration order observable.
-    static void ResolveBaseConstructors(JsonNode root)
-    {
-        if (root is not JsonObject file || file["types"] is not JsonArray types) return;
-        foreach (var item in types)
-        {
-            if (item is not JsonObject type || ReadOwnerNode(type["base"]) is not TypeNode.Fqn baseFqn) continue;
-            if (_localTypes.Contains(baseFqn.Name)) continue;
-            var open = ResolveOwnerType(baseFqn);
-            if (open == null || type["ctors"] is not JsonArray ctors) continue;
-            foreach (var ctorNode in ctors)
-            {
-                if (ctorNode is not JsonObject ctor || ctor["thisArgs"] is JsonArray
-                    || ctor["baseArgs"] is not JsonArray baseArgs) continue;
-                var semanticSig = (ctor["delegationSig"] as JsonArray)?.Where(x => x != null)
-                    .Select(TypeJson.Read).ToList() ?? new List<TypeNode>();
-                if (semanticSig.Count != baseArgs.Count)
-                    throw new InvalidOperationException($"bir2cir: constructor delegation to '{baseFqn.Name}' carries "
-                        + $"{baseArgs.Count} arguments but {semanticSig.Count} signature slots");
-                var arity = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                    .Where(c => c.GetParameters().Length == semanticSig.Count).ToList();
-                var winner = ctor["delegationDeclarationId"] is JsonValue delegationIdentity
-                    ? _refs.SelectConstructorDeclaration(arity, delegationIdentity.GetValue<string>())
-                    : PickDeclaredConstructor(arity, semanticSig,
-                        $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(semanticSig)})");
-                ctor["baseCtorRef"] = MemberRefJson(winner, MemberRefNode.Kinds.Ctor, open, baseFqn.Args);
-                StampDelegateArgumentTargets(ctor, winner.GetParameters(),
-                    baseFqn.Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>(), "baseArgs");
-                ctor.Remove("delegationDeclarationId");
-            }
-        }
     }
 
     static void Walk(JsonNode node)

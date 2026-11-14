@@ -60,6 +60,8 @@ static class Bir2Cir
                 TypedPhysicalDelegateAdapter.SelfTest();
                 ClrMemberResolution.SelfTestTypedDelegateSlots();
                 ClrMemberResolution.SelfTestTypedInterfaceSlots();
+                ClrMemberResolution.SelfTestTypedBaseConstructors();
+                ClrMemberResolution.DeclarationBindingsSelfTest();
                 BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
                 PrimitiveOperatorLowering.SelfTest();
@@ -1415,6 +1417,14 @@ sealed class Pipeline
         var physicalRoots = loweredRoots.Select(file =>
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Resolve declaration operands on the continuing physical records before
+        // invocation adaptation can append methods. The ordinary operation walk
+        // has already bound its own call sites; it does not consume these edits.
+        foreach (var root in physicalDocuments)
+        {
+            ClrMemberResolution.ApplyDeclarationBindings(root, refs, emittedLocalTypes);
+            ClrMemberResolution.ResolveBaseConstructors(root, refs, emittedLocalTypes);
+        }
         // Retain the original prepared declaration membership and exact source
         // anchors across this one-way frontier. The captured ID keys already
         // own selection; pending metadata and allocated names are not a new
