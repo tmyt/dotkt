@@ -112,10 +112,12 @@ internal static class ProjectedCollectionReturnInspector
             return false;
         });
         var blob = metadata.GetBlobReader(attribute.Value);
-        Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == "bir-json/1", "invalid collection source carrier");
+        Require(blob.ReadUInt16() == 1, "invalid collection source carrier");
+        var codec = blob.ReadSerializedString();
+        Require(codec == DotKt.Bir.TypeNodeCarrier.Codec, "collection source carrier did not use the selected TypeNode codec");
         var length = blob.ReadInt32();
         Require(length >= 0 && length <= blob.RemainingBytes - 2, "invalid collection source carrier length");
-        var document = JsonDocument.Parse(blob.ReadBytes(length));
+        var document = JsonDocument.Parse(DotKt.Bir.TypeNode.ToJson(DotKt.Bir.TypeNodeCarrier.Decode(codec!, blob.ReadBytes(length))));
         Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "invalid collection source carrier suffix");
         return document;
     }

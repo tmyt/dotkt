@@ -3,6 +3,10 @@
 import base64
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
+from carrier_inspection import type_payloads
 
 
 def objects(node):
@@ -19,11 +23,19 @@ def payload(method, short_name):
     matches = [a for a in method.get("attrs", [])
                if a["attr"].get("name") == "DotKt.Runtime.CompilerServices." + short_name]
     assert len(matches) == 1, (method["name"], short_name, len(matches))
-    return json.loads(base64.b64decode(matches[0]["args"][1]["bytes"]))
+    return decoded_types[id(matches[0])] if short_name == "KotlinSuspendResultAttribute" else \
+        json.loads(base64.b64decode(matches[0]["args"][1]["bytes"]))
 
+
+if len(sys.argv) != 3:
+    raise SystemExit("usage: assert-owner-constrained-suspend-cir.py <cir.json> <metadata-inspector.dll>")
 
 with open(sys.argv[1], encoding="utf-8") as stream:
-    types = {t["name"]: t for t in json.load(stream)["types"]}
+    root = json.load(stream)
+    types = {t["name"]: t for t in root["types"]}
+
+decoded_types = type_payloads([node for node in objects(root) if node.get("attr", {}).get("name")
+                             == "DotKt.Runtime.CompilerServices.KotlinSuspendResultAttribute"], sys.argv[2])
 
 assert not any("_ownerConstraintDispatchBounds" in node or "erasedInnerConstraints" in node
                for node in objects(list(types.values())))
