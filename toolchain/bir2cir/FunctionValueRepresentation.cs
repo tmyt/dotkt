@@ -9,7 +9,7 @@ using DotKt.Cir;
 // Choose argument/result carriers at construction, rather than allocating adapters at
 // each assignment or generic use. A function carrying an explicit physical delegate
 // family retains its exact signature.
-static class FunctionValueRepresentation
+static partial class FunctionValueRepresentation
 {
     internal const string RestorationKey = "functionValueRestoration";
     static readonly TypeNode Object = new TypeNode.Fqn("object");
@@ -109,6 +109,29 @@ static class FunctionValueRepresentation
         _ => Object,
     };
 
+    // Both owning source occurrences and the still-live late DOM consumers use
+    // this single mapping. A native pointer or already-selected callable is a
+    // complete signature boundary, including any nested function types.
+    static TypeNode RepresentType(TypeNode type, ValueTypeOracle isByRefLike) => type switch {
+        TypeNode.Fqn { Name: FunctionPointerVocabulary.Pointer } => type,
+        TypeNode.Fn { Suspend: false, Clr: null } fn => new TypeNode.Fn(false,
+            Carrier(fn.Ret, isByRefLike), fn.Params.Select(parameter => Carrier(parameter, isByRefLike)).ToArray(),
+            fn.Recv == null ? null : Carrier(fn.Recv, isByRefLike)),
+        TypeNode.Fn => type,
+        TypeNode.Fqn named => named with { Args = named.Args?.Select(argument => RepresentType(argument, isByRefLike)).ToArray() },
+        TypeNode.Array array => array with { Elem = RepresentType(array.Elem, isByRefLike) },
+        TypeNode.Nullable nullable => nullable with { Of = RepresentType(nullable.Of, isByRefLike) },
+        TypeNode.Oblivious oblivious => oblivious with { Of = RepresentType(oblivious.Of, isByRefLike) },
+        TypeNode.Projection projection => projection with { Of = RepresentType(projection.Of, isByRefLike) },
+        TypeNode.ByRef byRef => byRef with { Of = RepresentType(byRef.Of, isByRefLike) },
+        TypeNode.Ptr pointer => pointer with { Of = RepresentType(pointer.Of, isByRefLike) },
+        TypeNode.FnPtr pointer => pointer with { Ret = RepresentType(pointer.Ret, isByRefLike),
+            Params = pointer.Params.Select(parameter => RepresentType(parameter, isByRefLike)).ToArray() },
+        TypeNode.Mod modifier => modifier with { M = RepresentType(modifier.M, isByRefLike), Of = RepresentType(modifier.Of, isByRefLike) },
+        TypeNode.Tv or TypeNode.Star => type,
+        _ => throw new InvalidOperationException("Unaccounted function-value type: " + type.GetType().Name),
+    };
+
     static void Walk(JsonNode node, ValueTypeOracle isByRefLike)
     {
         if (node is JsonObject obj)
@@ -125,15 +148,11 @@ static class FunctionValueRepresentation
                 && nodeTag.TryGetValue<string>(out var nodeKind) && nodeKind == "delegateInvoke"
                 && TypeJson.Read(obj["funcType"]) is TypeNode.Fn { Suspend: false, Clr: null } invocation
                     ? invocation.Ret : null;
-            if (obj["t"] is JsonValue tag && tag.TryGetValue<string>(out var kind) && kind == "fn")
+            if (obj["t"] is JsonValue tag && tag.TryGetValue<string>(out _))
             {
-                var fn = (TypeNode.Fn)TypeJson.Read(obj);
-                if (fn.Suspend || fn.Clr != null) return;
-                // A ref struct cannot cross an object slot. Keep its exact CLR signature even for a stored
-                // Kotlin function; all boxable slots still share the ordinary identity-preserving carrier.
-                var physical = new TypeNode.Fn(false, Carrier(fn.Ret, isByRefLike),
-                    fn.Params.Select(parameter => Carrier(parameter, isByRefLike)).ToArray(),
-                    fn.Recv == null ? null : Carrier(fn.Recv, isByRefLike));
+                var original = TypeJson.Read(obj);
+                var physical = RepresentType(original, isByRefLike);
+                if (TypeNodeDataEquality.Equal(original, physical)) return;
                 var replacement = (JsonObject)TypeJson.Write(physical);
                 obj.Clear();
                 foreach (var pair in replacement.ToList()) obj[pair.Key] = pair.Value?.DeepClone();
@@ -254,6 +273,7 @@ static class FunctionValueRepresentation
                 != expected[KotlinSupertypesRecord.PreKey].GetValue<string>()
             || owner.KotlinSupertypesPre.Value.Bounds[0][0] is not TypeNode.Fqn { Name: "kotlin.Comparable" })
             throw new InvalidOperationException("Function source facts lost earliest sibling bounds or exact leaf order");
+        SelfTestSourceRepresentation();
         Console.WriteLine("[function source facts] self-test OK (typed slots, all type families, native signatures, least-erased edges/bounds)");
     }
 }
