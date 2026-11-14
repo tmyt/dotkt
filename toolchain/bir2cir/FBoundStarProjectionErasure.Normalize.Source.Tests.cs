@@ -120,6 +120,117 @@ static partial class FBoundStarProjectionErasure
         NormalizeInnerFactoryLocalsSource(exactMethod, state);
         Require(ReferenceEquals(exact.Type.Value, logical) && exactMethod.Ret.Value == logical,
             "normalization erased an explicitly protected exact cast");
+        NormalizationSourceWorklistSelfTest(refs);
+        OwnerConstrainedMethodLowering.Reset(refs, _ => null);
         Console.WriteLine("[owning carrier normalization] self-test OK (live post-order/fixed points, ctor/suspend bodies, ID/fallback calls, presence and identities)");
+    }
+
+    static void NormalizationSourceWorklistSelfTest(ReferenceMetadataIndex refs)
+    {
+        static void Require(bool value, string message)
+        { if (!value) throw new InvalidOperationException("Owning normalization worklist: " + message); }
+        var integer = new TypeNode.Fqn("kotlin.Int");
+        var unit = new TypeNode.Fqn("kotlin.Unit");
+        var logical = new TypeNode.Fqn("WorklistBox", new TypeNode[] { new TypeNode.Fqn("kotlin.String") });
+        BirLocal Local(string name, TypeNode type) => new() { Name = name, Sty = type };
+        BirVariable Variable(string name, TypeNode type, IBirExpression value) => new() {
+            Name = name, Type = type, Init = OptionalField<IBirExpression>.Of(value),
+        };
+        BirConstant One() => new() { Type = integer, Value = new BirLiteral.IntegerLiteral(1) };
+        BirFunctionDeclaration Method(TypeNode result, params IBirStatement[] body) => new() {
+            Name = "worklist", Ret = result, Params = Array.Empty<BirParameter>(), Body = body,
+        };
+        var getter = new BirFunctionDeclaration { Name = "source_get", DeclarationId = "worklist-get", Vis = "private",
+            PropertyName = "value", PropertyAccessor = "get", PropertyAssociation = "WorklistBox:field:value",
+            Params = Array.Empty<BirParameter>(), Ret = integer,
+            Body = new IBirStatement[] { new BirReturn { Value = One() } } };
+        var setter = new BirFunctionDeclaration { Name = "source_set", DeclarationId = "worklist-set", Vis = "private",
+            PropertyName = "value", PropertyAccessor = "set", PropertyAssociation = "WorklistBox:field:value",
+            Params = new[] { new BirParameter { Name = "value", Type = integer } }, Ret = unit, Body = Array.Empty<IBirStatement>() };
+        var definition = new BirClassDefinition { Name = "WorklistBox", Kind = "class", Vis = "public",
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Methods = new[] { getter, setter },
+            Fields = new[] { new BirFieldDeclaration { Name = "value", Type = integer } } };
+        var root = new BirFileDeclaration { FileClass = "Worklist", Types = new IBirTypeDeclaration[] { definition } };
+        var context = SourceSynthesisTestContext(root, refs);
+        var owner = context.Owners["WorklistBox"];
+        SynthesizeSource(owner, context);
+        var physical = new TypeNode.Fqn(owner.ErasedName);
+        var state = new SourceRewriteState(context, (_, _) => null);
+
+        // There are no inferred locals to trigger a second iteration. The
+        // enclosing safe cast must observe the child cast after postorder binding.
+        var inner = new BirCast { Type = logical, E = OptionalField<IBirExpression>.Of(Local("physical", physical)) };
+        var outer = new BirInstanceOrNull { Type = logical, E = OptionalField<IBirExpression>.Of(inner) };
+        var nested = Method(logical, new BirReturn { Value = OptionalField<IBirExpression>.Of(outer) });
+        NormalizeInnerFactoryLocalsSource(nested, state);
+        Require(inner.Type.Value == physical && outer.Type.Value == physical && nested.Ret.Value == physical
+            && ReferenceEquals(outer.E.Value, inner), "nested type operation required an extra local-propagation iteration");
+
+        foreach (var (declared, result) in new (TypeNode, TypeNode)[] {
+            (new TypeNode.Nullable(logical), physical), (new TypeNode.Oblivious(logical), physical),
+            (new TypeNode.Array(new TypeNode.Projection("out", logical)), new TypeNode.Array(physical)),
+        })
+        {
+            var shaped = Method(declared, new BirReturn { Value = OptionalField<IBirExpression>.Of(Local("physical", result)) });
+            NormalizeInnerFactoryLocalsSource(shaped, state);
+            Require(shaped.Ret.Value == result && shaped.RetKotlinType.Value == declared,
+                "return eligibility or the first-writer Kotlin result fact lost a projection/nullability shell");
+        }
+
+        var logicalArray = new TypeNode.Array(logical);
+        var physicalArray = new TypeNode.Array(physical);
+        var arrayProducer = new BirCallStatic { Owner = new TypeNode.Fqn("Worklist"), Method = "array",
+            Args = Array.Empty<IBirExpression>(), Ret = physicalArray };
+        state.ArrayProjection(arrayProducer, logical);
+        var indexArgument = Local("b", logical);
+        var index = new BirCallStatic { Owner = new TypeNode.Fqn("Worklist"), Method = "index", Ret = integer,
+            Args = new IBirExpression[] { indexArgument } };
+        var read = new BirArrayGet { Array = OptionalField<IBirExpression>.Of(Local("array", logicalArray)),
+            Index = OptionalField<IBirExpression>.Of(index), Elem = logical, Sty = logical };
+        var use = new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of(read) };
+        var reverse = Method(integer, Variable("array", logicalArray, arrayProducer), use,
+            Variable("b", logical, Local("a", logical)), Variable("a", logical, Local("physical", physical)));
+        NormalizeInnerFactoryLocalsSource(reverse, state);
+        Require(use.Expr.Value is BirCast replacement && ReferenceEquals(replacement.E.Value, read)
+            && ReferenceEquals(read.Index.Value, index) && ReferenceEquals(index.Args.Value.Single(), indexArgument)
+            && indexArgument.Sty.Value == physical && state.ProjectedRead(read),
+            "next iteration did not recollect the live descendants moved below the array-read replacement");
+        var occurrences = 0;
+        reverse.Visit(node => { if (ReferenceEquals(node, indexArgument)) occurrences++; });
+        Require(occurrences == 1, "recollection duplicated a continuing descendant");
+
+        var slots = context.Declarations.Slots(owner).Values.ToDictionary(row => row.Original, row => row);
+        var selectedGet = slots[context.Bindings.GetCapturedSource(getter)].Slot.Name.Value;
+        var selectedSet = slots[context.Bindings.GetCapturedSource(setter)].Slot.Name.Value;
+        foreach (var kind in new[] { "field", "lateinitGet", "setFieldExpr", "setField", "callInstance", "newBoundDelegate" })
+        {
+            var receiver = Local("receiver", logical);
+            BirGraphValue access = kind switch {
+                "field" => new BirFieldGet { OwnerType = logical, Name = "value", Recv = receiver, Ret = integer },
+                "lateinitGet" => new BirLateinitGet { OwnerType = logical, Name = "value", Recv = receiver, Ret = integer },
+                "setFieldExpr" => new BirFieldSetExpression { OwnerType = logical, Name = "value", Recv = receiver, Value = One(), Ret = unit },
+                "setField" => new BirSetField { OwnerType = logical, Name = "value", Recv = receiver, Value = One() },
+                "callInstance" => new BirCallInstance { OwnerType = logical, Method = "source_get", DeclarationId = "worklist-get",
+                    Recv = receiver, Args = Array.Empty<IBirExpression>(), Ret = integer,
+                    PropertyName = "value", PropertyAccessor = "get" },
+                _ => new BirNewBoundDelegate { OwnerType = logical, Method = "source_get", DeclarationId = "worklist-get",
+                    Recv = receiver, Sig = Array.Empty<TypeNode>(), CalleeRet = integer,
+                    FuncType = new TypeNode.Fn(false, integer, Array.Empty<TypeNode>()) },
+            };
+            Require(ReferenceEquals(BindSourceNormalizedNode(access, state), access)
+                && receiver.Sty.Value == logical, kind + " was rebound without its receiver's physical evidence");
+            var statement = access is IBirStatement direct ? direct
+                : new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of((IBirExpression)access) };
+            var method = Method(integer, Variable("receiver", logical, Local("physicalReceiver", physical)), statement);
+            NormalizeInnerFactoryLocalsSource(method, state);
+            var selected = method.Body.Value[1] is BirExpressionStatement expression ? (BirGraphValue)expression.Expr.Value
+                : (BirGraphValue)method.Body.Value[1];
+            var expected = kind is "setField" or "setFieldExpr" ? selectedSet : selectedGet;
+            if (selected is BirNewBoundDelegate bound)
+                Require(bound.OwnerType.Value == physical && bound.CalleeOwner.Value == physical && bound.Method.Value == expected
+                    && ReferenceEquals(bound.Recv.Value, receiver), "bound delegate target did not follow its normalized receiver");
+            else Require(selected is BirCallInstance call && call.OwnerType.Value == physical && call.Method.Value == expected
+                    && ReferenceEquals(call.Recv.Value, receiver), kind + " did not bind after receiver-local normalization");
+        }
     }
 }
