@@ -55,6 +55,10 @@ static partial class MapVarianceRealign
         return map;
     }
 
+    // CLR variance does not apply to value-type arguments. Keep the exact
+    // source collection face in an alias local rather than storing, for example,
+    // MutableList<Int> as MutableIterable<Any?> and producing unverifiable IL.
+    // A type-variable source similarly restores its precise invariant bound.
     static TypeNode RealignedType(TypeNode declType, TypeNode srcType, IReadOnlyDictionary<int, TypeNode> constraints)
     {
         if (declType is TypeNode.Fqn { Name: "kotlin.collections.MutableIterable", Args.Length: 1 }
@@ -69,16 +73,15 @@ static partial class MapVarianceRealign
         if (InvariantGenericArgs(bound) is not TypeNode[] boundArgs || boundArgs.Length != declArgs.Length) return declType;
         return RealignArgs((TypeNode.Fqn)declType, declArgs, boundArgs);
     }
-
-
+    // Wrappers do not change the invariant collection head selected below.
     static TypeNode UnwrapNullableOblivious(TypeNode t) => t switch
     {
         TypeNode.Nullable n => UnwrapNullableOblivious(n.Of),
         TypeNode.Oblivious ob => UnwrapNullableOblivious(ob.Of),
         _ => t,
     };
-
-
+    // Replace only over-approximated arguments; retain the original owner when
+    // none has a more precise bound argument.
     static TypeNode RealignArgs(TypeNode.Fqn owner, TypeNode[] args, TypeNode[] boundArgs)
     {
         var realigned = new TypeNode[args.Length];
@@ -95,8 +98,6 @@ static partial class MapVarianceRealign
         while (aliases.TryGetValue(name, out var src) && seen.Add(name)) name = src;
         return name;
     }
-
-
     static Dictionary<NullableRepresentationFrame.Slot, TypeNode> ArgumentRoles(TypeNode.Fqn owner, TypeNode[] arguments,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames)
     {
@@ -113,8 +114,6 @@ static partial class MapVarianceRealign
     // `kotlin.collections.Map<K,V>` -> [K,V]. Null for a non-collection / non-generic type.
     static TypeNode[] InvariantGenericArgs(TypeNode t) =>
         t is TypeNode.Fqn { Args: { } args } f && InvariantCollections.Contains(f.Name) ? args : null;
-
-
     // The `in`/`out` use-site variance over-approximation is `kotlin.Any` — but a projected key/value is genuinely
     // NULLABLE (`Map<in K, V>` -> the key projects to `Any?`), so post-#37/#48 kotc emits the marker as the wrapped
     // `{t:nullable,of:kotlin.Any}` rather than a bare `kotlin.Any` (pre-#48 the `?` was a retired scalar flag, leaving a

@@ -56,6 +56,8 @@ static partial class MapVarianceRealign
             var env = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
             foreach (var parameter in method.Params.OrEmpty())
                 if (parameter.Name.HasValue && parameter.Type.HasValue) env[parameter.Name.Value] = parameter.Type.Value;
+            // A receiver's method type-variable index selects its precise
+            // invariant-collection bound, undoing use-site variance approximation.
             var constraints = new Dictionary<int, TypeNode>();
             var parameters = method.TypeParams.OrEmpty();
             for (var index = 0; index < parameters.Length; index++)
@@ -88,6 +90,8 @@ static partial class MapVarianceRealign
                         break;
                     case BirCallInstance call:
                         Realign(call.TypeArgs.OrDefault(), call.DeclarationId.OrDefault(), call.Args.OrDefault(), env, declarations, typeFrames);
+                        // Inlined member calls can still name the approximated
+                        // owner. Restore its arguments from the alias-root bound.
                         if (call.OwnerType.OrDefault() is { } owner && InvariantGenericArgs(owner) is { } arguments
                             && arguments.Any(IsObjectish) && call.Recv.OrDefault() is BirLocal { Name.HasValue: true } local
                             && env.TryGetValue(ResolveAliasRoot(local.Name.Value, aliases), out var source)
@@ -113,6 +117,9 @@ static partial class MapVarianceRealign
         node.VisitChildren(child => Walk(child, action));
     }
 
+    // A marked fresh collection literal may infer narrower element arguments
+    // than its receiving constructor slot. Widen that allocation to the slot;
+    // never reinterpret the identity of an existing collection value.
     static void RealignFactoryCtorArgTypes(BirNew construction, ReferenceMetadataIndex refs,
         Func<TypeNode, TypeNode> nullableArgument)
     {
@@ -168,6 +175,8 @@ static partial class MapVarianceRealign
             if (arguments[index] != concrete) arguments[index] = BirGraphValue.CopyType(concrete);
     }
 
+    // A local uses its declaration; otherwise only the node's own Type/Ret
+    // fields supply this policy's evidence, not general Surface/Sty inference.
     static TypeNode ActualArgType(IBirExpression value, Dictionary<string, TypeNode> env)
         => value is BirLocal { Name.HasValue: true } local && env.TryGetValue(local.Name.Value, out var declared)
             ? declared : (value as BirGraphValue)?.OwnTypeOrReturnStamp;
