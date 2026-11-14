@@ -47,6 +47,7 @@ static class Bir2Cir
                 FBoundStarProjectionErasure.CurrentDeclarationPreparationSelfTest();
                 FBoundStarProjectionErasure.FieldAccessorsSourceSelfTest();
                 FBoundStarProjectionErasure.MethodPreparationSourceSelfTest();
+                FBoundStarProjectionErasure.NativeProofSourceTransferSelfTest();
                 FBoundStarProjectionErasure.CarrierDemandSourceSelfTest();
                 FBoundStarProjectionErasure.ProjectionContextSelfTest();
                 FBoundStarProjectionErasure.AlignmentSourceSelfTest();
@@ -54,6 +55,8 @@ static class Bir2Cir
                 SourceDeclarationSignatures.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();
+                ForeignStarProjectionBinding.SelfTestSource();
+                ExactMutableViewDispatch.SelfTestSource();
                 MemberCallSubstitution.StaticCollectionPreferenceSelfTest();
                 MemberCallSubstitution.SourceDeclarationSnapshotsSelfTest();
                 MemberCallSubstitution.FactoriesSourceSelfTest();

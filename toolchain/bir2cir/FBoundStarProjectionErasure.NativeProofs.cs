@@ -10,14 +10,8 @@ static partial class FBoundStarProjectionErasure
         // A physical slot/forwarder is authored from this exact method. A
         // separate private storage body must retain its independent proof rows.
         public void TransferIndependentMethodProofs(JsonObject source, JsonObject projection)
-        {
-            var target = bindings.RegisterPhysical(projection);
-            foreach (var (index, proofs) in Rows(source).ToArray())
-                foreach (var proof in proofs.Where(proof => !ContainsOwnerTv(proof)).ToArray())
-                    Add(target, index, proof);
-            if (Str(projection[DeclarationIdentityBinding.Key]) is string identity)
-                methods[identity] = target;
-        }
+            => TransferIndependentMethodProofRows(Rows(source), bindings.RegisterPhysical(projection),
+                Str(projection[DeclarationIdentityBinding.Key]));
 
         // Clone resolution here is the existing late declaration policy, not
         // permission to repair a missing captured frontier occurrence.
