@@ -266,6 +266,10 @@ static partial class StringCharSequenceBridge
         };
     }
 
+    // A nonnullable slot or an actual !! assertion permits peeling String?.
+    // Nullable slots otherwise keep a conditional adapter/null result, with a
+    // single spill for values which cannot be reread. Conditional value arms
+    // are converted independently; an existing CharSequence view is unchanged.
     static IBirExpression SourceCoerceCharSeqArg(IBirExpression value, SourceBridgeEnv env, bool nonNullSlot)
     {
         var conversion = SelectCharSequenceConversion(BirGraphStaticType.Surface(value, env.Vars),
@@ -406,9 +410,9 @@ static partial class StringCharSequenceBridge
         return found;
     }
 
-    // Both owning source and genuine late DOM materialization use this single
-    // declaration builder. Its source signatures and optional facts are fixed
-    // here; later member/type binding still owns their physical resolution.
+    // Whole-source and newly materialized-return paths publish this same
+    // owning declaration. Its signatures and optional facts are fixed here;
+    // later member/type binding still owns their physical resolution.
     static BirClassDefinition BuildAdapterDeclaration()
     {
         TypeNode T(string name) => new TypeNode.Fqn(name);

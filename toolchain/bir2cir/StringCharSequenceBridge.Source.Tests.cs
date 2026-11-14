@@ -89,6 +89,16 @@ static partial class StringCharSequenceBridge
                 && adapter.Ctors.Value[0].BaseArgs.IsNull && adapter.Ctors.Value[0].ThisArgs.IsNull
                 && adapter.Methods.Value[0].Mods.Value.Operator.Value && !adapter.Methods.Value[2].Attrs.IsPresent,
                 "single adapter declaration shape/order/presence");
+            var actualAdapter = result.AppendedTypes.Single();
+            Require(actualAdapter.Methods.Value[0].Body.Value[0] is BirReturn { Value.Value: BirNativeInstance {
+                    Type.Value: TypeNode.Fqn { Name: "System.String" }, Method.Value: "get_Chars",
+                    Ret.Value: TypeNode.Fqn { Name: "System.Char" }, Args.Value: [BirLocal { Name.Value: "index" }] } }
+                && actualAdapter.Methods.Value[3].Body.Value[0] is BirReturn { Value.Value: BirPropertyGet {
+                    Type.Value: TypeNode.Fqn { Name: "System.String" }, Name.Value: "Length" } }
+                && actualAdapter.Methods.Value[1].Body.Value[0] is BirReturn { Value.Value: BirNew {
+                    Args.Value: [BirNativeInstance { Method.Value: "Substring", Args.Value: [BirLocal { Name.Value: "startIndex" },
+                        BirBinaryOperation { Op.Value: "-", Lhs.Value: BirLocal { Name.Value: "endIndex" }, Rhs.Value: BirLocal { Name.Value: "startIndex" } }] }] } },
+                "adapter must keep CLR UTF-16 character/length and exclusive-end substring operations");
             Require(result.DelegateAdapters.Count == 0 && Apply(new BirFileDeclaration { Methods = Array.Empty<BirFunctionDeclaration>() }, null, null).AppendedTypes.Count == 0,
                 "adapter emission must remain process-wide, not per-file");
 
