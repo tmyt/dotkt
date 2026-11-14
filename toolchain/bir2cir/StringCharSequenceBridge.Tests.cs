@@ -39,7 +39,7 @@ static partial class StringCharSequenceBridge
         Apply(new BirFileDeclaration { Methods = new[] { method }, Types = Array.Empty<IBirTypeDeclaration>() }, null, null);
         Require(Adapted(receiver.Recv.Value), "resolved interface receiver must adapt String");
         Require(ReferenceEquals(customReceiver.Recv.Value, custom), "custom receiver identity must remain unchanged");
-        var nullableCore = nullableJoin.Then.Value is BirValueBlock block ? block.Result.Value : nullableJoin.Then.Value;
+        var nullableCore = nullableJoin.Then.Value is BirValueBlock nullableBlock ? nullableBlock.Result.Value : nullableJoin.Then.Value;
         Require(nullableCore is BirConditional { Then.Value: BirConstant { Value.Value: BirLiteral.NullLiteral },
             Else.Value: BirNew { Type.Value: TypeNode.Fqn { Name: Adapter } } }
             && ReferenceEquals(nullableJoin.Else.Value, nullBranch), "nullable join must preserve null and adapt its non-null String branch");
