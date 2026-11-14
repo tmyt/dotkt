@@ -14,9 +14,6 @@ static partial class ErasedElementValues
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
     const string SourceVariableKey = "_erasedValueVariable";
 
-    internal static void RetainVariable(JsonObject value, TypeNode.Tv variable) =>
-        value[SourceVariableKey] = TypeJson.Write(variable);
-
     internal static TypeNode.Tv RetainedVariable(JsonObject value) =>
         TypeJson.Read(value[SourceVariableKey]) as TypeNode.Tv;
 
@@ -39,10 +36,9 @@ static partial class ErasedElementValues
         bool IsInterface(TypeNode value) => value is TypeNode.Fqn named
             && (definitions.TryGetValue(named.Name, out var declaration) ? Text(declaration["kind"]) == "interface"
                 : references.IsInterfaceType(named));
-        var iterators = new KotlinIteratorValueBinding();
         foreach (var method in (type["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
             .Concat((type["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()))
-            Project(method, type, IsInterface, frames, isValue, policy, iterators, captureStorageOnly: true);
+            Project(method, type, IsInterface, frames, isValue, policy);
     }
 
     internal static void ApplySuspendBody(JsonObject lambda, ReferenceMetadataIndex references,
@@ -53,42 +49,7 @@ static partial class ErasedElementValues
         bool IsInterface(TypeNode value) => value is TypeNode.Fqn named
             && (definitions.TryGetValue(named.Name, out var declaration) ? Text(declaration["kind"]) == "interface"
                 : references.IsInterfaceType(named));
-        Project(lambda, lambda, IsInterface, frames, isValue, policy, new KotlinIteratorValueBinding(), captureStorageOnly: true);
-    }
-
-    internal static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references,
-        ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null)
-    {
-        var files = roots.OfType<JsonObject>().ToArray();
-        var iteratorValues = new KotlinIteratorValueBinding();
-        var interfaces = new Dictionary<string, bool>(StringComparer.Ordinal);
-        var frames = references?.NullableTypeFrames.ToDictionary(pair => pair.Key, pair => pair.Value,
-            StringComparer.Ordinal) ?? new Dictionary<string, NullableRepresentationFrame>(StringComparer.Ordinal);
-        void Types(JsonObject container)
-        {
-            foreach (var type in (container["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-            {
-                if (Text(type["name"]) is string name) interfaces[name] = Text(type["kind"]) == "interface";
-                if (Text(type["name"]) is string owner && KotlinSupertypesRecord.ReadNullableFrame(type) is { } frame)
-                    frames[owner] = frame;
-                Types(type);
-            }
-        }
-        foreach (var file in files) Types(file);
-        bool IsInterface(TypeNode type) => type is TypeNode.Fqn named
-            && (interfaces.TryGetValue(named.Name, out var local) ? local : references?.IsInterfaceType(named) == true);
-        void Container(JsonObject container, JsonObject owner)
-        {
-            foreach (var method in (container["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                Project(method, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues,
-                    retainSourceVariables: true);
-            foreach (var constructor in (container["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                Project(constructor, owner, IsInterface, frames, isValue ?? (_ => false), policy, iteratorValues,
-                    retainSourceVariables: true);
-            foreach (var type in (container["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                Container(type, type);
-        }
-        foreach (var file in files) Container(file, null);
+        Project(lambda, lambda, IsInterface, frames, isValue, policy);
     }
 
     static TypeNode.Tv Variable(TypeNode type) => type switch {
@@ -97,10 +58,11 @@ static partial class ErasedElementValues
         _ => null,
     };
 
+    // Late existential capture alignment consumes erased field/parameter origins;
+    // module array/iterator reads have already been projected on the typed graph.
     static void Project(JsonObject method, JsonObject owner, Func<TypeNode, bool> isInterface,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames, ValueTypeOracle isValue,
-        GenericRepresentationPolicy policy, KotlinIteratorValueBinding iteratorValues, bool captureStorageOnly = false,
-        bool retainSourceVariables = false)
+        GenericRepresentationPolicy policy)
     {
         if (method["k"] == null && method["body"] is JsonArray nativeBody)
         {
@@ -117,13 +79,10 @@ static partial class ErasedElementValues
             .Concat(method["body"] as JsonArray ?? new JsonArray()).ToArray();
         if (executable.Length == 0) return;
         var reads = new Dictionary<JsonObject, TypeNode.Tv>();
-        var iteratorReads = new HashSet<JsonObject>();
-        var fieldReads = new HashSet<JsonObject>();
         var captures = new List<JsonObject>();
         var uses = new Dictionary<JsonObject, Slot>();
         var addressed = new HashSet<Slot>();
         var slots = new List<Slot>();
-        var loopSlots = new Dictionary<JsonObject, Slot>();
         var valueResults = new HashSet<JsonObject>();
         var bindings = new Dictionary<string, Slot>(StringComparer.Ordinal);
         var parameterOrigins = new Dictionary<Slot, TypeNode.Tv>();
@@ -145,13 +104,6 @@ static partial class ErasedElementValues
                     parameterOrigins[slot] = variable;
             }
 
-        TypeNode.Tv Element(JsonObject operation, Dictionary<string, Slot> scope)
-        {
-            var types = scope.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal);
-            return Variable(ArrayConstructionLowering.ArrayElementOf(
-                StaticType.Surface(operation["array"], BirScope.FromVars(types))));
-        }
-
         void Bind(JsonNode node, Dictionary<string, Slot> scope, bool location = false)
         {
             if (node is JsonArray array)
@@ -170,18 +122,11 @@ static partial class ErasedElementValues
                 uses[obj] = slot;
                 if (location) addressed.Add(slot);
             }
-            if (!captureStorageOnly && kind == "arrayGet" && !location && Element(obj, scope) is { } read) reads[obj] = read;
             if (!location && kind == "field" && Text(obj["recv"]?["k"]) == "this"
                 && TypeJson.OwnerName(obj["ownerType"]) == Text(owner?["name"])
                 && Text(obj["name"]) is string fieldName && erasedFields.TryGetValue(fieldName, out var fieldVariable))
             {
                 reads[obj] = fieldVariable;
-                fieldReads.Add(obj);
-            }
-            if (!captureStorageOnly && !location && iteratorValues.Element(obj) is { } iteratorElement)
-            {
-                reads[obj] = iteratorElement;
-                iteratorReads.Add(obj);
             }
             if (!location && kind is "cond" or "valueBlock") valueResults.Add(obj);
             if (kind == "valueBlock")
@@ -198,11 +143,6 @@ static partial class ErasedElementValues
             {
                 Bind(obj["array"], scope);
                 var loop = new Slot(obj, loopName, TypeJson.Read(obj["elem"]));
-                if (!captureStorageOnly && Element(obj, scope) is { } element)
-                {
-                    loop = loop with { Type = element };
-                    loopSlots[obj] = loop;
-                }
                 var inner = new Dictionary<string, Slot>(scope, StringComparer.Ordinal) { [loopName] = loop };
                 Bind(obj["body"], inner);
                 return;
@@ -233,9 +173,9 @@ static partial class ErasedElementValues
             }
         }
         foreach (var statement in executable) Bind(statement, bindings);
-        if (reads.Count == 0 && loopSlots.Count == 0 && parameterOrigins.Count == 0) return;
+        if (reads.Count == 0 && parameterOrigins.Count == 0) return;
 
-        var origins = loopSlots.Values.ToDictionary(slot => slot, slot => (TypeNode.Tv)slot.Type);
+        var origins = new Dictionary<Slot, TypeNode.Tv>();
         foreach (var (slot, variable) in parameterOrigins) origins[slot] = variable;
         TypeNode.Tv Origin(JsonNode node)
         {
@@ -270,27 +210,11 @@ static partial class ErasedElementValues
         var casts = new Dictionary<JsonObject, TypeNode>();
         var constrained = new HashSet<JsonObject>();
         var erasedResults = new HashSet<JsonObject>();
-        TypeNode.Tv LogicalVariable(JsonObject value)
-        {
-            TypeNode.Tv variable;
-            if (Text(value["k"]) == "local" && uses.TryGetValue(value, out var slot))
-                variable = slot.Type as TypeNode.Tv ?? parameterOrigins.GetValueOrDefault(slot);
-            else variable = reads.GetValueOrDefault(value)
-                ?? Variable(TypeJson.Read(value["sty"] ?? value["type"] ?? value["ret"]));
-            if (variable == null) return null;
-            var frame = variable.Scope == "method" ? NullableRepresentationTypes.DeclarationMethodFrame(method)
-                : owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner);
-            return frame == null ? variable : frame.Variable(
-                new TypeNode.Tv(variable.Scope, frame.PhysicalSlot(variable.I).SourceIndex),
-                NullableRepresentationFrame.Role.Ordinary);
-        }
         void Plan(JsonNode node)
         {
             if (node is JsonArray array) { foreach (var child in array) Plan(child); return; }
             if (node is not JsonObject obj) return;
             if (obj["k"] == null && obj["params"] is JsonArray && obj["body"] is JsonArray) return;
-            if (retainSourceVariables && Origin(obj) != null && LogicalVariable(obj) is { } sourceVariable)
-                RetainVariable(obj, sourceVariable);
             if (Text(obj["k"]) == "cast" && NullableBool(obj["reifiedTypeOperand"]) == false
                 && TypeJson.Read(obj["type"]) is TypeNode.Tv target && Origin(obj["e"]) == target)
                 casts[obj] = Bound(target, new HashSet<TypeNode.Tv>());
@@ -309,15 +233,8 @@ static partial class ErasedElementValues
         foreach (var statement in executable) Plan(statement);
         foreach (var (read, _) in reads)
         {
-            if (iteratorReads.Contains(read))
-            {
-                iteratorValues.Bind(read);
-                continue;
-            }
-            if (!fieldReads.Contains(read)) read["elem"] = TypeJson.Write(ObjectType);
             read["sty"] = TypeJson.Write(ObjectType);
         }
-        foreach (var (loop, _) in loopSlots) loop["elem"] = TypeJson.Write(ObjectType);
         foreach (var result in erasedResults)
         {
             if (TypeJson.Read(result["type"]) is TypeNode.Tv) result["type"] = TypeJson.Write(ObjectType);
@@ -418,201 +335,8 @@ static partial class ErasedElementValues
 
     internal static void SelfTest()
     {
-        var root = JsonNode.Parse("""
-        {"fileClass":"ArrayValueControl","methods":[{"name":"consume","typeParams":[{"name":"T"}],
-         "params":[{"name":"xs","type":{"t":"array","elem":{"t":"tv","scope":"method","i":0}}}],
-         "ret":{"t":"fqn","name":"kotlin.Any"},"body":[
-          {"k":"var","name":"value","type":{"t":"tv","scope":"method","i":0},"init":
-           {"k":"arrayGet","array":{"k":"local","name":"xs"},"index":{"k":"const","type":{"t":"fqn","name":"kotlin.Int"},"value":0}}},
-          {"k":"var","name":"alias","type":{"t":"tv","scope":"method","i":0},"init":{"k":"local","name":"value"}},
-          {"k":"return","value":{"k":"cast","reifiedTypeOperand":false,"type":{"t":"tv","scope":"method","i":0},"e":{"k":"local","name":"alias"}}}
-         ]}]}
-        """).AsObject();
-        var pristine = root.DeepClone();
-        var nestedRoot = pristine.DeepClone();
-        var enclosingMethod = nestedRoot["methods"][0].AsObject();
-        enclosingMethod[NullableRepresentationTypes.MethodFrameKey] =
-            new NullableRepresentationFrame(1, System.Array.Empty<int>()).ToJson().ToJsonString();
-        var nestedLambda = JsonNode.Parse("""
-        {"k":"newSuspendLambda","typeParams":[{"name":"A"},{"name":"B"},{"name":"C"}],"params":[],
-         "body":[{"k":"var","name":"inner","type":{"t":"tv","scope":"method","i":2},
-          "init":{"k":"arrayGet","array":{"k":"local","name":"xs","sty":
-           {"t":"array","elem":{"t":"tv","scope":"method","i":2}}},
-           "index":{"k":"const","type":{"t":"fqn","name":"kotlin.Int"},"value":0}}}]}
-        """).AsObject();
-        var nestedBody = nestedLambda["body"].DeepClone();
-        enclosingMethod["body"].AsArray().Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = nestedLambda });
-        ApplyAll(new[] { nestedRoot }, null);
-        if (!JsonNode.DeepEquals(nestedBody, nestedLambda["body"]))
-            throw new InvalidOperationException("An enclosing value projection rewrote a lambda's independent generic frame");
-        ApplyAll(new[] { root }, null);
-        var method = root["methods"][0];
-        if (TypeJson.Read(method["params"][0]["type"]) is not TypeNode.Array { Elem: TypeNode.Tv }
-            || TypeJson.Read(method["body"][0]["type"]) != ObjectType
-            || TypeJson.Read(method["body"][0]["init"]["elem"]) != ObjectType
-            || TypeJson.Read(method["body"][1]["type"]) != ObjectType
-            || TypeJson.Read(method["body"][2]["value"]["type"]) != ObjectType)
-            throw new InvalidOperationException("Open array values lost erased locals or their separate array signature");
-        var aliasRead = method["body"][2]["value"]["e"].AsObject();
-        if (RetainedVariable(aliasRead) != new TypeNode.Tv("method", 0))
-            throw new InvalidOperationException("Erased alias lost its generic meaning before bound-owner selection");
-        ClearRetainedVariables(root);
-        if (RetainedVariable(aliasRead) != null)
-            throw new InvalidOperationException("Value-source facts survived their owning projection phase");
-        var objectAlias = pristine.DeepClone();
-        var objectBody = objectAlias["methods"][0]["body"].AsArray();
-        objectBody.Insert(2, new JsonObject {
-            ["k"] = "var", ["name"] = "any", ["type"] = TypeJson.Write(ObjectType),
-            ["init"] = new JsonObject { ["k"] = "local", ["name"] = "alias" },
-        });
-        objectBody[3] = new JsonObject { ["k"] = "return",
-            ["value"] = new JsonObject { ["k"] = "local", ["name"] = "any" } };
-        ApplyAll(new[] { objectAlias }, null);
-        if (RetainedVariable(objectBody[3]["value"].AsObject()) != null)
-            throw new InvalidOperationException("An Object alias invented a generic receiver type");
-
-        foreach (var blockResult in new[] { false, true })
-        {
-            var expressionRoot = pristine.DeepClone().AsObject();
-            var expressionMethod = expressionRoot["methods"][0];
-            var read = expressionMethod["body"][0]["init"].DeepClone();
-            var variable = new TypeNode.Tv("method", 0);
-            var expression = blockResult ? new JsonObject {
-                ["k"] = "valueBlock", ["type"] = TypeJson.Write(variable), ["sty"] = TypeJson.Write(variable),
-                ["stmts"] = new JsonArray(new JsonObject {
-                    ["k"] = "var", ["name"] = "innerAlias", ["type"] = TypeJson.Write(variable), ["init"] = read,
-                }),
-                ["result"] = new JsonObject { ["k"] = "local", ["name"] = "innerAlias" },
-            } : new JsonObject {
-                ["k"] = "cond", ["type"] = TypeJson.Write(variable), ["sty"] = TypeJson.Write(variable),
-                ["cond"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = true },
-                ["then"] = read, ["else"] = read.DeepClone(),
-            };
-            expressionMethod["body"][0]["init"] = expression;
-            ApplyAll(new[] { expressionRoot }, null);
-            if (TypeJson.Read(expression["type"]) != ObjectType || TypeJson.Read(expression["sty"]) != ObjectType
-                || TypeJson.Read(expressionMethod["body"][0]["type"]) != ObjectType
-                || blockResult && TypeJson.Read(expression["result"]["sty"]) != ObjectType)
-                throw new InvalidOperationException("Open array expression lost its erased merge or lexical result binding");
-        }
-
-        var expanded = JsonNode.Parse(pristine.ToJsonString().Replace("\"i\":0", "\"i\":2")).AsObject();
-        var expandedMethod = expanded["methods"][0].AsObject();
-        expandedMethod["typeParams"] = JsonNode.Parse("""
-        ["A","B",{"name":"T","constraints":[{"t":"fqn","name":"System.Collections.Generic.List",
-         "args":[{"t":"tv","scope":"method","i":3}]}]},"$nullable1"]
-        """);
-        expandedMethod[NullableRepresentationTypes.MethodFrameKey] =
-            "{\"sourceArity\":3,\"nullable\":[1],\"storage\":[],\"nullableStorage\":[],\"order\":[0,1,2,3]}";
-        expandedMethod[NullableGenericErasure.MethodTypeParameterBoundsPre] =
-            "{\"bounds\":{\"2\":[{\"t\":\"fqn\",\"name\":\"System.Collections.Generic.List\",\"args\":[{\"t\":\"nullable\",\"of\":{\"t\":\"tv\",\"scope\":\"method\",\"i\":1}}]}]}}";
-        ApplyAll(new[] { expanded }, null);
-        if (TypeJson.Read(expandedMethod["body"][2]["value"]["type"]) is not TypeNode.Nullable {
-                Of: TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "method", I: 3 }] } })
-            throw new InvalidOperationException("Erased array value bound did not close its source nullable frame");
-
-        var nestedMethod = pristine["methods"][0].DeepClone().AsObject();
-        nestedMethod["typeParams"] = JsonNode.Parse("""
-        [{"name":"T","constraints":[{"t":"fqn","name":"Carrier","args":[{"t":"tv","scope":"type","i":2}]}]}]
-        """);
-        nestedMethod[NullableGenericErasure.MethodTypeParameterBoundsPre] =
-            "{\"bounds\":{\"0\":[{\"t\":\"fqn\",\"name\":\"Carrier\",\"args\":[{\"t\":\"tv\",\"scope\":\"type\",\"i\":1}]}]}}";
-        var nestedOwner = new JsonObject {
-            ["name"] = "NestedOwner", ["kind"] = "class",
-            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "Outer" }, new JsonObject { ["name"] = "$nullableOuter" }, new JsonObject { ["name"] = "Inner" }),
-            ["methods"] = new JsonArray(nestedMethod),
-        };
-        nestedOwner[KotlinSupertypesRecord.PreKey] =
-            "{\"nullableFrame\":{\"sourceArity\":2,\"nullable\":[0],\"storage\":[],\"nullableStorage\":[],\"order\":[0,2,1]}}";
-        var physicalBounds = nestedOwner.DeepClone().AsObject();
-        physicalBounds["name"] = "PhysicalBoundsOwner";
-        physicalBounds["methods"][0].AsObject().Remove(NullableGenericErasure.MethodTypeParameterBoundsPre);
-        ApplyAll(new[] { new JsonObject { ["types"] = new JsonArray(nestedOwner, physicalBounds) } }, null);
-        foreach (var declaration in new[] { nestedOwner, physicalBounds })
-            if (TypeJson.Read(declaration["methods"][0]["body"][2]["value"]["type"]) is not TypeNode.Nullable {
-                    Of: TypeNode.Fqn { Name: "Carrier", Args: [TypeNode.Tv { Scope: "type", I: 2 }] } })
-                throw new InvalidOperationException("Erased array bound confused source and nested physical frame indices");
-
-        var nativeLocal = pristine.DeepClone().AsObject();
-        var nativeBody = nativeLocal["methods"][0]["body"].AsArray();
-        nativeBody.Add(JsonNode.Parse("""
-        {"k":"exprStmt","expr":{"k":"callStatic","method":"native","sig":[
-         {"t":"byRef","of":{"t":"tv","scope":"method","i":0}},
-         {"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],
-         "args":[{"k":"local","name":"value"},{"k":"local","name":"value"}]}}
-        """));
-        ApplyAll(new[] { nativeLocal }, null);
-        var nativeArguments = nativeBody[^1]["expr"]["args"].AsArray();
-        var nativeElement = new TypeNode.Tv("method", 0);
-        PhysicalValueCoercion.AllocateNativeLocals(nativeBody, Array.Empty<JsonObject>(), nativeBody);
-        if (TypeJson.Read(nativeBody[0]["type"]) != nativeElement
-            || nativeArguments.Any(argument => Text(argument["k"]) != "local" || Text(argument["name"]) != "value"))
-            throw new InvalidOperationException("Native allocation lost exact same-slot array-fed local storage");
-
-        var address = pristine.DeepClone().AsObject();
-        address["methods"][0]["body"] = JsonNode.Parse("""
-        [{"k":"exprStmt","expr":{"k":"callStatic","method":"native","sig":[{"t":"byRef","of":{"t":"tv","scope":"method","i":0}}],
-          "args":[{"k":"arrayGet","elem":{"t":"tv","scope":"method","i":0},"array":{"k":"local","name":"xs"},
-                   "index":{"k":"const","type":{"t":"fqn","name":"kotlin.Int"},"value":0}}]}}]
-        """);
-        ApplyAll(new[] { address }, null);
-        if (TypeJson.Read(address["methods"][0]["body"][0]["expr"]["args"][0]["elem"]) is not TypeNode.Tv)
-            throw new InvalidOperationException("Array value projection changed a native element location");
-
-        var delegation = pristine.DeepClone().AsObject();
-        var constructor = delegation["methods"][0].DeepClone().AsObject();
-        constructor["baseArgs"] = new JsonArray(constructor["body"][0]["init"].DeepClone());
-        constructor["body"] = new JsonArray();
-        delegation["methods"] = new JsonArray();
-        delegation["types"] = new JsonArray(new JsonObject {
-            ["kind"] = "class", ["name"] = "Derived", ["ctors"] = new JsonArray(constructor),
-        });
-        ApplyAll(new[] { delegation }, null);
-        if (TypeJson.Read(constructor["baseArgs"][0]["elem"]) != ObjectType)
-            throw new InvalidOperationException("Array value projection missed executable constructor delegation");
-        Console.WriteLine("[open array element values] self-test OK (erased reads/aliases, retained signature)");
-        IteratorSelfTest(pristine.AsObject());
         SourceScalarSelfTest();
         SourceElementSelfTest();
-    }
-
-    static void IteratorSelfTest(JsonObject template)
-    {
-        foreach (var direction in new[] { "next", "previous" })
-        {
-            var root = template.DeepClone().AsObject();
-            var method = root["methods"][0];
-            var read = new JsonObject {
-                ["k"] = "callInstance", ["ownerType"] = TypeJson.Fqn("kotlin.collections.ListIterator"),
-                ["method"] = direction, [DeclarationIdentityBinding.Key] = "iterator-" + direction,
-                ["args"] = new JsonArray(),
-                ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "iterator" },
-                ["sty"] = TypeJson.Write(new TypeNode.Tv("method", 0)),
-            };
-            var binding = new KotlinIteratorValueBinding();
-            foreach (var key in new[] { "super", "clrOwnerResolved" })
-            {
-                var exact = read.DeepClone().AsObject();
-                exact[key] = true;
-                if (binding.Element(exact) != null)
-                    throw new InvalidOperationException("Iterator value binding changed exact native/super dispatch");
-            }
-            var unrelated = read.DeepClone().AsObject();
-            unrelated["ownerType"] = TypeJson.Fqn("UserIterator");
-            if (binding.Element(unrelated) != null)
-                throw new InvalidOperationException("Iterator value binding inferred a protocol from a member name");
-            method["body"][0]["init"] = read;
-            ApplyAll(new[] { root }, null);
-            if (Text(read["k"]) != "valueBlock"
-                || Text(read["result"]["else"][DeclarationIdentityBinding.Key]) != "iterator-" + direction
-                || Text(read["result"]["else"]["k"]) != "callInstance"
-                || Text(read["result"]["then"]["method"]) != (direction == "next" ? "dotktNextValue" : "dotktPreviousValue")
-                || read["stmts"] is not JsonArray { Count: 1 }
-                || TypeJson.Read(method["body"][0]["type"]) != ObjectType
-                || TypeJson.Read(method["body"][1]["type"]) != ObjectType)
-                throw new InvalidOperationException("Iterator value binding lost erased forward/reverse reads or aliases");
-        }
-        Console.WriteLine("[iterator element values] self-test OK (declaration binding, directions, aliases, exact dispatch)");
     }
 
     static string Text(JsonNode node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;

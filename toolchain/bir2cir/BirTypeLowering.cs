@@ -139,24 +139,6 @@ static partial class BirTypeLowering
         ValidateType(root, directGenericArgument: false);
     }
 
-    public static void ValidatePointerVocabulary(JsonNode root, string file)
-    {
-        void Walk(JsonNode node)
-        {
-            if (node == null) return;
-            if (IsTypeObject(node))
-            {
-                PointerValidateType(TypeNode.Parse(node.ToJsonString()), file);
-                return;
-            }
-            if (node is JsonObject obj)
-                foreach (var child in obj.Select(property => property.Value)) Walk(child);
-            else if (node is JsonArray array)
-                foreach (var child in array) Walk(child);
-        }
-
-        Walk(root);
-    }
 
     // The bare kotlin.* tokens and their CLR-codegen lowering. Consulted only in the non-reference
     // (substitute/app) build; the reference build keeps every kotlin.* token verbatim.

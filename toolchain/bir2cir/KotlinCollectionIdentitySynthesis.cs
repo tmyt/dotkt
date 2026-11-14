@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // NOMINAL KOTLIN COLLECTION IDENTITIES alongside the operational BCL faces.
@@ -38,39 +37,6 @@ static partial class KotlinCollectionIdentitySynthesis
 
     sealed record Def<T>(T Node, TypeNode.Fqn Base, TypeNode.Fqn[] Interfaces);
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
-    {
-        var defs = new Dictionary<string, Def<JsonObject>>(StringComparer.Ordinal);
-        foreach (var root in roots) Collect(root, defs);
-        foreach (var def in defs.Values) Apply(def, defs, refs);
-    }
-
-    static void Collect(JsonNode root, Dictionary<string, Def<JsonObject>> defs)
-    {
-        if (root is not JsonObject obj || obj["types"] is not JsonArray types) return;
-        foreach (var type in types.OfType<JsonObject>())
-        {
-            if (Str(type["name"]) is string name)
-                defs[name] = new(type, TypeJson.Read(type["base"]) as TypeNode.Fqn,
-                    (type["interfaces"] as JsonArray)?.Select(TypeJson.Read)
-                        .OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>());
-            Collect(type, defs);
-        }
-    }
-
-    static void Apply(Def<JsonObject> def, IReadOnlyDictionary<string, Def<JsonObject>> defs, ReferenceMetadataIndex refs)
-    {
-        var identities = SelectIdentities(SupertypeNames(def, defs, refs));
-        if (identities.Count == 0) return;
-        if (def.Node["interfaces"] is not JsonArray interfaces)
-        {
-            interfaces = new JsonArray();
-            def.Node["interfaces"] = interfaces;
-        }
-        foreach (var identity in identities)
-            if (!interfaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == identity))
-                interfaces.Add(TypeJson.Fqn(identity));
-    }
 
     static IReadOnlyList<string> SelectIdentities(HashSet<string> names)
     {
@@ -149,6 +115,4 @@ static partial class KotlinCollectionIdentitySynthesis
         if (!dictionary && Has("System.Collections.IEnumerable")) names.Add(MutableIterable);
     }
 
-    static string Str(JsonNode node) =>
-        node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 }
