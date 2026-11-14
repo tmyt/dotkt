@@ -464,7 +464,7 @@ sealed partial class ValueRepresentationLowering
             || materializedBound["body"][0]["expr"]["e"]?["e"]?["k"]?.GetValue<string>() != "valueBlock")
             throw new InvalidOperationException("Source and materialized value operations diverged on their shared saved-bound decision");
         assertNestedBoundGuards();
-        var method = root["methods"][3];
+        var method = root["methods"].AsArray().OfType<JsonObject>().Single(method => Text(method["name"]) == "use");
         foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
             method[key] = JsonNode.Parse("""
             [{"owner":{"t":"fqn","name":"Source"},"member":"value","arity":0,"params":[],
