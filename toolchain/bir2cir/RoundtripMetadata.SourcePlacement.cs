@@ -15,6 +15,14 @@ static partial class RoundtripMetadata
     static byte[] ExtensionCoreContent(string name) => BirCarrier.EncodeBody(BirCarrier.JsonV1, name,
         (writer, value) => { writer.WriteStartObject(); writer.WriteString("name", value); writer.WriteEndObject(); });
 
+    static byte[] SourceMethodIdentityContent(string name, string declaration) => BirCarrier.EncodeBody(
+        BirCarrier.JsonV1, (Name: name, Declaration: declaration), (writer, value) => {
+            writer.WriteStartObject();
+            writer.WriteString("name", value.Name);
+            if (value.Declaration != null) writer.WriteString("sourceDeclaration", value.Declaration);
+            writer.WriteEndObject();
+        });
+
     static BirAttribute PlacementCarrier(string name, byte[] content) => new() {
         Attr = new TypeNode.Fqn(name),
         ArgTypes = new TypeNode[] { new TypeNode.Fqn("System.String"), new TypeNode.Array(new TypeNode.Fqn("System.Byte")) },
@@ -32,4 +40,8 @@ static partial class RoundtripMetadata
 
     internal static void StampExtensionCore(BirFunctionDeclaration wrapper, string core)
         => wrapper.Attrs = wrapper.Attrs.OrEmpty().Append(PlacementCarrier(AKExtensionCore, ExtensionCoreContent(core))).ToArray();
+
+    internal static void AddSourceMethodIdentity(BirFunctionDeclaration method, string sourceName,
+        string sourceDeclaration = null) => method.Attrs = method.Attrs.OrEmpty()
+            .Append(PlacementCarrier(AKSourceMethod, SourceMethodIdentityContent(sourceName, sourceDeclaration))).ToArray();
 }

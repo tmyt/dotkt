@@ -1683,6 +1683,10 @@ internal static class BirGraphDom
                 case "nullableGenericRet": break;
                 case "nullableGenericSuspendRet": break;
                 case "declarationSourceName": break;
+                case "kotlinSourceMember": break;
+                case "pendingOverrideOwner": break;
+                case "pendingOverrideReturn": break;
+                case "pendingOverrideMember": break;
                 case "methodTypeParameterBoundsPre": break;
                 case "nullableRepresentationFrame": break;
                 case "kotlinPropertyAccessorCarrier": break;
@@ -1765,6 +1769,10 @@ internal static class BirGraphDom
             NullableGenericRet = Field<TypeNode>(fields, "nullableGenericRet", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableGenericSuspendRet = Field<TypeNode>(fields, "nullableGenericSuspendRet", value => TypeNode.Parse(value!.GetValue<string>())),
             DeclarationSourceName = Field<string>(fields, "declarationSourceName", value => value!.GetValue<string>()),
+            KotlinSourceMember = Field<string>(fields, "kotlinSourceMember", value => value!.GetValue<string>()),
+            PendingOverrideOwner = Field<TypeNode>(fields, "pendingOverrideOwner", value => TypeNode.Read(value) ?? throw new FormatException()),
+            PendingOverrideReturn = Field<TypeNode>(fields, "pendingOverrideReturn", value => TypeNode.Read(value) ?? throw new FormatException()),
+            PendingOverrideMember = Field<string>(fields, "pendingOverrideMember", value => value!.GetValue<string>()),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
             NullableRepresentationFrame = Field<NullableRepresentationFrame>(fields, "nullableRepresentationFrame", value => DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(value!.GetValue<string>())),
             KotlinPropertyAccessorCarrier = Field<EventPropertySourceFacts>(fields, "kotlinPropertyAccessorCarrier", value => ReadEventPropertySourceFacts(value!)),
