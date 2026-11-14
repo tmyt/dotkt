@@ -985,6 +985,12 @@ static partial class ClrMemberResolution
     internal static JsonArray SelectedGenericTypeParameters(TypeNode.Fqn owner, string name, int arity,
         bool instance, IReadOnlyList<TypeNode> parameters, ReferenceMetadataIndex refs,
         TypeNode[] parameterOwnerArguments = null)
+        => new(SelectedGenericProofDeclaration(owner, name, arity, instance, parameters, refs, parameterOwnerArguments)
+            .GetGenericArguments().Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+
+    static MethodInfo SelectedGenericProofDeclaration(TypeNode.Fqn owner, string name, int arity,
+        bool instance, IReadOnlyList<TypeNode> parameters, ReferenceMetadataIndex refs,
+        TypeNode[] parameterOwnerArguments = null)
     {
         _refs = refs;
         var declaration = ResolveOwnerType(owner)
@@ -998,7 +1004,7 @@ static partial class ClrMemberResolution
                 + string.Join("; ", declaration.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
                     .Where(method => method.Name == name)
                     .Select(method => method.ToString())));
-        return new JsonArray(selected.GetGenericArguments().Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+        return selected;
     }
 
     static MethodInfo SelectedGenericDeclaration(Type owner, string name, int arity, bool instance,
