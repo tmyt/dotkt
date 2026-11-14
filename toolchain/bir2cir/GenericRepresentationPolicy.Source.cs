@@ -7,6 +7,7 @@ sealed partial class GenericRepresentationPolicy
 {
     readonly HashSet<BirGraphValue> _sourceNativeStorage = new(ReferenceEqualityComparer.Instance);
     HashSet<(string Owner, string Name, bool Static, string Receiver)> _pendingNativePhysicalBindings;
+    Dictionary<BirGraphValue, (string Owner, string Name, bool Static, string Receiver)> _pendingNativeOrigins;
     readonly record struct SourceOwner(string Name, bool HasKind, bool Generated,
         BirTypeParameter[] Parameters, BirAttribute[] Attributes, BirFieldDeclaration[] Fields);
 
@@ -135,6 +136,7 @@ sealed partial class GenericRepresentationPolicy
         if (_pendingNativePhysicalBindings != null) throw new InvalidOperationException("Source native locations are already prepared for their DOM continuation");
         var matched = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
         var physical = new HashSet<(string Owner, string Name, bool Static, string Receiver)>();
+        var origins = new Dictionary<BirGraphValue, (string Owner, string Name, bool Static, string Receiver)>(ReferenceEqualityComparer.Instance);
         void Fields(string owner, IEnumerable<BirFieldDeclaration> fields)
         {
             foreach (var field in fields)
@@ -142,7 +144,9 @@ sealed partial class GenericRepresentationPolicy
                 if (!_sourceNativeStorage.Contains(field)) continue;
                 if (owner == null || !field.Name.HasValue || !field._nativeLocation.OrDefault())
                     throw new InvalidOperationException("Selected native storage lost its physical declaration");
-                physical.Add(FieldKey(owner, field.Name.Value, field.Static.OrDefault(), field.CompanionReceiver.OrDefault()));
+                var key = FieldKey(owner, field.Name.Value, field.Static.OrDefault(), field.CompanionReceiver.OrDefault());
+                physical.Add(key);
+                origins.Add(field, key);
                 matched.Add(field);
             }
         }
@@ -155,7 +159,9 @@ sealed partial class GenericRepresentationPolicy
                 if (!_sourceNativeStorage.Contains(cell)) continue;
                 if (!cell.Name.HasValue || !cell._nativeLocation.OrDefault())
                     throw new InvalidOperationException("Selected native capture storage lost its physical declaration");
-                physical.Add(FieldKey(cell.Name.Value, "v", false, (TypeNode)null));
+                var key = FieldKey(cell.Name.Value, "v", false, (TypeNode)null);
+                physical.Add(key);
+                origins.Add(cell, key);
                 matched.Add(cell);
             }
         }
@@ -165,16 +171,20 @@ sealed partial class GenericRepresentationPolicy
         // Their native role survives placement independently of the physical declarations we must bind below.
         _nativeFieldNames.UnionWith(physical);
         _pendingNativePhysicalBindings = physical;
+        _pendingNativeOrigins = origins;
     }
 
     // Re-associate only the exact declarations carried across the one-way
     // frontier. Selection, source eligibility, and native flags already exist.
-    internal void BindDomDeclarations(IReadOnlyList<JsonNode> roots)
+    internal void BindDomDeclarations(IReadOnlyList<JsonNode> roots, AliasDeclarationTransitions aliases = null)
     {
         if (!_sourceAwaitingDom) throw new InvalidOperationException("Source generic policy is already bound to its DOM continuation");
         var expected = _pendingNativePhysicalBindings
             ?? throw new InvalidOperationException("Source native locations were not prepared for their DOM continuation");
         var matched = new HashSet<(string Owner, string Name, bool Static, string Receiver)>();
+        aliases?.ValidateProjection(roots);
+        if (aliases?.HasTransitions == true)
+            foreach (var field in _sourceNativeStorage.OfType<BirFieldDeclaration>()) aliases.ValidateNativeField(field);
         void BindOwners(JsonObject declaration)
         {
             if (declaration["kind"] != null && Text(declaration["name"]) is string owner)
@@ -208,15 +218,38 @@ sealed partial class GenericRepresentationPolicy
             _nativeFields.Add(declaration);
             matched.Add(key);
         }
-        foreach (var root in roots.OfType<JsonObject>())
+        for (var file = 0; file < roots.Count; file++)
         {
-            BindOwners(root);
+            if (roots[file] is not JsonObject root) continue;
+            if (aliases?.HasTransitions == true)
+            {
+                // The alias host/helper are physical output, not replacement
+                // source declarations. Preserve the original per-file order.
+                foreach (var owner in aliases.LogicalOwners(file, root)) BindOwners(owner);
+                foreach (var cell in (root["refTypes"] as JsonArray ?? new()).OfType<JsonObject>())
+                    if (Text(cell["name"]) is string cellOwner) _localDeclarations[cellOwner] = cell;
+            }
+            else BindOwners(root);
             BindFields(root, Text(root["fileClass"]));
         }
+        if (aliases != null)
+            foreach (var (_, field) in aliases.RetiredFields)
+            {
+                if (!_sourceNativeStorage.Contains(field)) continue;
+                if (_pendingNativeOrigins == null || !_pendingNativeOrigins.TryGetValue(field, out var key)
+                    || !expected.Contains(key) || matched.Contains(key)
+                    || !field._nativeLocation.OrDefault()
+                    || FieldKey(key.Owner, field.Name.OrDefault(), field.Static.OrDefault(), field.CompanionReceiver.OrDefault()) != key)
+                    throw new InvalidOperationException("Retired native storage does not match its selected source occurrence");
+                // Explicit owner retirement is not a missing-field fallback.
+                // This exact selected field has one detached physical projection.
+                BindNative(key, field.ToDom());
+            }
         if (!matched.SetEquals(expected))
             throw new InvalidOperationException("A selected native source declaration is absent from its DOM continuation");
         _sourceNativeStorage.Clear();
         _pendingNativePhysicalBindings = null;
+        _pendingNativeOrigins = null;
         _sourceAwaitingDom = false;
     }
 }

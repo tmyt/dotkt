@@ -339,9 +339,15 @@ static partial class SuspendColdLowering
     // method name (both spellings) + no args. EXCLUDES kotlinx's own `CoroutineScope.coroutineContext` (a callInstance
     // member property), which stays untouched. Lowered to `<current continuation>.get_context` (JVM's <cont>.getContext).
     internal static bool IsCoroutineContextRead(JsonObject o) =>
-        Str(o["k"]) == "callStatic"
-        && KotlinPropertyAccessors.IsCall(o, "coroutineContext", "get")
-        && (o["args"] is not JsonArray ar || ar.Count == 0);
+        IsCoroutineContextRead(Str(o["k"]), Str(o[KotlinPropertyAccessors.SourceNameKey]),
+            Str(o[KotlinPropertyAccessors.KindKey]), Str(o["method"]), Str(o["prop"]),
+            o["args"] is JsonArray arguments ? arguments.Count : null);
+
+    internal static bool IsCoroutineContextRead(string kind, string preservedName, string preservedKind,
+        string method, string propertyKind, int? argumentCount) => kind == "callStatic"
+        && (preservedName == "coroutineContext" && preservedKind == "get"
+            || method == "coroutineContext" && propertyKind == "get")
+        && (argumentCount == null || argumentCount == 0);
 
     const string CoroutineContextFqn = "kotlin.coroutines.CoroutineContext";
     const string ContinuationFqn = "kotlin.coroutines.Continuation";

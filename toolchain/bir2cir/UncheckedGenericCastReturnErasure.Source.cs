@@ -135,10 +135,12 @@ static partial class UncheckedGenericCastReturnErasure
     // occurrence produced by the single module projection. No candidate search,
     // name matching, body snapshot, or later replacement chasing occurs here.
     public static DeclIndex BindDomDeclarations(PendingSourceIndex pending, IReadOnlyList<JsonObject> actualRoots,
-        IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations = null)
+        IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations = null,
+        AliasDeclarationTransitions aliases = null)
     {
         var (roots, occurrences, index) = pending.Consume();
         if (actualRoots.Count != roots.Length) throw ProjectionMismatch();
+        aliases?.ValidateProjection(actualRoots);
         var associated = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
         foreach (var occurrence in occurrences)
         {
@@ -148,6 +150,7 @@ static partial class UncheckedGenericCastReturnErasure
                 || Str(root["fileClass"]) != sourceRoot.FileClass) throw ProjectionMismatch();
             BirFunctionDeclaration[] sourceMethods;
             JsonObject container;
+            var retiredOwner = false;
             if (occurrence.Type < 0)
             {
                 sourceMethods = sourceRoot.Declaration.Methods.OrEmpty();
@@ -156,11 +159,20 @@ static partial class UncheckedGenericCastReturnErasure
             else
             {
                 var sourceTypes = sourceRoot.Declaration.Types.OrEmpty();
-                if (occurrence.Type >= sourceTypes.Length || !ReferenceEquals(sourceTypes[occurrence.Type], occurrence.Owner)
-                    || occurrence.Owner.Name.OrDefault() != occurrence.Facts.Owner
-                    || root["types"] is not JsonArray types || occurrence.Type >= types.Count
-                    || types[occurrence.Type] is not JsonObject owner || Str(owner["name"]) != occurrence.Facts.Owner)
-                    throw ProjectionMismatch();
+                var position = occurrence.Type;
+                var reported = aliases?.TryOwner(sourceRoot.Declaration, occurrence.Type, occurrence.Owner,
+                    out position, out retiredOwner) == true;
+                if (occurrence.Owner.Name.OrDefault() != occurrence.Facts.Owner) throw ProjectionMismatch();
+                JsonObject owner = null;
+                if (!retiredOwner)
+                {
+                    if (position < 0 || position >= sourceTypes.Length || !ReferenceEquals(sourceTypes[position], occurrence.Owner)
+                        || root["types"] is not JsonArray types || position >= types.Count
+                        || types[position] is not JsonObject projectedOwner || Str(projectedOwner["name"]) != occurrence.Facts.Owner)
+                        throw ProjectionMismatch();
+                    owner = projectedOwner;
+                }
+                else if (!reported || sourceTypes.Any(type => ReferenceEquals(type, occurrence.Owner))) throw ProjectionMismatch();
                 sourceMethods = occurrence.Owner.Methods.OrEmpty();
                 container = owner;
             }
@@ -172,12 +184,17 @@ static partial class UncheckedGenericCastReturnErasure
             JsonObject method;
             if (retiredDeclarations != null && retiredDeclarations.TryGetValue(occurrence.Declaration, out var retired))
             {
-                if (retired == null || retired.Parent != null || sourceMethods.Any(value => ReferenceEquals(value, occurrence.Declaration)))
+                var stillOwned = retiredOwner
+                    ? sourceRoot.Declaration.Methods.OrEmpty().Concat(sourceRoot.Declaration.Types.OrEmpty()
+                        .SelectMany(type => type.Methods.OrEmpty())).Any(value => ReferenceEquals(value, occurrence.Declaration))
+                    : sourceMethods.Any(value => ReferenceEquals(value, occurrence.Declaration));
+                if (retired == null || retired.Parent != null || stillOwned)
                     throw ProjectionMismatch();
                 method = retired;
             }
             else
             {
+                if (retiredOwner) throw ProjectionMismatch();
                 // Only explicit retirements in this captured owning vector can move this exact occurrence.
                 var position = occurrence.Method;
                 if (retiredDeclarations != null)

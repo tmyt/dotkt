@@ -15,7 +15,7 @@ using DotKt.Cir;
 // BirTypeLowering has exposed the real CLI collision set. It allocates a stable physical name once and rewrites
 // declarations and every local use by that same authoritative key. No signature/name resolver is allowed to
 // rediscover the Kotlin declaration after erasure.
-static class DeclarationIdentityBinding
+static partial class DeclarationIdentityBinding
 {
     internal const string Key = "declarationId";
     internal const string ExplicitNameKey = "explicitClrName";
@@ -124,30 +124,20 @@ static class DeclarationIdentityBinding
                     || Str(obj[Key]) is not string id)
                     return;
                 var nodeKind = Str(obj["k"]);
-                if (localIds.Contains(id)) return;
-                // `suspend inline val coroutineContext` is an existing semantic intrinsic whose physical target is
-                // the current continuation, authored by SuspendColdLowering. Preserve the exact selected call until
-                // that pass consumes it; binding it to the reference stub first executes the intentional
-                // NotImplementedError body. The shared classifier avoids a second spelling heuristic here.
-                if (SuspendColdLowering.IsCoroutineContextRead(obj)) return;
-                if (!refs.TryDeclarationIdentity(
-                    id, out var physicalName, out var owner, out var intrinsic, out _))
-                {
-                    if (deferUnknown) return;
-                    throw new InvalidOperationException(
-                        $"bir2cir: referenced frontend declaration identity '{id}' has no trusted physical binding");
-                }
+                var plan = PlanReferencedBinding(nodeKind, id, refs, localIds,
+                    SuspendColdLowering.IsCoroutineContextRead(obj), obj[ReferencedFactoryKey] != null, deferUnknown);
+                if (plan.Action == ReferencedAction.Skip) return;
                 // NetInteropBinding has already selected the CLR delegate shape for a referenced companion callable
                 // reference. A real companion member still needs its identity-allocated MethodDef name and physical
                 // carrier owner; otherwise ClrMemberResolution would search again using the erased source signature.
                 // An explicitly intrinsic-bound companion was already mapped to its exact CLR target by that pass.
-                if (nodeKind is "newBoundClrDelegate" or "newClrStaticDelegate")
+                if (plan.Action == ReferencedAction.ClrDelegate)
                 {
-                    if (intrinsic == null)
+                    if (plan.Intrinsic == null)
                     {
-                        obj["method"] = physicalName;
+                        obj["method"] = plan.Name;
                         var existingOwner = TypeJson.Read(obj["clrType"]) as TypeNode.Fqn;
-                        obj["clrType"] = TypeJson.Write(new TypeNode.Fqn(owner, existingOwner?.Args));
+                        obj["clrType"] = TypeJson.Write(new TypeNode.Fqn(plan.Owner, existingOwner?.Args));
                     }
                     obj.Remove(Key);
                     return;
@@ -156,16 +146,16 @@ static class DeclarationIdentityBinding
                 // representation pass below must project the already-selected declaration onto its BCL target. Mark
                 // this exact binding for MemberCallSubstitution instead of replacing it with the absent ref-only stub
                 // or asking that pass to rediscover an overload from the erased signature.
-                if (intrinsic != null)
+                if (plan.Action is ReferencedAction.StaticIntrinsicDelegate or ReferencedAction.MarkIntrinsic)
                 {
                     // A direct non-generic top-level callable reference has no forwarding call for
                     // MemberCallSubstitution to rewrite. Materialize its selected CLR static target here; kotc only
                     // supplied the semantic declaration identity and bir2cir remains the sole owner of this physical
                     // delegate shape. Extension/member references use forwarding calls or have already been reshaped
                     // by NetInteropBinding, so a surviving newDelegate must name a fully-qualified static intrinsic.
-                    if (nodeKind == "newDelegate")
+                    if (plan.Action == ReferencedAction.StaticIntrinsicDelegate)
                     {
-                        BindStaticIntrinsicDelegate(obj, id, intrinsic);
+                        BindStaticIntrinsicDelegate(obj, id, plan.Intrinsic);
                         return;
                     }
                     obj[ReferencedIntrinsicKey] = true;
@@ -179,9 +169,7 @@ static class DeclarationIdentityBinding
                 // the real factory MethodDef, and a call whose exact substitution already declined (the marker is
                 // present at the late bind) must also fall through to that same exact physical MethodDef. Re-marking
                 // either shape would strand the authoritative identity at the final fail-closed gate.
-                if (refs.TryDeclarationFactory(id, out _, out _, out _)
-                    && nodeKind == "callStatic"
-                    && (obj[ReferencedFactoryKey] == null || deferUnknown))
+                if (plan.Action == ReferencedAction.MarkFactory)
                 {
                     obj[ReferencedFactoryKey] = true;
                     return;
@@ -189,17 +177,14 @@ static class DeclarationIdentityBinding
                 // An aliased/native-array owner's reference declaration is not a MethodDef on its CLR target. Its
                 // representation belongs to the override/property/intrinsic binding passes. Do not replace
                 // their selected member with a reference-stub name or discard an unresolved property role.
-                if (deferUnknown && nodeKind is "callInstance" or "constrainedCall"
-                    && (refs.TryResolveClrOwner(owner, out _, out _) || AliasHelperHoist.IsNativeArrayOwner(owner)))
-                    return;
-                obj["method"] = physicalName;
+                obj["method"] = plan.Name;
                 if (Str(obj["k"]) == "callStatic")
                 {
-                    obj["owner"] = new JsonObject { ["t"] = "fqn", ["name"] = owner };
-                    obj["calleeOwner"] = new JsonObject { ["t"] = "fqn", ["name"] = owner };
+                    obj["owner"] = new JsonObject { ["t"] = "fqn", ["name"] = plan.Owner };
+                    obj["calleeOwner"] = new JsonObject { ["t"] = "fqn", ["name"] = plan.Owner };
                 }
                 else if (Str(obj["k"]) == "newDelegate")
-                    obj["calleeOwner"] = new JsonObject { ["t"] = "fqn", ["name"] = owner };
+                    obj["calleeOwner"] = new JsonObject { ["t"] = "fqn", ["name"] = plan.Owner };
                 // The trusted declaration binding already selected the exact getter/setter MethodDef. Leaving the
                 // semantic role would make a later property resolver attempt to associate that physical name again.
                 obj.Remove("prop");
@@ -219,23 +204,15 @@ static class DeclarationIdentityBinding
 
     static void BindStaticIntrinsicDelegate(JsonObject node, string declarationId, string intrinsic)
     {
-        var dot = intrinsic.LastIndexOf('.');
-        if (dot <= 0 || dot == intrinsic.Length - 1)
-            throw new InvalidOperationException(
-                $"bir2cir: selected intrinsic declaration '{declarationId}' cannot be represented as a static callable reference: '{intrinsic}'");
-        JsonArray argumentTypes;
-        if (node["sig"] is JsonArray signature)
-            argumentTypes = (JsonArray)signature.DeepClone();
-        else if (TypeJson.Read(node["funcType"]) is TypeNode.Fn functionType)
-            argumentTypes = new JsonArray(functionType.DelegateParams.Select(TypeJson.Write).ToArray());
-        else
-            throw new InvalidOperationException(
-                $"bir2cir: selected intrinsic callable reference '{declarationId}' has no semantic parameter signature");
+        var target = StaticIntrinsicTarget(declarationId, intrinsic);
+        var parameters = StaticIntrinsicParameters(declarationId,
+            node["sig"] is JsonArray signature ? signature.Select(TypeJson.Read).ToArray() : null,
+            TypeJson.Read(node["funcType"]));
 
         node["k"] = "newClrStaticDelegate";
-        node["clrType"] = TypeJson.Write(new TypeNode.Fqn(intrinsic[..dot]));
-        node["method"] = intrinsic[(dot + 1)..];
-        node["argTypes"] = argumentTypes;
+        node["clrType"] = TypeJson.Write(new TypeNode.Fqn(target.Owner));
+        node["method"] = target.Name;
+        node["argTypes"] = new JsonArray(parameters.Select(TypeJson.Write).ToArray());
         foreach (var key in new[]
                  {
                      "owner", "ownerType", "calleeOwner", "sig", "prop", Key,
@@ -756,6 +733,7 @@ static class DeclarationIdentityBinding
             throw new InvalidOperationException(
                 "DeclarationIdentityBinding self-test clobbered caller-substituted signature slots");
         SelfTestFinalPhysicalNames();
+        SelfTestSourceBinding();
     }
 
     static void SelfTestFinalPhysicalNames()
