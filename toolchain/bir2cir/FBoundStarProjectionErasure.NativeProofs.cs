@@ -30,8 +30,7 @@ static partial class FBoundStarProjectionErasure
                     : new Dictionary<int, List<TypeNode>>();
             else required = methods.TryGetValue(Str(declaration[DeclarationIdentityBinding.Key]) ?? "", out var method)
                 ? Rows(method) : new Dictionary<int, List<TypeNode>>();
-            return required.TryGetValue(index, out var proofs) && proofs.Any(proof =>
-                references.PhysicalConstraintType(proof) == references.PhysicalConstraintType(bound));
+            return IsRequiredPhysicalConstraint(required, index, bound);
         }
 
         public void RegisterPhysicalLocalDefinitions(IReadOnlyDictionary<string, JsonObject> physicalDefinitions)

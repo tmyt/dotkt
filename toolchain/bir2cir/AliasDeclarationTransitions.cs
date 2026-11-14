@@ -47,8 +47,8 @@ sealed partial class AliasDeclarationTransitions
 
     // Later materialization may append physical declarations, but cannot change
     // the reported representation of any preceding source occurrence. These
-    // classes extend the physical continuation, not the original logical owners.
-    internal void AdmitMaterializedTypes(BirFileDeclaration file, IReadOnlyList<BirClassDefinition> appended)
+    // declarations extend the physical continuation, not the original logical owners.
+    internal void AdmitMaterializedTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> appended)
     {
         if (files.Count == 0) return; // Reference builds have no alias transition ledger.
         var index = files.FindIndex(entry => ReferenceEquals(entry.File, file));

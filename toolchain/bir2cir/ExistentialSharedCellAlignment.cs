@@ -7,7 +7,7 @@ using DotKt.Bir;
 // A mutable capture's heap cell keeps the original Kotlin generic frame, but its value field must accept the
 // representation actually written to it. Only cells explicitly assembled from refTypes participate: neither
 // ordinary CLR fields nor generated-class names/layout are evidence of mutable-capture storage.
-static class ExistentialSharedCellAlignment
+static partial class ExistentialSharedCellAlignment
 {
     public static void ApplyAll(IReadOnlyList<JsonNode> roots,
         IReadOnlyList<SharedSyntheticSynthesis.CellStorage> cells,

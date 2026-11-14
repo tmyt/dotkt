@@ -42,6 +42,13 @@ static partial class FBoundStarProjectionErasure
         Require(plan.Add(original, 0, disposable) && plan.Add(original, 1, independent)
             && plan.Add(original, 1, dependent) && plan.Add(original, 2, disposable),
             "source proof fixture did not populate its exact ordinary parameter positions");
+        Require(ReferenceEquals(plan.LocalSourceMethod("source"), source)
+            && ReferenceEquals(plan.LocalSourceMethodBinding("source"), original)
+            && plan.LocalSourceMethodBinding("unknown") == null
+            && plan.ExactMethodArgument(original, "source", 0)
+            && plan.IsPhysicalConstraint(original, 0, disposable)
+            && !plan.IsPhysicalConstraint(original, 0, dependent),
+            "source queries lost their actual captured method or shared proof rows");
 
         var untouched = Method("unadmitted");
         Reject(() => plan.TransferIndependentMethodProofs(source with { }, untouched));
@@ -105,6 +112,7 @@ static partial class FBoundStarProjectionErasure
         // descriptors, not same-name reconstructions at a missing-node check.
         var physicalRoot = root.ToDom(bindings.ObserveProjection);
         bindings.BindProjected();
+        Reject(() => plan.LocalSourceMethod("source"));
         var physicalOwner = physicalRoot["types"][0].AsObject();
         var physicalProjection = physicalOwner["methods"][2].AsObject();
         Require(ReferenceEquals(projected.Physical, physicalProjection)

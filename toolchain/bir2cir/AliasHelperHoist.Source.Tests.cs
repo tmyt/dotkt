@@ -110,6 +110,9 @@ static partial class AliasHelperHoist
         file.Types = new IBirTypeDeclaration[] { host, helper, kept, first, second };
         Refused(() => transitions.AdmitMaterializedTypes(file, new[] { first }));
         transitions.AdmitMaterializedTypes(file, new[] { second });
+        var contract = new BirInterfaceDefinition { Name = "ReferenceContract", Kind = "interface" };
+        file.Types = file.Types.OrEmpty().Concat(new IBirTypeDeclaration[] { contract }).ToArray();
+        transitions.AdmitMaterializedTypes(file, new IBirTypeDeclaration[] { contract });
         var projection = file.ToDom();
         transitions.ValidateProjection(new JsonNode[] { projection });
         var owners = transitions.LogicalOwners(0, projection).ToArray();
