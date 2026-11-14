@@ -1527,42 +1527,10 @@ public static class CirMessagePack
     }
 
     private static TypeNode Read_type(ref MessagePackReader reader) =>
-        Discriminator(reader, "t") switch
-        {
-            "fqn" => Read_tFqn(ref reader),
-            "tv" => Read_tTv(ref reader),
-            "star" => Read_tStar(ref reader),
-            "projection" => Read_tProjection(ref reader),
-            "fn" => Read_tFn(ref reader),
-            "nullable" => Read_tNullable(ref reader),
-            "oblivious" => Read_tOblivious(ref reader),
-            "array" => Read_tArray(ref reader),
-            "byRef" => Read_tByRef(ref reader),
-            "ptr" => Read_tPtr(ref reader),
-            "fnPtr" => Read_tFnPtr(ref reader),
-            "mod" => Read_tMod(ref reader),
-            _ => throw new FormatException(),
-        };
+        TypeNodeMessagePack.Read(ref reader);
 
-    private static void Write_type(ref MessagePackWriter writer, TypeNode node, int depth)
-    {
-        switch (node)
-        {
-            case TypeNode.Fqn value: Write_tFqn(ref writer, value, depth); break;
-            case TypeNode.Tv value: Write_tTv(ref writer, value, depth); break;
-            case TypeNode.Star value: Write_tStar(ref writer, value, depth); break;
-            case TypeNode.Projection value: Write_tProjection(ref writer, value, depth); break;
-            case TypeNode.Fn value: Write_tFn(ref writer, value, depth); break;
-            case TypeNode.Nullable value: Write_tNullable(ref writer, value, depth); break;
-            case TypeNode.Oblivious value: Write_tOblivious(ref writer, value, depth); break;
-            case TypeNode.Array value: Write_tArray(ref writer, value, depth); break;
-            case TypeNode.ByRef value: Write_tByRef(ref writer, value, depth); break;
-            case TypeNode.Ptr value: Write_tPtr(ref writer, value, depth); break;
-            case TypeNode.FnPtr value: Write_tFnPtr(ref writer, value, depth); break;
-            case TypeNode.Mod value: Write_tMod(ref writer, value, depth); break;
-            default: throw new FormatException();
-        }
-    }
+    private static void Write_type(ref MessagePackWriter writer, TypeNode node, int depth) =>
+        TypeNodeMessagePack.Write(ref writer, node, depth);
 
     private static ICirStatement[] Read_cirStatementList(ref MessagePackReader reader)
     {
@@ -1632,107 +1600,107 @@ public static class CirMessagePack
             {
                 case "inline":
                     Seen(ref seen, 1UL);
-                    field_inline = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_inline = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "infix":
                     Seen(ref seen, 2UL);
-                    field_infix = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_infix = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "operator":
                     Seen(ref seen, 4UL);
-                    field_operator = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_operator = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "tailrec":
                     Seen(ref seen, 8UL);
-                    field_tailrec = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_tailrec = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "external":
                     Seen(ref seen, 16UL);
-                    field_external = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_external = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "ext":
                     Seen(ref seen, 32UL);
-                    field_ext = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_ext = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "extensionReceiver":
                     Seen(ref seen, 64UL);
-                    field_extensionReceiver = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_extensionReceiver = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "override":
                     Seen(ref seen, 128UL);
-                    field_override = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_override = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "abstract":
                     Seen(ref seen, 256UL);
-                    field_abstract = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_abstract = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "open":
                     Seen(ref seen, 512UL);
-                    field_open = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_open = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "suspend":
                     Seen(ref seen, 1024UL);
-                    field_suspend = OptionalField<bool>.Of(Read_value61(ref reader));
+                    field_suspend = OptionalField<bool>.Of(Read_value50(ref reader));
                     break;
                 case "data":
                     Seen(ref seen, 2048UL);
-                    field_data = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_data = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "sealed":
                     Seen(ref seen, 4096UL);
-                    field_sealed = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_sealed = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "inner":
                     Seen(ref seen, 8192UL);
-                    field_inner = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_inner = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "enum":
                     Seen(ref seen, 16384UL);
-                    field_enum = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_enum = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "fun":
                     Seen(ref seen, 32768UL);
-                    field_fun = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_fun = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "annotation":
                     Seen(ref seen, 65536UL);
-                    field_annotation = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_annotation = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "value":
                     Seen(ref seen, 131072UL);
-                    field_value = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_value = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "object":
                     Seen(ref seen, 262144UL);
-                    field_object = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_object = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "const":
                     Seen(ref seen, 524288UL);
-                    field_const = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_const = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "lateinit":
                     Seen(ref seen, 1048576UL);
-                    field_lateinit = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_lateinit = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "vararg":
                     Seen(ref seen, 2097152UL);
-                    field_vararg = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_vararg = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "noinline":
                     Seen(ref seen, 4194304UL);
-                    field_noinline = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_noinline = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "crossinline":
                     Seen(ref seen, 8388608UL);
-                    field_crossinline = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_crossinline = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "inlineOnly":
                     Seen(ref seen, 16777216UL);
-                    field_inlineOnly = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_inlineOnly = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 case "context":
                     Seen(ref seen, 33554432UL);
-                    field_context = OptionalField<bool>.Of(Read_value60(ref reader));
+                    field_context = OptionalField<bool>.Of(Read_value49(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -1750,132 +1718,132 @@ public static class CirMessagePack
         if (node.Inline.IsPresent)
         {
             writer.Write("inline");
-            Write_value60(ref writer, node.Inline.Value, depth + 1);
+            Write_value49(ref writer, node.Inline.Value, depth + 1);
         }
         if (node.Infix.IsPresent)
         {
             writer.Write("infix");
-            Write_value60(ref writer, node.Infix.Value, depth + 1);
+            Write_value49(ref writer, node.Infix.Value, depth + 1);
         }
         if (node.Operator.IsPresent)
         {
             writer.Write("operator");
-            Write_value60(ref writer, node.Operator.Value, depth + 1);
+            Write_value49(ref writer, node.Operator.Value, depth + 1);
         }
         if (node.Tailrec.IsPresent)
         {
             writer.Write("tailrec");
-            Write_value60(ref writer, node.Tailrec.Value, depth + 1);
+            Write_value49(ref writer, node.Tailrec.Value, depth + 1);
         }
         if (node.External.IsPresent)
         {
             writer.Write("external");
-            Write_value60(ref writer, node.External.Value, depth + 1);
+            Write_value49(ref writer, node.External.Value, depth + 1);
         }
         if (node.Ext.IsPresent)
         {
             writer.Write("ext");
-            Write_value60(ref writer, node.Ext.Value, depth + 1);
+            Write_value49(ref writer, node.Ext.Value, depth + 1);
         }
         if (node.ExtensionReceiver.IsPresent)
         {
             writer.Write("extensionReceiver");
-            Write_value60(ref writer, node.ExtensionReceiver.Value, depth + 1);
+            Write_value49(ref writer, node.ExtensionReceiver.Value, depth + 1);
         }
         if (node.Override.IsPresent)
         {
             writer.Write("override");
-            Write_value60(ref writer, node.Override.Value, depth + 1);
+            Write_value49(ref writer, node.Override.Value, depth + 1);
         }
         if (node.Abstract.IsPresent)
         {
             writer.Write("abstract");
-            Write_value60(ref writer, node.Abstract.Value, depth + 1);
+            Write_value49(ref writer, node.Abstract.Value, depth + 1);
         }
         if (node.Open.IsPresent)
         {
             writer.Write("open");
-            Write_value60(ref writer, node.Open.Value, depth + 1);
+            Write_value49(ref writer, node.Open.Value, depth + 1);
         }
         if (node.Suspend.IsPresent)
         {
             writer.Write("suspend");
-            Write_value61(ref writer, node.Suspend.Value, depth + 1);
+            Write_value50(ref writer, node.Suspend.Value, depth + 1);
         }
         if (node.Data.IsPresent)
         {
             writer.Write("data");
-            Write_value60(ref writer, node.Data.Value, depth + 1);
+            Write_value49(ref writer, node.Data.Value, depth + 1);
         }
         if (node.Sealed.IsPresent)
         {
             writer.Write("sealed");
-            Write_value60(ref writer, node.Sealed.Value, depth + 1);
+            Write_value49(ref writer, node.Sealed.Value, depth + 1);
         }
         if (node.Inner.IsPresent)
         {
             writer.Write("inner");
-            Write_value60(ref writer, node.Inner.Value, depth + 1);
+            Write_value49(ref writer, node.Inner.Value, depth + 1);
         }
         if (node.Enum.IsPresent)
         {
             writer.Write("enum");
-            Write_value60(ref writer, node.Enum.Value, depth + 1);
+            Write_value49(ref writer, node.Enum.Value, depth + 1);
         }
         if (node.Fun.IsPresent)
         {
             writer.Write("fun");
-            Write_value60(ref writer, node.Fun.Value, depth + 1);
+            Write_value49(ref writer, node.Fun.Value, depth + 1);
         }
         if (node.Annotation.IsPresent)
         {
             writer.Write("annotation");
-            Write_value60(ref writer, node.Annotation.Value, depth + 1);
+            Write_value49(ref writer, node.Annotation.Value, depth + 1);
         }
         if (node.Value.IsPresent)
         {
             writer.Write("value");
-            Write_value60(ref writer, node.Value.Value, depth + 1);
+            Write_value49(ref writer, node.Value.Value, depth + 1);
         }
         if (node.Object.IsPresent)
         {
             writer.Write("object");
-            Write_value60(ref writer, node.Object.Value, depth + 1);
+            Write_value49(ref writer, node.Object.Value, depth + 1);
         }
         if (node.Const.IsPresent)
         {
             writer.Write("const");
-            Write_value60(ref writer, node.Const.Value, depth + 1);
+            Write_value49(ref writer, node.Const.Value, depth + 1);
         }
         if (node.Lateinit.IsPresent)
         {
             writer.Write("lateinit");
-            Write_value60(ref writer, node.Lateinit.Value, depth + 1);
+            Write_value49(ref writer, node.Lateinit.Value, depth + 1);
         }
         if (node.Vararg.IsPresent)
         {
             writer.Write("vararg");
-            Write_value60(ref writer, node.Vararg.Value, depth + 1);
+            Write_value49(ref writer, node.Vararg.Value, depth + 1);
         }
         if (node.Noinline.IsPresent)
         {
             writer.Write("noinline");
-            Write_value60(ref writer, node.Noinline.Value, depth + 1);
+            Write_value49(ref writer, node.Noinline.Value, depth + 1);
         }
         if (node.Crossinline.IsPresent)
         {
             writer.Write("crossinline");
-            Write_value60(ref writer, node.Crossinline.Value, depth + 1);
+            Write_value49(ref writer, node.Crossinline.Value, depth + 1);
         }
         if (node.InlineOnly.IsPresent)
         {
             writer.Write("inlineOnly");
-            Write_value60(ref writer, node.InlineOnly.Value, depth + 1);
+            Write_value49(ref writer, node.InlineOnly.Value, depth + 1);
         }
         if (node.Context.IsPresent)
         {
             writer.Write("context");
-            Write_value60(ref writer, node.Context.Value, depth + 1);
+            Write_value49(ref writer, node.Context.Value, depth + 1);
         }
     }
 
@@ -1918,7 +1886,7 @@ public static class CirMessagePack
             {
                 case "module":
                     Seen(ref seen, 1UL);
-                    field_module = Read_value63(ref reader);
+                    field_module = Read_value52(ref reader);
                     break;
                 case "entryPoint":
                     Seen(ref seen, 2UL);
@@ -1926,7 +1894,7 @@ public static class CirMessagePack
                     break;
                 case "callingConvention":
                     Seen(ref seen, 4UL);
-                    field_callingConvention = Read_value64(ref reader);
+                    field_callingConvention = Read_value53(ref reader);
                     break;
                 case "callingConventionType":
                     Seen(ref seen, 8UL);
@@ -1934,7 +1902,7 @@ public static class CirMessagePack
                     break;
                 case "charSet":
                     Seen(ref seen, 16UL);
-                    field_charSet = Read_value65(ref reader);
+                    field_charSet = Read_value54(ref reader);
                     break;
                 case "charSetType":
                     Seen(ref seen, 32UL);
@@ -1962,7 +1930,7 @@ public static class CirMessagePack
                     break;
                 case "pseudoFields":
                     Seen(ref seen, 2048UL);
-                    field_pseudoFields = Read_value66(ref reader);
+                    field_pseudoFields = Read_value55(ref reader);
                     break;
                 case "attributeCtorRef":
                     Seen(ref seen, 4096UL);
@@ -1982,15 +1950,15 @@ public static class CirMessagePack
         CheckDepth(depth);
         writer.WriteMapHeader(13);
         writer.Write("module");
-        Write_value63(ref writer, node.Module, depth + 1);
+        Write_value52(ref writer, node.Module, depth + 1);
         writer.Write("entryPoint");
         Write_value1(ref writer, node.EntryPoint, depth + 1);
         writer.Write("callingConvention");
-        Write_value64(ref writer, node.CallingConvention, depth + 1);
+        Write_value53(ref writer, node.CallingConvention, depth + 1);
         writer.Write("callingConventionType");
         Write_type(ref writer, node.CallingConventionType, depth + 1);
         writer.Write("charSet");
-        Write_value65(ref writer, node.CharSet, depth + 1);
+        Write_value54(ref writer, node.CharSet, depth + 1);
         writer.Write("charSetType");
         Write_type(ref writer, node.CharSetType, depth + 1);
         writer.Write("exactSpelling");
@@ -2004,7 +1972,7 @@ public static class CirMessagePack
         writer.Write("throwOnUnmappableChar");
         Write_value2(ref writer, node.ThrowOnUnmappableChar, depth + 1);
         writer.Write("pseudoFields");
-        Write_value66(ref writer, node.PseudoFields, depth + 1);
+        Write_value55(ref writer, node.PseudoFields, depth + 1);
         writer.Write("attributeCtorRef");
         Write_memberRef(ref writer, node.AttributeCtorRef, depth + 1);
     }
@@ -2261,61 +2229,11 @@ public static class CirMessagePack
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static TypeNode.Fqn Read_tFqn(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        string field_name = default!;
-        TypeNode[]? field_args = default!;
-        TypeNode.SourceClassifier? field_classifier = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "fqn") throw new FormatException();
-                    break;
-                case "name":
-                    Seen(ref seen, 2UL);
-                    field_name = Read_value93(ref reader);
-                    break;
-                case "args":
-                    Seen(ref seen, 4UL);
-                    field_args = Read_value94(ref reader);
-                    break;
-                case "classifier":
-                    Seen(ref seen, 8UL);
-                    field_classifier = Read_sourceClassifier(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 3UL) != 3UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.Fqn(field_name, field_args) { Classifier = field_classifier };
-        return value;
-    }
+    private static TypeNode.Fqn Read_tFqn(ref MessagePackReader reader) =>
+        TypeNodeMessagePack.Read(ref reader) as TypeNode.Fqn ?? throw new FormatException();
 
-    private static void Write_tFqn(ref MessagePackWriter writer, TypeNode.Fqn node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(2 + ((node.Args) is null ? 0 : 1) + ((node.Classifier) is null ? 0 : 1));
-        writer.Write("t");
-        writer.Write("fqn");
-        writer.Write("name");
-        Write_value93(ref writer, node.Name, depth + 1);
-        if ((node.Args) is { } child_args)
-        {
-            writer.Write("args");
-            Write_value94(ref writer, child_args, depth + 1);
-        }
-        if ((node.Classifier) is { } child_classifier)
-        {
-            writer.Write("classifier");
-            Write_sourceClassifier(ref writer, child_classifier, depth + 1);
-        }
-    }
+    private static void Write_tFqn(ref MessagePackWriter writer, TypeNode.Fqn node, int depth) =>
+        TypeNodeMessagePack.Write(ref writer, node, depth);
 
     private static string Read_value42(ref MessagePackReader reader)
     {
@@ -2472,507 +2390,6 @@ public static class CirMessagePack
         }
     }
 
-    private static TypeNode.Tv Read_tTv(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        string field_scope = default!;
-        int field_i = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "tv") throw new FormatException();
-                    break;
-                case "scope":
-                    Seen(ref seen, 2UL);
-                    field_scope = Read_value96(ref reader);
-                    break;
-                case "i":
-                    Seen(ref seen, 4UL);
-                    field_i = Read_value97(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 7UL) != 7UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.Tv(field_scope, field_i);
-        return value;
-    }
-
-    private static void Write_tTv(ref MessagePackWriter writer, TypeNode.Tv node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(3);
-        writer.Write("t");
-        writer.Write("tv");
-        writer.Write("scope");
-        Write_value96(ref writer, node.Scope, depth + 1);
-        writer.Write("i");
-        Write_value97(ref writer, node.I, depth + 1);
-    }
-
-    private static TypeNode.Star Read_tStar(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "star") throw new FormatException();
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 1UL) != 1UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.Star();
-        return value;
-    }
-
-    private static void Write_tStar(ref MessagePackWriter writer, TypeNode.Star node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(1);
-        writer.Write("t");
-        writer.Write("star");
-    }
-
-    private static TypeNode.Projection Read_tProjection(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        string field_variance = default!;
-        TypeNode field_of = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "projection") throw new FormatException();
-                    break;
-                case "variance":
-                    Seen(ref seen, 2UL);
-                    field_variance = Read_value98(ref reader);
-                    break;
-                case "of":
-                    Seen(ref seen, 4UL);
-                    field_of = Read_type(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 7UL) != 7UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.Projection(field_variance, field_of);
-        return value;
-    }
-
-    private static void Write_tProjection(ref MessagePackWriter writer, TypeNode.Projection node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(3);
-        writer.Write("t");
-        writer.Write("projection");
-        writer.Write("variance");
-        Write_value98(ref writer, node.Variance, depth + 1);
-        writer.Write("of");
-        Write_type(ref writer, node.Of, depth + 1);
-    }
-
-    private static TypeNode.Fn Read_tFn(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        bool field_suspend = default!;
-        TypeNode field_ret = default!;
-        TypeNode[] field_params = default!;
-        TypeNode? field_recv = default!;
-        TypeNode[]? field_ctx = default!;
-        string? field_clr = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "fn") throw new FormatException();
-                    break;
-                case "suspend":
-                    Seen(ref seen, 2UL);
-                    field_suspend = Read_value2(ref reader);
-                    break;
-                case "ret":
-                    Seen(ref seen, 4UL);
-                    field_ret = Read_type(ref reader);
-                    break;
-                case "params":
-                    Seen(ref seen, 8UL);
-                    field_params = Read_value32(ref reader);
-                    break;
-                case "recv":
-                    Seen(ref seen, 16UL);
-                    field_recv = Read_type(ref reader);
-                    break;
-                case "ctx":
-                    Seen(ref seen, 32UL);
-                    field_ctx = Read_value99(ref reader);
-                    break;
-                case "clr":
-                    Seen(ref seen, 64UL);
-                    field_clr = Read_value100(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 15UL) != 15UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.Fn(field_suspend, field_ret, field_params, field_recv, field_clr, field_ctx);
-        return value;
-    }
-
-    private static void Write_tFn(ref MessagePackWriter writer, TypeNode.Fn node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(4 + ((node.Recv) is null ? 0 : 1) + ((node.Ctx) is { Length: > 0 } ? 1 : 0) + ((node.Clr) is null ? 0 : 1));
-        writer.Write("t");
-        writer.Write("fn");
-        writer.Write("suspend");
-        Write_value2(ref writer, node.Suspend, depth + 1);
-        writer.Write("ret");
-        Write_type(ref writer, node.Ret, depth + 1);
-        writer.Write("params");
-        Write_value32(ref writer, node.Params, depth + 1);
-        if ((node.Recv) is { } child_recv)
-        {
-            writer.Write("recv");
-            Write_type(ref writer, child_recv, depth + 1);
-        }
-        if ((node.Ctx) is { Length: > 0 } child_ctx)
-        {
-            writer.Write("ctx");
-            Write_value99(ref writer, child_ctx, depth + 1);
-        }
-        if ((node.Clr) is { } child_clr)
-        {
-            writer.Write("clr");
-            Write_value100(ref writer, child_clr, depth + 1);
-        }
-    }
-
-    private static TypeNode.Nullable Read_tNullable(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        TypeNode field_of = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "nullable") throw new FormatException();
-                    break;
-                case "of":
-                    Seen(ref seen, 2UL);
-                    field_of = Read_type(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 3UL) != 3UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.Nullable(field_of);
-        return value;
-    }
-
-    private static void Write_tNullable(ref MessagePackWriter writer, TypeNode.Nullable node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(2);
-        writer.Write("t");
-        writer.Write("nullable");
-        writer.Write("of");
-        Write_type(ref writer, node.Of, depth + 1);
-    }
-
-    private static TypeNode.Oblivious Read_tOblivious(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        TypeNode field_of = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "oblivious") throw new FormatException();
-                    break;
-                case "of":
-                    Seen(ref seen, 2UL);
-                    field_of = Read_type(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 3UL) != 3UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.Oblivious(field_of);
-        return value;
-    }
-
-    private static void Write_tOblivious(ref MessagePackWriter writer, TypeNode.Oblivious node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(2);
-        writer.Write("t");
-        writer.Write("oblivious");
-        writer.Write("of");
-        Write_type(ref writer, node.Of, depth + 1);
-    }
-
-    private static TypeNode.Array Read_tArray(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        TypeNode field_elem = default!;
-        int? field_rank = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "array") throw new FormatException();
-                    break;
-                case "elem":
-                    Seen(ref seen, 2UL);
-                    field_elem = Read_type(ref reader);
-                    break;
-                case "rank":
-                    Seen(ref seen, 4UL);
-                    field_rank = Read_value101(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 3UL) != 3UL) throw new FormatException();
-        reader.Depth--;
-        var value = TypeNode.ArrayFromWire(field_elem, field_rank);
-        return value;
-    }
-
-    private static void Write_tArray(ref MessagePackWriter writer, TypeNode.Array node, int depth)
-    {
-        CheckDepth(depth);
-        TypeNode.ValidateArrayWire(node);
-        writer.WriteMapHeader(2 + ((node.SzArray ? (int?)null : node.Rank) is null ? 0 : 1));
-        writer.Write("t");
-        writer.Write("array");
-        writer.Write("elem");
-        Write_type(ref writer, node.Elem, depth + 1);
-        if ((node.SzArray ? (int?)null : node.Rank) is { } child_rank)
-        {
-            writer.Write("rank");
-            Write_value101(ref writer, child_rank, depth + 1);
-        }
-    }
-
-    private static TypeNode.ByRef Read_tByRef(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        TypeNode field_of = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "byRef") throw new FormatException();
-                    break;
-                case "of":
-                    Seen(ref seen, 2UL);
-                    field_of = Read_type(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 3UL) != 3UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.ByRef(field_of);
-        return value;
-    }
-
-    private static void Write_tByRef(ref MessagePackWriter writer, TypeNode.ByRef node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(2);
-        writer.Write("t");
-        writer.Write("byRef");
-        writer.Write("of");
-        Write_type(ref writer, node.Of, depth + 1);
-    }
-
-    private static TypeNode.Ptr Read_tPtr(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        TypeNode field_of = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "ptr") throw new FormatException();
-                    break;
-                case "of":
-                    Seen(ref seen, 2UL);
-                    field_of = Read_type(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 3UL) != 3UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.Ptr(field_of);
-        return value;
-    }
-
-    private static void Write_tPtr(ref MessagePackWriter writer, TypeNode.Ptr node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(2);
-        writer.Write("t");
-        writer.Write("ptr");
-        writer.Write("of");
-        Write_type(ref writer, node.Of, depth + 1);
-    }
-
-    private static TypeNode.FnPtr Read_tFnPtr(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        int field_cc = default!;
-        int field_genericArity = default!;
-        int field_requiredParams = default!;
-        TypeNode field_ret = default!;
-        TypeNode[] field_params = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "fnPtr") throw new FormatException();
-                    break;
-                case "cc":
-                    Seen(ref seen, 2UL);
-                    field_cc = Read_value102(ref reader);
-                    break;
-                case "genericArity":
-                    Seen(ref seen, 4UL);
-                    field_genericArity = Read_value97(ref reader);
-                    break;
-                case "requiredParams":
-                    Seen(ref seen, 8UL);
-                    field_requiredParams = Read_value97(ref reader);
-                    break;
-                case "ret":
-                    Seen(ref seen, 16UL);
-                    field_ret = Read_type(ref reader);
-                    break;
-                case "params":
-                    Seen(ref seen, 32UL);
-                    field_params = Read_value32(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 63UL) != 63UL) throw new FormatException();
-        reader.Depth--;
-        var value = TypeNode.ReadFunctionPointer(field_cc, field_genericArity, field_requiredParams, field_ret, field_params);
-        return value;
-    }
-
-    private static void Write_tFnPtr(ref MessagePackWriter writer, TypeNode.FnPtr node, int depth)
-    {
-        CheckDepth(depth);
-        TypeNode.ValidateFunctionPointerWire(node);
-        writer.WriteMapHeader(6);
-        writer.Write("t");
-        writer.Write("fnPtr");
-        writer.Write("cc");
-        Write_value102(ref writer, node.CallingConvention, depth + 1);
-        writer.Write("genericArity");
-        Write_value97(ref writer, node.GenericArity, depth + 1);
-        writer.Write("requiredParams");
-        Write_value97(ref writer, node.RequiredParams, depth + 1);
-        writer.Write("ret");
-        Write_type(ref writer, node.Ret, depth + 1);
-        writer.Write("params");
-        Write_value32(ref writer, node.Params, depth + 1);
-    }
-
-    private static TypeNode.Mod Read_tMod(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        bool field_req = default!;
-        TypeNode field_m = default!;
-        TypeNode field_of = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "t":
-                    Seen(ref seen, 1UL);
-                    if (IrMessagePack.ReadString(ref reader) != "mod") throw new FormatException();
-                    break;
-                case "req":
-                    Seen(ref seen, 2UL);
-                    field_req = Read_value103(ref reader);
-                    break;
-                case "m":
-                    Seen(ref seen, 4UL);
-                    field_m = Read_type(ref reader);
-                    break;
-                case "of":
-                    Seen(ref seen, 8UL);
-                    field_of = Read_type(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 15UL) != 15UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.Mod(field_req, field_m, field_of);
-        return value;
-    }
-
-    private static void Write_tMod(ref MessagePackWriter writer, TypeNode.Mod node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(4);
-        writer.Write("t");
-        writer.Write("mod");
-        writer.Write("req");
-        Write_value103(ref writer, node.Req, depth + 1);
-        writer.Write("m");
-        Write_type(ref writer, node.M, depth + 1);
-        writer.Write("of");
-        Write_type(ref writer, node.Of, depth + 1);
-    }
-
     private static ICirStatement Read_cirStatementNode(ref MessagePackReader reader) =>
         Discriminator(reader, "k") switch
         {
@@ -3057,7 +2474,7 @@ public static class CirMessagePack
                     break;
                 case "specialConstraints":
                     Seen(ref seen, 8UL);
-                    field_specialConstraints = OptionalField<string[]>.Of(Read_value126(ref reader));
+                    field_specialConstraints = OptionalField<string[]>.Of(Read_value104(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -3087,31 +2504,31 @@ public static class CirMessagePack
         if (node.SpecialConstraints.IsPresent)
         {
             writer.Write("specialConstraints");
-            Write_value126(ref writer, node.SpecialConstraints.Value, depth + 1);
+            Write_value104(ref writer, node.SpecialConstraints.Value, depth + 1);
         }
     }
 
-    private static bool Read_value60(ref MessagePackReader reader)
+    private static bool Read_value49(ref MessagePackReader reader)
     {
         var value = reader.ReadBoolean();
         if (value != true) throw new FormatException();
         return value;
     }
 
-    private static void Write_value60(ref MessagePackWriter writer, bool node, int depth)
+    private static void Write_value49(ref MessagePackWriter writer, bool node, int depth)
     {
         if (node != true) throw new FormatException();
         writer.Write(node);
     }
 
-    private static bool Read_value61(ref MessagePackReader reader)
+    private static bool Read_value50(ref MessagePackReader reader)
     {
         var value = reader.ReadBoolean();
         if (value != true) throw new FormatException();
         return value;
     }
 
-    private static void Write_value61(ref MessagePackWriter writer, bool node, int depth)
+    private static void Write_value50(ref MessagePackWriter writer, bool node, int depth)
     {
         if (node != true) throw new FormatException();
         writer.Write(node);
@@ -3195,58 +2612,58 @@ public static class CirMessagePack
         }
     }
 
-    private static string Read_value63(ref MessagePackReader reader)
+    private static string Read_value52(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value.Length < 1) throw new FormatException();
         return value;
     }
 
-    private static void Write_value63(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value52(ref MessagePackWriter writer, string node, int depth)
     {
         if (node.Length < 1) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static string Read_value64(ref MessagePackReader reader)
+    private static string Read_value53(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("winapi" or "cdecl" or "stdcall" or "thiscall" or "fastcall")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value64(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value53(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("winapi" or "cdecl" or "stdcall" or "thiscall" or "fastcall")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static string Read_value65(ref MessagePackReader reader)
+    private static string Read_value54(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("none" or "ansi" or "unicode" or "auto")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value65(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value54(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("none" or "ansi" or "unicode" or "auto")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static string[] Read_value66(ref MessagePackReader reader)
+    private static string[] Read_value55(ref MessagePackReader reader)
     {
-        var value = ReadArray<string>(ref reader, Read_value127);
+        var value = ReadArray<string>(ref reader, Read_value105);
         return value;
     }
 
-    private static void Write_value66(ref MessagePackWriter writer, string[] node, int depth)
+    private static void Write_value55(ref MessagePackWriter writer, string[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
         foreach (var child in node)
         {
-            Write_value127(ref writer, child, depth + 1);
+            Write_value105(ref writer, child, depth + 1);
         }
     }
 
@@ -3490,7 +2907,7 @@ public static class CirMessagePack
                     break;
                 case "value":
                     Seen(ref seen, 2UL);
-                    field_value = Read_value199(ref reader);
+                    field_value = Read_value177(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3508,7 +2925,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("char");
         writer.Write("value");
-        Write_value199(ref writer, node.Value, depth + 1);
+        Write_value177(ref writer, node.Value, depth + 1);
     }
 
     private static AttributeArgument.Int8Value Read_attributeInt8(ref MessagePackReader reader)
@@ -3526,7 +2943,7 @@ public static class CirMessagePack
                     break;
                 case "value":
                     Seen(ref seen, 2UL);
-                    field_value = Read_value200(ref reader);
+                    field_value = Read_value178(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3544,7 +2961,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("i8");
         writer.Write("value");
-        Write_value200(ref writer, node.Value, depth + 1);
+        Write_value178(ref writer, node.Value, depth + 1);
     }
 
     private static AttributeArgument.UInt8Value Read_attributeUInt8(ref MessagePackReader reader)
@@ -3562,7 +2979,7 @@ public static class CirMessagePack
                     break;
                 case "value":
                     Seen(ref seen, 2UL);
-                    field_value = Read_value201(ref reader);
+                    field_value = Read_value179(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3580,7 +2997,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("u8");
         writer.Write("value");
-        Write_value201(ref writer, node.Value, depth + 1);
+        Write_value179(ref writer, node.Value, depth + 1);
     }
 
     private static AttributeArgument.Int16Value Read_attributeInt16(ref MessagePackReader reader)
@@ -3598,7 +3015,7 @@ public static class CirMessagePack
                     break;
                 case "value":
                     Seen(ref seen, 2UL);
-                    field_value = Read_value202(ref reader);
+                    field_value = Read_value180(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3616,7 +3033,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("i16");
         writer.Write("value");
-        Write_value202(ref writer, node.Value, depth + 1);
+        Write_value180(ref writer, node.Value, depth + 1);
     }
 
     private static AttributeArgument.UInt16Value Read_attributeUInt16(ref MessagePackReader reader)
@@ -3634,7 +3051,7 @@ public static class CirMessagePack
                     break;
                 case "value":
                     Seen(ref seen, 2UL);
-                    field_value = Read_value199(ref reader);
+                    field_value = Read_value177(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3652,7 +3069,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("u16");
         writer.Write("value");
-        Write_value199(ref writer, node.Value, depth + 1);
+        Write_value177(ref writer, node.Value, depth + 1);
     }
 
     private static AttributeArgument.Int32Value Read_attributeInt32(ref MessagePackReader reader)
@@ -3670,7 +3087,7 @@ public static class CirMessagePack
                     break;
                 case "value":
                     Seen(ref seen, 2UL);
-                    field_value = Read_value203(ref reader);
+                    field_value = Read_value181(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3688,7 +3105,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("i32");
         writer.Write("value");
-        Write_value203(ref writer, node.Value, depth + 1);
+        Write_value181(ref writer, node.Value, depth + 1);
     }
 
     private static AttributeArgument.UInt32Value Read_attributeUInt32(ref MessagePackReader reader)
@@ -3706,7 +3123,7 @@ public static class CirMessagePack
                     break;
                 case "value":
                     Seen(ref seen, 2UL);
-                    field_value = Read_value204(ref reader);
+                    field_value = Read_value182(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3724,7 +3141,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("u32");
         writer.Write("value");
-        Write_value204(ref writer, node.Value, depth + 1);
+        Write_value182(ref writer, node.Value, depth + 1);
     }
 
     private static AttributeArgument.Int64Value Read_attributeInt64(ref MessagePackReader reader)
@@ -3742,7 +3159,7 @@ public static class CirMessagePack
                     break;
                 case "value":
                     Seen(ref seen, 2UL);
-                    field_value = Read_value205(ref reader);
+                    field_value = Read_value183(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3760,7 +3177,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("i64");
         writer.Write("value");
-        Write_value205(ref writer, node.Value, depth + 1);
+        Write_value183(ref writer, node.Value, depth + 1);
     }
 
     private static AttributeArgument.UInt64Value Read_attributeUInt64(ref MessagePackReader reader)
@@ -3778,7 +3195,7 @@ public static class CirMessagePack
                     break;
                 case "value":
                     Seen(ref seen, 2UL);
-                    field_value = Read_value206(ref reader);
+                    field_value = Read_value184(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3796,7 +3213,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("u64");
         writer.Write("value");
-        Write_value206(ref writer, node.Value, depth + 1);
+        Write_value184(ref writer, node.Value, depth + 1);
     }
 
     private static AttributeArgument.Float32Value Read_attributeFloat32(ref MessagePackReader reader)
@@ -3814,7 +3231,7 @@ public static class CirMessagePack
                     break;
                 case "bits":
                     Seen(ref seen, 2UL);
-                    field_bits = Read_value203(ref reader);
+                    field_bits = Read_value181(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3832,7 +3249,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("f32");
         writer.Write("bits");
-        Write_value203(ref writer, node.Bits, depth + 1);
+        Write_value181(ref writer, node.Bits, depth + 1);
     }
 
     private static AttributeArgument.Float64Value Read_attributeFloat64(ref MessagePackReader reader)
@@ -3850,7 +3267,7 @@ public static class CirMessagePack
                     break;
                 case "bits":
                     Seen(ref seen, 2UL);
-                    field_bits = Read_value205(ref reader);
+                    field_bits = Read_value183(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3868,7 +3285,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("f64");
         writer.Write("bits");
-        Write_value205(ref writer, node.Bits, depth + 1);
+        Write_value183(ref writer, node.Bits, depth + 1);
     }
 
     private static AttributeArgument.TextValue Read_attributeText(ref MessagePackReader reader)
@@ -3922,7 +3339,7 @@ public static class CirMessagePack
                     break;
                 case "units":
                     Seen(ref seen, 2UL);
-                    field_units = Read_value207(ref reader);
+                    field_units = Read_value185(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -3940,7 +3357,7 @@ public static class CirMessagePack
         writer.Write("a");
         writer.Write("utf16");
         writer.Write("units");
-        Write_value207(ref writer, node.Units, depth + 1);
+        Write_value185(ref writer, node.Units, depth + 1);
     }
 
     private static AttributeArgument.BytesValue Read_attributeBytes(ref MessagePackReader reader)
@@ -4315,7 +3732,7 @@ public static class CirMessagePack
                     break;
                 case "slots":
                     Seen(ref seen, 4UL);
-                    field_slots = Read_value209(ref reader);
+                    field_slots = Read_value187(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -4335,7 +3752,7 @@ public static class CirMessagePack
         writer.Write("assembly");
         Write_value1(ref writer, node.Assembly, depth + 1);
         writer.Write("slots");
-        Write_value209(ref writer, node.Slots, depth + 1);
+        Write_value187(ref writer, node.Slots, depth + 1);
     }
 
     private static CirEvent Read_cirEvent(ref MessagePackReader reader)
@@ -4351,7 +3768,7 @@ public static class CirMessagePack
             {
                 case "k":
                     Seen(ref seen, 1UL);
-                    field_k = Read_value210(ref reader);
+                    field_k = Read_value188(ref reader);
                     break;
                 case "name":
                     Seen(ref seen, 2UL);
@@ -4375,7 +3792,7 @@ public static class CirMessagePack
         CheckDepth(depth);
         writer.WriteMapHeader(3);
         writer.Write("k");
-        Write_value210(ref writer, node.K, depth + 1);
+        Write_value188(ref writer, node.K, depth + 1);
         writer.Write("name");
         Write_value1(ref writer, node.Name, depth + 1);
         writer.Write("delegateType");
@@ -4466,7 +3883,7 @@ public static class CirMessagePack
             {
                 case "kind":
                     Seen(ref seen, 1UL);
-                    field_kind = Read_value211(ref reader);
+                    field_kind = Read_value189(ref reader);
                     break;
                 case "name":
                     Seen(ref seen, 2UL);
@@ -4494,193 +3911,13 @@ public static class CirMessagePack
         CheckDepth(depth);
         writer.WriteMapHeader(4);
         writer.Write("kind");
-        Write_value211(ref writer, node.Kind, depth + 1);
+        Write_value189(ref writer, node.Kind, depth + 1);
         writer.Write("name");
         Write_value1(ref writer, node.Name, depth + 1);
         writer.Write("type");
         Write_type(ref writer, node.Type, depth + 1);
         writer.Write("value");
         Write_cirAttributeArgument(ref writer, node.Value, depth + 1);
-    }
-
-    private static string Read_value93(ref MessagePackReader reader)
-    {
-        var value = IrMessagePack.ReadString(ref reader);
-        return value;
-    }
-
-    private static void Write_value93(ref MessagePackWriter writer, string node, int depth)
-    {
-        IrMessagePack.WriteString(ref writer, node);
-    }
-
-    private static TypeNode[] Read_value94(ref MessagePackReader reader)
-    {
-        var value = ReadArray<TypeNode>(ref reader, Read_type);
-        return value;
-    }
-
-    private static void Write_value94(ref MessagePackWriter writer, TypeNode[] node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteArrayHeader(node.Length);
-        foreach (var child in node)
-        {
-            Write_type(ref writer, child, depth + 1);
-        }
-    }
-
-    private static TypeNode.SourceClassifier Read_sourceClassifier(ref MessagePackReader reader)
-    {
-        var count = ReadMap(ref reader);
-        ulong seen = 0;
-        string field_packageName = default!;
-        string[] field_ownerPath = default!;
-        string field_name = default!;
-        for (var i = 0; i < count; i++)
-        {
-            switch (IrMessagePack.ReadString(ref reader))
-            {
-                case "packageName":
-                    Seen(ref seen, 1UL);
-                    field_packageName = Read_value1(ref reader);
-                    break;
-                case "ownerPath":
-                    Seen(ref seen, 2UL);
-                    field_ownerPath = Read_value212(ref reader);
-                    break;
-                case "name":
-                    Seen(ref seen, 4UL);
-                    field_name = Read_value63(ref reader);
-                    break;
-                default: throw new FormatException();
-            }
-        }
-        if ((seen & 7UL) != 7UL) throw new FormatException();
-        reader.Depth--;
-        var value = new TypeNode.SourceClassifier(field_packageName, field_ownerPath, field_name);
-        return value;
-    }
-
-    private static void Write_sourceClassifier(ref MessagePackWriter writer, TypeNode.SourceClassifier node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteMapHeader(3);
-        writer.Write("packageName");
-        Write_value1(ref writer, node.PackageName, depth + 1);
-        writer.Write("ownerPath");
-        Write_value212(ref writer, node.OwnerPath, depth + 1);
-        writer.Write("name");
-        Write_value63(ref writer, node.Name, depth + 1);
-    }
-
-    private static string Read_value96(ref MessagePackReader reader)
-    {
-        var value = IrMessagePack.ReadString(ref reader);
-        if (value is not ("type" or "method")) throw new FormatException();
-        return value;
-    }
-
-    private static void Write_value96(ref MessagePackWriter writer, string node, int depth)
-    {
-        if (node is not ("type" or "method")) throw new FormatException();
-        IrMessagePack.WriteString(ref writer, node);
-    }
-
-    private static int Read_value97(ref MessagePackReader reader)
-    {
-        var value = reader.ReadInt32();
-        if (value < 0) throw new FormatException();
-        return value;
-    }
-
-    private static void Write_value97(ref MessagePackWriter writer, int node, int depth)
-    {
-        if (node < 0) throw new FormatException();
-        writer.Write(node);
-    }
-
-    private static string Read_value98(ref MessagePackReader reader)
-    {
-        var value = IrMessagePack.ReadString(ref reader);
-        if (value is not ("in" or "out")) throw new FormatException();
-        return value;
-    }
-
-    private static void Write_value98(ref MessagePackWriter writer, string node, int depth)
-    {
-        if (node is not ("in" or "out")) throw new FormatException();
-        IrMessagePack.WriteString(ref writer, node);
-    }
-
-    private static TypeNode[] Read_value99(ref MessagePackReader reader)
-    {
-        var value = ReadArray<TypeNode>(ref reader, Read_type);
-        return value;
-    }
-
-    private static void Write_value99(ref MessagePackWriter writer, TypeNode[] node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteArrayHeader(node.Length);
-        foreach (var child in node)
-        {
-            Write_type(ref writer, child, depth + 1);
-        }
-    }
-
-    private static string Read_value100(ref MessagePackReader reader)
-    {
-        var value = IrMessagePack.ReadString(ref reader);
-        if (value is not ("System.Func" or "System.Action" or "DotKt.Runtime.CompilerServices.KFunc" or "DotKt.Runtime.CompilerServices.KAction")) throw new FormatException();
-        return value;
-    }
-
-    private static void Write_value100(ref MessagePackWriter writer, string node, int depth)
-    {
-        if (node is not ("System.Func" or "System.Action" or "DotKt.Runtime.CompilerServices.KFunc" or "DotKt.Runtime.CompilerServices.KAction")) throw new FormatException();
-        IrMessagePack.WriteString(ref writer, node);
-    }
-
-    private static int Read_value101(ref MessagePackReader reader)
-    {
-        var value = reader.ReadInt32();
-        if (value < 1) throw new FormatException();
-        if (value > 32) throw new FormatException();
-        return value;
-    }
-
-    private static void Write_value101(ref MessagePackWriter writer, int node, int depth)
-    {
-        if (node < 1) throw new FormatException();
-        if (node > 32) throw new FormatException();
-        writer.Write(node);
-    }
-
-    private static int Read_value102(ref MessagePackReader reader)
-    {
-        var value = reader.ReadInt32();
-        if (value < 0) throw new FormatException();
-        if (value > 255) throw new FormatException();
-        return value;
-    }
-
-    private static void Write_value102(ref MessagePackWriter writer, int node, int depth)
-    {
-        if (node < 0) throw new FormatException();
-        if (node > 255) throw new FormatException();
-        writer.Write(node);
-    }
-
-    private static bool Read_value103(ref MessagePackReader reader)
-    {
-        var value = reader.ReadBoolean();
-        return value;
-    }
-
-    private static void Write_value103(ref MessagePackWriter writer, bool node, int depth)
-    {
-        writer.Write(node);
     }
 
     private static CirSourcePoint Read_cirSourcePoint(ref MessagePackReader reader)
@@ -4915,15 +4152,15 @@ public static class CirMessagePack
                     break;
                 case "body":
                     Seen(ref seen, 2UL);
-                    field_body = Read_value214(ref reader);
+                    field_body = Read_value191(ref reader);
                     break;
                 case "catches":
                     Seen(ref seen, 4UL);
-                    field_catches = Read_value215(ref reader);
+                    field_catches = Read_value192(ref reader);
                     break;
                 case "finally":
                     Seen(ref seen, 8UL);
-                    field_finally = OptionalField<ICirStatement[]>.Of(Read_value214(ref reader));
+                    field_finally = OptionalField<ICirStatement[]>.Of(Read_value191(ref reader));
                     break;
                 case "type":
                     Seen(ref seen, 16UL);
@@ -4945,13 +4182,13 @@ public static class CirMessagePack
         writer.Write("k");
         writer.Write("try");
         writer.Write("body");
-        Write_value214(ref writer, node.Body, depth + 1);
+        Write_value191(ref writer, node.Body, depth + 1);
         writer.Write("catches");
-        Write_value215(ref writer, node.Catches, depth + 1);
+        Write_value192(ref writer, node.Catches, depth + 1);
         if (node.Finally.IsPresent)
         {
             writer.Write("finally");
-            Write_value214(ref writer, node.Finally.Value, depth + 1);
+            Write_value191(ref writer, node.Finally.Value, depth + 1);
         }
         if (node.Type.IsPresent)
         {
@@ -5017,7 +4254,7 @@ public static class CirMessagePack
                     break;
                 case "body":
                     Seen(ref seen, 4UL);
-                    field_body = Read_value214(ref reader);
+                    field_body = Read_value191(ref reader);
                     break;
                 case "loopId":
                     Seen(ref seen, 8UL);
@@ -5041,7 +4278,7 @@ public static class CirMessagePack
         writer.Write("cond");
         Write_cirExpressionNode(ref writer, node.Cond, depth + 1);
         writer.Write("body");
-        Write_value214(ref writer, node.Body, depth + 1);
+        Write_value191(ref writer, node.Body, depth + 1);
         writer.Write("loopId");
         Write_value28(ref writer, node.LoopId, depth + 1);
     }
@@ -5061,7 +4298,7 @@ public static class CirMessagePack
                     break;
                 case "branches":
                     Seen(ref seen, 2UL);
-                    field_branches = Read_value216(ref reader);
+                    field_branches = Read_value193(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -5079,7 +4316,7 @@ public static class CirMessagePack
         writer.Write("k");
         writer.Write("if");
         writer.Write("branches");
-        Write_value216(ref writer, node.Branches, depth + 1);
+        Write_value193(ref writer, node.Branches, depth + 1);
     }
 
     private static CirFor Read_cirFor(ref MessagePackReader reader)
@@ -5115,7 +4352,7 @@ public static class CirMessagePack
                     break;
                 case "cmp":
                     Seen(ref seen, 16UL);
-                    field_cmp = Read_value217(ref reader);
+                    field_cmp = Read_value194(ref reader);
                     break;
                 case "step":
                     Seen(ref seen, 32UL);
@@ -5123,7 +4360,7 @@ public static class CirMessagePack
                     break;
                 case "body":
                     Seen(ref seen, 64UL);
-                    field_body = Read_value214(ref reader);
+                    field_body = Read_value191(ref reader);
                     break;
                 case "loopId":
                     Seen(ref seen, 128UL);
@@ -5151,11 +4388,11 @@ public static class CirMessagePack
         writer.Write("to");
         Write_cirExpressionNode(ref writer, node.To, depth + 1);
         writer.Write("cmp");
-        Write_value217(ref writer, node.Cmp, depth + 1);
+        Write_value194(ref writer, node.Cmp, depth + 1);
         writer.Write("step");
         Write_value28(ref writer, node.Step, depth + 1);
         writer.Write("body");
-        Write_value214(ref writer, node.Body, depth + 1);
+        Write_value191(ref writer, node.Body, depth + 1);
         writer.Write("loopId");
         Write_value28(ref writer, node.LoopId, depth + 1);
     }
@@ -5191,7 +4428,7 @@ public static class CirMessagePack
                     break;
                 case "body":
                     Seen(ref seen, 16UL);
-                    field_body = Read_value214(ref reader);
+                    field_body = Read_value191(ref reader);
                     break;
                 case "loopId":
                     Seen(ref seen, 32UL);
@@ -5219,7 +4456,7 @@ public static class CirMessagePack
         writer.Write("elem");
         Write_type(ref writer, node.Elem, depth + 1);
         writer.Write("body");
-        Write_value214(ref writer, node.Body, depth + 1);
+        Write_value191(ref writer, node.Body, depth + 1);
         writer.Write("loopId");
         Write_value28(ref writer, node.LoopId, depth + 1);
     }
@@ -5270,7 +4507,7 @@ public static class CirMessagePack
                     break;
                 case "body":
                     Seen(ref seen, 128UL);
-                    field_body = Read_value214(ref reader);
+                    field_body = Read_value191(ref reader);
                     break;
                 case "loopId":
                     Seen(ref seen, 256UL);
@@ -5304,7 +4541,7 @@ public static class CirMessagePack
         writer.Write("stepM");
         Write_value1(ref writer, node.StepM, depth + 1);
         writer.Write("body");
-        Write_value214(ref writer, node.Body, depth + 1);
+        Write_value191(ref writer, node.Body, depth + 1);
         writer.Write("loopId");
         Write_value28(ref writer, node.LoopId, depth + 1);
     }
@@ -5324,7 +4561,7 @@ public static class CirMessagePack
                     break;
                 case "body":
                     Seen(ref seen, 2UL);
-                    field_body = Read_value214(ref reader);
+                    field_body = Read_value191(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -5342,7 +4579,7 @@ public static class CirMessagePack
         writer.Write("k");
         writer.Write("block");
         writer.Write("body");
-        Write_value214(ref writer, node.Body, depth + 1);
+        Write_value191(ref writer, node.Body, depth + 1);
     }
 
     private static CirBreak Read_cirBreak(ref MessagePackReader reader)
@@ -5619,7 +4856,7 @@ public static class CirMessagePack
                     break;
                 case "member":
                     Seen(ref seen, 128UL);
-                    field_member = OptionalField<string>.Of(Read_value218(ref reader));
+                    field_member = OptionalField<string>.Of(Read_value195(ref reader));
                     break;
                 case "accessor":
                     Seen(ref seen, 256UL);
@@ -5627,7 +4864,7 @@ public static class CirMessagePack
                     break;
                 case "dispatch":
                     Seen(ref seen, 512UL);
-                    field_dispatch = OptionalField<string>.Of(Read_value219(ref reader));
+                    field_dispatch = OptionalField<string>.Of(Read_value196(ref reader));
                     break;
                 case "localAccessor":
                     Seen(ref seen, 1024UL);
@@ -5685,7 +4922,7 @@ public static class CirMessagePack
         if (node.Member.IsPresent)
         {
             writer.Write("member");
-            Write_value218(ref writer, node.Member.Value, depth + 1);
+            Write_value195(ref writer, node.Member.Value, depth + 1);
         }
         if (node.Accessor.IsPresent)
         {
@@ -5695,7 +4932,7 @@ public static class CirMessagePack
         if (node.Dispatch.IsPresent)
         {
             writer.Write("dispatch");
-            Write_value219(ref writer, node.Dispatch.Value, depth + 1);
+            Write_value196(ref writer, node.Dispatch.Value, depth + 1);
         }
         if (node.LocalAccessor.IsPresent)
         {
@@ -5746,7 +4983,7 @@ public static class CirMessagePack
                     break;
                 case "kind":
                     Seen(ref seen, 2UL);
-                    field_kind = Read_value220(ref reader);
+                    field_kind = Read_value197(ref reader);
                     break;
                 case "name":
                     Seen(ref seen, 4UL);
@@ -5792,7 +5029,7 @@ public static class CirMessagePack
         writer.Write("k");
         writer.Write("clrEventAccessorImpl");
         writer.Write("kind");
-        Write_value220(ref writer, node.Kind, depth + 1);
+        Write_value197(ref writer, node.Kind, depth + 1);
         writer.Write("name");
         Write_value1(ref writer, node.Name, depth + 1);
         writer.Write("delegateType");
@@ -5857,7 +5094,7 @@ public static class CirMessagePack
                     break;
                 case "body":
                     Seen(ref seen, 16UL);
-                    field_body = Read_value214(ref reader);
+                    field_body = Read_value191(ref reader);
                     break;
                 case "loopId":
                     Seen(ref seen, 32UL);
@@ -5905,7 +5142,7 @@ public static class CirMessagePack
         writer.Write("var");
         Write_value1(ref writer, node.Var, depth + 1);
         writer.Write("body");
-        Write_value214(ref writer, node.Body, depth + 1);
+        Write_value191(ref writer, node.Body, depth + 1);
         writer.Write("loopId");
         Write_value28(ref writer, node.LoopId, depth + 1);
         writer.Write("enumerableGetRef");
@@ -5946,7 +5183,7 @@ public static class CirMessagePack
                     break;
                 case "body":
                     Seen(ref seen, 8UL);
-                    field_body = Read_value214(ref reader);
+                    field_body = Read_value191(ref reader);
                     break;
                 case "loopId":
                     Seen(ref seen, 16UL);
@@ -5972,18 +5209,18 @@ public static class CirMessagePack
         writer.Write("count");
         Write_cirExpressionNode(ref writer, node.Count, depth + 1);
         writer.Write("body");
-        Write_value214(ref writer, node.Body, depth + 1);
+        Write_value191(ref writer, node.Body, depth + 1);
         writer.Write("loopId");
         Write_value28(ref writer, node.LoopId, depth + 1);
     }
 
-    private static string[] Read_value126(ref MessagePackReader reader)
+    private static string[] Read_value104(ref MessagePackReader reader)
     {
         var value = ReadArray<string>(ref reader, Read_value1);
         return value;
     }
 
-    private static void Write_value126(ref MessagePackWriter writer, string[] node, int depth)
+    private static void Write_value104(ref MessagePackWriter writer, string[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
@@ -5993,14 +5230,14 @@ public static class CirMessagePack
         }
     }
 
-    private static string Read_value127(ref MessagePackReader reader)
+    private static string Read_value105(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("EntryPoint" or "CallingConvention" or "CharSet" or "ExactSpelling" or "SetLastError" or "PreserveSig" or "BestFitMapping" or "ThrowOnUnmappableChar")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value127(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value105(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("EntryPoint" or "CallingConvention" or "CharSet" or "ExactSpelling" or "SetLastError" or "PreserveSig" or "BestFitMapping" or "ThrowOnUnmappableChar")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
@@ -6303,7 +5540,7 @@ public static class CirMessagePack
                     break;
                 case "stmts":
                     Seen(ref seen, 2UL);
-                    field_stmts = Read_value214(ref reader);
+                    field_stmts = Read_value191(ref reader);
                     break;
                 case "result":
                     Seen(ref seen, 4UL);
@@ -6329,7 +5566,7 @@ public static class CirMessagePack
         writer.Write("k");
         writer.Write("valueBlock");
         writer.Write("stmts");
-        Write_value214(ref writer, node.Stmts, depth + 1);
+        Write_value191(ref writer, node.Stmts, depth + 1);
         writer.Write("result");
         Write_cirExpressionNode(ref writer, node.Result, depth + 1);
         if (node.Type.IsPresent)
@@ -6477,7 +5714,7 @@ public static class CirMessagePack
                     break;
                 case "elems":
                     Seen(ref seen, 4UL);
-                    field_elems = Read_value222(ref reader);
+                    field_elems = Read_value199(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -6497,7 +5734,7 @@ public static class CirMessagePack
         writer.Write("elem");
         Write_type(ref writer, node.Elem, depth + 1);
         writer.Write("elems");
-        Write_value222(ref writer, node.Elems, depth + 1);
+        Write_value199(ref writer, node.Elems, depth + 1);
     }
 
     private static CirNewArraySized Read_cirNewArraySizedNode(ref MessagePackReader reader)
@@ -6739,7 +5976,7 @@ public static class CirMessagePack
                     break;
                 case "elems":
                     Seen(ref seen, 4UL);
-                    field_elems = Read_value222(ref reader);
+                    field_elems = Read_value199(ref reader);
                     break;
                 case "ctorRef":
                     Seen(ref seen, 8UL);
@@ -6767,7 +6004,7 @@ public static class CirMessagePack
         writer.Write("elem");
         Write_type(ref writer, node.Elem, depth + 1);
         writer.Write("elems");
-        Write_value222(ref writer, node.Elems, depth + 1);
+        Write_value199(ref writer, node.Elems, depth + 1);
         writer.Write("ctorRef");
         Write_memberRef(ref writer, node.CtorRef, depth + 1);
         writer.Write("addRef");
@@ -6798,7 +6035,7 @@ public static class CirMessagePack
                     break;
                 case "parts":
                     Seen(ref seen, 4UL);
-                    field_parts = Read_value223(ref reader);
+                    field_parts = Read_value200(ref reader);
                     break;
                 case "ctorRef":
                     Seen(ref seen, 8UL);
@@ -6834,7 +6071,7 @@ public static class CirMessagePack
         writer.Write("elem");
         Write_type(ref writer, node.Elem, depth + 1);
         writer.Write("parts");
-        Write_value223(ref writer, node.Parts, depth + 1);
+        Write_value200(ref writer, node.Parts, depth + 1);
         writer.Write("ctorRef");
         Write_memberRef(ref writer, node.CtorRef, depth + 1);
         writer.Write("addRef");
@@ -7421,7 +6658,7 @@ public static class CirMessagePack
                     break;
                 case "args":
                     Seen(ref seen, 4UL);
-                    field_args = Read_value222(ref reader);
+                    field_args = Read_value199(ref reader);
                     break;
                 case "argTypes":
                     Seen(ref seen, 8UL);
@@ -7453,7 +6690,7 @@ public static class CirMessagePack
         writer.Write("type");
         Write_type(ref writer, node.Type, depth + 1);
         writer.Write("args");
-        Write_value222(ref writer, node.Args, depth + 1);
+        Write_value199(ref writer, node.Args, depth + 1);
         if (node.ArgTypes.IsPresent)
         {
             writer.Write("argTypes");
@@ -7492,7 +6729,7 @@ public static class CirMessagePack
                     break;
                 case "args":
                     Seen(ref seen, 4UL);
-                    field_args = Read_value222(ref reader);
+                    field_args = Read_value199(ref reader);
                     break;
                 case "memberRef":
                     Seen(ref seen, 8UL);
@@ -7516,7 +6753,7 @@ public static class CirMessagePack
         writer.Write("type");
         Write_type(ref writer, node.Type, depth + 1);
         writer.Write("args");
-        Write_value222(ref writer, node.Args, depth + 1);
+        Write_value199(ref writer, node.Args, depth + 1);
         writer.Write("memberRef");
         Write_memberRef(ref writer, node.MemberRef, depth + 1);
     }
@@ -7581,7 +6818,7 @@ public static class CirMessagePack
                     break;
                 case "args":
                     Seen(ref seen, 1024UL);
-                    field_args = Read_value222(ref reader);
+                    field_args = Read_value199(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -7645,7 +6882,7 @@ public static class CirMessagePack
             Write_type(ref writer, node.Ret.Value, depth + 1);
         }
         writer.Write("args");
-        Write_value222(ref writer, node.Args, depth + 1);
+        Write_value199(ref writer, node.Args, depth + 1);
     }
 
     private static CirCallInstance Read_cirCallInstanceNode(ref MessagePackReader reader)
@@ -7718,7 +6955,7 @@ public static class CirMessagePack
                     break;
                 case "args":
                     Seen(ref seen, 4096UL);
-                    field_args = Read_value222(ref reader);
+                    field_args = Read_value199(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -7782,7 +7019,7 @@ public static class CirMessagePack
         writer.Write("recv");
         Write_cirExpressionNode(ref writer, node.Recv, depth + 1);
         writer.Write("args");
-        Write_value222(ref writer, node.Args, depth + 1);
+        Write_value199(ref writer, node.Args, depth + 1);
     }
 
     private static CirConstrainedCall Read_cirConstrainedCallNode(ref MessagePackReader reader)
@@ -7850,7 +7087,7 @@ public static class CirMessagePack
                     break;
                 case "args":
                     Seen(ref seen, 2048UL);
-                    field_args = Read_value222(ref reader);
+                    field_args = Read_value199(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -7906,7 +7143,7 @@ public static class CirMessagePack
         writer.Write("recv");
         Write_cirExpressionNode(ref writer, node.Recv, depth + 1);
         writer.Write("args");
-        Write_value222(ref writer, node.Args, depth + 1);
+        Write_value199(ref writer, node.Args, depth + 1);
     }
 
     private static CirGenericStatic Read_cirGenericStaticNode(ref MessagePackReader reader)
@@ -7940,7 +7177,7 @@ public static class CirMessagePack
                     break;
                 case "args":
                     Seen(ref seen, 16UL);
-                    field_args = Read_value222(ref reader);
+                    field_args = Read_value199(ref reader);
                     break;
                 case "memberRef":
                     Seen(ref seen, 32UL);
@@ -7968,7 +7205,7 @@ public static class CirMessagePack
         writer.Write("typeArgs");
         Write_value32(ref writer, node.TypeArgs, depth + 1);
         writer.Write("args");
-        Write_value222(ref writer, node.Args, depth + 1);
+        Write_value199(ref writer, node.Args, depth + 1);
         writer.Write("memberRef");
         Write_memberRef(ref writer, node.MemberRef, depth + 1);
     }
@@ -8011,7 +7248,7 @@ public static class CirMessagePack
                     break;
                 case "args":
                     Seen(ref seen, 32UL);
-                    field_args = Read_value222(ref reader);
+                    field_args = Read_value199(ref reader);
                     break;
                 case "memberRef":
                     Seen(ref seen, 64UL);
@@ -8019,11 +7256,11 @@ public static class CirMessagePack
                     break;
                 case "receiverMode":
                     Seen(ref seen, 128UL);
-                    field_receiverMode = Read_value224(ref reader);
+                    field_receiverMode = Read_value201(ref reader);
                     break;
                 case "dispatch":
                     Seen(ref seen, 256UL);
-                    field_dispatch = Read_value219(ref reader);
+                    field_dispatch = Read_value196(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -8049,13 +7286,13 @@ public static class CirMessagePack
         writer.Write("recv");
         Write_cirExpressionNode(ref writer, node.Recv, depth + 1);
         writer.Write("args");
-        Write_value222(ref writer, node.Args, depth + 1);
+        Write_value199(ref writer, node.Args, depth + 1);
         writer.Write("memberRef");
         Write_memberRef(ref writer, node.MemberRef, depth + 1);
         writer.Write("receiverMode");
-        Write_value224(ref writer, node.ReceiverMode, depth + 1);
+        Write_value201(ref writer, node.ReceiverMode, depth + 1);
         writer.Write("dispatch");
-        Write_value219(ref writer, node.Dispatch, depth + 1);
+        Write_value196(ref writer, node.Dispatch, depth + 1);
     }
 
     private static CirStaticField Read_cirStaticFieldNode(ref MessagePackReader reader)
@@ -8279,7 +7516,7 @@ public static class CirMessagePack
                     break;
                 case "member":
                     Seen(ref seen, 128UL);
-                    field_member = OptionalField<string>.Of(Read_value218(ref reader));
+                    field_member = OptionalField<string>.Of(Read_value195(ref reader));
                     break;
                 case "accessor":
                     Seen(ref seen, 256UL);
@@ -8287,7 +7524,7 @@ public static class CirMessagePack
                     break;
                 case "dispatch":
                     Seen(ref seen, 512UL);
-                    field_dispatch = OptionalField<string>.Of(Read_value219(ref reader));
+                    field_dispatch = OptionalField<string>.Of(Read_value196(ref reader));
                     break;
                 case "localAccessor":
                     Seen(ref seen, 1024UL);
@@ -8348,7 +7585,7 @@ public static class CirMessagePack
         if (node.Member.IsPresent)
         {
             writer.Write("member");
-            Write_value218(ref writer, node.Member.Value, depth + 1);
+            Write_value195(ref writer, node.Member.Value, depth + 1);
         }
         if (node.Accessor.IsPresent)
         {
@@ -8358,7 +7595,7 @@ public static class CirMessagePack
         if (node.Dispatch.IsPresent)
         {
             writer.Write("dispatch");
-            Write_value219(ref writer, node.Dispatch.Value, depth + 1);
+            Write_value196(ref writer, node.Dispatch.Value, depth + 1);
         }
         if (node.LocalAccessor.IsPresent)
         {
@@ -8439,7 +7676,7 @@ public static class CirMessagePack
                     break;
                 case "member":
                     Seen(ref seen, 128UL);
-                    field_member = OptionalField<string>.Of(Read_value218(ref reader));
+                    field_member = OptionalField<string>.Of(Read_value195(ref reader));
                     break;
                 case "accessor":
                     Seen(ref seen, 256UL);
@@ -8447,7 +7684,7 @@ public static class CirMessagePack
                     break;
                 case "dispatch":
                     Seen(ref seen, 512UL);
-                    field_dispatch = OptionalField<string>.Of(Read_value219(ref reader));
+                    field_dispatch = OptionalField<string>.Of(Read_value196(ref reader));
                     break;
                 case "localAccessor":
                     Seen(ref seen, 1024UL);
@@ -8505,7 +7742,7 @@ public static class CirMessagePack
         if (node.Member.IsPresent)
         {
             writer.Write("member");
-            Write_value218(ref writer, node.Member.Value, depth + 1);
+            Write_value195(ref writer, node.Member.Value, depth + 1);
         }
         if (node.Accessor.IsPresent)
         {
@@ -8515,7 +7752,7 @@ public static class CirMessagePack
         if (node.Dispatch.IsPresent)
         {
             writer.Write("dispatch");
-            Write_value219(ref writer, node.Dispatch.Value, depth + 1);
+            Write_value196(ref writer, node.Dispatch.Value, depth + 1);
         }
         if (node.LocalAccessor.IsPresent)
         {
@@ -8863,7 +8100,7 @@ public static class CirMessagePack
                     break;
                 case "dispatch":
                     Seen(ref seen, 16UL);
-                    field_dispatch = OptionalField<string>.Of(Read_value219(ref reader));
+                    field_dispatch = OptionalField<string>.Of(Read_value196(ref reader));
                     break;
                 case "recv":
                     Seen(ref seen, 32UL);
@@ -8875,7 +8112,7 @@ public static class CirMessagePack
                     break;
                 case "handlerExact":
                     Seen(ref seen, 128UL);
-                    field_handlerExact = Read_value225(ref reader);
+                    field_handlerExact = Read_value202(ref reader);
                     break;
                 case "memberRef":
                     Seen(ref seen, 256UL);
@@ -8921,7 +8158,7 @@ public static class CirMessagePack
         if (node.Dispatch.IsPresent)
         {
             writer.Write("dispatch");
-            Write_value219(ref writer, node.Dispatch.Value, depth + 1);
+            Write_value196(ref writer, node.Dispatch.Value, depth + 1);
         }
         if (node.Recv.IsPresent)
         {
@@ -8931,7 +8168,7 @@ public static class CirMessagePack
         writer.Write("handler");
         Write_cirExpressionNode(ref writer, node.Handler, depth + 1);
         writer.Write("handlerExact");
-        Write_value225(ref writer, node.HandlerExact, depth + 1);
+        Write_value202(ref writer, node.HandlerExact, depth + 1);
         if (node.MemberRef.IsPresent)
         {
             writer.Write("memberRef");
@@ -8997,7 +8234,7 @@ public static class CirMessagePack
                     break;
                 case "dispatch":
                     Seen(ref seen, 16UL);
-                    field_dispatch = OptionalField<string>.Of(Read_value219(ref reader));
+                    field_dispatch = OptionalField<string>.Of(Read_value196(ref reader));
                     break;
                 case "recv":
                     Seen(ref seen, 32UL);
@@ -9009,7 +8246,7 @@ public static class CirMessagePack
                     break;
                 case "handlerExact":
                     Seen(ref seen, 128UL);
-                    field_handlerExact = Read_value225(ref reader);
+                    field_handlerExact = Read_value202(ref reader);
                     break;
                 case "memberRef":
                     Seen(ref seen, 256UL);
@@ -9055,7 +8292,7 @@ public static class CirMessagePack
         if (node.Dispatch.IsPresent)
         {
             writer.Write("dispatch");
-            Write_value219(ref writer, node.Dispatch.Value, depth + 1);
+            Write_value196(ref writer, node.Dispatch.Value, depth + 1);
         }
         if (node.Recv.IsPresent)
         {
@@ -9065,7 +8302,7 @@ public static class CirMessagePack
         writer.Write("handler");
         Write_cirExpressionNode(ref writer, node.Handler, depth + 1);
         writer.Write("handlerExact");
-        Write_value225(ref writer, node.HandlerExact, depth + 1);
+        Write_value202(ref writer, node.HandlerExact, depth + 1);
         if (node.MemberRef.IsPresent)
         {
             writer.Write("memberRef");
@@ -9131,11 +8368,11 @@ public static class CirMessagePack
                     break;
                 case "args":
                     Seen(ref seen, 16UL);
-                    field_args = Read_value222(ref reader);
+                    field_args = Read_value199(ref reader);
                     break;
                 case "dispatch":
                     Seen(ref seen, 32UL);
-                    field_dispatch = Read_value219(ref reader);
+                    field_dispatch = Read_value196(ref reader);
                     break;
                 case "memberRef":
                     Seen(ref seen, 64UL);
@@ -9187,9 +8424,9 @@ public static class CirMessagePack
         writer.Write("recv");
         Write_cirExpressionNode(ref writer, node.Recv, depth + 1);
         writer.Write("args");
-        Write_value222(ref writer, node.Args, depth + 1);
+        Write_value199(ref writer, node.Args, depth + 1);
         writer.Write("dispatch");
-        Write_value219(ref writer, node.Dispatch, depth + 1);
+        Write_value196(ref writer, node.Dispatch, depth + 1);
         if (node.MemberRef.IsPresent)
         {
             writer.Write("memberRef");
@@ -9259,7 +8496,7 @@ public static class CirMessagePack
                     break;
                 case "args":
                     Seen(ref seen, 8UL);
-                    field_args = Read_value222(ref reader);
+                    field_args = Read_value199(ref reader);
                     break;
                 case "memberRef":
                     Seen(ref seen, 16UL);
@@ -9309,7 +8546,7 @@ public static class CirMessagePack
         writer.Write("method");
         Write_value1(ref writer, node.Method, depth + 1);
         writer.Write("args");
-        Write_value222(ref writer, node.Args, depth + 1);
+        Write_value199(ref writer, node.Args, depth + 1);
         if (node.MemberRef.IsPresent)
         {
             writer.Write("memberRef");
@@ -9381,7 +8618,7 @@ public static class CirMessagePack
                     break;
                 case "member":
                     Seen(ref seen, 8UL);
-                    field_member = Read_value218(ref reader);
+                    field_member = Read_value195(ref reader);
                     break;
                 case "accessor":
                     Seen(ref seen, 16UL);
@@ -9389,7 +8626,7 @@ public static class CirMessagePack
                     break;
                 case "dispatch":
                     Seen(ref seen, 32UL);
-                    field_dispatch = OptionalField<string>.Of(Read_value219(ref reader));
+                    field_dispatch = OptionalField<string>.Of(Read_value196(ref reader));
                     break;
                 case "recv":
                     Seen(ref seen, 64UL);
@@ -9439,7 +8676,7 @@ public static class CirMessagePack
         writer.Write("static");
         Write_value2(ref writer, node.Static, depth + 1);
         writer.Write("member");
-        Write_value218(ref writer, node.Member, depth + 1);
+        Write_value195(ref writer, node.Member, depth + 1);
         if (node.Accessor.IsPresent)
         {
             writer.Write("accessor");
@@ -9448,7 +8685,7 @@ public static class CirMessagePack
         if (node.Dispatch.IsPresent)
         {
             writer.Write("dispatch");
-            Write_value219(ref writer, node.Dispatch.Value, depth + 1);
+            Write_value196(ref writer, node.Dispatch.Value, depth + 1);
         }
         if (node.Recv.IsPresent)
         {
@@ -9522,7 +8759,7 @@ public static class CirMessagePack
                     break;
                 case "member":
                     Seen(ref seen, 8UL);
-                    field_member = Read_value218(ref reader);
+                    field_member = Read_value195(ref reader);
                     break;
                 case "accessor":
                     Seen(ref seen, 16UL);
@@ -9530,7 +8767,7 @@ public static class CirMessagePack
                     break;
                 case "dispatch":
                     Seen(ref seen, 32UL);
-                    field_dispatch = OptionalField<string>.Of(Read_value219(ref reader));
+                    field_dispatch = OptionalField<string>.Of(Read_value196(ref reader));
                     break;
                 case "recv":
                     Seen(ref seen, 64UL);
@@ -9584,7 +8821,7 @@ public static class CirMessagePack
         writer.Write("static");
         Write_value2(ref writer, node.Static, depth + 1);
         writer.Write("member");
-        Write_value218(ref writer, node.Member, depth + 1);
+        Write_value195(ref writer, node.Member, depth + 1);
         if (node.Accessor.IsPresent)
         {
             writer.Write("accessor");
@@ -9593,7 +8830,7 @@ public static class CirMessagePack
         if (node.Dispatch.IsPresent)
         {
             writer.Write("dispatch");
-            Write_value219(ref writer, node.Dispatch.Value, depth + 1);
+            Write_value196(ref writer, node.Dispatch.Value, depth + 1);
         }
         if (node.Recv.IsPresent)
         {
@@ -9649,7 +8886,7 @@ public static class CirMessagePack
                     break;
                 case "parts":
                     Seen(ref seen, 2UL);
-                    field_parts = Read_value222(ref reader);
+                    field_parts = Read_value199(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -9667,7 +8904,7 @@ public static class CirMessagePack
         writer.Write("k");
         writer.Write("concat");
         writer.Write("parts");
-        Write_value222(ref writer, node.Parts, depth + 1);
+        Write_value199(ref writer, node.Parts, depth + 1);
     }
 
     private static CirDelegateInvoke Read_cirDelegateInvokeNode(ref MessagePackReader reader)
@@ -9696,7 +8933,7 @@ public static class CirMessagePack
                     break;
                 case "args":
                     Seen(ref seen, 8UL);
-                    field_args = Read_value222(ref reader);
+                    field_args = Read_value199(ref reader);
                     break;
                 case "invokeRef":
                     Seen(ref seen, 16UL);
@@ -9722,7 +8959,7 @@ public static class CirMessagePack
         writer.Write("recv");
         Write_cirExpressionNode(ref writer, node.Recv, depth + 1);
         writer.Write("args");
-        Write_value222(ref writer, node.Args, depth + 1);
+        Write_value199(ref writer, node.Args, depth + 1);
         writer.Write("invokeRef");
         Write_memberRef(ref writer, node.InvokeRef, depth + 1);
     }
@@ -9802,7 +9039,7 @@ public static class CirMessagePack
                     break;
                 case "values":
                     Seen(ref seen, 8UL);
-                    field_values = OptionalField<CirPhysicalEnumValue[]>.Of(Read_value226(ref reader));
+                    field_values = OptionalField<CirPhysicalEnumValue[]>.Of(Read_value203(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -9829,7 +9066,7 @@ public static class CirMessagePack
         if (node.Values.IsPresent)
         {
             writer.Write("values");
-            Write_value226(ref writer, node.Values.Value, depth + 1);
+            Write_value203(ref writer, node.Values.Value, depth + 1);
         }
     }
 
@@ -9962,7 +9199,7 @@ public static class CirMessagePack
                     break;
                 case "values":
                     Seen(ref seen, 4UL);
-                    field_values = OptionalField<CirPhysicalEnumValue[]>.Of(Read_value226(ref reader));
+                    field_values = OptionalField<CirPhysicalEnumValue[]>.Of(Read_value203(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -9984,7 +9221,7 @@ public static class CirMessagePack
         if (node.Values.IsPresent)
         {
             writer.Write("values");
-            Write_value226(ref writer, node.Values.Value, depth + 1);
+            Write_value203(ref writer, node.Values.Value, depth + 1);
         }
     }
 
@@ -10299,7 +9536,7 @@ public static class CirMessagePack
                     break;
                 case "captures":
                     Seen(ref seen, 32UL);
-                    field_captures = Read_value222(ref reader);
+                    field_captures = Read_value199(ref reader);
                     break;
                 case "delegateCtorRef":
                     Seen(ref seen, 64UL);
@@ -10332,7 +9569,7 @@ public static class CirMessagePack
             Write_value32(ref writer, node.TypeArgs.Value, depth + 1);
         }
         writer.Write("captures");
-        Write_value222(ref writer, node.Captures, depth + 1);
+        Write_value199(ref writer, node.Captures, depth + 1);
         writer.Write("delegateCtorRef");
         Write_memberRef(ref writer, node.DelegateCtorRef, depth + 1);
     }
@@ -10596,7 +9833,7 @@ public static class CirMessagePack
                     break;
                 case "captures":
                     Seen(ref seen, 8UL);
-                    field_captures = Read_value222(ref reader);
+                    field_captures = Read_value199(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -10621,7 +9858,7 @@ public static class CirMessagePack
             Write_value32(ref writer, node.TypeArgs.Value, depth + 1);
         }
         writer.Write("captures");
-        Write_value222(ref writer, node.Captures, depth + 1);
+        Write_value199(ref writer, node.Captures, depth + 1);
     }
 
     private static CirObjectMethod Read_cirObjectMethodNode(ref MessagePackReader reader)
@@ -10641,7 +9878,7 @@ public static class CirMessagePack
                     break;
                 case "method":
                     Seen(ref seen, 2UL);
-                    field_method = Read_value227(ref reader);
+                    field_method = Read_value204(ref reader);
                     break;
                 case "recv":
                     Seen(ref seen, 4UL);
@@ -10667,7 +9904,7 @@ public static class CirMessagePack
         writer.Write("k");
         writer.Write("objMethod");
         writer.Write("method");
-        Write_value227(ref writer, node.Method, depth + 1);
+        Write_value204(ref writer, node.Method, depth + 1);
         writer.Write("recv");
         Write_cirExpressionNode(ref writer, node.Recv, depth + 1);
         if (node.Arg.IsPresent)
@@ -10927,7 +10164,7 @@ public static class CirMessagePack
         Write_value1(ref writer, node.Of, depth + 1);
     }
 
-    private static ushort Read_value199(ref MessagePackReader reader)
+    private static ushort Read_value177(ref MessagePackReader reader)
     {
         var value = reader.ReadUInt16();
         if (value < 0) throw new FormatException();
@@ -10935,14 +10172,14 @@ public static class CirMessagePack
         return value;
     }
 
-    private static void Write_value199(ref MessagePackWriter writer, ushort node, int depth)
+    private static void Write_value177(ref MessagePackWriter writer, ushort node, int depth)
     {
         if (node < 0) throw new FormatException();
         if (node > 65535) throw new FormatException();
         writer.Write(node);
     }
 
-    private static sbyte Read_value200(ref MessagePackReader reader)
+    private static sbyte Read_value178(ref MessagePackReader reader)
     {
         var value = reader.ReadSByte();
         if (value < -128) throw new FormatException();
@@ -10950,14 +10187,14 @@ public static class CirMessagePack
         return value;
     }
 
-    private static void Write_value200(ref MessagePackWriter writer, sbyte node, int depth)
+    private static void Write_value178(ref MessagePackWriter writer, sbyte node, int depth)
     {
         if (node < -128) throw new FormatException();
         if (node > 127) throw new FormatException();
         writer.Write(node);
     }
 
-    private static byte Read_value201(ref MessagePackReader reader)
+    private static byte Read_value179(ref MessagePackReader reader)
     {
         var value = reader.ReadByte();
         if (value < 0) throw new FormatException();
@@ -10965,14 +10202,14 @@ public static class CirMessagePack
         return value;
     }
 
-    private static void Write_value201(ref MessagePackWriter writer, byte node, int depth)
+    private static void Write_value179(ref MessagePackWriter writer, byte node, int depth)
     {
         if (node < 0) throw new FormatException();
         if (node > 255) throw new FormatException();
         writer.Write(node);
     }
 
-    private static short Read_value202(ref MessagePackReader reader)
+    private static short Read_value180(ref MessagePackReader reader)
     {
         var value = reader.ReadInt16();
         if (value < -32768) throw new FormatException();
@@ -10980,14 +10217,14 @@ public static class CirMessagePack
         return value;
     }
 
-    private static void Write_value202(ref MessagePackWriter writer, short node, int depth)
+    private static void Write_value180(ref MessagePackWriter writer, short node, int depth)
     {
         if (node < -32768) throw new FormatException();
         if (node > 32767) throw new FormatException();
         writer.Write(node);
     }
 
-    private static int Read_value203(ref MessagePackReader reader)
+    private static int Read_value181(ref MessagePackReader reader)
     {
         var value = reader.ReadInt32();
         if (value < -2147483648) throw new FormatException();
@@ -10995,14 +10232,14 @@ public static class CirMessagePack
         return value;
     }
 
-    private static void Write_value203(ref MessagePackWriter writer, int node, int depth)
+    private static void Write_value181(ref MessagePackWriter writer, int node, int depth)
     {
         if (node < -2147483648) throw new FormatException();
         if (node > 2147483647) throw new FormatException();
         writer.Write(node);
     }
 
-    private static uint Read_value204(ref MessagePackReader reader)
+    private static uint Read_value182(ref MessagePackReader reader)
     {
         var value = reader.ReadUInt32();
         if (value < 0) throw new FormatException();
@@ -11010,14 +10247,14 @@ public static class CirMessagePack
         return value;
     }
 
-    private static void Write_value204(ref MessagePackWriter writer, uint node, int depth)
+    private static void Write_value182(ref MessagePackWriter writer, uint node, int depth)
     {
         if (node < 0) throw new FormatException();
         if (node > 4294967295) throw new FormatException();
         writer.Write(node);
     }
 
-    private static long Read_value205(ref MessagePackReader reader)
+    private static long Read_value183(ref MessagePackReader reader)
     {
         var value = reader.ReadInt64();
         if (value < -9223372036854775808) throw new FormatException();
@@ -11025,14 +10262,14 @@ public static class CirMessagePack
         return value;
     }
 
-    private static void Write_value205(ref MessagePackWriter writer, long node, int depth)
+    private static void Write_value183(ref MessagePackWriter writer, long node, int depth)
     {
         if (node < -9223372036854775808) throw new FormatException();
         if (node > 9223372036854775807) throw new FormatException();
         writer.Write(node);
     }
 
-    private static ulong Read_value206(ref MessagePackReader reader)
+    private static ulong Read_value184(ref MessagePackReader reader)
     {
         var value = reader.ReadUInt64();
         if (value < 0) throw new FormatException();
@@ -11040,26 +10277,26 @@ public static class CirMessagePack
         return value;
     }
 
-    private static void Write_value206(ref MessagePackWriter writer, ulong node, int depth)
+    private static void Write_value184(ref MessagePackWriter writer, ulong node, int depth)
     {
         if (node < 0) throw new FormatException();
         if (node > 18446744073709551615) throw new FormatException();
         writer.Write(node);
     }
 
-    private static ushort[] Read_value207(ref MessagePackReader reader)
+    private static ushort[] Read_value185(ref MessagePackReader reader)
     {
-        var value = ReadArray<ushort>(ref reader, Read_value199);
+        var value = ReadArray<ushort>(ref reader, Read_value177);
         return value;
     }
 
-    private static void Write_value207(ref MessagePackWriter writer, ushort[] node, int depth)
+    private static void Write_value185(ref MessagePackWriter writer, ushort[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
         foreach (var child in node)
         {
-            Write_value199(ref writer, child, depth + 1);
+            Write_value177(ref writer, child, depth + 1);
         }
     }
 
@@ -11079,13 +10316,13 @@ public static class CirMessagePack
         }
     }
 
-    private static MemberRefNode[] Read_value209(ref MessagePackReader reader)
+    private static MemberRefNode[] Read_value187(ref MessagePackReader reader)
     {
         var value = ReadArray<MemberRefNode>(ref reader, Read_memberRef);
         return value;
     }
 
-    private static void Write_value209(ref MessagePackWriter writer, MemberRefNode[] node, int depth)
+    private static void Write_value187(ref MessagePackWriter writer, MemberRefNode[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
@@ -11095,46 +10332,30 @@ public static class CirMessagePack
         }
     }
 
-    private static string Read_value210(ref MessagePackReader reader)
+    private static string Read_value188(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value != "clrEventDecl") throw new FormatException();
         return value;
     }
 
-    private static void Write_value210(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value188(ref MessagePackWriter writer, string node, int depth)
     {
         if (node != "clrEventDecl") throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static string Read_value211(ref MessagePackReader reader)
+    private static string Read_value189(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("field" or "property")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value211(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value189(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("field" or "property")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
-    }
-
-    private static string[] Read_value212(ref MessagePackReader reader)
-    {
-        var value = ReadArray<string>(ref reader, Read_value63);
-        return value;
-    }
-
-    private static void Write_value212(ref MessagePackWriter writer, string[] node, int depth)
-    {
-        CheckDepth(depth);
-        writer.WriteArrayHeader(node.Length);
-        foreach (var child in node)
-        {
-            Write_value63(ref writer, child, depth + 1);
-        }
     }
 
     private static CirSourceSpan Read_cirSourceSpan(ref MessagePackReader reader)
@@ -11195,13 +10416,13 @@ public static class CirMessagePack
         Write_value28(ref writer, node.Ec, depth + 1);
     }
 
-    private static ICirStatement[] Read_value214(ref MessagePackReader reader)
+    private static ICirStatement[] Read_value191(ref MessagePackReader reader)
     {
         var value = ReadArray<ICirStatement>(ref reader, Read_cirStatementNode);
         return value;
     }
 
-    private static void Write_value214(ref MessagePackWriter writer, ICirStatement[] node, int depth)
+    private static void Write_value191(ref MessagePackWriter writer, ICirStatement[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
@@ -11211,13 +10432,13 @@ public static class CirMessagePack
         }
     }
 
-    private static CirCatchClause[] Read_value215(ref MessagePackReader reader)
+    private static CirCatchClause[] Read_value192(ref MessagePackReader reader)
     {
         var value = ReadArray<CirCatchClause>(ref reader, Read_cirCatchClause);
         return value;
     }
 
-    private static void Write_value215(ref MessagePackWriter writer, CirCatchClause[] node, int depth)
+    private static void Write_value192(ref MessagePackWriter writer, CirCatchClause[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
@@ -11227,13 +10448,13 @@ public static class CirMessagePack
         }
     }
 
-    private static CirConditionalBranch[] Read_value216(ref MessagePackReader reader)
+    private static CirConditionalBranch[] Read_value193(ref MessagePackReader reader)
     {
         var value = ReadArray<CirConditionalBranch>(ref reader, Read_cirConditionalBranch);
         return value;
     }
 
-    private static void Write_value216(ref MessagePackWriter writer, CirConditionalBranch[] node, int depth)
+    private static void Write_value193(ref MessagePackWriter writer, CirConditionalBranch[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
@@ -11243,53 +10464,53 @@ public static class CirMessagePack
         }
     }
 
-    private static string Read_value217(ref MessagePackReader reader)
+    private static string Read_value194(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("<=" or "<" or ">=")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value217(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value194(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("<=" or "<" or ">=")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static string Read_value218(ref MessagePackReader reader)
+    private static string Read_value195(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("accessor" or "field")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value218(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value195(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("accessor" or "field")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static string Read_value219(ref MessagePackReader reader)
+    private static string Read_value196(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("call" or "callvirt" or "constrained")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value219(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value196(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("call" or "callvirt" or "constrained")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static string Read_value220(ref MessagePackReader reader)
+    private static string Read_value197(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("add" or "remove" or "raise")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value220(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value197(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("add" or "remove" or "raise")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
@@ -11339,13 +10560,13 @@ public static class CirMessagePack
         }
     }
 
-    private static ICirExpression[] Read_value222(ref MessagePackReader reader)
+    private static ICirExpression[] Read_value199(ref MessagePackReader reader)
     {
         var value = ReadArray<ICirExpression>(ref reader, Read_cirExpressionNode);
         return value;
     }
 
-    private static void Write_value222(ref MessagePackWriter writer, ICirExpression[] node, int depth)
+    private static void Write_value199(ref MessagePackWriter writer, ICirExpression[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
@@ -11355,13 +10576,13 @@ public static class CirMessagePack
         }
     }
 
-    private static CirSpreadPart[] Read_value223(ref MessagePackReader reader)
+    private static CirSpreadPart[] Read_value200(ref MessagePackReader reader)
     {
         var value = ReadArray<CirSpreadPart>(ref reader, Read_cirSpreadPart);
         return value;
     }
 
-    private static void Write_value223(ref MessagePackWriter writer, CirSpreadPart[] node, int depth)
+    private static void Write_value200(ref MessagePackWriter writer, CirSpreadPart[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
@@ -11371,39 +10592,39 @@ public static class CirMessagePack
         }
     }
 
-    private static string Read_value224(ref MessagePackReader reader)
+    private static string Read_value201(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("address" or "value")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value224(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value201(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("address" or "value")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static bool Read_value225(ref MessagePackReader reader)
+    private static bool Read_value202(ref MessagePackReader reader)
     {
         var value = reader.ReadBoolean();
         if (value != true) throw new FormatException();
         return value;
     }
 
-    private static void Write_value225(ref MessagePackWriter writer, bool node, int depth)
+    private static void Write_value202(ref MessagePackWriter writer, bool node, int depth)
     {
         if (node != true) throw new FormatException();
         writer.Write(node);
     }
 
-    private static CirPhysicalEnumValue[] Read_value226(ref MessagePackReader reader)
+    private static CirPhysicalEnumValue[] Read_value203(ref MessagePackReader reader)
     {
         var value = ReadArray<CirPhysicalEnumValue>(ref reader, Read_cirPhysicalEnumValue);
         return value;
     }
 
-    private static void Write_value226(ref MessagePackWriter writer, CirPhysicalEnumValue[] node, int depth)
+    private static void Write_value203(ref MessagePackWriter writer, CirPhysicalEnumValue[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
@@ -11413,14 +10634,14 @@ public static class CirMessagePack
         }
     }
 
-    private static string Read_value227(ref MessagePackReader reader)
+    private static string Read_value204(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("GetHashCode" or "ToString" or "Equals")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value227(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value204(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("GetHashCode" or "ToString" or "Equals")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
@@ -11447,7 +10668,7 @@ public static class CirMessagePack
                     break;
                 case "body":
                     Seen(ref seen, 4UL);
-                    field_body = Read_value214(ref reader);
+                    field_body = Read_value191(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -11470,7 +10691,7 @@ public static class CirMessagePack
             Write_value1(ref writer, node.Var.Value, depth + 1);
         }
         writer.Write("body");
-        Write_value214(ref writer, node.Body, depth + 1);
+        Write_value191(ref writer, node.Body, depth + 1);
     }
 
     private static CirConditionalBranch Read_cirConditionalBranch(ref MessagePackReader reader)
@@ -11490,11 +10711,11 @@ public static class CirMessagePack
                     break;
                 case "else":
                     Seen(ref seen, 2UL);
-                    field_else = OptionalField<bool>.Of(Read_value225(ref reader));
+                    field_else = OptionalField<bool>.Of(Read_value202(ref reader));
                     break;
                 case "body":
                     Seen(ref seen, 4UL);
-                    field_body = Read_value214(ref reader);
+                    field_body = Read_value191(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -11517,10 +10738,10 @@ public static class CirMessagePack
         if (node.Else.IsPresent)
         {
             writer.Write("else");
-            Write_value225(ref writer, node.Else.Value, depth + 1);
+            Write_value202(ref writer, node.Else.Value, depth + 1);
         }
         writer.Write("body");
-        Write_value214(ref writer, node.Body, depth + 1);
+        Write_value191(ref writer, node.Body, depth + 1);
     }
 
     private static CirSpreadPart Read_cirSpreadPart(ref MessagePackReader reader)
