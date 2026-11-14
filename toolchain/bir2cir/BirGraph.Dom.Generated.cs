@@ -33,6 +33,52 @@ internal static class BirGraphDom
         };
     }
 
+    internal static BirRoundtripDeclarationIdentity ReadBirRoundtripDeclarationIdentity(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "declarationId": break;
+                case "declarationSourceName": break;
+                case "declarationSignatureAllocation": break;
+                case "declarationSemanticSignature": break;
+                case "semanticReifiedIndices": break;
+                case "nullableWitnessIndices": break;
+                case "nullableRepresentationFrame": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirRoundtripDeclarationIdentity at {source.GetPath()}");
+            }
+        return new BirRoundtripDeclarationIdentity
+        {
+            DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
+            DeclarationSourceName = Field<string>(fields, "declarationSourceName", value => value!.GetValue<string>()),
+            DeclarationSignatureAllocation = Field<bool>(fields, "declarationSignatureAllocation", value => value!.GetValue<bool>()),
+            DeclarationSemanticSignature = Field<SourceDeclarationSignature>(fields, "declarationSemanticSignature", value => SourceDeclarationSignature.Read(value!)),
+            SemanticReifiedIndices = Field<int[]>(fields, "semanticReifiedIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
+            NullableWitnessIndices = Field<int[]>(fields, "nullableWitnessIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
+            NullableRepresentationFrame = Field<NullableRepresentationFrame>(fields, "nullableRepresentationFrame", value => DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(value!.GetValue<string>())),
+        };
+    }
+
+    internal static BirInnerConstructorFactory ReadBirInnerConstructorFactory(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "inner": break;
+                case "declaration": break;
+                case "typeArgs": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirInnerConstructorFactory at {source.GetPath()}");
+            }
+        return new BirInnerConstructorFactory
+        {
+            Inner = Field<string>(fields, "inner", value => value!.GetValue<string>()),
+            Declaration = Field<string>(fields, "declaration", value => value!.GetValue<string>()),
+            TypeArgs = Field<int[]>(fields, "typeArgs", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
+        };
+    }
+
     internal static CapturedGenericArgument ReadCapturedGenericArgument(JsonNode source)
     {
         var fields = source.AsObject();
@@ -140,6 +186,7 @@ internal static class BirGraphDom
                 case "types": break;
                 case "refTypes": break;
                 case "typeAliases": break;
+                case "roundtripMetadataPending": break;
                 case "assemblyAttrs": break;
                 case "attrs": break;
                 case "wellKnownRefs": break;
@@ -156,6 +203,7 @@ internal static class BirGraphDom
             Types = Field<IBirTypeDeclaration[]>(fields, "types", value => ((JsonArray)value!).Select(item0 => ReadBirTypeDeclaration(item0!)).ToArray()),
             RefTypes = Field<BirRefTypeDeclaration[]>(fields, "refTypes", value => ((JsonArray)value!).Select(item0 => ReadBirRefTypeDeclaration(item0!)).ToArray()),
             TypeAliases = fields.ContainsKey("typeAliases") ? throw new FormatException() : default,
+            RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
             AssemblyAttrs = Field<BirAttribute[]>(fields, "assemblyAttrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             WellKnownRefs = Field<PhysicalMemberTable>(fields, "wellKnownRefs", value => PhysicalMemberTable.Read(value!)),
@@ -1448,6 +1496,8 @@ internal static class BirGraphDom
                 case "sharedCellType": break;
                 case "attrs": break;
                 case "suspendFnTypePre": break;
+                case "roundtripMetadataPending": break;
+                case "collIdentity": break;
                 case "functionSignatureType": break;
                 case "kotlinType": break;
                 case "nullableGeneric": break;
@@ -1469,6 +1519,8 @@ internal static class BirGraphDom
             SharedCellType = Field<TypeNode>(fields, "sharedCellType", value => TypeNode.Read(value) ?? throw new FormatException()),
             Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
+            CollIdentity = Field<TypeNode>(fields, "collIdentity", value => TypeNode.Parse(value!.GetValue<string>())),
             FunctionSignatureType = Field<TypeNode>(fields, "functionSignatureType", value => TypeNode.Read(value) ?? throw new FormatException()),
             KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableGeneric = Field<TypeNode>(fields, "nullableGeneric", value => TypeNode.Parse(value!.GetValue<string>())),
@@ -1604,6 +1656,12 @@ internal static class BirGraphDom
                 case "_syntheticTypeArgs": break;
                 case "lexicalOwnerTypeParamCount": break;
                 case "retSuspendFnTypePre": break;
+                case "roundtripMetadataPending": break;
+                case "roundtripDeclarationIdentity": break;
+                case "roundtripMethodBounds": break;
+                case "roundtripSuspend": break;
+                case "existentialInnerConstructorFactory": break;
+                case "collIdentityRet": break;
                 case "semanticReifiedIndices": break;
                 case "nullableWitnessIndices": break;
                 case "suspendResult": break;
@@ -1679,6 +1737,12 @@ internal static class BirGraphDom
             _syntheticTypeArgs = Field<TypeNode[]>(fields, "_syntheticTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             LexicalOwnerTypeParamCount = Field<int>(fields, "lexicalOwnerTypeParamCount", value => value!.GetValue<int>()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
+            RoundtripDeclarationIdentity = Field<BirRoundtripDeclarationIdentity>(fields, "roundtripDeclarationIdentity", value => ReadBirRoundtripDeclarationIdentity(value!)),
+            RoundtripMethodBounds = Field<SourceBoundsSnapshot>(fields, "roundtripMethodBounds", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
+            RoundtripSuspend = Field<bool>(fields, "roundtripSuspend", value => value!.GetValue<bool>()),
+            ExistentialInnerConstructorFactory = Field<BirInnerConstructorFactory>(fields, "existentialInnerConstructorFactory", value => ReadBirInnerConstructorFactory(value!)),
+            CollIdentityRet = Field<TypeNode>(fields, "collIdentityRet", value => TypeNode.Parse(value!.GetValue<string>())),
             SemanticReifiedIndices = Field<int[]>(fields, "semanticReifiedIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             NullableWitnessIndices = Field<int[]>(fields, "nullableWitnessIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             SuspendResult = Field<TypeNode>(fields, "suspendResult", value => TypeNode.Parse(value!.GetValue<string>())),
@@ -1736,6 +1800,8 @@ internal static class BirGraphDom
                 case "vis": break;
                 case "attrs": break;
                 case "body": break;
+                case "roundtripMetadataPending": break;
+                case "roundtripDeclarationIdentity": break;
                 case "baseCtorRef": break;
                 case "localCtorIndex": break;
                 case "preStmts": break;
@@ -1756,6 +1822,8 @@ internal static class BirGraphDom
             Vis = Field<string>(fields, "vis", value => value!.GetValue<string>()),
             Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             Body = Field<IBirStatement[]>(fields, "body", value => ((JsonArray)value!).Select(item0 => ReadBirStatement(item0!)).ToArray()),
+            RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
+            RoundtripDeclarationIdentity = Field<BirRoundtripDeclarationIdentity>(fields, "roundtripDeclarationIdentity", value => ReadBirRoundtripDeclarationIdentity(value!)),
             BaseCtorRef = Field<BirMemberReference>(fields, "baseCtorRef", value => ReadBirMemberReference(value!)),
             LocalCtorIndex = Field<int>(fields, "localCtorIndex", value => value!.GetValue<int>()),
             PreStmts = Field<IBirStatement[]>(fields, "preStmts", value => ((JsonArray)value!).Select(item0 => ReadBirStatement(item0!)).ToArray()),
@@ -1794,6 +1862,8 @@ internal static class BirGraphDom
                 case "companionGetterDeclarationId": break;
                 case "companionSetterDeclarationId": break;
                 case "suspendFnTypePre": break;
+                case "roundtripMetadataPending": break;
+                case "collIdentity": break;
                 case "_nativeLocation": break;
                 case "constant": break;
                 case "kotlinType": break;
@@ -1830,6 +1900,8 @@ internal static class BirGraphDom
             CompanionGetterDeclarationId = Field<string>(fields, "companionGetterDeclarationId", value => value!.GetValue<string>()),
             CompanionSetterDeclarationId = Field<string>(fields, "companionSetterDeclarationId", value => value!.GetValue<string>()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
+            CollIdentity = Field<TypeNode>(fields, "collIdentity", value => TypeNode.Parse(value!.GetValue<string>())),
             _nativeLocation = Field<bool>(fields, "_nativeLocation", value => value!.GetValue<bool>()),
             Constant = Field<BirLiteral>(fields, "constant", value => BirLiteral.Read(value), semanticNull: true),
             KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
@@ -1878,6 +1950,8 @@ internal static class BirGraphDom
                 case "kotlinStatic": break;
                 case "overrides": break;
                 case "suspendFnTypePre": break;
+                case "roundtripMetadataPending": break;
+                case "collIdentity": break;
                 case "kotlinType": break;
                 case "nullableGeneric": break;
                 case "get": break;
@@ -1906,6 +1980,8 @@ internal static class BirGraphDom
             KotlinStatic = Field<bool>(fields, "kotlinStatic", value => value!.GetValue<bool>()),
             Overrides = Field<BirOverride[]>(fields, "overrides", value => ((JsonArray)value!).Select(item0 => ReadBirOverride(item0!)).ToArray()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
+            CollIdentity = Field<TypeNode>(fields, "collIdentity", value => TypeNode.Parse(value!.GetValue<string>())),
             KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableGeneric = Field<TypeNode>(fields, "nullableGeneric", value => TypeNode.Parse(value!.GetValue<string>())),
             Get = Field<string>(fields, "get", value => value!.GetValue<string>()),

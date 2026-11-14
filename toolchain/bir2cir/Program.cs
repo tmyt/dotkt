@@ -1403,23 +1403,23 @@ sealed class Pipeline
         bool runtimeRepresentationTypes = false;
         foreach (var (lowered, outputName) in loweredRoots)
         {
-            // ROUNDTRIP METADATA (#71 S2): stamp member/parameter attributes here and grant type-header obligations
-            // for StampTypeHeaders at the typed seam. All become ordinary CIR attrs/retAttrs emitted by ilemit's
+            // ROUNDTRIP METADATA (#71 S2): grant exact declaration/slot obligations and transfer metadata-only
+            // facts here. CompleteMetadata encodes them at the typed seam as CIR attrs/retAttrs emitted by ilemit's
             // generic BuildCab path, with no Kotlin knowledge there. Materialized facts (nullableFlags,
             // suspendFnType, inlineBir, mods, suspendBridge, readOnly) are all present. SKIPPED in the runtime build
             // (`SubstituteStdlibBuild`) except for runtime linkage and representation-type associations. Placed after
             // the earlier reference-body squash, which preserves all captured metadata. The attribute-class DEFS
             // are emitted ONCE below (SynthDefsFile), not per-file.
-            if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
+            if (!_options.SubstituteStdlibBuild) RoundtripMetadata.PrepareMetadata(lowered, runtimeMode: false);
             // Runtime builds retain declaration linkage and representation-type associations, not source slots.
             // Exact runtime MethodDefs are associated with their reference twins by declaration ID.
             else
             {
-                RoundtripMetadata.StripRuntimeAttrs(lowered);
+                RoundtripMetadata.PrepareMetadata(lowered, runtimeMode: true);
             }
             // The Kotlin `suspend` modifier has no CLR meaning and every consumer of it is a bir2cir pass: the cold
-            // lowering, and the [KotlinFunction(Suspend)] stamp just written (which is how a referenced module still
-            // sees a suspend surface). CIR describes the physical graph, so the flag stops here — ilemit has no
+            // lowering, and the pending [KotlinFunction(Suspend)] obligation (which is how a referenced module still
+            // sees a suspend surface). DropModifier transfers that exact scalar before removing it — ilemit has no
             // coroutine semantics to apply to it, and IrSanity refuses one that survives.
             SuspendResidueLowering.DropModifier(lowered);
             // W1-S2 (#46): resolve every clrStatic/clrInstance/newClr against the ref.dll MLC. Internal
@@ -1457,7 +1457,7 @@ sealed class Pipeline
         // pending source facts are opaque to the intervening physical binders.
         foreach (var root in physicalDocuments)
         {
-            RoundtripMetadata.StampTypeHeaders(root, _options.SubstituteStdlibBuild);
+            RoundtripMetadata.CompleteMetadata(root, _options.SubstituteStdlibBuild);
             if (_options.SubstituteStdlibBuild)
                 runtimeRepresentationTypes |= RoundtripMetadata.HasRepresentationTypeAssociations(root);
         }

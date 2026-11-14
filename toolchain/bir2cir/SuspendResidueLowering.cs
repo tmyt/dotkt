@@ -111,7 +111,12 @@ static class SuspendResidueLowering
         if (methods == null) return;
         foreach (var m in methods)
             if (m is JsonObject method && method["mods"] is JsonObject mods)
+            {
+                if (method["roundtripMetadataPending"]?.GetValue<bool>() == true
+                    && mods.TryGetPropertyValue("suspend", out var suspend))
+                    method["roundtripSuspend"] = suspend?.DeepClone();
                 mods.Remove("suspend");
+            }
     }
 
     // `throw new System.NotSupportedException("<msg>")` — one statement, in the pre-lowering vocabulary the rest of the
