@@ -71,10 +71,16 @@ static partial class ExactMutableViewDispatch
         internal override IBirExpression Local(string name) => new BirLocal { Name = name };
         internal override IBirExpression Is(TypeNode type, IBirExpression value) => new BirIsInstance { Type = Copy(type), E = E(value) };
         internal override IBirExpression Binary(string op, IBirExpression left, IBirExpression right)
-            => new BirBinaryOperation { Op = op, Lhs = E(left), Rhs = E(right) };
+            // This owner runs after source short-circuit lowering. Its guard
+            // therefore authors the explicit conditional directly, like the
+            // retained DOM renderer, instead of leaving &&/|| for ilemit.
+            => new BirConditional { Type = Copy(Bool), Cond = E(left),
+                Then = E(op == "&&" ? right : new BirConstant { Type = Copy(Bool), Value = new BirLiteral.BooleanLiteral(true) }),
+                Else = E(op == "||" ? right : new BirConstant { Type = Copy(Bool), Value = new BirLiteral.BooleanLiteral(false) }),
+            };
         internal override IBirExpression Not(IBirExpression value) => new BirUnaryOperation { Op = "!", E = E(value) };
-        internal override IBirExpression NonNull(IBirExpression value) => Binary("!=", value,
-            new BirConstant { Type = new TypeNode.Nullable(Copy(Any)), Value = new BirLiteral.NullLiteral() });
+        internal override IBirExpression NonNull(IBirExpression value) => new BirBinaryOperation { Op = "!=", Lhs = E(value),
+            Rhs = E(new BirConstant { Type = new TypeNode.Nullable(Copy(Any)), Value = new BirLiteral.NullLiteral() }) };
         internal override IBirExpression Eligible(IBirExpression receiver, TypeNode.Fqn view, int family)
             => new BirCallStatic { Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.ExactMutableViewCacheKt"),
                 Method = "canUseExactMutableView", TypeArgs = Array.Empty<TypeNode>(),

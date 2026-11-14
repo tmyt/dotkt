@@ -8,6 +8,9 @@ static partial class ExactMutableViewDispatch
     {
         static void Require(bool value, string message)
         { if (!value) throw new InvalidOperationException("Owning exact view dispatch: " + message); }
+        static bool BooleanConstant(IBirExpression expression, bool expected) => expression is BirConstant constant
+            && constant.Type.OrDefault() == Bool && constant.Value.OrDefault() is BirLiteral.BooleanLiteral literal
+            && literal.Value == expected;
         foreach (var family in new[] { 4, 5, 6 })
         foreach (var isVoid in new[] { false, true })
         {
@@ -36,7 +39,7 @@ static partial class ExactMutableViewDispatch
             var statements = block.Stmts.Value;
             Require(statements.Length == (isVoid ? 5 : 4)
                 && statements[0] is BirVariable capture && ReferenceEquals(capture.Init.Value, receiver)
-                && statements[1] is BirVariable { Type.HasValue: true, Init.Value: BirBinaryOperation { Op.Value: "&&" } } guard
+                && statements[1] is BirVariable { Type.HasValue: true, Init.Value: BirConditional } guard
                 && guard.Type.Value == Bool
                 && statements[2] is BirVariable argument0 && ReferenceEquals(argument0.Init.Value, first)
                 && statements[3] is BirVariable argument1 && ReferenceEquals(argument1.Init.Value, second),
@@ -44,6 +47,32 @@ static partial class ExactMutableViewDispatch
             var receiverName = ((BirVariable)statements[0]).Name.Value;
             var guardName = ((BirVariable)statements[1]).Name.Value;
             var argumentNames = statements.Skip(2).Take(2).Cast<BirVariable>().Select(v => v.Name.Value).ToArray();
+            var guardExpression = (BirConditional)((BirVariable)statements[1]).Init.Value;
+            Require(guardExpression.Type.Value == Bool
+                && guardExpression.Cond.Value is BirBinaryOperation { Op.Value: "!=", Lhs.Value: BirLocal nonNullReceiver, Rhs.Value: BirConstant nullValue }
+                && nonNullReceiver.Name.Value == receiverName && nullValue.Value.OrDefault() is (null or BirLiteral.NullLiteral)
+                && BooleanConstant(guardExpression.Else.Value, false)
+                && guardExpression.Then.Value is BirConditional eligibility
+                && eligibility.Type.Value == Bool && eligibility.Cond.Value is BirCallStatic { Method.Value: "canUseExactMutableView" }
+                && BooleanConstant(eligibility.Else.Value, false),
+                "native interface probing was not short-circuited behind null and metadata eligibility");
+            var eligible = (BirConditional)guardExpression.Then.Value;
+            Require(eligible.Then.Value is BirConditional authored
+                && authored.Type.Value == Bool && BooleanConstant(authored.Else.Value, false)
+                && authored.Cond.Value is BirUnaryOperation { Op.Value: "!", E.Value: BirIsInstance test }
+                && test.Type.Value is TypeNode.Fqn { Name: "probe.AuthoredSlot" },
+                "authored-slot exclusion no longer short-circuits native dispatch");
+            if (family == 4)
+            {
+                var native = (BirConditional)((BirConditional)eligible.Then.Value).Then.Value;
+                Require(native.Type.Value == Bool && BooleanConstant(native.Else.Value, false)
+                    && native.Cond.Value is BirIsInstance collection && collection.Type.Value is TypeNode.Fqn { Name: "System.Collections.Generic.ICollection`1" }
+                    && native.Then.Value is BirConditional alternatives && alternatives.Type.Value == Bool
+                    && alternatives.Cond.Value is BirIsInstance set && set.Type.Value == view
+                    && BooleanConstant(alternatives.Then.Value, true)
+                    && alternatives.Else.Value is BirIsInstance classifier && classifier.Type.Value is TypeNode.Fqn { Name: "DotKt.Runtime.CompilerServices.KotlinMutableSetClassifier" },
+                    "mutable-set native alternatives lost their conditional AND/OR ordering");
+            }
             IBirExpression condition, direct, fallback;
             if (isVoid)
             {
@@ -80,11 +109,13 @@ static partial class ExactMutableViewDispatch
                 if (ReferenceEquals(node, receiver)) receivers++;
                 if (ReferenceEquals(node, second)) throwingArguments++;
                 if (node is BirIsInstance) classifiers++;
+                if (node is BirBinaryOperation binary && binary.Op.OrDefault() is "&&" or "||")
+                    throw new InvalidOperationException("Owning exact view left a source short-circuit operator after its lowering phase");
             });
             Require(declarations == 1 && receivers == 1 && throwingArguments == 1,
                 "a registered declaration, receiver, or throwing argument was cloned/multiplied");
             Require(classifiers == (family == 4 ? 4 : 2), "set-family or authored-slot eligibility guard changed");
         }
-        Console.WriteLine("[owning exact mutable view] self-test OK (families4/5/6, Unit/value, guard-before-arguments, actual declaration identity)");
+        Console.WriteLine("[owning exact mutable view] self-test OK (families4/5/6, Unit/value, explicit conditional short circuits, guard-before-arguments, actual declaration identity)");
     }
 }
