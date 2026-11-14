@@ -16,7 +16,7 @@ using DotKt.Bir;
 // The identities form the Kotlin relation themselves. A MutableSet identity is also a Set and Collection identity;
 // a Set identity is also a Collection identity. Set membership and Collection mutability are independent:
 // implementing Set and MutableCollection does not imply implementing MutableSet.
-static class KotlinCollectionIdentitySynthesis
+static partial class KotlinCollectionIdentitySynthesis
 {
     const string Iterable = "kotlin.collections.Iterable";
     const string MutableIterable = "kotlin.collections.MutableIterable";
@@ -36,40 +36,44 @@ static class KotlinCollectionIdentitySynthesis
     const string IterableIdentity = "DotKt.Runtime.CompilerServices.KotlinIterableClassifier";
     const string MutableIterableIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableIterableClassifier";
 
-    sealed class Def
-    {
-        public JsonObject Node;
-        public TypeNode.Fqn Base;
-        public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
-    }
+    sealed record Def<T>(T Node, TypeNode.Fqn Base, TypeNode.Fqn[] Interfaces);
 
     public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
-        var defs = new Dictionary<string, Def>(StringComparer.Ordinal);
+        var defs = new Dictionary<string, Def<JsonObject>>(StringComparer.Ordinal);
         foreach (var root in roots) Collect(root, defs);
         foreach (var def in defs.Values) Apply(def, defs, refs);
     }
 
-    static void Collect(JsonNode root, Dictionary<string, Def> defs)
+    static void Collect(JsonNode root, Dictionary<string, Def<JsonObject>> defs)
     {
         if (root is not JsonObject obj || obj["types"] is not JsonArray types) return;
         foreach (var type in types.OfType<JsonObject>())
         {
             if (Str(type["name"]) is string name)
-                defs[name] = new Def
-                {
-                    Node = type,
-                    Base = TypeJson.Read(type["base"]) as TypeNode.Fqn,
-                    Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read)
-                        .OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>(),
-                };
+                defs[name] = new(type, TypeJson.Read(type["base"]) as TypeNode.Fqn,
+                    (type["interfaces"] as JsonArray)?.Select(TypeJson.Read)
+                        .OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>());
             Collect(type, defs);
         }
     }
 
-    static void Apply(Def def, IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
+    static void Apply(Def<JsonObject> def, IReadOnlyDictionary<string, Def<JsonObject>> defs, ReferenceMetadataIndex refs)
     {
-        var names = SupertypeNames(def, defs, refs);
+        var identities = SelectIdentities(SupertypeNames(def, defs, refs));
+        if (identities.Count == 0) return;
+        if (def.Node["interfaces"] is not JsonArray interfaces)
+        {
+            interfaces = new JsonArray();
+            def.Node["interfaces"] = interfaces;
+        }
+        foreach (var identity in identities)
+            if (!interfaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == identity))
+                interfaces.Add(TypeJson.Fqn(identity));
+    }
+
+    static IReadOnlyList<string> SelectIdentities(HashSet<string> names)
+    {
         var identities = new List<string>();
         if (names.Contains(MutableSet)) identities.Add(MutableSetIdentity);
         else if (names.Contains(Set)) identities.Add(SetIdentity);
@@ -82,19 +86,10 @@ static class KotlinCollectionIdentitySynthesis
         if (names.Contains(MutableIterable) && !names.Overlaps(new[] { MutableCollection, MutableSet, MutableList }))
             identities.Add(MutableIterableIdentity);
         if (identities.Count == 0 && names.Contains(Iterable)) identities.Add(IterableIdentity);
-        if (identities.Count == 0) return;
-
-        if (def.Node["interfaces"] is not JsonArray interfaces)
-        {
-            interfaces = new JsonArray();
-            def.Node["interfaces"] = interfaces;
-        }
-        foreach (var identity in identities)
-            if (!interfaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == identity))
-                interfaces.Add(TypeJson.Fqn(identity));
+        return identities;
     }
 
-    static HashSet<string> SupertypeNames(Def start, IReadOnlyDictionary<string, Def> defs,
+    static HashSet<string> SupertypeNames<T>(Def<T> start, IReadOnlyDictionary<string, Def<T>> defs,
         ReferenceMetadataIndex refs)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);

@@ -74,7 +74,7 @@ static partial class BirTypeLowering
     // Validate the semantic carrier at the last all-Kotlin boundary, before star/F-bound passes can replace a
     // `ClrPointer<*>` pointee with object and erase the evidence needed for a precise refusal. A pointer itself is not
     // a legal CLR generic argument, while an array OF pointers is a managed array type and may occupy one.
-    public static void ValidatePointerVocabulary(JsonNode root, string file)
+    static void PointerValidateType(TypeNode root, string file)
     {
         void Refuse(string message) => throw new InvalidDataException($"bir2cir: {file}: {message}");
 
@@ -136,12 +136,17 @@ static partial class BirTypeLowering
             }
         }
 
+        ValidateType(root, directGenericArgument: false);
+    }
+
+    public static void ValidatePointerVocabulary(JsonNode root, string file)
+    {
         void Walk(JsonNode node)
         {
             if (node == null) return;
             if (IsTypeObject(node))
             {
-                ValidateType(TypeNode.Parse(node.ToJsonString()), directGenericArgument: false);
+                PointerValidateType(TypeNode.Parse(node.ToJsonString()), file);
                 return;
             }
             if (node is JsonObject obj)
