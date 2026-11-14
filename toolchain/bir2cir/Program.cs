@@ -138,6 +138,7 @@ static class Bir2Cir
                 ClrMemberResolution.WellKnownTableSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
                 ConstrainedTypeParameterReceiverBinding.AritySnapshotSelfTest();
+                ConstrainedTypeParameterReceiverBinding.ResolvedPropertiesSelfTest();
                 SourceOwnerClosureTests.Run();
                 StdlibSubstituteTypeParams.SelfTest();
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
@@ -1413,10 +1414,6 @@ sealed class Pipeline
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
             CapturedGenericInvocation.Apply(lowered, refs, emittedLocalTypes);
-            // Property nodes reveal whether they denote an accessor or a public field only after CLR member
-            // resolution. Convert the accessor subset on type-variable receivers to constrained calls now, retaining
-            // the exact memberRef just resolved; fields keep their distinct load/store representation.
-            ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(new[] { lowered });
         }
 
         var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
@@ -1428,6 +1425,11 @@ sealed class Pipeline
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         loweredRoots.Clear();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Final resolution distinguished actual accessors from public fields.
+        // Consume their receiver-dispatch facts on the same owning typed graph;
+        // retain each exact MemberRef and each resolved file's own arity snapshot.
+        foreach (var root in physicalDocuments)
+            ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(root);
         // Fixed BCL operands depend only on the reference universe. Author their
         // complete physical role table directly on the continuing typed roots.
         foreach (var root in physicalDocuments) ClrMemberResolution.ResolveWellKnown(root, refs);

@@ -59,6 +59,11 @@
         }, "required": ["index", "bound", "template", "consequences", "ownerArgs"], "additionalProperties": false
       }
     },
+    "ownerConstraintDispatchBoundsText": {
+      "type": "string", "x-dotkt-csharp-type": "OwnerConstraintDispatchBounds", "x-dotkt-csharp-codec": "OwnerConstraintDispatchBounds",
+      "x-dotkt-frame-role": "FrozenSourceFact",
+      "x-dotkt-json-content": { "type": "object", "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/type" } } }
+    },
     "sourceTypeVectorText": {
       "type": "string", "x-dotkt-csharp-type": "SourceTypeVector", "x-dotkt-csharp-codec": "SourceTypeVector",
       "x-dotkt-json-content": { "type": "array", "items": { "$ref": "#/$defs/type" } }
@@ -520,6 +525,7 @@
         "suspendTaskResult": { "x-dotkt-representation-role": "Return", "$ref": "#/$defs/type" },
         "dotktValueReturn": { "type": "boolean" },
         "_ownerConstraintOverrideBounds": { "type": "string", "x-dotkt-csharp-type": "OwnerConstraintOverrideBounds", "x-dotkt-csharp-codec": "OwnerConstraintOverrideBounds", "x-dotkt-json-content": "#/$defs/ownerConstraintOverrideBounds" },
+        "_ownerConstraintDispatchBounds": { "$ref": "#/$defs/ownerConstraintDispatchBoundsText" },
         "_physicalDeclarationSignature": { "type": "boolean" },
         "retKotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },
         "_preparedDelegateReturnArgument": { "type": "boolean" },
@@ -603,7 +609,7 @@
       "required": ["name", "type", "kotlinAccessors", "propertyAssociation"], "additionalProperties": false
     },
     "birInterfaceDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirInterfaceDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringProperties": { "kotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" }, "roundtripSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText", "x-dotkt-frame-role": "FrozenSourceFact" }, "roundtripTypeHeaderPending": { "type": "boolean" }, "managedReferenceContract": { "$ref": "#/$defs/birManagedReferenceContract", "x-dotkt-frame-role": "FrozenSourceFact" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirInterfaceDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringProperties": { "kotlinType": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "_ownerConstraintDispatchBounds": { "$ref": "#/$defs/ownerConstraintDispatchBoundsText" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" }, "roundtripSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText", "x-dotkt-frame-role": "FrozenSourceFact" }, "roundtripTypeHeaderPending": { "type": "boolean" }, "managedReferenceContract": { "$ref": "#/$defs/birManagedReferenceContract", "x-dotkt-frame-role": "FrozenSourceFact" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "interface" }, "semanticOwner": { "type": "string" }, "vis": { "type": "string" },
         "mods": { "$ref": "#/$defs/birModifiers" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
@@ -643,7 +649,7 @@
       "required": ["name", "kind", "entries", "attrs"], "additionalProperties": false
     },
     "birClassDefinition": {
-      "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringKinds": ["struct", "delegate"], "loweringSourceFields": ["clrEvents"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "_syntheticFrameBound": { "type": "boolean" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" }, "roundtripSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText", "x-dotkt-frame-role": "FrozenSourceFact" }, "roundtripTypeHeaderPending": { "type": "boolean" } } },
+      "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringKinds": ["struct", "delegate"], "loweringSourceFields": ["clrEvents"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "_ownerConstraintDispatchBounds": { "$ref": "#/$defs/ownerConstraintDispatchBoundsText" }, "_syntheticFrameBound": { "type": "boolean" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" }, "roundtripSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText", "x-dotkt-frame-role": "FrozenSourceFact" }, "roundtripTypeHeaderPending": { "type": "boolean" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "class" }, "generated": { "const": true }, "base": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
         "companionCaptureOwner": { "type": "string" },
