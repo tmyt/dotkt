@@ -55,6 +55,8 @@ static class Bir2Cir
                 FBoundStarProjectionErasure.SynthesisSourceSelfTest();
                 FBoundStarProjectionErasure.ReferenceContractsSourceSelfTest();
                 FBoundStarProjectionErasure.ConstructionSourceSelfTest();
+                OwnerConstrainedMethodLowering.ContinuationSourceSelfTest();
+                FBoundStarProjectionErasure.ConstraintSurfacesSourceSelfTest();
                 FBoundStarProjectionErasure.NormalizationSourceSelfTest();
                 FBoundStarProjectionErasure.RewriteSourceSelfTest();
                 GenericArrayStorageLowering.SourceTypeOperationSelfTest();

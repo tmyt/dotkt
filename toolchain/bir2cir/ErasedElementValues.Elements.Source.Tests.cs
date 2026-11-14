@@ -69,6 +69,12 @@ static partial class ErasedElementValues
             && innerRead.Elem.IsPresent == false && BirNodeType.Of(innerRead) == innerVariable,
             "module bounds, loop scope, captures or independent suspend frame changed");
 
+        ClearRetainedVariables(root);
+        Require(!read.ErasedValueVariableFact.IsPresent && !bodyRead.ErasedValueVariableFact.IsPresent
+            && ReferenceEquals(method.Body.Value, body) && read.Elem.Value == ObjectType
+            && bodyRead.Sty.Value == ObjectType && parameters[0].Type.Value == new TypeNode.Array(variable),
+            "carrier handoff cleanup changed physical values, parameters or owning body storage");
+
         var ownerVariable = new TypeNode.Tv("type", 0);
         var delegation = new BirArrayGet { Array = new BirLocal { Name = "values" },
             Index = new BirConstant { Type = new TypeNode.Fqn("kotlin.Int"), Value = new BirLiteral.IntegerLiteral(0) } };
