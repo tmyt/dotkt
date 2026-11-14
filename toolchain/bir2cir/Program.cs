@@ -506,6 +506,9 @@ sealed class Pipeline
             // Keep unchecked generic results object-typed until a real typed
             // consumer; the captured body-Tv facts retain their exact identity.
             UncheckedGenericCastReturnErasure.Apply(source, uncheckedDeclarations);
+            // Restore invariant collection call arguments from the original
+            // selected declaration and this file's current owning body/frame.
+            if (!referenceBuild) MapVarianceRealign.Apply(source, inventory.CalleeTypeParameters, refs);
             // Event delegate selection owns the pre-strip accessor recipe.
             // Capture it before retiring bound stubs; later event binding uses
             // this same authority even when that accessor no longer emits.
@@ -591,10 +594,6 @@ sealed class Pipeline
         // supertype, so this synthetic-retention is a technical necessity, not a preference. (docs/design-charsequence-clr-string.md)
         var hasUserCharSeqImpl = module.Preparation.Inventory.HasUserCharSeqImplementation;
 
-        // Exact declaration identities select the callee's parameter-type vector,
-        // captured module-wide before override or per-file declaration changes.
-        var calleeTypeParams = module.Preparation.Inventory.CalleeTypeParameters;
-
         // Declaration returns were snapshotted before typed erasure. Re-derive
         // each use from that declaration, not the frontend's substituted return.
         var nullableTvDeclRets = module.Preparation.NullableDeclarations;
@@ -628,14 +627,6 @@ sealed class Pipeline
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
             // Initial nullable-use flow already ran on owning source BIR.
             // Subsequent calls below follow only their actual late capability transitions.
-            // VARIANCE -> INVARIANCE type-arg REALIGNMENT (il-bymap): kotc approximates a use-site `in`/`out` variance
-            // projection to `kotlin.Any` (JVM-erased, harmless), so a call into an INVARIANT @ClrTypeAlias collection
-            // generic (`getOrImplicitDefault<K,V>` on a `Map<String,V>` receiver) carries a `K = Any` typeArg while the
-            // actual arg pins `K = String`. On the CLR `IDictionary<,>` is invariant, so the mismatch -> EntryPointNotFound
-            // at `ContainsKey`. Realign each such typeArg to the actual argument's concrete type-argument. BIR-space,
-            // before MemberCallSubstitution + type lowering; non-ref only. A no-op when the arg already agrees (genuine
-            // `<Any>` calls) or the callee isn't a local input (an app never re-lowers a referenced stdlib body).
-            if (!_options.RefBuild) MapVarianceRealign.Apply(bir.Root, calleeTypeParams, refs);
             // CALL substitution (substitute/app builds only): a member call / construction whose OWNER is a CLR-bound
             // type in the ref.dll (@ClrTypeAlias, or the legacy class-level @ClrIntrinsic) is rewritten to a plain BCL
             // call/new. This is the bir2cir home of what kotc's clrName() member routing used to do — sourced from the
@@ -1394,23 +1385,23 @@ sealed class Pipeline
         bool runtimeRepresentationTypes = false;
         foreach (var (lowered, outputName) in loweredRoots)
         {
-            // ROUNDTRIP METADATA (#71 S2): stamp member/parameter attributes here and grant type-header obligations
-            // for StampTypeHeaders at the typed seam. All become ordinary CIR attrs/retAttrs emitted by ilemit's
+            // ROUNDTRIP METADATA (#71 S2): grant exact declaration/slot obligations and transfer metadata-only
+            // facts here. CompleteMetadata encodes them at the typed seam as CIR attrs/retAttrs emitted by ilemit's
             // generic BuildCab path, with no Kotlin knowledge there. Materialized facts (nullableFlags,
             // suspendFnType, inlineBir, mods, suspendBridge, readOnly) are all present. SKIPPED in the runtime build
             // (`SubstituteStdlibBuild`) except for runtime linkage and representation-type associations. Placed after
             // the earlier reference-body squash, which preserves all captured metadata. The attribute-class DEFS
             // are emitted ONCE below (SynthDefsFile), not per-file.
-            if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
+            if (!_options.SubstituteStdlibBuild) RoundtripMetadata.PrepareMetadata(lowered, runtimeMode: false);
             // Runtime builds retain declaration linkage and representation-type associations, not source slots.
             // Exact runtime MethodDefs are associated with their reference twins by declaration ID.
             else
             {
-                RoundtripMetadata.StripRuntimeAttrs(lowered);
+                RoundtripMetadata.PrepareMetadata(lowered, runtimeMode: true);
             }
             // The Kotlin `suspend` modifier has no CLR meaning and every consumer of it is a bir2cir pass: the cold
-            // lowering, and the [KotlinFunction(Suspend)] stamp just written (which is how a referenced module still
-            // sees a suspend surface). CIR describes the physical graph, so the flag stops here — ilemit has no
+            // lowering, and the pending [KotlinFunction(Suspend)] obligation (which is how a referenced module still
+            // sees a suspend surface). DropModifier transfers that exact scalar before removing it — ilemit has no
             // coroutine semantics to apply to it, and IrSanity refuses one that survives.
             SuspendResidueLowering.DropModifier(lowered);
             // W1-S2 (#46): resolve every clrStatic/clrInstance/newClr against the ref.dll MLC. Internal
@@ -1451,7 +1442,7 @@ sealed class Pipeline
         // pending source facts are opaque to the intervening physical binders.
         foreach (var root in physicalDocuments)
         {
-            RoundtripMetadata.StampTypeHeaders(root, _options.SubstituteStdlibBuild);
+            RoundtripMetadata.CompleteMetadata(root, _options.SubstituteStdlibBuild);
             if (_options.SubstituteStdlibBuild)
                 runtimeRepresentationTypes |= RoundtripMetadata.HasRepresentationTypeAssociations(root);
         }

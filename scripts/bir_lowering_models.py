@@ -354,6 +354,7 @@ def outputs(root, definitions):
             return f"{left}.FrozenText == {right}.FrozenText"
         if kind == "NullableRepresentationFrame": return f"EqualFrame({left}, {right})"
         if kind == "PhysicalMemberTable": return f"{left}.StructurallyEquals({right})"
+        if kind == "SourceDeclarationSignature": return f"{left}.SameContent({right})"
         if kind == "SourceTypeAlias": return f"SourceMetadataDataEquality.Equal({left}, {right})"
         if is_child(field): return f"((BirGraphValue){left}).StructurallyEquals((BirGraphValue){right})"
         return f"EqualityComparer<{kind}>.Default.Equals({left}, {right})"
@@ -432,6 +433,10 @@ def outputs(root, definitions):
                                  if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
         if explicit_source_types:
             model += ["    public override TypeNode? ExplicitSourceType => " + " ?? ".join(explicit_source_types) + ";"]
+        own_type_or_return = [member(field) + ".OrDefault()" for field in ("type", "ret")
+                              if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
+        if own_type_or_return:
+            model += ["    public override TypeNode? OwnTypeOrReturnStamp => " + " ?? ".join(own_type_or_return) + ";"]
         if "declarationId" in shape["properties"]:
             model += ["    public override OptionalField<string> DeclarationIdentityFact => DeclarationId;"]
         if "dotktDelegateSlot" in shape["properties"]:

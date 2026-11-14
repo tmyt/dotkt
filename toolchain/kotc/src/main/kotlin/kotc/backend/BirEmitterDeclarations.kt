@@ -1704,7 +1704,7 @@ internal fun BirEmitter.sourceAnnotationDefinition(klass: IrClass): BirClassDefi
  *  concern, NOT a reason to re-introduce a kotc filter. */
 internal fun BirEmitter.sourceAttributes(anns: List<IrConstructorCall>): List<BirAttribute> {
 	// kotc emits ONE BIR for every build: annotations ride EVERY build's BIR verbatim (ref/app/rt identical here).
-	// The rt-build strip is downstream in bir2cir (RoundtripMetadata.StripRuntimeAttrs) and is SELECTIVE — it drops
+	// Runtime metadata filtering is downstream in bir2cir (RoundtripMetadata.CompleteMetadata) and is SELECTIVE — it drops
 	// the compile-time-only carriers (`DotKt.Runtime.CompilerServices.*` round-trip attrs / `kotlin.clr.*` @Clr binding
 	// / NRT) but KEEPS the user's own annotations (kotlin.Deprecated / SinceKotlin / …) on the shipping rt.dll (#47).
 	return anns.mapNotNull { ann ->
