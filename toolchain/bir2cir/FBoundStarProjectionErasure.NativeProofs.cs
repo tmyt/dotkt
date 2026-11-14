@@ -67,5 +67,4 @@ static partial class FBoundStarProjectionErasure
 
     static NativeProofPlan _nativeProofs;
 
-    static void NativeProofSelfTest() => NativeProofSourceSelfTest();
 }

@@ -1252,7 +1252,7 @@ static partial class FBoundStarProjectionErasure
         WeakenOwnerDependentInnerConstraints(new[] { projectedOwner }, dependencyPlan);
         if (((JsonArray)projectedInner["typeParams"][1]["constraints"]).Count != 0)
             throw new InvalidOperationException("Value projection resurrected a constraint on a bottom-fixed inner slot");
-        NativeProofSelfTest();
+        NativeProofSourceSelfTest();
         LocalAliasDeclarationSelfTest();
         Console.WriteLine("[constraint projections] self-test OK (star, variance, annotation, exact bound, physical/source separation, native proof demand)");
     }

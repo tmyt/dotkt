@@ -101,12 +101,14 @@ static partial class GenericArrayStorageLowering
         {
             var sources = new[] { File("FirstArrayFile", "$arrayIndex$0"), File("SecondArrayFile", "$arrayStorage$1") };
             var values = GenericRepresentationPolicy.CreateSource(sources, refs.Aliases, refs);
+            values.PrepareDomLocations(sources);
             var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(sources, values, out var preparation);
             var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, values);
             var first = sources[0].ToDom(declarations.ObserveProjection);
             var second = sources[1].ToDom(declarations.ObserveProjection);
             declarations.BindProjected();
             var roots = new JsonNode[] { first, second };
+            values.BindDomDeclarations(roots);
             if (physical)
                 PhysicalValueCoercion.ApplyFixtureForSelfTest(roots,
                     () => throw new InvalidOperationException("Unexpected array Unit conversion"),
