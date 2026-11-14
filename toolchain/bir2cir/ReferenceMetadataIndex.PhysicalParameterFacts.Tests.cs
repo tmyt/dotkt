@@ -12,8 +12,15 @@ sealed partial class ReferenceMetadataIndex
         { if (!condition) throw new InvalidOperationException("Typed shipped parameter facts: " + message); }
         var index = Build(new[] { typeof(object).Assembly.Location });
         var enumerable = index.PhysicalOwnerTypeParametersInPhysicalFrame("System.Collections.Generic.IEnumerable`1");
+        // Current CLR IEnumerable<T> is covariant AND permits byref-like type
+        // arguments. Its absence of type bounds does not mean no special flags.
+        var enumerableAttributes = typeof(IEnumerable<>).GetGenericArguments().Single().GenericParameterAttributes;
+        var enumerableSpecial = (enumerableAttributes & GenericParameterAttributes.AllowByRefLike) != 0
+            ? new[] { "allowsRefStruct" } : Array.Empty<string>();
         Require(enumerable is [var item] && item.Variance.Value == "out" && !item.Constraints.IsPresent
-            && !item.SpecialConstraints.IsPresent, "physical variance or unconstrained field presence changed");
+            && item.SpecialConstraints.IsPresent == (enumerableSpecial.Length != 0)
+            && item.SpecialConstraints.OrEmpty().SequenceEqual(enumerableSpecial),
+            "physical variance or actual CLR-only flag presence changed");
         Require(index.PhysicalOwnerTypeParametersInPhysicalFrame(null) == null
             && index.PhysicalOwnerTypeParametersInPhysicalFrame("Missing.Reference.Owner") == null
             && index.PhysicalOwnerTypeParametersInPhysicalFrame("System.String") is { Length: 0 }
