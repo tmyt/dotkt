@@ -39,6 +39,7 @@ static class Bir2Cir
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
                 MemberStrip.SelfTestSource();
+                InheritedDefaultFakeOverrideElision.SelfTestSource();
                 DeclarationIdentityBinding.SelfTest();
                 SourceDeclarationSignatures.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
@@ -511,6 +512,10 @@ sealed class Pipeline
             // this same authority even when that accessor no longer emits.
             localEventDeclarations.CaptureSource(source);
             if (!referenceBuild) MemberStrip.Apply(source, refs, RetireDeclaration);
+            // Inherited interface implementations supply an existing slot, not
+            // a second abstract declaration. Preserve their selected source row
+            // before retiring the exact fake override occurrence.
+            InheritedDefaultFakeOverrideElision.Apply(source, RetireDeclaration);
             captured[index] = null;
             // The remaining passes still own DOM graphs. Construct that frontier
             // directly; never serialize/reparse the typed input between passes.
@@ -647,10 +652,8 @@ sealed class Pipeline
             // so the (already-BCL) member bodies and the rule-3 call routing both see a consistent helper. No-op for ref.
             // Bound stubs were retired on owning typed source declarations,
             // before this hoist can turn them into helper implementations.
-            // Kotlin IR fake overrides are BIR facts, not CLR declarations. Consume the frontend's explicit selected
-            // implementation fact instead of rediscovering a DIM from hierarchy bodies or reference metadata.
-            // This is representation-independent and therefore applies to reference builds too.
-            InheritedDefaultFakeOverrideElision.Apply(bir.Root);
+            // Inherited interface fake overrides were consumed on owning typed
+            // source records in every build mode, including reference builds.
             var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs, genericRepresentations);
             // CLR override allocation: ordinary functions carrying @ClrIntrinsic receive the external slot name;
             // Kotlin property accessors keep their dedicated name and receive an explicit interface/base MethodImpl

@@ -237,7 +237,7 @@ sealed partial class TypedCirProjection
 
     internal CirTypeDeclaration ProjectCirTypeDeclaration(BirInterfaceDefinition value)
     {
-        if (value._ownerConstraintDispatchBounds.IsPresent || value.CompanionCarrier.IsPresent || value.KotlinSupertypesPre.IsPresent || value.KotlinType.IsPresent || value.ManagedReferenceContract.IsPresent || value.RoundtripSupertypesPre.IsPresent || value.RoundtripTypeHeaderPending.IsPresent || value.SemanticOwner.IsPresent || value.StaticCarrier.IsPresent)
+        if (value._ownerConstraintDispatchBounds.IsPresent || value.CompanionCarrier.IsPresent || value.InheritedDefaultMethods.IsPresent || value.KotlinSupertypesPre.IsPresent || value.KotlinType.IsPresent || value.ManagedReferenceContract.IsPresent || value.RoundtripSupertypesPre.IsPresent || value.RoundtripTypeHeaderPending.IsPresent || value.SemanticOwner.IsPresent || value.StaticCarrier.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirInterfaceDefinition");
         return new CirTypeDeclaration
         {

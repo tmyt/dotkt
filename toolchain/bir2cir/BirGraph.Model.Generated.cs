@@ -10208,6 +10208,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
     public OptionalField<SourceTypeFacts> RoundtripSupertypesPre { get; set; }
     public OptionalField<bool> RoundtripTypeHeaderPending { get; set; }
     public OptionalField<BirManagedReferenceContract> ManagedReferenceContract { get; set; }
+    public OptionalField<BirInheritedDefaultMethod[]> InheritedDefaultMethods { get; set; }
     public OptionalField<bool> Generated { get; set; }
     public OptionalField<bool> Abstract { get; set; }
     public OptionalField<bool> Final { get; set; }
@@ -10270,6 +10271,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (StaticCarrier.HasValue) { visit((BirGraphValue)StaticCarrier.Value); }
         if (CompanionCarrier.HasValue) { visit((BirGraphValue)CompanionCarrier.Value); }
         if (ManagedReferenceContract.HasValue) { visit((BirGraphValue)ManagedReferenceContract.Value); }
+        if (InheritedDefaultMethods.HasValue) { foreach (var item0 in InheritedDefaultMethods.Value) { visit((BirGraphValue)item0); } }
         if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { visit((BirGraphValue)item0); } }
         if (Pos.HasValue) { visit((BirGraphValue)Pos.Value); }
         if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { visit((BirGraphValue)item0); } }
@@ -10290,6 +10292,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (StaticCarrier.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)StaticCarrier.Value!, replacement => StaticCarrier = OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)replacement))); }
         if (CompanionCarrier.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)CompanionCarrier.Value!, replacement => CompanionCarrier = OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)replacement))); }
         if (ManagedReferenceContract.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)ManagedReferenceContract.Value!, replacement => ManagedReferenceContract = OptionalField<BirManagedReferenceContract>.Of((BirManagedReferenceContract)replacement))); }
+        if (InheritedDefaultMethods.HasValue) { for (var index0 = 0; index0 < InheritedDefaultMethods.Value.Length; index0++) { var at0 = index0; var child0 = InheritedDefaultMethods.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)InheritedDefaultMethods.Value[at0]!, replacement => InheritedDefaultMethods.Value[at0] = (BirInheritedDefaultMethod)replacement)); } }
         if (CapturedTypeParams.HasValue) { for (var index0 = 0; index0 < CapturedTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = CapturedTypeParams.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)CapturedTypeParams.Value[at0]!, replacement => CapturedTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
         if (Pos.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
         if (InterfaceSlotRefs.HasValue) { for (var index0 = 0; index0 < InterfaceSlotRefs.Value.Length; index0++) { var at0 = index0; var child0 = InterfaceSlotRefs.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)InterfaceSlotRefs.Value[at0]!, replacement => InterfaceSlotRefs.Value[at0] = (BirInterfaceSlotSet)replacement)); } }
@@ -10311,6 +10314,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (StaticCarrier.HasValue) { visit("staticCarrier", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)StaticCarrier.Value!, replacement => StaticCarrier = OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)replacement))); }
         if (CompanionCarrier.HasValue) { visit("companionCarrier", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)CompanionCarrier.Value!, replacement => CompanionCarrier = OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)replacement))); }
         if (ManagedReferenceContract.HasValue) { visit("managedReferenceContract", BirGenericFrameRole.FrozenSourceFact, new BirGraphSlot(() => (BirGraphValue)ManagedReferenceContract.Value!, replacement => ManagedReferenceContract = OptionalField<BirManagedReferenceContract>.Of((BirManagedReferenceContract)replacement))); }
+        if (InheritedDefaultMethods.HasValue) { for (var index0 = 0; index0 < InheritedDefaultMethods.Value.Length; index0++) { var at0 = index0; var child0 = InheritedDefaultMethods.Value[at0]; visit("inheritedDefaultMethods", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)InheritedDefaultMethods.Value[at0]!, replacement => InheritedDefaultMethods.Value[at0] = (BirInheritedDefaultMethod)replacement)); } }
         if (CapturedTypeParams.HasValue) { for (var index0 = 0; index0 < CapturedTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = CapturedTypeParams.Value[at0]; visit("capturedTypeParams", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)CapturedTypeParams.Value[at0]!, replacement => CapturedTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
         if (Pos.HasValue) { visit("pos", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
         if (InterfaceSlotRefs.HasValue) { for (var index0 = 0; index0 < InterfaceSlotRefs.Value.Length; index0++) { var at0 = index0; var child0 = InterfaceSlotRefs.Value[at0]; visit("interfaceSlotRefs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)InterfaceSlotRefs.Value[at0]!, replacement => InterfaceSlotRefs.Value[at0] = (BirInterfaceSlotSet)replacement)); } }
@@ -10336,6 +10340,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         StaticCarrier = StaticCarrier.HasValue ? OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)rewrite((BirGraphValue)StaticCarrier.Value)) : StaticCarrier,
         CompanionCarrier = CompanionCarrier.HasValue ? OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)rewrite((BirGraphValue)CompanionCarrier.Value)) : CompanionCarrier,
         ManagedReferenceContract = ManagedReferenceContract.HasValue ? OptionalField<BirManagedReferenceContract>.Of((BirManagedReferenceContract)rewrite((BirGraphValue)ManagedReferenceContract.Value)) : ManagedReferenceContract,
+        InheritedDefaultMethods = InheritedDefaultMethods.HasValue ? OptionalField<BirInheritedDefaultMethod[]>.Of(InheritedDefaultMethods.Value.Select(item0 => (BirInheritedDefaultMethod)rewrite((BirGraphValue)item0)).ToArray()) : InheritedDefaultMethods,
         CapturedTypeParams = CapturedTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(CapturedTypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : CapturedTypeParams,
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)rewrite((BirGraphValue)Pos.Value)) : Pos,
         InterfaceSlotRefs = InterfaceSlotRefs.HasValue ? OptionalField<BirInterfaceSlotSet[]>.Of(InterfaceSlotRefs.Value.Select(item0 => (BirInterfaceSlotSet)rewrite((BirGraphValue)item0)).ToArray()) : InterfaceSlotRefs,
@@ -10359,6 +10364,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         StaticCarrier = StaticCarrier.HasValue ? OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)((BirGraphValue)StaticCarrier.Value).DeepClone()) : StaticCarrier,
         CompanionCarrier = CompanionCarrier.HasValue ? OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)((BirGraphValue)CompanionCarrier.Value).DeepClone()) : CompanionCarrier,
         ManagedReferenceContract = ManagedReferenceContract.HasValue ? OptionalField<BirManagedReferenceContract>.Of((BirManagedReferenceContract)((BirGraphValue)ManagedReferenceContract.Value).DeepClone()) : ManagedReferenceContract,
+        InheritedDefaultMethods = InheritedDefaultMethods.HasValue ? OptionalField<BirInheritedDefaultMethod[]>.Of(InheritedDefaultMethods.Value.Select(item0 => (BirInheritedDefaultMethod)((BirGraphValue)item0).DeepClone()).ToArray()) : InheritedDefaultMethods,
         CapturedTypeParams = CapturedTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(CapturedTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : CapturedTypeParams,
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone()) : Pos,
         InterfaceSlotRefs = InterfaceSlotRefs.HasValue ? OptionalField<BirInterfaceSlotSet[]>.Of(InterfaceSlotRefs.Value.Select(item0 => (BirInterfaceSlotSet)((BirGraphValue)item0).DeepClone()).ToArray()) : InterfaceSlotRefs,
@@ -10393,6 +10399,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         StaticCarrier = StaticCarrier.HasValue ? OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)child(BirGenericFrameRole.Lexical, (BirGraphValue)StaticCarrier.Value)) : StaticCarrier,
         CompanionCarrier = CompanionCarrier.HasValue ? OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)child(BirGenericFrameRole.Lexical, (BirGraphValue)CompanionCarrier.Value)) : CompanionCarrier,
         ManagedReferenceContract = ManagedReferenceContract.HasValue ? OptionalField<BirManagedReferenceContract>.Of((BirManagedReferenceContract)child(BirGenericFrameRole.FrozenSourceFact, (BirGraphValue)ManagedReferenceContract.Value)) : ManagedReferenceContract,
+        InheritedDefaultMethods = InheritedDefaultMethods.HasValue ? OptionalField<BirInheritedDefaultMethod[]>.Of(InheritedDefaultMethods.Value.Select(item0 => (BirInheritedDefaultMethod)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : InheritedDefaultMethods,
         CapturedTypeParams = CapturedTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(CapturedTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : CapturedTypeParams,
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value)) : Pos,
         InterfaceSlotRefs = InterfaceSlotRefs.HasValue ? OptionalField<BirInterfaceSlotSet[]>.Of(InterfaceSlotRefs.Value.Select(item0 => (BirInterfaceSlotSet)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : InterfaceSlotRefs,
@@ -10427,6 +10434,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (StaticCarrier.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)StaticCarrier.Value); }
         if (CompanionCarrier.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)CompanionCarrier.Value); }
         if (ManagedReferenceContract.HasValue) { child(BirGenericFrameRole.FrozenSourceFact, (BirGraphValue)ManagedReferenceContract.Value); }
+        if (InheritedDefaultMethods.HasValue) { foreach (var item0 in InheritedDefaultMethods.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
         if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
         if (Pos.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value); }
         if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
@@ -10454,6 +10462,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (StaticCarrier.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)StaticCarrier.Value); }
         if (CompanionCarrier.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)CompanionCarrier.Value); }
         if (ManagedReferenceContract.HasValue) { child(BirGenericFrameRole.FrozenSourceFact, (BirGraphValue)ManagedReferenceContract.Value); }
+        if (InheritedDefaultMethods.HasValue) { foreach (var item0 in InheritedDefaultMethods.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
         if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
         if (Pos.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Pos.Value); }
         if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
@@ -10480,6 +10489,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (StaticCarrier.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)StaticCarrier.Value); }
         if (CompanionCarrier.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)CompanionCarrier.Value); }
         if (ManagedReferenceContract.HasValue) { child(BirGenericFrameRole.FrozenSourceFact, BirRepresentationRole.Lexical, (BirGraphValue)ManagedReferenceContract.Value); }
+        if (InheritedDefaultMethods.HasValue) { foreach (var item0 in InheritedDefaultMethods.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Pos.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Pos.Value); }
         if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
@@ -10507,6 +10517,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (StaticCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)StaticCarrier.Value); }
         if (CompanionCarrier.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)CompanionCarrier.Value); }
         if (ManagedReferenceContract.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)ManagedReferenceContract.Value); }
+        if (InheritedDefaultMethods.HasValue) { foreach (var item0 in InheritedDefaultMethods.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
         if (CapturedTypeParams.HasValue) { foreach (var item0 in CapturedTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
         if (Pos.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pos.Value); }
         if (InterfaceSlotRefs.HasValue) { foreach (var item0 in InterfaceSlotRefs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
@@ -10540,6 +10551,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
             && EqualField(RoundtripSupertypesPre, value.RoundtripSupertypesPre, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(RoundtripTypeHeaderPending, value.RoundtripTypeHeaderPending, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(ManagedReferenceContract, value.ManagedReferenceContract, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
+            && EqualField(InheritedDefaultMethods, value.InheritedDefaultMethods, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(Generated, value.Generated, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Abstract, value.Abstract, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Final, value.Final, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
@@ -10579,6 +10591,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         WriteOptional(writer, "roundtripSupertypesPre", RoundtripSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
         WriteOptional(writer, "roundtripTypeHeaderPending", RoundtripTypeHeaderPending, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "managedReferenceContract", ManagedReferenceContract, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "inheritedDefaultMethods", InheritedDefaultMethods, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "generated", Generated, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "abstract", Abstract, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "final", Final, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -10620,6 +10633,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (RoundtripSupertypesPre.IsPresent) result["roundtripSupertypesPre"] = RoundtripSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(RoundtripSupertypesPre.Value);
         if (RoundtripTypeHeaderPending.IsPresent) result["roundtripTypeHeaderPending"] = RoundtripTypeHeaderPending.IsNull ? null : JsonValue.Create(RoundtripTypeHeaderPending.Value);
         if (ManagedReferenceContract.IsPresent) result["managedReferenceContract"] = ManagedReferenceContract.IsNull ? null : ((BirGraphValue)ManagedReferenceContract.Value).ToDom();
+        if (InheritedDefaultMethods.IsPresent) result["inheritedDefaultMethods"] = InheritedDefaultMethods.IsNull ? null : new JsonArray(InheritedDefaultMethods.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (Generated.IsPresent) result["generated"] = Generated.IsNull ? null : JsonValue.Create(Generated.Value);
         if (Abstract.IsPresent) result["abstract"] = Abstract.IsNull ? null : JsonValue.Create(Abstract.Value);
         if (Final.IsPresent) result["final"] = Final.IsNull ? null : JsonValue.Create(Final.Value);
