@@ -7,20 +7,59 @@ static partial class UncheckedGenericCastReturnErasure
 {
     internal sealed record SourceRoot(BirFileDeclaration Declaration, string FileClass);
     internal sealed record SourceOccurrence(int File, int Type, int Method, string Identity, Decl Facts,
-        BirFunctionDeclaration Declaration, IBirTypeDeclaration Owner, BirFunctionDeclaration[] OriginalMethods);
+        BirFunctionDeclaration Declaration, IBirTypeDeclaration Owner, BirFunctionDeclaration[] OriginalMethods)
+    {
+        internal TypeNode ExpectedPhysicalReturn = Facts.Return;
+    }
 
     public sealed class PendingSourceIndex
     {
         SourceRoot[] roots;
         SourceOccurrence[] occurrences;
+        readonly DeclIndex index = new();
 
         internal PendingSourceIndex(SourceRoot[] roots, SourceOccurrence[] occurrences)
-        { this.roots = roots; this.occurrences = occurrences; }
+        {
+            this.roots = roots; this.occurrences = occurrences;
+            foreach (var occurrence in occurrences) index.ByIdentity.Add(occurrence.Identity, occurrence.Facts);
+        }
 
-        internal (SourceRoot[] Roots, SourceOccurrence[] Occurrences) Consume()
+        internal DeclIndex SourceDeclarations => roots != null ? index
+            : throw new InvalidOperationException("Unchecked source declarations already crossed their owning frontier");
+
+        // Only the actual compiler-owned declaration transitions can report a
+        // changed physical return. Captured body-Tv facts remain unchanged.
+        internal bool AlignDelegateTargets(BirFileDeclaration root, ValueTypeOracle isValue)
+        {
+            _ = SourceDeclarations;
+            return DelegateTargetSlotAlignment.Apply(root, isValue, RecordPhysicalReturnChange);
+        }
+
+        void RecordPhysicalReturnChange(BirFunctionDeclaration actual, TypeNode before, TypeNode after)
+        {
+            _ = SourceDeclarations;
+            var occurrence = occurrences.SingleOrDefault(value => ReferenceEquals(value.Declaration, actual));
+            if (occurrence == null) return; // Expansion can create targets outside the captured catalog.
+            if (!ReferenceEquals(occurrence.Facts.SourceMethod, actual)
+                || actual.DeclarationId.OrDefault() != occurrence.Identity
+                || actual.Static.OrDefault() != occurrence.Facts.Static
+                || occurrence.ExpectedPhysicalReturn != before || actual.Ret.OrDefault() != after)
+                throw ProjectionMismatch();
+            occurrence.ExpectedPhysicalReturn = BirGraphValue.CopyType(after);
+        }
+
+        internal void EraseOwnedReturn(Decl declaration)
+        {
+            var actual = declaration.SourceMethod;
+            var before = actual.Ret.Value;
+            actual.Ret = new TypeNode.Fqn("object");
+            RecordPhysicalReturnChange(actual, before, actual.Ret.Value);
+        }
+
+        internal (SourceRoot[] Roots, SourceOccurrence[] Occurrences, DeclIndex Index) Consume()
         {
             if (roots == null) throw new InvalidOperationException("Unchecked declaration snapshot was already bound");
-            var result = (roots, occurrences);
+            var result = (roots, occurrences, index);
             roots = null;
             occurrences = null;
             return result;
@@ -48,7 +87,7 @@ static partial class UncheckedGenericCastReturnErasure
                     if (!identities.Add(identity))
                         throw new ArgumentException($"An item with the same key has already been added. Key: {identity}");
                     var facts = new Decl { Owner = owner, TopLevel = typeIndex < 0, Static = method.Static.OrDefault(),
-                        Return = (TypeNode.Tv)BirGraphValue.CopyType(method.Ret.Value) };
+                        Return = (TypeNode.Tv)BirGraphValue.CopyType(method.Ret.Value), SourceMethod = method };
                     occurrences.Add(new SourceOccurrence(fileIndex, typeIndex, methodIndex, identity, facts, method, declaration, methods));
                 }
             }
@@ -98,9 +137,8 @@ static partial class UncheckedGenericCastReturnErasure
     public static DeclIndex BindDomDeclarations(PendingSourceIndex pending, IReadOnlyList<JsonObject> actualRoots,
         IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations = null)
     {
-        var (roots, occurrences) = pending.Consume();
+        var (roots, occurrences, index) = pending.Consume();
         if (actualRoots.Count != roots.Length) throw ProjectionMismatch();
-        var index = new DeclIndex();
         var associated = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
         foreach (var occurrence in occurrences)
         {
@@ -130,7 +168,7 @@ static partial class UncheckedGenericCastReturnErasure
                 || !ReferenceEquals(occurrence.OriginalMethods[occurrence.Method], occurrence.Declaration)
                 || occurrence.Declaration.DeclarationId.OrDefault() != occurrence.Identity
                 || occurrence.Declaration.Static.OrDefault() != occurrence.Facts.Static
-                || occurrence.Declaration.Ret.OrDefault() != occurrence.Facts.Return) throw ProjectionMismatch();
+                || occurrence.Declaration.Ret.OrDefault() != occurrence.ExpectedPhysicalReturn) throw ProjectionMismatch();
             JsonObject method;
             if (retiredDeclarations != null && retiredDeclarations.TryGetValue(occurrence.Declaration, out var retired))
             {
@@ -157,12 +195,10 @@ static partial class UncheckedGenericCastReturnErasure
             }
             if (Str(method[DeclarationIdentityBinding.Key]) != occurrence.Identity
                 || Bool(method["static"]) != occurrence.Facts.Static
-                || TypeJson.Read(method["ret"]) != occurrence.Facts.Return
+                || TypeJson.Read(method["ret"]) != occurrence.ExpectedPhysicalReturn
                 || !associated.Add(method)) throw ProjectionMismatch();
-            index.ByIdentity.Add(occurrence.Identity, new Decl {
-                Owner = occurrence.Facts.Owner, TopLevel = occurrence.Facts.TopLevel, Static = occurrence.Facts.Static,
-                Return = occurrence.Facts.Return, Method = method,
-            });
+            occurrence.Facts.Method = method;
+            occurrence.Facts.SourceMethod = null;
         }
         return index;
     }

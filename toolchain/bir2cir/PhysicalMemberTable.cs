@@ -11,6 +11,9 @@ sealed class PhysicalMemberTable
     internal IReadOnlyDictionary<string, MemberRefNode> Members { get; }
     PhysicalMemberTable(Dictionary<string, MemberRefNode> members) => Members = members;
 
+    internal static PhysicalMemberTable Create(IReadOnlyDictionary<string, MemberRefNode> members)
+        => new(members.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal));
+
     internal bool StructurallyEquals(PhysicalMemberTable other)
     {
         if (ReferenceEquals(this, other)) return true;

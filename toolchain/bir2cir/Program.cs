@@ -70,6 +70,7 @@ static class Bir2Cir
                 PropertyReferenceFunctionLowering.SelfTestSource();
                 LocalStaticOwnerBinding.SelfTestSource();
                 NullableTvErasureCallRealign.SelfTestSourceFixedSlots();
+                NullableTvErasureCallRealign.SelfTestSourceUses();
                 ValueSlotNullableWrite.SelfTestSource();
                 NullableGenericErasure.SourceSelfTest();
                 ClrMemberResolution.SourceSignatureSelfTest();
@@ -134,6 +135,7 @@ static class Bir2Cir
                 ClrMemberResolution.FunctionSlotComparisonSelfTest();
                 StringCharSequenceBridge.CallSignatureSelfTest();
                 ClrMemberResolution.NullableSlotComparisonSelfTest();
+                ClrMemberResolution.WellKnownTableSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
                 ConstrainedTypeParameterReceiverBinding.AritySnapshotSelfTest();
                 ConstrainedTypeParameterReceiverBinding.ResolvedPropertiesSelfTest();
@@ -488,6 +490,19 @@ sealed class Pipeline
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
             var source = captured[index];
+            // Admit each pristine synthetic declaration snapshot at its original
+            // per-file clock. Later files must not become visible to this file's
+            // initial nullable-use flow merely because preparation is module-wide.
+            NullableTvErasureCallRealign.ApplyNewSyntheticTypes(syntheticTypes[index], nullableDeclarations);
+            var sourceUses = nullableDeclarations.BindSourceVisibility();
+            NullableTvErasureCallRealign.ApplySourceUses(source, sourceUses, isValueFqn, refs);
+            // Function constructions now state their consuming slots. Align
+            // their owned targets, then reflow only when a declaration changed.
+            if (uncheckedDeclarations.AlignDelegateTargets(source, isValueFqn))
+                NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(source, sourceUses, isValueFqn, refs);
+            // Keep unchecked generic results object-typed until a real typed
+            // consumer; the captured body-Tv facts retain their exact identity.
+            UncheckedGenericCastReturnErasure.Apply(source, uncheckedDeclarations);
             captured[index] = null;
             // The remaining passes still own DOM graphs. Construct that frontier
             // directly; never serialize/reparse the typed input between passes.
@@ -496,8 +511,7 @@ sealed class Pipeline
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
                 root,
-                inputsWithSources[index].Suspend,
-                syntheticTypes[index]));
+                inputsWithSources[index].Suspend, sourceUses));
         }
 
         var continuingRoots = files.Select(file => file.Root).ToArray();
@@ -598,45 +612,13 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
-            // Owning typed preparation snapshotted heap ref-cell declarations before erasure. Admit their pristine
-            // element slots to the nullable-generic use index at the original per-file clock. Otherwise a late
-            // inherited protected-property read may be correctly realigned to object[] while its store into a
-            // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
-            NullableTvErasureCallRealign.ApplyNewSyntheticTypes(bir.SyntheticTypes, nullableTvDeclRets);
+            // The canonical index already contains later files' synthetic facts,
+            // but these early per-file capabilities retain the same visibility
+            // as this file's owning source-use pass. Global stages use canonical.
+            var sourceUses = bir.NullableSourceUses;
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
-            // GENERIC-BOUNDARY nullable-Tv USE realignment — THE USE AXIS of #86's erasure invariant (#4;
-            // #113/#117/#120/#142). The DEF-side erasure above turns a member's `T?`/`…Ref<T?>…` into
-            // `object`/`…Ref<object>…`, but a CALL site kotc emitted with T already substituted carries the concrete
-            // `Nullable(kotlin.Int)`/`…Ref<Nullable(kotlin.Int)>…` (no bare `Tv` for the sweep to catch), which lowers
-            // to a slot the member neither returns nor accepts — an ilverify StackUnexpected at a nested position, a
-            // member that does not exist at all when the call's `sig` descriptor is what drifted. So every USE is
-            // re-derived as `Subst(Erase(declaration), typeArgs)` and never `Erase(Subst(...))`: call returns, call
-            // and constructor ARGUMENTS (descriptor included), field reads, and the WRITE positions — setLocal,
-            // setField (statement/expression/static forms), arraySet, return (statement/expression forms), and the
-            // `if/else` value join. Object-erasure rewrites stay gated to the exact bare-object boundary; concrete
-            // V <-> Nullable<V> fixed slots use explicit construction/extraction with complete type identity.
-            // BEFORE BirTypeLowering.
-            NullableTvErasureCallRealign.ApplySourceUses(bir.Root, nullableTvDeclRets, isValueFqn, refs);
-            // DELEGATE-TARGET slot alignment (ALL builds — the declaration half neither axis above can reach on its
-            // own): a delegate's parameters and return are reified ARGUMENTS, so `(Int?) -> String` is
-            // `Func<object, string>` and `(T?) -> String` is `Func<object, string>` at every instantiation; the
-            // LIFTED method bound into that delegate declares ordinary slots, where a direct `Int?` is a
-            // `Nullable<int32>` and a `String?` is a `string`. ECMA-335 II.14.6 admits neither pair, so the target's
-            // slot follows the delegate's `object` — every parameter (contravariant: only `object` is assignable
-            // from `object`) and a value/`Nullable`/type-variable return (covariant: a reference already reaches
-            // `object`, and rewriting it is what broke #189). Runs AFTER the use axis, which is what corrects a
-            // construction's own `funcType` to the slot it fills; the declared transition below then types the newly-`object`
-            // lambda slots' BODIES — narrowing each read and boxing each `return` — and happens only when a slot
-            // actually moved.
-            if (DelegateTargetSlotAlignment.Apply(bir.Root, isValueFqn))
-                NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(
-                    bir.Root, nullableTvDeclRets, isValueFqn, refs);
-            // UNCHECKED OBJECT->Tv RETURN ERASURE: the non-null-T sibling of nullable-generic return erasure.  A JVM
-            // `Any? as T` physically returns Object; spelling the CLR return as reified T would insert `unbox.any T`
-            // inside the callee and throw even when a null result is stored but never consumed.  Emit object physically,
-            // preserve T in round-trip metadata, and keep a directly initialized Tv local object-typed until its actual
-            // typed use.  All matching is structural and this pass fully states the CIR types ilemit emits 1:1.
-            UncheckedGenericCastReturnErasure.Apply(bir.Root, uncheckedGenericCastRets);
+            // Initial nullable-use flow already ran on owning source BIR.
+            // Subsequent calls below follow only their actual late capability transitions.
             // VARIANCE -> INVARIANCE type-arg REALIGNMENT (il-bymap): kotc approximates a use-site `in`/`out` variance
             // projection to `kotlin.Any` (JVM-erased, harmless), so a call into an INVARIANT @ClrTypeAlias collection
             // generic (`getOrImplicitDefault<K,V>` on a `Map<String,V>` receiver) carries a `K = Any` typeArg while the
@@ -695,7 +677,7 @@ sealed class Pipeline
             // could not see a node that did not exist yet. Submit the exact materialized work items rather than
             // repairing the whole file after construction.
             NullableTvErasureCallRealign.ApplyMaterialized(
-                materializedEventHandles, nullableTvDeclRets, isValueFqn, refs);
+                materializedEventHandles, sourceUses, isValueFqn, refs);
             // Event reads synthesize add/remove callbacks as normal `newClosure` ingredient bags. The main
             // ClosureSynthesis pass ran earlier, before event binding. Give the exact materialized roots to its late
             // entry contract so only these newly-created callback classes are assembled.
@@ -705,7 +687,7 @@ sealed class Pipeline
                     materializedEventHandles, materializedEventClosureTypes, isValueFqn))
                 foreach (var materializedType in materializedEventClosureTypes)
                     NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(
-                        materializedType, nullableTvDeclRets, isValueFqn, refs);
+                        materializedType, sourceUses, isValueFqn, refs);
             // ClosureSynthesis stamps the transient lifted-frame correspondence on a GENERIC closure class, and the pass
             // that consumes it (SharedSyntheticSynthesis) already ran. Drop it here so the invariant "it never reaches
             // CIR" holds for a class assembled by this late pass too, rather than only for the main one.
@@ -737,14 +719,15 @@ sealed class Pipeline
             // referenced top-level call to its real file-class owner; bind the trusted physical-Object/logical-T
             // metadata boundary to an explicit CIR return conversion before `sty` is consumed by type lowering.
             if (!_options.RefBuild) UncheckedGenericCastReturnErasure.ApplyReferenced(substituted, refs);
-            // Cross-module half of the nullable-Tv use realignment (#86 D1). The pass above already re-derived every use
-            // whose callee it could name; a REFERENCED top-level fun reaches it as `callStatic owner=null` — kotc has no
+            // Cross-module half of the nullable-Tv use realignment (#86 D1). The initial typed source-use pass in
+            // LoadModule re-derived every use whose callee it could name; a REFERENCED top-level fun reaches it as
+            // `callStatic owner=null` — kotc has no
             // file class for it — and only MemberCallSubstitution has now attributed it to the owner the reference index
             // is keyed by. Same formula, same code, run once more so those calls' returns and arguments are derived from
             // the producing assembly's declaration too. Idempotent on everything the earlier run already corrected.
             if (!_options.RefBuild)
                 NullableTvErasureCallRealign.ApplyAfterReferencedOwnerBinding(
-                    substituted, nullableTvDeclRets, isValueFqn, refs);
+                    substituted, sourceUses, isValueFqn, refs);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
@@ -1431,7 +1414,6 @@ sealed class Pipeline
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
             CapturedGenericInvocation.Apply(lowered, refs, emittedLocalTypes);
-            ClrMemberResolution.ResolveWellKnown(lowered, refs);
         }
 
         var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
@@ -1448,6 +1430,9 @@ sealed class Pipeline
         // retain each exact MemberRef and each resolved file's own arity snapshot.
         foreach (var root in physicalDocuments)
             ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(root);
+        // Fixed BCL operands depend only on the reference universe. Author their
+        // complete physical role table directly on the continuing typed roots.
+        foreach (var root in physicalDocuments) ClrMemberResolution.ResolveWellKnown(root, refs);
         // Exact member resolution selected each MethodDef's CLR-only generic
         // constraints. Consume those facts on the same owning typed occurrences
         // before interface/delegate materialization; retain the prepared local
@@ -1730,7 +1715,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 }
 
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend,
-    NullableTvErasureCallRealign.SyntheticTypesSnapshot SyntheticTypes);
+    NullableTvErasureCallRealign.DeclIndex NullableSourceUses);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
     SourceModuleIndex SourceIndex,
     GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots,

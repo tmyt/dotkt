@@ -35,37 +35,9 @@ using DotKt.Bir;
 // method's parameter is `object`, NullableTvErasureCallRealign types every read of it as `object` and narrows at the
 // consumer that needs a value, and once its return is `object` the `return` statement's value is boxed by the same
 // write axis. Both are ordinary erasure-boundary uses; this pass states the declaration and nothing else.
-static class DelegateTargetSlotAlignment
+static partial class DelegateTargetSlotAlignment
 {
     static ValueTypeOracle _isValue = _ => false;
-
-    // Reports whether any target slot MOVED. The use axis has to see the moved declaration — a now-`object`
-    // parameter is read as `object` and narrowed at its first typed consumer, a now-`object` return boxes its
-    // `return` value. This is an explicit declaration-capability transition, so the caller schedules the body-flow
-    // entry dedicated to that transition exactly when a slot moved. Nothing moved is the common case and costs nothing.
-    public static bool Apply(JsonNode root, ValueTypeOracle isValue)
-    {
-        _isValue = isValue ?? (_ => false);
-        if (root is not JsonObject o) return false;
-        // Target identity -> which of its slots the delegate states as `object`. A `newDelegate` normally names a
-        // compiler-owned lifted static by `method`; the signature component keeps the identity complete if that BIR
-        // form also carries a resolved descriptor. A `newClosure` names its synthetic class by `closureType`, and its
-        // body is always that class's `invoke`.
-        //
-        // Owner, name and signature form the target identity: another owner's method must never move a local
-        // declaration just because they share a name and parameter vector. `sig`
-        // is the same frontend fact every overload-bearing node in BIR carries, it has been through the same erasure
-        // sweep as declarations by the time this pass runs, and it lays out `[ext receiver?] + contexts + regulars`
-        // exactly as `params` does — so the two compare directly.
-        var statics = new Dictionary<string, Demand>(StringComparer.Ordinal);
-        var closures = new Dictionary<string, Demand>(StringComparer.Ordinal);
-        Collect(o, statics, closures);
-        if (statics.Count == 0 && closures.Count == 0) return false;
-        _moved = false;
-        if (statics.Count > 0) AlignMethods(o["methods"], Str(o["fileClass"]), statics);
-        AlignClosureTypes(o, closures, statics);
-        return _moved;
-    }
 
     static bool _moved;
 
@@ -170,24 +142,34 @@ static class DelegateTargetSlotAlignment
     static void AlignMethods(JsonNode methods, string owner, Dictionary<string, Demand> byTarget)
     {
         if (owner == null || methods is not JsonArray a) return;
-        var matched = new Dictionary<Demand, List<JsonObject>>();
-        foreach (var m in a)
+        foreach (var (method, demand) in SelectedTargets(a.OfType<JsonObject>(), owner, byTarget,
+            method => Str(method["name"]), method => Str(method["semanticOwner"]),
+            method => (method["params"] as JsonArray ?? new()).Select(parameter => TypeJson.Read(parameter?["type"])).ToArray()))
+            Align(method, demand);
+    }
+
+    // Both owning renderers select from the same complete target set. In
+    // particular an ambiguous wildcard never changes either declaration.
+    static IEnumerable<(T Method, Demand Demand)> SelectedTargets<T>(IEnumerable<T> methods, string owner,
+        Dictionary<string, Demand> byTarget, Func<T, string> name, Func<T, string> semanticOwner,
+        Func<T, TypeNode[]> parameters)
+    {
+        var matched = new Dictionary<Demand, List<T>>();
+        foreach (var method in methods)
         {
-            if (m is not JsonObject mo || Str(mo["name"]) is not string n) continue;
-            // Lifted methods remain in the file's declaration list until owner routing. Their explicit
-            // semantic owner already names the target used by the delegate construction.
-            var targetOwner = Str(mo["semanticOwner"]) ?? owner;
-            var own = string.Join(",", (mo["params"] as JsonArray ?? new JsonArray())
-                .Select(p => TypeJson.Read((p as JsonObject)?["type"]) is TypeNode t
-                    ? TypeJson.Write(t).ToJsonString() : "?"));
-            if (!byTarget.TryGetValue(targetOwner + "|" + n + "|" + own, out var d)
-                && !byTarget.TryGetValue(targetOwner + "|" + n + "|" + AnySig, out d)) continue;
-            if (!matched.TryGetValue(d, out var list)) matched[d] = list = new List<JsonObject>();
-            list.Add(mo);
+            if (name(method) is not { } member) continue;
+            var targetOwner = semanticOwner(method) ?? owner;
+            if (!byTarget.TryGetValue(targetOwner + "|" + member + "|" + SignatureKey(parameters(method)), out var demand)
+                && !byTarget.TryGetValue(targetOwner + "|" + member + "|" + AnySig, out demand)) continue;
+            if (!matched.TryGetValue(demand, out var hits)) matched[demand] = hits = new();
+            hits.Add(method);
         }
         foreach (var (demand, hits) in matched)
-            if (hits.Count == 1) Align(hits[0], demand);
+            if (hits.Count == 1) yield return (hits[0], demand);
     }
+
+    static string SignatureKey(IEnumerable<TypeNode> parameters)
+        => string.Join(",", parameters.Select(type => type == null ? "?" : TypeNode.ToJson(type)));
 
     const string AnySig = "*";
 
@@ -195,7 +177,13 @@ static class DelegateTargetSlotAlignment
     // declaration's own parameters in.
     static string SigKey(JsonNode sig) => sig is not JsonArray a
         ? AnySig
-        : string.Join(",", a.Select(s => TypeJson.Read(s) is TypeNode t ? TypeJson.Write(t).ToJsonString() : "?"));
+        : SignatureKey(a.Select(TypeJson.Read));
+
+    readonly record struct AlignmentPlan(int[] Parameters, bool Return);
+    static AlignmentPlan Plan(TypeNode[] parameters, TypeNode result, Demand demand)
+        => new(parameters.Select((type, index) => (type, index))
+            .Where(slot => demand.Params.Contains(slot.index) && slot.type != null && !IsBareObject(slot.type))
+            .Select(slot => slot.index).ToArray(), demand.Ret && result != null && NeedsObjectSeam(result));
 
     // THE TWO POSITIONS TAKE OPPOSITE RULES, because delegate compatibility is not symmetric (ECMA-335 II.14.6):
     //
@@ -212,11 +200,12 @@ static class DelegateTargetSlotAlignment
     // first typed consumer and boxes a now-`object` return at the `return`.
     static void Align(JsonObject mo, Demand d)
     {
+        var parameters = (mo["params"] as JsonArray ?? new()).Select(parameter => TypeJson.Read(parameter?["type"])).ToArray();
+        var plan = Plan(parameters, TypeJson.Read(mo["ret"]), d);
         var argumentPrologueCount = 0;
         if (mo["params"] is JsonArray ps)
-            for (var i = 0; i < ps.Count; i++)
-                if (d.Params.Contains(i) && ps[i] is JsonObject po
-                    && TypeJson.Read(po["type"]) is TypeNode pt && !IsBareObject(pt))
+            foreach (var i in plan.Parameters)
+                if (ps[i] is JsonObject po && parameters[i] is TypeNode pt)
                 {
                     if (mo["body"] is JsonArray body && Str(po["name"]) is string sourceName)
                     {
@@ -243,7 +232,7 @@ static class DelegateTargetSlotAlignment
                     po["type"] = TypeJson.Write(ObjFqn);
                     _moved = true;
                 }
-        if (d.Ret && TypeJson.Read(mo["ret"]) is TypeNode ret && NeedsObjectSeam(ret))
+        if (plan.Return)
         {
             mo["ret"] = TypeJson.Write(ObjFqn);
             _moved = true;

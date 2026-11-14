@@ -11,8 +11,22 @@ using DotKt.Cir;
 sealed class InnerApplicationOrder
 {
     internal readonly record struct DeclarationFact(string Name, bool Inner, int CapturedCount, string SemanticOwner);
-    readonly Dictionary<string, (int Count, string Owner)> _locals = new(StringComparer.Ordinal);
+    sealed record Shape(int Version, int Count, string Owner, Shape Previous);
+    readonly Dictionary<string, Shape> _locals = new(StringComparer.Ordinal);
     readonly ReferenceMetadataIndex _references;
+    readonly int? _visibleThrough;
+    int _version;
+
+    InnerApplicationOrder(InnerApplicationOrder source)
+    {
+        _references = source._references;
+        _locals = source._locals;
+        _visibleThrough = source._visibleThrough ?? source._version;
+    }
+
+    // Declaration shape facts are shared. Only a genuinely changed local shape
+    // adds a scalar history link; no dictionary or declaration is cloned.
+    internal InnerApplicationOrder CaptureView() => new(this);
 
     public InnerApplicationOrder(IEnumerable<JsonNode> roots, ReferenceMetadataIndex references)
     {
@@ -48,15 +62,25 @@ sealed class InnerApplicationOrder
 
     void Add(string name, bool inner, int count, string semanticOwner)
     {
+        if (_visibleThrough != null)
+            throw new InvalidOperationException("An inner-application visibility view cannot admit declarations");
         if (inner && count > 0 && name != null)
-            _locals[name] = (count, semanticOwner
-                ?? throw new InvalidOperationException($"Kotlin inner type '{name}' has no semantic owner"));
+        {
+            var owner = semanticOwner
+                ?? throw new InvalidOperationException($"Kotlin inner type '{name}' has no semantic owner");
+            _locals.TryGetValue(name, out var prior);
+            if (prior != null && prior.Count == count && prior.Owner == owner) return;
+            _locals[name] = new Shape(++_version, count, owner, prior);
+        }
     }
 
     public TypeNode[] DeclarationArguments(TypeNode.Fqn application)
     {
         if (application?.Args is not { } arguments) return null;
-        var found = _locals.TryGetValue(application.Name, out var shape);
+        _locals.TryGetValue(application.Name, out var local);
+        while (local != null && _visibleThrough is { } through && local.Version > through) local = local.Previous;
+        var found = local != null;
+        var shape = found ? (local.Count, local.Owner) : default;
         if (!found && _references?.TryInnerCapturedCount(application.Name, out var count) == true)
         {
             if (!_references.TryInnerSemanticOwner(application.Name, out var owner))
