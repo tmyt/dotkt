@@ -233,7 +233,7 @@
       "required": ["k", "elem", "e"], "additionalProperties": false
     },
     "birArrayGet": {
-      "type": "object", "x-dotkt-model": { "name": "BirArrayGet", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirArrayGet", "domain": "birCore", "role": "expression", "loweringProperties": { "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" } } },
       "properties": { "k": { "const": "arrayGet" }, "array": { "$ref": "#/$defs/birExpressionNode" }, "index": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "array", "index"], "additionalProperties": false
     },
@@ -2019,7 +2019,7 @@
       "required": ["k", "elem", "size", "init", "invokeRef"], "additionalProperties": false
     },
     "cirArrayGetNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirArrayGet", "domain": "cirExecutable", "roles": ["expression"] },
+      "type": "object", "x-dotkt-model": { "name": "CirArrayGet", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["_erasedValueVariable"] },
       "properties": { "k": { "const": "arrayGet" }, "array": { "$ref": "#/$defs/cirExpressionNode" }, "index": { "$ref": "#/$defs/cirExpressionNode" }, "elem": { "x-dotkt-representation-role": "Element", "$ref": "#/$defs/type" } },
       "required": ["k", "array", "index", "elem"], "additionalProperties": false
     },
