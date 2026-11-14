@@ -125,7 +125,69 @@ static partial class OpaqueCarrierTypeBinding
             && TypeNodeDataEquality.Equal(((BirValueBlock)DefaultBirCarrier.DecodeTyped(defaultAttribute)).Type.Value, physical)
             && TypeNodeDataEquality.Equal(TypeJson.Read(root["methods"][0]["ret"]), source),
             "outer carrier owner did not use typed payload binding or touched the live source declaration");
+        SelfTestMetadataLeaves();
         Console.WriteLine("[typed opaque executable binding] self-test OK (inline/default codecs, parameter vectors, carried identities, spans and scalar boundary)");
+    }
+
+    static void SelfTestMetadataLeaves()
+    {
+        var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        var local = new TypeNode.Fqn("Leaf.Outer.Inner", new TypeNode[] { new TypeNode.Tv("type", 1) });
+        var physical = local with { Name = "Leaf.Outer+Inner`1" };
+        var referenced = new TypeNode.Fqn("System.Environment.SpecialFolder");
+        var referencedPhysical = referenced with { Name = typeof(Environment.SpecialFolder).FullName };
+        var shape = new TypeNode.Fn(true, local, new TypeNode[] { referenced, new TypeNode.Array(local) },
+            new TypeNode.Nullable(local), Ctx: new TypeNode[] { local });
+        var sourceBoundShape = SourceDeclarationSignature.RewriteType(shape, type =>
+            type.Name == local.Name ? physical : type.Name == referenced.Name ? referencedPhysical : type);
+        var suspendBoundShape = SourceDeclarationSignature.RewriteType(shape,
+            type => type.Name == local.Name ? physical : type);
+        const string frame = """{"sourceArity":2,"nullable":[1],"storage":[0],"nullableStorage":[1],"order":[3,0,2,1,4]}""";
+        var sourceText = "{\"interfaces\":[],\"bounds\":{\"3\":[" + TypeNode.ToJson(shape)
+            + "],\"0\":[]},\"base\":" + TypeNode.ToJson(local) + ",\"nullableFrame\":" + frame + "}";
+        var sourceFacts = SourceTypeFacts.ReadFrozenText(sourceText);
+        var methodFacts = new SourceBoundsSnapshot(new Dictionary<int, TypeNode[]> {
+            [3] = new TypeNode[] { shape }, [0] = Array.Empty<TypeNode>(),
+        });
+        var declaration = new BirClassDefinition {
+            Name = local.Name, Kind = "class", NestedIn = "Leaf.Outer", KotlinSupertypesPre = sourceFacts,
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } },
+        };
+        var method = new BirFunctionDeclaration {
+            Name = "method", Ret = local, NullableGenericRet = shape, SuspendResult = shape,
+            MethodTypeParameterBoundsPre = methodFacts,
+            Params = new[] {
+                new BirParameter { Name = "value", Type = local, NullableGeneric = shape },
+                new BirParameter { Name = "explicitNull", Type = local, NullableGeneric = OptionalField<TypeNode>.Null },
+                new BirParameter { Name = "absent", Type = local },
+            },
+        };
+        var root = new BirFileDeclaration { FileClass = "Leaf.File", Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Name = "Leaf.Outer", Kind = "class" }, declaration,
+        }, Methods = new[] { method } }.ToDom();
+        ApplyAll(new JsonNode[] { root }, refs);
+        var bound = SourceTypeFacts.ReadFrozenText(root["types"][1][KotlinSupertypesRecord.PreKey].GetValue<string>());
+        var expectedText = "{\"interfaces\":[],\"bounds\":{\"3\":[" + TypeNode.ToJson(sourceBoundShape)
+            + "],\"0\":[]},\"base\":" + TypeNode.ToJson(physical) + ",\"nullableFrame\":" + frame + "}";
+        var boundMethod = root["methods"][0];
+        var bounds = SourceBoundsSnapshot.ReadFrozenText(boundMethod[NullableGenericErasure.MethodTypeParameterBoundsPre].GetValue<string>());
+        Require(bound.FrozenText == expectedText && bound.Bounds.Keys.SequenceEqual(new[] { 3, 0 })
+            && bound.Interfaces.Count == 0 && bound.Bounds[0].Length == 0
+            && TypeNodeDataEquality.Equal(bounds.Bounds[3][0], sourceBoundShape)
+            && bounds.Bounds.Keys.SequenceEqual(new[] { 3, 0 }) && bounds.Bounds[0].Length == 0,
+            "source record binding changed field/vector order, emptiness, frame or bounds shape");
+        Require(TypeNodeDataEquality.Equal(TypeNode.Parse(boundMethod["nullableGenericRet"].GetValue<string>()), sourceBoundShape)
+            && TypeNodeDataEquality.Equal(TypeNode.Parse(boundMethod["params"][0]["nullableGeneric"].GetValue<string>()), sourceBoundShape)
+            && TypeNodeDataEquality.Equal(TypeNode.Parse(boundMethod["suspendResult"].GetValue<string>()), suspendBoundShape)
+            && boundMethod["params"][1].AsObject().ContainsKey("nullableGeneric")
+            && boundMethod["params"][1]["nullableGeneric"] == null
+            && !boundMethod["params"][2].AsObject().ContainsKey("nullableGeneric"),
+            "source/reference and suspend/local selection rules or leaf presence changed");
+        var rewritten = sourceFacts.RewriteTypes(type => SourceDeclarationSignature.RewriteType(type,
+            classifier => classifier.Name == local.Name ? physical : classifier));
+        Require(ReferenceEquals(sourceFacts.NullableFrame, rewritten.NullableFrame) && sourceFacts.FrozenText == sourceText
+            && BindSourceClassifier(referenced, new Dictionary<string, string> { [referenced.Name] = physical.Name }, refs).Name == physical.Name,
+            "leaf rewriting mutated source facts, replaced its nullable frame or lost local precedence");
     }
 
     static void Require(bool value, string message)

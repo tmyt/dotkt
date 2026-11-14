@@ -78,11 +78,7 @@ static partial class OpaqueCarrierTypeBinding
             if (nestedPhysical.Count > 0) RewriteCarrierSlots(root, nestedPhysical);
             BindSourceRecords(root, nestedPhysical, refs);
         }
-        semanticSignatures?.RewriteClassifiers(type => {
-            if (nestedPhysical.TryGetValue(type.Name, out var local)) return type with { Name = local };
-            return refs.TryExactPhysicalTypeName(type.Name, type.Args?.Length ?? 0, out var exact)
-                && exact != null && exact.Contains('+') ? type with { Name = exact } : type;
-        });
+        semanticSignatures?.RewriteClassifiers(type => BindSourceClassifier(type, nestedPhysical, refs));
     }
 
     // Source carriers are captured before ownership lowering so they retain source nullability, stars, Kotlin inner
@@ -104,10 +100,14 @@ static partial class OpaqueCarrierTypeBinding
             })
             {
                 if ((obj[key] as JsonValue)?.TryGetValue<string>(out var encoded) != true) continue;
-                var payload = JsonNode.Parse(encoded)
-                    ?? throw new InvalidOperationException($"{key} pass-local payload decoded to null");
-                BindSourcePayload(payload, localPhysical, refs);
-                obj[key] = payload.ToJsonString();
+                TypeNode Rewrite(TypeNode type) => SourceDeclarationSignature.RewriteType(type,
+                    classifier => BindSourceClassifier(classifier, localPhysical, refs));
+                obj[key] = key switch {
+                    KotlinSupertypesRecord.PreKey => SourceTypeFacts.ReadFrozenText(encoded).RewriteTypes(Rewrite).FrozenText,
+                    NullableGenericErasure.MethodTypeParameterBoundsPre =>
+                        SourceBoundsSnapshot.ReadFrozenText(encoded).RewriteTypes(Rewrite).FrozenText,
+                    _ => TypeNode.ToJson(Rewrite(TypeNode.Parse(encoded))),
+                };
             }
             foreach (var child in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
                 BindSourceRecords(child, localPhysical, refs);
@@ -117,28 +117,12 @@ static partial class OpaqueCarrierTypeBinding
                 BindSourceRecords(child, localPhysical, refs);
     }
 
-    static void BindSourcePayload(JsonNode payload, IReadOnlyDictionary<string, string> localPhysical,
+    static TypeNode.Fqn BindSourceClassifier(TypeNode.Fqn type, IReadOnlyDictionary<string, string> localPhysical,
         ReferenceMetadataIndex refs)
     {
-        void Rewrite(JsonNode current)
-        {
-            if (current is JsonObject type)
-            {
-                if (Str(type["t"]) == "fqn" && Str(type["name"]) is string name)
-                {
-                    var arity = type["args"] is JsonArray args ? args.Count : 0;
-                    if (localPhysical.TryGetValue(name, out var local)) type["name"] = local;
-                    else if (refs.TryExactPhysicalTypeName(name, arity, out var exact)
-                        && exact != null && exact.Contains('+'))
-                        type["name"] = exact;
-                }
-                foreach (var child in type.Select(kv => kv.Value).Where(value => value != null).ToList())
-                    Rewrite(child);
-            }
-            else if (current is JsonArray array)
-                foreach (var child in array.Where(value => value != null).ToList()) Rewrite(child);
-        }
-        Rewrite(payload);
+        if (localPhysical.TryGetValue(type.Name, out var local)) return type with { Name = local };
+        return refs.TryExactPhysicalTypeName(type.Name, type.Args?.Length ?? 0, out var exact)
+            && exact != null && exact.Contains('+') ? type with { Name = exact } : type;
     }
 
     static void RewriteCarrierSlots(JsonNode node, IReadOnlyDictionary<string, string> physicalBySemantic)
@@ -156,10 +140,13 @@ static partial class OpaqueCarrierTypeBinding
             if ((obj["suspendResult"] as JsonValue)?.TryGetValue<string>(out var suspendResult) == true
                 && !string.IsNullOrEmpty(suspendResult))
             {
-                var payload = JsonNode.Parse(suspendResult)
-                    ?? throw new InvalidOperationException("suspend-result carrier decoded to null");
-                BindJsonMetadataPayload(payload, physicalBySemantic);
-                obj["suspendResult"] = payload.ToJsonString();
+                // This is a TypeNode JSON leaf, not an executable byte carrier.
+                // Unlike source records, it binds only this producer's local
+                // nested identities, without reference lookup.
+                var payload = SourceDeclarationSignature.RewriteType(TypeNode.Parse(suspendResult),
+                    type => physicalBySemantic.TryGetValue(type.Name, out var physical)
+                        ? type with { Name = physical } : type);
+                obj["suspendResult"] = TypeNode.ToJson(payload);
             }
 
             if (DefaultBirCarrier.IsCarrier(obj))
@@ -176,25 +163,4 @@ static partial class OpaqueCarrierTypeBinding
                 RewriteCarrierSlots(value, physicalBySemantic);
     }
 
-    // Suspend-result metadata is JSON, not an executable byte carrier. Keep its
-    // explicit metadata-leaf path separate from the owning executable traversal.
-    static void BindJsonMetadataPayload(JsonNode payload, IReadOnlyDictionary<string, string> physicalBySemantic)
-    {
-        void Rewrite(JsonNode current)
-        {
-            if (current is JsonObject obj)
-            {
-                if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name
-                    && physicalBySemantic.TryGetValue(name, out var physical))
-                    obj["name"] = physical;
-                foreach (var child in obj.Select(kv => kv.Value).Where(child => child != null).ToList())
-                {
-                    Rewrite(child);
-                }
-            }
-            else if (current is JsonArray array)
-                foreach (var child in array.Where(value => value != null).ToList()) Rewrite(child);
-        }
-        Rewrite(payload);
-    }
 }
