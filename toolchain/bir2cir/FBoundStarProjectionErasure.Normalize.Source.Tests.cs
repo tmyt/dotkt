@@ -202,6 +202,11 @@ static partial class FBoundStarProjectionErasure
         var slots = context.Declarations.Slots(owner).Values.ToDictionary(row => row.Original, row => row);
         var selectedGet = slots[context.Bindings.GetCapturedSource(getter)].Slot.Name.Value;
         var selectedSet = slots[context.Bindings.GetCapturedSource(setter)].Slot.Name.Value;
+        // These current source owners already own value carriers. Do not
+        // disable the representation policy to make an artificial late-only
+        // selection clock. The normalizer must nevertheless bind every pending
+        // access and update its actual receiver local in the same owning walk.
+        Require(context.Projection.RequiresKotlinValueCarrier(logical), "source-generic value-slot policy was not active");
         foreach (var kind in new[] { "field", "lateinitGet", "setFieldExpr", "setField", "callInstance", "newBoundDelegate" })
         {
             var receiver = Local("receiver", logical);
@@ -217,12 +222,12 @@ static partial class FBoundStarProjectionErasure
                     Recv = receiver, Sig = Array.Empty<TypeNode>(), CalleeRet = integer,
                     FuncType = new TypeNode.Fn(false, integer, Array.Empty<TypeNode>()) },
             };
-            Require(ReferenceEquals(BindSourceNormalizedNode(access, state), access)
-                && receiver.Sty.Value == logical, kind + " was rebound without its receiver's physical evidence");
+            Require(receiver.Sty.Value == logical, kind + " did not start with the authored logical receiver");
             var statement = access is IBirStatement direct ? direct
                 : new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of((IBirExpression)access) };
             var method = Method(integer, Variable("receiver", logical, Local("physicalReceiver", physical)), statement);
             NormalizeInnerFactoryLocalsSource(method, state);
+            Require(receiver.Sty.Value == physical, kind + " receiver local was not normalized on its actual occurrence");
             var selected = method.Body.Value[1] is BirExpressionStatement expression ? (BirGraphValue)expression.Expr.Value
                 : (BirGraphValue)method.Body.Value[1];
             var expected = kind is "setField" or "setFieldExpr" ? selectedSet : selectedGet;

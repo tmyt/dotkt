@@ -82,7 +82,11 @@ static partial class FBoundStarProjectionErasure
                 "selected local event edge lost its identity or its live receiver");
 
             var arraySemantic = new TypeNode.Fqn("BodyBox", new TypeNode[] { any });
-            var array = new BirLocal { Name = "array", Sty = new TypeNode.Array(new TypeNode.Projection("out", arraySemantic)) };
+            // Ordinary source-generic values already use their nominal carrier.
+            // The array flow retains the distinct Kotlin element separately,
+            // just as initializer/local normalization publishes it in production.
+            var array = new BirLocal { Name = "array", Sty = new TypeNode.Array(carrier) };
+            state.ArrayProjection(array, arraySemantic);
             var read = new BirArrayGet { Array = array, Index = new BirConstant { Type = new TypeNode.Fqn("kotlin.Int"),
                 Value = new BirLiteral.IntegerLiteral(0) }, Elem = arraySemantic };
             var projected = (BirCast)BindProjectedArrayReadSource(read, state);
