@@ -91,7 +91,7 @@ static partial class GenericArrayStorageLowering
                 Name = "probe", Ret = new TypeNode.Fqn("void"),
                 Params = new[] { new BirParameter { Name = "array", Type = new TypeNode.Fqn("System.Array") } },
                 Body = new IBirStatement[] { new BirForArray {
-                    Array = new BirLocal { Name = "array", Type = new TypeNode.Fqn("System.Array") },
+                    Array = new BirLocal { Name = "array", Sty = new TypeNode.Fqn("System.Array") },
                     Var = "element", Elem = new TypeNode.Fqn("System.Object"), Body = Array.Empty<IBirStatement>(),
                 }, new BirVariable { Name = lateName, Type = new TypeNode.Fqn("System.Int32"),
                     Init = new BirConstant { Type = new TypeNode.Fqn("System.Int32"), Value = new BirLiteral.IntegerLiteral(0) } } },
