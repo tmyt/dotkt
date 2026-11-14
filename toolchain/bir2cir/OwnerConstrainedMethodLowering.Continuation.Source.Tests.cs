@@ -112,7 +112,7 @@ static partial class OwnerConstrainedMethodLowering
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
         var unit = new TypeNode.Fqn("kotlin.Unit");
         BirTypeParameter Parameter(string name, params TypeNode[] constraints) => new() {
-            Name = name, Constraints = constraints.Length == 0 ? default : constraints,
+            Name = name, Constraints = constraints.Length == 0 ? default(OptionalField<TypeNode[]>) : OptionalField<TypeNode[]>.Of(constraints),
         };
         FBoundStarProjectionErasure.CarrierRealizationContext Context(BirFileDeclaration file)
         {
