@@ -330,25 +330,6 @@ static partial class MemberCallSubstitution
         return new(Argument(arguments[0], 0), Argument(arguments[1], owner.Name == "kotlin.collections.MutableMap" ? 0 : 1));
     }
 
-    internal static JsonNode StaticMapPreference(TypeNode.Fqn owner, ReferenceMetadataIndex refs,
-        CollectionOperationPhase phase = CollectionOperationPhase.Physical)
-    {
-        JsonObject Unknown() => new() {
-            ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(ObjType)), ["value"] = null };
-        JsonNode Token(MapPreferenceArgument argument) => argument.Type == null ? Unknown()
-            : new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(argument.Type) };
-        JsonObject Variance(int value) => new() { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = value };
-        var plan = SelectMapPreference(owner, refs, phase);
-        if (plan.Unknown) return Unknown();
-        return new JsonObject {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(MapPreferenceOwner),
-            ["method"] = MapPreferenceMethod, ["typeArgs"] = new JsonArray(),
-            ["sig"] = new JsonArray(MapPreferenceSignature().Select(TypeJson.Write).ToArray()),
-            ["ret"] = TypeJson.Write(ObjType),
-            ["args"] = new JsonArray(Token(plan.Key), Variance(plan.Key.Variance), Token(plan.Value), Variance(plan.Value.Variance)),
-        };
-    }
-
     internal static IBirExpression StaticMapPreferenceValue(TypeNode.Fqn owner, ReferenceMetadataIndex refs,
         CollectionOperationPhase phase = CollectionOperationPhase.Physical)
     {
@@ -619,9 +600,6 @@ static partial class MemberCallSubstitution
         ("merge", _, 3, true) => "clrMapMerge",
         _ => null,
     };
-
-    internal static JsonArray MapHelperSig(string method)
-        => new(MapHelperTypes(method).Select(TypeJson.Write).ToArray());
 
     internal static TypeNode[] MapHelperTypes(string method)
     {

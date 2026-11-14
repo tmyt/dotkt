@@ -3,6 +3,7 @@ using DotKt.Bir.Lowering;
 
 static partial class CatchClauseWidening
 {
+    static readonly string[] IndexOobNet = { "System.ArgumentOutOfRangeException", "System.IndexOutOfRangeException" };
     internal static void Apply(BirFileDeclaration root) => WidenSource(root);
 
     static void WidenSource(BirGraphValue node)

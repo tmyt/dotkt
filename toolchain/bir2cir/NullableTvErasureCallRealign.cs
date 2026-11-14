@@ -446,24 +446,6 @@ static partial class NullableTvErasureCallRealign
     static TypeNode[] OwnerArguments(TypeNode.Fqn owner) =>
         _sourceApplicationOrder?.DeclarationArguments(owner) ?? owner?.Args;
 
-    static void ApplyDeclaredUses(JsonNode root, DeclIndex idx, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs)
-    {
-        _isValue = isValue ?? (_ => false);
-        _refs = refs;
-        _sourceApplicationOrder = idx.SourceApplicationOrder;
-        ApplyRec(root, idx);
-    }
-
-    // The CROSS-MODULE half (#86 D1) — the same formula after a distinct capability transition. It exists because of
-    // WHEN a referenced callee acquires an owner: kotc emits a referenced top-level call
-    // as `callStatic owner=null`, and only MemberCallSubstitution attributes it to the file class the reference index
-    // is keyed by, so those calls have no resolvable declaration on the first run. Every rewrite here is gated on a
-    // difference plus the object-erasure relation, so re-deriving a slot the first run already corrected is a no-op.
-    public static void ApplyAfterReferencedOwnerBinding(
-        JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
-        => ApplyDeclaredUses(root, idx, isValue, refs);
-
     // The SAME-MODULE inherited-member half. A call emitted against its Kotlin receiver owner can only be matched to
     // the declaration that owns its nullable-generic slot after InheritedMemberOwnerBinding closes the base-chain
     // substitution (`Derived : Base<String>` reading `Base<T>.values: Array<T?>`). Until then the source-use pass has

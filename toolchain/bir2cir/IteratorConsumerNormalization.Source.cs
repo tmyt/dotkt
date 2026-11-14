@@ -4,6 +4,8 @@ using DotKt.Cir;
 
 static partial class IteratorConsumerNormalization
 {
+    const string Bridge = "kotlin.collections.ClrIteratorBridgeKt";
+    static readonly TypeNode ObjT = new TypeNode.Fqn("object");
     // The member pass has already chosen the iterator protocol. Retain its
     // actual operands and normalize only the referenced consumer face.
     internal static void Apply(BirFileDeclaration root) => ProcessSource(root);
@@ -78,4 +80,21 @@ static partial class IteratorConsumerNormalization
         });
         return (owner as TypeNode.Fqn)?.Name ?? (ownerType as TypeNode.Fqn)?.Name;
     }
+
+    static (TypeNode, TypeNode) EntryKvArgs(TypeNode.Fqn element)
+    {
+        var arguments = element.Args;
+        return (arguments is { Length: >= 1 } && arguments[0] != null ? arguments[0] : ObjT,
+                arguments is { Length: >= 2 } && arguments[1] != null ? arguments[1] : ObjT);
+    }
+
+    static (string, TypeNode)? IteratorVarElem(TypeNode type)
+        => type is TypeNode.Fqn { Args: { Length: 1 } arguments } named
+            && named.Name is "kotlin.collections.Iterator" or "kotlin.collections.MutableIterator"
+                ? (named.Name, arguments[0]) : null;
+
+    static TypeNode IteratorDispatchElem(TypeNode type)
+        => type is TypeNode.Fqn { Args: { Length: 1 } arguments } named
+            && named.Name is "kotlin.collections.Iterator" or "kotlin.collections.MutableIterator"
+                ? arguments[0] : null;
 }

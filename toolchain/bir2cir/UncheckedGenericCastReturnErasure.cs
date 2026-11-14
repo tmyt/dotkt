@@ -52,50 +52,12 @@ static partial class UncheckedGenericCastReturnErasure
         && castType is TypeNode.Tv variable && variable == expected
         && IsNullableOrObjectSource(sourceType);
 
-    // Consumer-side half of the object-return ABI.  dll2klib has already restored the Kotlin expression type into
-    // BIR's `sty`, while the reference index sees the producer's physical Object return and trusted [KotlinType]
-    // declaration carrier.  Turn that exact pair into CIR's explicit `ret`: BirTypeLowering then lowers the concrete
-    // Kotlin type and ilemit mechanically emits the required unbox/cast at the call boundary.
-    public static void ApplyReferenced(JsonNode root, ReferenceMetadataIndex refs)
-    {
-        RewriteReferencedCalls(root, refs);
-    }
-
     // An inherited call initially names its receiver rather than the declaration owner. Only after owner binding
     // can the selected object-returning declaration be closed in its exact frame. Preserve its Kotlin result as an
     // explicit use projection before BirTypeLowering consumes sty; PhysicalValueCoercion materializes the cast.
     public static void ApplyAfterInheritedOwnerBinding(JsonNode root, DeclIndex index)
     {
         ApplyCallsOnly(root, index);
-    }
-
-    static void RewriteReferencedCalls(JsonNode node, ReferenceMetadataIndex refs)
-    {
-        switch (node)
-        {
-            case JsonObject call:
-            {
-                var kind = Str(call["k"]);
-                if (kind is "callStatic" or "callInstance")
-                {
-                    KotlinPropertyAccessors.TryCallIdentity(call, out _, out var propertyRole);
-                    var owner = kind == "callStatic"
-                        ? TypeJson.Read(call["ownerType"]) ?? TypeJson.Read(call["owner"]) ?? TypeJson.Read(call["calleeOwner"])
-                        : TypeJson.Read(call["ownerType"]);
-                    if (SelectReferencedReturn(new(kind == "callStatic", Str(call[DeclarationIdentityBinding.Key]),
-                        propertyRole, Str(call["method"]), owner, TypeJson.Read(call["sty"]), TypeJson.Read(call["ret"]),
-                        (call["args"] as JsonArray)?.Count ?? 0, ReadTypes(call["typeArgs"])), refs) != null)
-                        call["ret"] = call["sty"].DeepClone();
-                }
-                foreach (var child in call.Select(kv => kv.Value).Where(v => v != null).ToList())
-                    RewriteReferencedCalls(child, refs);
-                break;
-            }
-            case JsonArray array:
-                foreach (var child in array.Where(v => v != null).ToList())
-                    RewriteReferencedCalls(child, refs);
-                break;
-        }
     }
 
     static bool IsObject(TypeNode type) =>

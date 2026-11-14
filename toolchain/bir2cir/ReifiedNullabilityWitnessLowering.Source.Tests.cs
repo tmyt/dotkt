@@ -77,6 +77,7 @@ static partial class ReifiedNullabilityWitnessLowering
             && !ReferenceEquals(classifierKnown.Args.Value[1], predicateKnown.Args.Value[1]), "known nullable flags/classifier/predicate");
         var pending = call.NullablePendingWitnesses.Value[0];
         var originalArgument = call.Args.Value[0];
+        var pendingFile = (BirFileDeclaration)file.DeepClone();
         MaterializeCallWitnesses(file);
         SourceCheck(!call.NullablePendingWitnesses.IsPresent && call.NullableWitnessCount.Value == 1
             && call.Args.Value.Length == 2 && ReferenceEquals(call.Args.Value[0], originalArgument)
@@ -85,7 +86,7 @@ static partial class ReifiedNullabilityWitnessLowering
             && ((BirGraphValue)call.Args.Value[1]).StructurallyEquals((BirGraphValue)pending),
             "owning witness consumption, independent argument copy and signature finalization");
         var rejected = false;
-        try { SourceRun(file); } catch (InvalidOperationException error) when (error.Message.Contains("assigned nullable witnesses twice", StringComparison.Ordinal)) { rejected = true; }
+        try { SourceRun(pendingFile); } catch (InvalidOperationException error) when (error.Message.Contains("assigned nullable witnesses twice", StringComparison.Ordinal)) { rejected = true; }
         SourceCheck(rejected, "pending witness non-reentrance");
     }
 

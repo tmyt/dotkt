@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
-using DotKt.Bir;
 
 // A CLR generic argument cannot distinguish `String` from `String?` (or `Int` from `Int?` after the Kotlin
 // instantiation has selected the same open `!!T` body). Collection storage also merges read-only/mutable faces.
@@ -18,38 +17,6 @@ static partial class ReifiedNullabilityWitnessLowering
     const string CallWitnessCountKey = "nullableWitnessCount";
     const string PendingWitnessesKey = "nullablePendingWitnesses";
     const string Prefix = "dotkt$nullableWitness$";
-    public static void MaterializeCallWitnesses(JsonNode root)
-    {
-        void Walk(JsonNode node)
-        {
-            switch (node)
-            {
-                case JsonObject obj:
-                    foreach (var property in obj.ToList())
-                        if (property.Key != PendingWitnessesKey && property.Value != null) Walk(property.Value);
-                    if (obj[PendingWitnessesKey] is not JsonArray pending) return;
-                    if (Str(obj["k"]) is not ("callStatic" or "callInstance" or "constrainedCall" or "new"))
-                        throw new InvalidOperationException(
-                            $"bir2cir: nullable witness survived on non-call node '{Str(obj["k"])}'");
-                    var args = obj["args"] as JsonArray
-                        ?? throw new InvalidOperationException("bir2cir: nullable-sensitive call lost its argument vector");
-                    foreach (var witness in pending)
-                        args.Add(witness?.DeepClone());
-                    obj.Remove(PendingWitnessesKey);
-                    obj[CallWitnessCountKey] = pending.Count;
-                    FinalizeVector(obj, "sig", args.Count, pending.Count);
-                    FinalizeVector(obj, "argTypes", args.Count, pending.Count);
-                    FinalizeVector(obj, "memberSignature", args.Count, pending.Count);
-                    break;
-                case JsonArray array:
-                    foreach (var child in array.ToList()) if (child != null) Walk(child);
-                    break;
-            }
-        }
-
-        Walk(root);
-    }
-
     public static void FinalizeCallSignatures(JsonNode root)
     {
         void Walk(JsonNode node)
@@ -100,6 +67,4 @@ static partial class ReifiedNullabilityWitnessLowering
     }
 
     static string Sanitize(string value) => new(value.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray());
-
-    static string Str(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
 }
