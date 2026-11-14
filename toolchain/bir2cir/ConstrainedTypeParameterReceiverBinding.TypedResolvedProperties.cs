@@ -4,8 +4,8 @@ using DotKt.Cir;
 
 static partial class ConstrainedTypeParameterReceiverBinding
 {
-    // This is intentionally per-file, at the old post-resolution clock. Another
-    // input file cannot change whether a bare local owner is already closed.
+    // The arity snapshot belongs to this resolved file. Another input file
+    // cannot change whether a bare local owner is already closed.
     internal static void ApplyResolvedProperties(BirFileDeclaration file)
     {
         var arities = new Dictionary<string, int>(StringComparer.Ordinal);

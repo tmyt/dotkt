@@ -1445,7 +1445,7 @@ sealed class Pipeline
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
         // Final resolution distinguished actual accessors from public fields.
         // Consume their receiver-dispatch facts on the same owning typed graph;
-        // retain each exact MemberRef and the original one-file arity clock.
+        // retain each exact MemberRef and each resolved file's own arity snapshot.
         foreach (var root in physicalDocuments)
             ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(root);
         // Exact member resolution selected each MethodDef's CLR-only generic

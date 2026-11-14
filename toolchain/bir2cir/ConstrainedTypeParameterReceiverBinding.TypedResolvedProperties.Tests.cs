@@ -74,6 +74,30 @@ static partial class ConstrainedTypeParameterReceiverBinding
             || setCall.Sig.Value[0] != integer || getCall.Ret.Value != integer || getCall.Sty.IsPresent)
             throw new InvalidOperationException("Resolved constrained accessor re-selected a member or duplicated setter operands");
 
+        // Construction operands belong to the caller's frame; the suspended
+        // executable body owns a different frame and must retain its accesses.
+        var captureGet = Getter();
+        var suspendBodyGet = Getter();
+        var suspendBodyReceiver = suspendBodyGet.Recv.Value;
+        var suspendBody = new IBirStatement[] { new BirExpressionStatement { Expr = suspendBodyGet } };
+        var captureValues = new IBirExpression[] { captureGet, null };
+        var suspend = new BirNewSuspendLambda {
+            Params = Array.Empty<BirLambdaParameter>(), CapValues = captureValues, Body = suspendBody,
+        };
+        method.Body = new IBirStatement[] { new BirExpressionStatement { Expr = suspend } };
+        ApplyResolvedProperties(file);
+        if (!ReferenceEquals(((BirExpressionStatement)method.Body.Value[0]).Expr.Value, suspend)
+            || !ReferenceEquals(suspend.CapValues.Value, captureValues)
+            || suspend.CapValues.Value[0] is not BirConstrainedCall captureAccess
+            || !ReferenceEquals(captureAccess.MemberRef.Value, captureGet.MemberRef.Value)
+            || !ReferenceEquals(captureAccess.Recv.Value, captureGet.Recv.Value)
+            || captureAccess.RecvType.Value != variable || suspend.CapValues.Value[1] != null
+            || !ReferenceEquals(suspend.Body.Value, suspendBody)
+            || !ReferenceEquals(((BirExpressionStatement)suspend.Body.Value[0]).Expr.Value, suspendBodyGet)
+            || !ReferenceEquals(suspendBodyGet.Recv.Value, suspendBodyReceiver)
+            || suspendBodyGet.Recv.Value is not BirLocal || suspendBodyGet.Dispatch.Value != "callvirt")
+            throw new InvalidOperationException("Resolved suspend construction crossed the body frame or lost capture occurrences");
+
         // The final owner lookup is local to this file and counts captured
         // parameters too. A round-trip header is never live dispatch evidence.
         var bare = Getter(); bare.Type = new TypeNode.Fqn("Probe.Generic");
@@ -120,6 +144,65 @@ static partial class ConstrainedTypeParameterReceiverBinding
         ApplyResolvedProperties(file);
         if (liveGet.Recv.Value is not BirCast)
             throw new InvalidOperationException("Live projected source bounds lost their erased dispatch route");
+
+        // Physical slot zero is a storage companion, not source parameter zero.
+        // Project both the bound's owner slot and its nested type variable.
+        var reorderedFrame = new NullableRepresentationFrame(2, Array.Empty<int>(), new[] { 2, 1, 0 },
+            storageIndices: new[] { 0 });
+        var sourceVariable = new TypeNode.Tv("type", 0);
+        var projectedBound = new TypeNode.Fqn("Probe.Contract", new TypeNode[] { sourceVariable, new TypeNode.Star() });
+        var reorderedFacts = new SourceTypeFacts(new Dictionary<int, TypeNode[]> {
+            [0] = new TypeNode[] { projectedBound },
+        }).MergeNullableFrame(reorderedFrame);
+        owner.TypeParams = new[] { new BirTypeParameter { Name = "Storage" },
+            new BirTypeParameter { Name = "Other" }, new BirTypeParameter { Name = "Source" } };
+        owner.KotlinSupertypesPre = reorderedFacts;
+        var mappedGet = Getter(); mappedGet.Recv = new BirLocal { Name = "mapped" };
+        var storageGet = Getter(); storageGet.Recv = new BirLocal { Name = "storage" };
+        typeMethod.Params = new[] {
+            new BirParameter { Name = "mapped", Type = new TypeNode.Tv("type", 2) },
+            new BirParameter { Name = "storage", Type = new TypeNode.Tv("type", 0) },
+        };
+        typeMethod.Body = new IBirStatement[] {
+            new BirExpressionStatement { Expr = mappedGet }, new BirExpressionStatement { Expr = storageGet },
+        };
+        var projectedSlots = ResolvedConstraintFrame(owner.TypeParams.Value, null,
+            reorderedFacts.Bounds, reorderedFrame);
+        ApplyResolvedProperties(file);
+        if (reorderedFrame.SourcePosition(0) != 2
+            || reorderedFrame.Variable(sourceVariable, NullableRepresentationFrame.Role.Storage).I != 0
+            || reorderedFrame.PhysicalSlot(0) != new NullableRepresentationFrame.Slot(0, NullableRepresentationFrame.Role.Storage)
+            || projectedSlots.Length != 3 || projectedSlots[0].Erased.Length != 0
+            || projectedSlots[2].Erased is not [TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "type", I: 2 }, TypeNode.Star] }]
+            || !ReferenceEquals(owner.KotlinSupertypesPre.Value, reorderedFacts)
+            || !ReferenceEquals(reorderedFacts.NullableFrame, reorderedFrame)
+            || reorderedFacts.Bounds[0][0] is not TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "type", I: 0 }, TypeNode.Star] }
+            || ((BirExpressionStatement)typeMethod.Body.Value[0]).Expr.Value is not BirPropertyGet { Recv.Value: BirCast }
+            || ((BirExpressionStatement)typeMethod.Body.Value[1]).Expr.Value is not BirConstrainedCall { RecvType.Value: TypeNode.Tv { Scope: "type", I: 0 } })
+            throw new InvalidOperationException("Live owner bounds confused source positions with physical storage slots");
+
+        // Method source bounds are live dispatch evidence too, without the
+        // owner's physical-frame remapping applying to their method variables.
+        var methodBound = new TypeNode.Fqn("Probe.Contract", new TypeNode[] {
+            new TypeNode.Tv("method", 1), new TypeNode.Star(),
+        });
+        var methodBounds = new SourceBoundsSnapshot(new Dictionary<int, TypeNode[]> {
+            [0] = new TypeNode[] { methodBound },
+        });
+        var methodBoundGet = Getter();
+        var boundedMethod = new BirFunctionDeclaration {
+            Name = "projectedMethod", TypeParams = new[] { new BirTypeParameter { Name = "T" }, new BirTypeParameter { Name = "U" } },
+            Params = new[] { new BirParameter { Name = "receiver", Type = variable } },
+            MethodTypeParameterBoundsPre = methodBounds,
+            Body = new IBirStatement[] { new BirExpressionStatement { Expr = methodBoundGet } },
+        };
+        owner.Methods = new[] { boundedMethod };
+        ApplyResolvedProperties(file);
+        if (!boundedMethod.MethodTypeParameterBoundsPre.HasValue
+            || !ReferenceEquals(boundedMethod.MethodTypeParameterBoundsPre.Value, methodBounds)
+            || methodBounds.Bounds[0] is not [TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "method", I: 1 }, TypeNode.Star] }]
+            || ((BirExpressionStatement)boundedMethod.Body.Value[0]).Expr.Value is not BirPropertyGet { Recv.Value: BirCast })
+            throw new InvalidOperationException("Live projected method bounds lost their dispatch route or source frame");
 
         var markerCall = new BirCallInstance { _erasedConstraintDispatch = false };
         var markerNative = new BirNativeInstance { _erasedConstraintDispatch = true };

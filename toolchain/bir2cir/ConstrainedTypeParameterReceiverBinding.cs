@@ -618,9 +618,6 @@ static partial class ConstrainedTypeParameterReceiverBinding
     static bool Bool(JsonNode node) =>
         node is JsonValue value && value.TryGetValue<bool>(out var result) && result;
 
-    static bool? NullableBool(JsonNode node) =>
-        node is JsonValue value && value.TryGetValue<bool>(out var result) ? result : null;
-
     static string Str(JsonNode node) =>
         node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 }
