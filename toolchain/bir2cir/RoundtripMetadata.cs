@@ -171,8 +171,6 @@ static partial class RoundtripMetadata
         constructor.Remove(DeclarationSignatureIdentity.AllocatedKey);
     }
 
-
-
     static void StampMethods(JsonNode methods)
     {
         if (methods is not JsonArray a) return;
@@ -734,8 +732,6 @@ static partial class RoundtripMetadata
         byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(typeJson));
         return Marker(AKCollIdentity, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
     }
-
-
 
     // Callable/parameter/field source slots still consume this carrier at the
     // original DOM metadata phase. Type headers use their owning TypeNode writer.

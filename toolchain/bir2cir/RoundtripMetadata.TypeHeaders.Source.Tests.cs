@@ -14,6 +14,15 @@ static partial class RoundtripMetadata
         var frame = new NullableRepresentationFrame(2, Array.Empty<int>(), new[] { 1, 0 });
         var source = new SourceTypeFacts(new Dictionary<int, TypeNode[]> { [0] = new[] { new TypeNode.Fqn("Probe.Bound") } })
             .MergeNullableFrame(frame);
+        var handoff = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Name = "Probe.Handoff", Kind = "class", KotlinSupertypesPre = source },
+        } }.ToDom();
+        var oldFact = handoff["types"][0][KotlinSupertypesRecord.PreKey];
+        Stamp(handoff);
+        if (oldFact == null || handoff["types"][0][KotlinSupertypesRecord.PreKey] != null
+            || !ReferenceEquals(handoff["types"][0]["roundtripSupertypesPre"], oldFact)
+            || handoff["types"][0]["roundtripTypeHeaderPending"]?.GetValue<bool>() != true)
+            throw new InvalidOperationException("Original stamp phase lost the exact frozen source-fact handoff");
         var member = new BirFunctionDeclaration { Name = "alreadyStamped" };
         var owner = new BirClassDefinition {
             Name = "Probe.Owner", Kind = "class", RoundtripTypeHeaderPending = true,
@@ -108,15 +117,24 @@ static partial class RoundtripMetadata
         var empty = new BirClassDefinition { Name = "Probe.Empty", Kind = "class", RoundtripTypeHeaderPending = true,
             Attrs = Array.Empty<BirAttribute>() };
         var late = new BirClassDefinition { Name = "Probe.Late", Kind = "class", Attrs = new[] { HeaderMarker(AKValue) } };
-        var file = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { representation, rich, empty, late } };
+        var entry = new BirEnumEntryDeclaration { Name = "A", Attrs = new[] { user } };
+        var enumeration = new BirEnumDefinition { Name = "Probe.RuntimeEnum", Kind = "enum", RoundtripTypeHeaderPending = true,
+            Entries = new[] { entry }, BasicEnum = new BirBasicEnumCarrier { Underlying = "System.Int32",
+                Entries = new[] { new BirBasicEnumCarrierEntry { Name = "A", Ordinal = 0, PhysicalValue = "7" } } } };
+        var file = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { representation, rich, empty, late, enumeration } };
         StampTypeHeaders(file, runtimeMode: true);
         ExpectNames(representation.Attrs.Value, "Probe.UserAttribute", AKType);
         ExpectNames(rich.Attrs.Value, AKRichEnum);
         ExpectNames(late.Attrs.Value, AKValue);
+        ExpectNames(enumeration.Attrs.Value, AKBasicEnum);
+        ExpectNames(entry.Attrs.Value, "Probe.UserAttribute", AKBasicEnumOrdinal);
+        ExpectPayload(enumeration, AKBasicEnum, """{"underlying":"System.Int32","entries":[{"name":"A","ordinal":0,"physicalValue":"7"}]}""");
         ExpectPayload(representation, AKType, TypeNode.ToJson(new TypeNode.Fqn("Probe.Source")));
         if (!ReferenceEquals(representation.Attrs.Value[0], user) || !HasRepresentationTypeAssociations(file)
             || empty.Attrs.IsPresent || representation.KotlinType.IsPresent || rich.RichEnum.IsPresent
-            || rich.EnumRich.IsPresent || rich.KotlinCompanion.IsPresent || rich.StaticCarrier.IsPresent)
+            || rich.EnumRich.IsPresent || rich.KotlinCompanion.IsPresent || rich.StaticCarrier.IsPresent
+            || enumeration.BasicEnum.IsPresent || enumeration.RoundtripTypeHeaderPending.IsPresent
+            || entry.Attrs.Value[1].Args.Value[0] is not BirAttributeLiteral { Value.Value: BirLiteral.IntegerLiteral { Value: 0 } })
             throw new InvalidOperationException("Runtime type headers changed user annotations or retained compiler facts");
     }
 

@@ -2088,7 +2088,6 @@ internal static class BirGraphDom
                 case "staticCarrier": break;
                 case "companionCarrier": break;
                 case "basicEnum": break;
-                case "roundtripSupertypesPre": break;
                 case "roundtripTypeHeaderPending": break;
                 case "generated": break;
                 case "abstract": break;
@@ -2127,7 +2126,6 @@ internal static class BirGraphDom
             StaticCarrier = Field<BirStaticCarrier>(fields, "staticCarrier", value => ReadBirStaticCarrier(value!)),
             CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),
             BasicEnum = Field<BirBasicEnumCarrier>(fields, "basicEnum", value => ReadBirBasicEnumCarrier(value!)),
-            RoundtripSupertypesPre = Field<SourceTypeFacts>(fields, "roundtripSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
             RoundtripTypeHeaderPending = Field<bool>(fields, "roundtripTypeHeaderPending", value => value!.GetValue<bool>()),
             Generated = Field<bool>(fields, "generated", value => value!.GetValue<bool>()),
             Abstract = Field<bool>(fields, "abstract", value => value!.GetValue<bool>()),

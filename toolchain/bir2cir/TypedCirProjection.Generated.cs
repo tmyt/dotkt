@@ -273,7 +273,7 @@ sealed partial class TypedCirProjection
 
     internal CirTypeDeclaration ProjectCirTypeDeclaration(BirEnumDefinition value)
     {
-        if (value.BasicEnum.IsPresent || value.ClrEnum.IsPresent || value.CompanionCarrier.IsPresent || value.KotlinSupertypesPre.IsPresent || value.RoundtripSupertypesPre.IsPresent || value.RoundtripTypeHeaderPending.IsPresent || value.SemanticOwner.IsPresent || value.StaticCarrier.IsPresent)
+        if (value.BasicEnum.IsPresent || value.ClrEnum.IsPresent || value.CompanionCarrier.IsPresent || value.KotlinSupertypesPre.IsPresent || value.RoundtripTypeHeaderPending.IsPresent || value.SemanticOwner.IsPresent || value.StaticCarrier.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirEnumDefinition");
         return new CirTypeDeclaration
         {
