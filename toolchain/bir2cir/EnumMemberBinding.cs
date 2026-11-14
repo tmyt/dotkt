@@ -23,12 +23,11 @@ using DotKt.Cir;
 //
 // Non-ref builds only (the ref/rt stdlib keeps `kotlin.Enum`'s own pure-Kotlin member bodies untouched). Scoped to the
 // `kotlin.Enum` owner and to locally-declared value-type enum owners, so no other call is affected.
-static class EnumMemberBinding
+static partial class EnumMemberBinding
 {
     const string RuntimeOwner = "DotKt.Runtime.CompilerServices.EnumRuntimeKt";
     // BCL Object-slot spellings (ObjectSlotRename runs first, so `anySlot` calls already carry these), and the arity of
     // each as an `objMethod` — ToString/GetHashCode take no arg, Equals takes one (moved from args[0] to `arg`).
-    static readonly HashSet<string> ObjectSlots = new(System.StringComparer.Ordinal) { "ToString", "GetHashCode", "Equals" };
 
     // Collect the local BASIC (value-type) enum type names — a `kind:"enum"` decl — across ALL input files. The set
     // MUST span the whole compilation, not one .bir.json: kotc emits one file per source, but a call site
@@ -104,7 +103,7 @@ static class EnumMemberBinding
 
         // (1) CONCRETE receiver: a `System.Enum`-inherited Object slot on a local value-type enum owner that declares
         // none of them. Box + `System.Object` virtual slot; System.Enum's override supplies name/equality/hash.
-        if (owner != null && basicEnums.Contains(owner) && ObjectSlots.Contains(method))
+        if (owner != null && basicEnums.Contains(owner) && AnySlotRebind.IsObjectSlot(method))
         {
             // Object-slot arity gate (matches EmitObjMethod): Equals takes exactly one arg (moved args[0] -> `arg`),
             // ToString/GetHashCode take none. A mismatch is unreachable (a `kind:"enum"` declares no members), but a
@@ -112,7 +111,7 @@ static class EnumMemberBinding
             // be miscast into an `objMethod` EmitObjMethod can't service.
             var args = obj["args"] as JsonArray;
             var argc = args?.Count ?? 0;
-            if (method == "Equals" ? argc == 1 : argc == 0)
+            if (AnySlotRebind.HasObjectSlotArity(method, argc))
                 ToObjMethod(obj, recv, method, method == "Equals" ? args[0] : null);
         }
     }

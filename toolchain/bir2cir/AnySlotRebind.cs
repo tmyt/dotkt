@@ -32,10 +32,14 @@ using DotKt.Cir;
 // abstract redeclaration (FindInInterfaces), the rebind is a benign no-op-equivalent: both `callvirt <iface>::Slot` and
 // `callvirt object::Slot` are virtual dispatch to the runtime type. An imported existential carrier likewise does
 // not own the Object virtual slot: use the carried Any fact and the reference ABI, not the carrier's name or members.
-static class AnySlotRebind
+static partial class AnySlotRebind
 {
     // BCL Object-slot spellings (ObjectSlotRename renames a call's `method` to these before this pass runs).
     static readonly HashSet<string> ObjectSlots = new(System.StringComparer.Ordinal) { "ToString", "GetHashCode", "Equals" };
+
+    internal static bool IsObjectSlot(string method) => ObjectSlots.Contains(method);
+    internal static bool HasObjectSlotArity(string method, int argumentCount)
+        => IsObjectSlot(method) && argumentCount == (method == "Equals" ? 1 : 0);
 
     // The explicit Kotlin override fact selects its CLR Object slot. An already-canonical declaration name
     // passes through unchanged when collecting the slots the emitted type declares.
@@ -196,7 +200,7 @@ static class AnySlotRebind
         // found") rather than being miscast into an `objMethod` EmitObjMethod can't service.
         var args = obj["args"] as JsonArray;
         var argc = args?.Count ?? 0;
-        if (method == "Equals" ? argc == 1 : argc == 0)
+        if (HasObjectSlotArity(method, argc))
             ToObjMethod(obj, recv, method, method == "Equals" ? args[0] : null);
     }
 
