@@ -9,6 +9,7 @@ internal static class BirGraphMutationTests
 {
     internal static void SelfTest()
     {
+        BirGraphFieldOrderTests.Run();
         TypeNode source = new TypeNode.Tv("method", 0);
         TypeNode target = new TypeNode.Fqn("kotlin.String");
         foreach (var origin in new BirGraphValue[] {
