@@ -110,10 +110,7 @@ static partial class AliasHelperHoist
         file.Types = new IBirTypeDeclaration[] { host, helper, kept, first, second };
         Refused(() => transitions.AdmitMaterializedTypes(file, new[] { first }));
         transitions.AdmitMaterializedTypes(file, new[] { second });
-        var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { file }, policy, out var preparation);
-        var nativeProofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
-        var projection = file.ToDom(declarations.ObserveProjection);
-        declarations.BindProjected();
+        var projection = file.ToDom();
         transitions.ValidateProjection(new JsonNode[] { projection });
         var owners = transitions.LogicalOwners(0, projection).ToArray();
         if (owners.Length != 2 || owners[0]["name"]?.GetValue<string>() != "Alias"
@@ -185,7 +182,10 @@ static partial class AliasHelperHoist
             || !ReferenceEquals(host.Fields.Value[0], moved) || !ReferenceEquals(original[0], first)
             || !ReferenceEquals(first.Methods.Value[0], firstMethod) || child.Vis.Value != "internal")
             throw new InvalidOperationException("Alias whole-type retirement changed kept source records or companion storage");
-        var projection = file.ToDom();
+        var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { file }, policy, out var preparation);
+        var nativeProofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
+        var projection = file.ToDom(declarations.ObserveProjection);
+        declarations.BindProjected();
         var retiredMap = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance);
         foreach (var method in retiredMethods) retiredMap.Add(method, method.ToDom());
         policy.BindDomDeclarations(new JsonNode[] { projection }, transitions);
