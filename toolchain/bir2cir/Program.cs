@@ -48,6 +48,7 @@ static class Bir2Cir
                 FunctionValueRepresentation.SelfTestSourceFacts();
                 BirNodeType.SelfTest();
                 CapturedGenericInvocation.SelfTestSourceFacts();
+                CapturedGenericInvocation.SelfTestPhysicalInvocation();
                 SourceModuleIndex.SelfTest();
                 InheritedClassInterfaceBridge.SourceSelfTest();
                 BirFileCodec.SelfTest();
@@ -1381,7 +1382,7 @@ sealed class Pipeline
             foreach (var (lowered, _) in loweredRoots)
                 ExactExternalDeclarationIdentity.Apply(lowered, refs);
 
-        CapturedGenericInvocation.PrepareLocalDeclarations(loweredRoots.Select(file => file.Root),
+        var capturedInvocations = CapturedGenericInvocation.PrepareLocalDeclarations(loweredRoots.Select(file => file.Root),
             flattenMissingOwners: _options.SubstituteStdlibBuild);
         // PHASE 3B — metadata, exact external identities, and validation over the now-stable module graph.
         bool runtimeRepresentationTypes = false;
@@ -1413,7 +1414,6 @@ sealed class Pipeline
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
-            CapturedGenericInvocation.Apply(lowered, refs, emittedLocalTypes);
         }
 
         var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
@@ -1423,8 +1423,17 @@ sealed class Pipeline
         // edges; no pass below returns the graph to DOM.
         var physicalRoots = loweredRoots.Select(file =>
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
-        loweredRoots.Clear();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Retain the original prepared declaration membership and exact source
+        // anchors across this one-way frontier. The captured ID keys already
+        // own selection; pending metadata and allocated names are not a new
+        // declaration inventory. Both invocation and receiver materialization
+        // now consume these same owning typed records before dispatch metadata.
+        var physicalCapturedInvocations = CapturedGenericInvocation.BindPhysicalDeclarations(
+            capturedInvocations, loweredRoots.Select(file => file.Root).ToArray(), physicalDocuments);
+        loweredRoots.Clear();
+        foreach (var root in physicalDocuments)
+            physicalCapturedInvocations.Apply(root, refs, emittedLocalTypes);
         // Final resolution distinguished actual accessors from public fields.
         // Consume their receiver-dispatch facts on the same owning typed graph;
         // retain each exact MemberRef and each resolved file's own arity snapshot.
