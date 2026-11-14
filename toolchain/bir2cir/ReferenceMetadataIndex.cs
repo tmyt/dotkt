@@ -3529,6 +3529,21 @@ sealed partial class ReferenceMetadataIndex
         IReadOnlyList<TypeNode> signature, TypeNode resolvedReturn, TypeNode[] ownerTypeArguments,
         JsonArray selectedTypeParams, TypeNode[] selectedOwnerTypeArguments,
         out ReferencedMethodDeclaration declaration, string propertyAccessor = null)
+        => TrySelectedMethodDeclarationByShape(ownerFqn, sourceMember, methodArity, signature, resolvedReturn,
+            ownerTypeArguments, KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(selectedTypeParams, selectedOwnerTypeArguments),
+            out declaration, propertyAccessor);
+
+    internal bool TrySelectedSourceMethodDeclaration(string ownerFqn, string sourceMember, int methodArity,
+        IReadOnlyList<TypeNode> signature, TypeNode resolvedReturn, TypeNode[] ownerTypeArguments,
+        BirTypeParameter[] selectedTypeParams, TypeNode[] selectedOwnerTypeArguments,
+        out ReferencedMethodDeclaration declaration, string propertyAccessor = null)
+        => TrySelectedMethodDeclarationByShape(ownerFqn, sourceMember, methodArity, signature, resolvedReturn,
+            ownerTypeArguments, KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(selectedTypeParams, selectedOwnerTypeArguments),
+            out declaration, propertyAccessor);
+
+    bool TrySelectedMethodDeclarationByShape(string ownerFqn, string sourceMember, int methodArity,
+        IReadOnlyList<TypeNode> signature, TypeNode resolvedReturn, TypeNode[] ownerTypeArguments,
+        string selectedShape, out ReferencedMethodDeclaration declaration, string propertyAccessor)
     {
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
@@ -3540,9 +3555,8 @@ sealed partial class ReferenceMetadataIndex
                     : (member.SourcePropertyName ?? member.PropertyName) == sourceMember
                         && member.AccessorKind == propertyAccessor)
                 && (member.NullableFrame?.SourceArity ?? member.MethodArity) == methodArity
-                && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                    member.SemanticMethodTypeParams ?? member.MethodTypeParams, selectedTypeParams,
-                    sourceOwnerArguments, selectedOwnerTypeArguments)
+                && KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
+                    member.SemanticMethodTypeParams ?? member.MethodTypeParams, sourceOwnerArguments) == selectedShape
                 && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments, kotlinParameters: true)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
             .ToList();
@@ -8170,6 +8184,13 @@ sealed partial class ReferenceMetadataIndex
                     Array.Empty<TypeNode>(), new TypeNode.Fqn("OtherCarrier"), new TypeNode[] { source },
                     new JsonArray(), Array.Empty<TypeNode>(), out _, propertyAccessor: "get"))
                 throw new InvalidOperationException("Inherited getter selection lost its recorded classifier correspondence");
+            if (!index.TrySelectedSourceMethodDeclaration("CarrierGetter", "value", 0,
+                    Array.Empty<TypeNode>(), new TypeNode.Fqn("StoredCarrier"), new TypeNode[] { source },
+                    Array.Empty<BirTypeParameter>(), Array.Empty<TypeNode>(), out _, propertyAccessor: "get")
+                || index.TrySelectedSourceMethodDeclaration("CarrierGetter", "value", 0,
+                    Array.Empty<TypeNode>(), new TypeNode.Fqn("OtherCarrier"), new TypeNode[] { source },
+                    Array.Empty<BirTypeParameter>(), Array.Empty<TypeNode>(), out _, propertyAccessor: "get"))
+                throw new InvalidOperationException("Owning selected declaration changed the same getter constraint-shape decision");
         }
         {
             var index = Build(Array.Empty<string>());

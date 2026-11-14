@@ -79,9 +79,14 @@ sealed class CurrentDeclarationBindings
 
     internal DeclarationBinding GetCapturedSource(BirGraphValue actual)
     {
-        if (bound) throw new InvalidOperationException("Source declaration read after its owning frontier");
-        return source.TryGetValue(actual, out var binding) ? binding
+        return TryGetCapturedSource(actual, out var binding) ? binding
             : throw new InvalidOperationException("The declaration has no captured source occurrence");
+    }
+
+    internal bool TryGetCapturedSource(BirGraphValue actual, out DeclarationBinding binding)
+    {
+        if (bound) throw new InvalidOperationException("Source declaration read after its owning frontier");
+        return source.TryGetValue(actual, out binding);
     }
 
     // Called by the generated projector at the actual construction, not by

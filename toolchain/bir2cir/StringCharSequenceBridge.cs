@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 static partial class StringCharSequenceBridge
 {
@@ -62,8 +63,15 @@ static partial class StringCharSequenceBridge
     }
 
     internal static JsonObject RestoreMaterializedValue(JsonObject value, TypeNode source, TypeNode target) =>
-        source is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" } && IsScalarCharSequence(target)
+        CanRestoreMaterializedValue(source, target)
             ? MaterializedExecutable.Normalize(RestoreErasedCharSequence(value, TypeJson.Write(target)).AsObject()) : null;
+
+    internal static IBirExpression RestoreMaterializedValue(IBirExpression value, TypeNode source, TypeNode target) =>
+        CanRestoreMaterializedValue(source, target)
+            ? MaterializedExecutable.NormalizeSource(SourceRestoreErasedCharSequence(value, target)) : null;
+
+    static bool CanRestoreMaterializedValue(TypeNode source, TypeNode target) =>
+        source is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" } && IsScalarCharSequence(target);
 
     static void EmitAdapter(JsonObject fileObj)
     {

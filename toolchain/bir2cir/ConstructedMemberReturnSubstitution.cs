@@ -7,7 +7,7 @@ using DotKt.Bir.Lowering;
 // that is `tv{scope:type,0}` plus the constructed owner `AtomicRef<Any>`. Once bir2cir has resolved the exact declaring
 // owner, substitute the owner's actual arguments into the result. Leaving the callee-relative tv for ilemit makes it
 // bind to the caller class's unrelated `!0` (or object fallback), producing invalid casts and signatures.
-static class ConstructedMemberReturnSubstitution
+static partial class ConstructedMemberReturnSubstitution
 {
     public static void ApplyAll(System.Collections.Generic.IEnumerable<JsonNode> roots)
     {
@@ -37,23 +37,7 @@ static class ConstructedMemberReturnSubstitution
     }
 
     internal static void ApplyCall(BirCallInstance call)
-    {
-        if (call.OwnerType.OrDefault() is not TypeNode.Fqn { Args: { } args }) return;
-        var stamp = call.Sty.OrDefault();
-        var changed = false;
-        if (call.Ret.HasValue && TryCloseResult(call.Ret.Value, stamp, args, out var result))
-        {
-            changed = true;
-            call.Ret = result;
-        }
-        if (call.DynRet.HasValue && TryCloseResult(call.DynRet.Value, stamp, args, out var dynamicResult))
-        {
-            changed = true;
-            call.DynRet = dynamicResult;
-        }
-        if (changed && stamp != null && (call.Ret.HasValue && !IrSanity.StampAgrees(stamp, call.Ret.Value)
-            || call.DynRet.HasValue && !IrSanity.StampAgrees(stamp, call.DynRet.Value))) call.Sty = default;
-    }
+        => ApplySourceCall(call);
 
     static void Walk(JsonNode node)
     {

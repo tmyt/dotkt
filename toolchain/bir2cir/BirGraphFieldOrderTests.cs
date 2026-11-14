@@ -18,8 +18,7 @@ static class BirGraphFieldOrderTests
             Sig = new TypeNode[] { value, value }, TypeArgs = new TypeNode[] { value },
             Ret = value, Args = arguments, Sty = OptionalField<TypeNode>.Null,
             RetSuspendFnTypePre = value, _innerFactoryArguments = true,
-            DeclarationId = "old-callee", ShapeTypes = new TypeNode[] { value }, Static = false,
-            Overrides = new[] { new BirOverride { Owner = owner, Member = "original" } } };
+            DeclarationId = "old-callee", ShapeTypes = new TypeNode[] { value }, Static = false };
         var events = new List<string>();
         call.RewriteOwnFieldsInPlace((field, _, type) => {
             events.Add("type:" + field);
@@ -44,6 +43,7 @@ static class BirGraphFieldOrderTests
             || !ReferenceEquals(call.RetSuspendFnTypePre.Value, value))
             throw new InvalidOperationException("Joint owning field traversal changed order, identity, presence or opaque facts");
 
+        call.Overrides = new[] { new BirOverride { Owner = owner, Member = "original" } };
         var moved = BirCallConversion.MoveInstanceToStatic(call);
         if (!ReferenceEquals(moved.Args.Value, arguments) || !ReferenceEquals(moved.Args.Value[0], donor)
             || !ReferenceEquals(moved.Sig.Value, call.Sig.Value)

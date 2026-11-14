@@ -75,8 +75,11 @@ static class TypedGenericArrayStorageLowering
     }
 
     static TypeNode.Fqn Type(string name) => new(name);
-    static IBirExpression Copy(IBirExpression expression) =>
-        (IBirExpression)((BirGraphValue)expression).Rewrite(value => value);
+    // Synthetic local reads can occur at several use sites. Actual operands are
+    // moved once: copying them would detach any captured callable declarations
+    // from their already-established source bindings.
+    static IBirExpression UseOperand(IBirExpression expression) => expression is BirLocal local
+        ? (IBirExpression)local.Rewrite(value => value) : expression;
     static BirLocal Local(string name, TypeNode type) => new() { Name = name, Sty = type };
     static BirConstant Int(int value) => new() { Type = Type("System.Int32"), Value = new BirLiteral.IntegerLiteral(value) };
     static BirConstant Null() => new() { Type = Type("System.Object"), Value = new BirLiteral.NullLiteral() };
@@ -96,7 +99,7 @@ static class TypedGenericArrayStorageLowering
     {
         var reference = BirMemberReference.FromPhysical(
             ClrMemberResolution.ArrayStorageMethodOf(refs, method, parameters, owner, receiver == null));
-        var args = arguments.Select(Copy).ToArray();
+        var args = arguments.Select(UseOperand).ToArray();
         var parameterTypes = parameters.Select(name => (TypeNode)Type(name)).ToArray();
         if (receiver == null) return new BirNativeStatic {
             Type = Type(owner), Method = method, Recv = OptionalField<IBirExpression>.Null,
@@ -104,7 +107,7 @@ static class TypedGenericArrayStorageLowering
             Dispatch = "call", MemberRef = reference,
         };
         return new BirNativeInstance {
-            Type = Type(owner), Method = method, Recv = OptionalField<IBirExpression>.Of(Copy(receiver)), Args = args,
+            Type = Type(owner), Method = method, Recv = OptionalField<IBirExpression>.Of(UseOperand(receiver)), Args = args,
             ArgTypes = parameterTypes, Ret = Type(result), Sty = Type(result),
             Dispatch = "callvirt", MemberRef = reference,
         };
@@ -168,18 +171,18 @@ static class TypedGenericArrayStorageLowering
         } };
         var component = Local(componentName, typeType);
         var value = Local(valueName, objectType);
-        var typeCheck = If(Not(EqualNull(Copy(value))),
+        var typeCheck = If(Not(EqualNull(UseOperand(value))),
             If(Not(RuntimeCall(refs, "System.Type", "IsInstanceOfType", component, "System.Boolean",
                 new[] { "System.Object" }, value)), Failure()));
-        var nullCheck = If(EqualNull(Copy(value)),
+        var nullCheck = If(EqualNull(UseOperand(value)),
             If(RuntimeCall(refs, "System.Type", "get_IsValueType", component, "System.Boolean", Array.Empty<string>()),
                 If(EqualNull(RuntimeCall(refs, "System.Nullable", "GetUnderlyingType", null, "System.Type",
                     new[] { "System.Type" }, component)), Failure())));
         return new BirValueBlock {
             Type = Type("void"), Stmts = new IBirStatement[] {
-                Var(arrayName, arrayType, Copy(receiver)),
-                Var(indexName, intType, Copy(store.Index.Value)),
-                Var(valueName, objectType, Copy(store.Value.Value)),
+                Var(arrayName, arrayType, UseOperand(receiver)),
+                Var(indexName, intType, UseOperand(store.Index.Value)),
+                Var(valueName, objectType, UseOperand(store.Value.Value)),
                 Var(componentName, typeType, RuntimeCall(refs, "System.Type", "GetElementType",
                     RuntimeCall(refs, "System.Object", "GetType", Local(arrayName, arrayType),
                         "System.Type", Array.Empty<string>()), "System.Type", Array.Empty<string>())),
@@ -200,9 +203,9 @@ static class TypedGenericArrayStorageLowering
         var body = new IBirStatement[] {
             Var(loop.Var.Value, loop.Elem.Value,
                 Read(refs, Local(arrayName, arrayType), Local(indexName, intType), loop.Elem.Value)),
-        }.Concat(loop.Body.OrEmpty().Select(value => (IBirStatement)((BirGraphValue)value).Rewrite(item => item))).ToArray();
+        }.Concat(loop.Body.OrEmpty()).ToArray();
         return new BirBlock { Body = new IBirStatement[] {
-            Var(arrayName, arrayType, Copy(receiver)),
+            Var(arrayName, arrayType, UseOperand(receiver)),
             Var(lengthName, intType, Call(refs, "get_Length", Local(arrayName, arrayType),
                 "System.Int32", Array.Empty<string>())),
             new BirFor { Label = loop.Label.IsPresent ? loop.Label : OptionalField<string>.Null,
@@ -249,6 +252,31 @@ static class TypedGenericArrayStorageLowering
         lazy.Fields = new[] { new BirFieldDeclaration { Name = "$arrayValue$0", Type = element } };
         if (lazyNames.Next("$arrayValue$") != "$arrayValue$1")
             throw new InvalidOperationException("Typed array names seeded before their first allocation");
+        var callables = new List<BirFunctionDeclaration>();
+        BirValueBlock Operand(TypeNode type)
+        {
+            var callable = new BirFunctionDeclaration { Name = "nested" + callables.Count,
+                Params = Array.Empty<BirParameter>(), Ret = element, Body = Array.Empty<IBirStatement>() };
+            callables.Add(callable);
+            return new BirValueBlock { Type = type,
+                Stmts = new IBirStatement[] { new BirLocalFunction { Id = callable.Name.Value, Decl = callable } },
+                Result = Local("operand", type) };
+        }
+        var operands = new BirGraphValue[] {
+            new BirArrayGet { Array = Operand(array), Index = Operand(integer), Elem = element },
+            new BirArraySet { Array = Operand(array), Index = Operand(integer), Value = Operand(element), Elem = element },
+            new BirArrayLength { Array = Operand(array) },
+            new BirForArray { Array = Operand(array), Var = "item", Elem = element,
+                Body = new IBirStatement[] { new BirExpressionStatement { Expr = Operand(element) } } },
+        };
+        var observed = new List<BirFunctionDeclaration>();
+        foreach (var operation in operands)
+            LowerOperation(operation, refs, new FreshNames(operation), array).Visit(node => {
+                if (node is BirFunctionDeclaration callable) observed.Add(callable);
+            });
+        if (observed.Count != callables.Count || callables.Any(callable =>
+                observed.Count(actual => ReferenceEquals(actual, callable)) != 1))
+            throw new InvalidOperationException("Typed array lowering copied or lost an owning callable operand/body");
         Console.WriteLine("[typed array operations] self-test OK (exact operation parity, names, storage checks, ordered store values)");
     }
 }
