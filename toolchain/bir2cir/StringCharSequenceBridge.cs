@@ -16,61 +16,14 @@ static partial class StringCharSequenceBridge
     static readonly HashSet<string> StringBuilderTokens = new(StringComparer.Ordinal)
         { "kotlin.text.StringBuilder", "java.lang.StringBuilder", "java.lang.AbstractStringBuilder", "System.Text.StringBuilder" };
 
-    // Synthesized exactly once per app assembly (dedup below). It uses pre-BirTypeLowering kotlin.* signature tokens and
-    // ordinary CIR CLR-call bodies for String.get_Chars/Length/Substring, implementing the same CharSequence slots as a
-    // user class. Type slots are structured `{t:"fqn",…}` nodes (§1 — types are nodes, no bare strings); the subsequent
-    // DeclNullableFlags/ReferenceNullableStrip/
-    // BirTypeLowering passes lower the `kotlin.*` identities to the CLR forms uniformly. (The retired `@<name>`
-    // this-assembly marker is dropped — bir2cir/ilemit derive local-vs-referenced from the FQN via `_types`.)
-    const string AdapterTypeJson = """
-    {
-      "name": "dotkt$StringCharSequence",
-      "kind": "class", "generated": true, "abstract": false, "vis": "public", "base": null,
-      "interfaces": [{"t":"fqn","name":"dotkt$CharSequence"}],
-      "fields": [{"name": "value", "type": {"t":"fqn","name":"kotlin.String"}, "vis": "internal"}],
-      "ctors": [{
-        "params": [{"name": "value", "type": {"t":"fqn","name":"kotlin.String"}}],
-        "baseArgs": null, "thisArgs": null, "vis": "public",
-        "body": [{"k": "setField", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value", "value": {"k": "local", "name": "value"}}]
-      }],
-      "methods": [
-        {"name": "get", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public", "mods": {"operator": true},
-         "params": [{"name": "index", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"kotlin.Char"},
-         "body": [{"k": "return", "value": {"k": "clrInstance", "type": {"t":"fqn","name":"System.String"}, "method": "get_Chars", "argTypes": [{"t":"fqn","name":"System.Int32"}], "ret": {"t":"fqn","name":"System.Char"},
-           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "value", "prop": "get", "args": []},
-           "args": [{"k": "local", "name": "index"}]}}], "attrs": []},
-        {"name": "subSequence", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
-         "params": [{"name": "startIndex", "type": {"t":"fqn","name":"kotlin.Int"}}, {"name": "endIndex", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"dotkt$CharSequence"},
-         "body": [{"k": "return", "value": {"k": "new", "type": {"t":"fqn","name":"dotkt$StringCharSequence"}, "argTypes": [{"t":"fqn","name":"kotlin.String"}],
-           "args": [{"k": "clrInstance", "type": {"t":"fqn","name":"System.String"}, "method": "Substring", "argTypes": [{"t":"fqn","name":"System.Int32"}, {"t":"fqn","name":"System.Int32"}], "ret": {"t":"fqn","name":"System.String"},
-             "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "value", "prop": "get", "args": []},
-             "args": [{"k": "local", "name": "startIndex"}, {"k": "binOp", "op": "-", "lhs": {"k": "local", "name": "endIndex"}, "rhs": {"k": "local", "name": "startIndex"}}]}]}}], "attrs": []},
-        {"name": "value", "propertyName": "value", "propertyAccessor": "get", "propertyAssociation": "string-value", "static": false, "override": false, "virtual": false, "abstract": false, "objectOverride": false, "vis": "public",
-         "params": [], "ret": {"t":"fqn","name":"kotlin.String"},
-         "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]},
-        {"name": "length", "propertyName": "length", "propertyAccessor": "get", "propertyAssociation": "string-length", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
-         "params": [], "ret": {"t":"fqn","name":"kotlin.Int"},
-         "body": [{"k": "return", "value": {"k": "clrPropGet", "type": {"t":"fqn","name":"System.String"}, "name": "Length", "ret": {"t":"fqn","name":"System.Int32"}, "static": false,
-           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "value", "prop": "get", "args": []}}}]},
-        {"name": "ToString", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": true, "vis": "public",
-         "params": [], "ret": {"t":"fqn","name":"kotlin.String"},
-         "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]}
-      ],
-      "properties": [
-        {"name": "value", "type": {"t":"fqn","name":"kotlin.String"}, "kotlinAccessors": ["get"], "propertyAssociation": "string-value"},
-        {"name": "length", "type": {"t":"fqn","name":"kotlin.Int"}, "kotlinAccessors": ["get"], "propertyAssociation": "string-length"}
-      ],
-      "attrs": []
-    }
-    """;
-
     // Process-wide: the app-local adapter type is emitted into EXACTLY ONE file's `types` per assembly (all of an app's
     // BIR files are lowered by a single bir2cir process; other files that also wrap resolve the type assembly-wide via
-    // ilemit's `_types`). Fresh per process; app builds only. `_fired` tracks whether the file just walked wrapped.
+    // ilemit's `_types`). Fresh per process; non-reference builds only. `_fired` tracks whether a wrap was authored.
     static bool _adapterEmitted;
     static bool _fired;
     // The ref.dll index — consulted ONLY to read a spliced anonymous object's (`dotkt$obj*`) ctor param types, so a
-    // static-String arg flowing into its `CharSequence` capture slot is adapter-wrapped (WrapNewCtorArgs). Null-safe.
+    // static-String arg flowing into its `CharSequence` capture slot is adapted
+    // by the owning source constructor boundary. Null-safe.
     static ReferenceMetadataIndex _refs;
     // #170 — lifted lambdas bound into a `dotkt$CharSequence`-returning delegate (from CharSeqStringLowering). Null-safe.
     static CharSeqStringLowering.CharSeqRetLambdas _retLambdas;
@@ -83,64 +36,30 @@ static partial class StringCharSequenceBridge
     {
         public readonly Dictionary<string, TypeNode> Vars;
         public readonly TypeNode RetType;
-        public readonly TypeNode.Fqn BaseType;
         public Env() { Vars = new(StringComparer.Ordinal); RetType = null; }
-        Env(Dictionary<string, TypeNode> vars, TypeNode retType, TypeNode.Fqn baseType)
-        { Vars = vars; RetType = retType; BaseType = baseType; }
+        Env(Dictionary<string, TypeNode> vars, TypeNode retType)
+        { Vars = vars; RetType = retType; }
 
-        // A type declaration owns its constructed base. A method/lambda/constructor declaration opens a parameter
-        // scope (even for an empty params array) while retaining that base; ordinary expression nodes keep the scope.
+        // Type declarations do not open a value-parameter scope here. A method,
+        // lambda or constructor does, including an explicitly empty vector.
         public Env WithDecl(JsonObject decl)
         {
             if (Str(decl["kind"]) is "class" or "interface" or "struct" or "enum")
-                return new Env(Vars, RetType, TypeJson.Read(decl["base"]) as TypeNode.Fqn);
+                return this;
             if (decl["params"] is not JsonArray ps) return this;
             var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal);
             foreach (var p in ps)
                 if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
                     vars[pn] = pt;
-            return new Env(vars, TypeJson.Read(decl["ret"]) ?? RetType, BaseType);
+            return new Env(vars, TypeJson.Read(decl["ret"]) ?? RetType);
         }
 
         public Env WithVar(string name, TypeNode type)
         {
             var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal) { [name] = type };
-            return new Env(vars, RetType, BaseType);
+            return new Env(vars, RetType);
         }
     }
-
-    public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
-        CharSeqStringLowering.CharSeqRetLambdas retLambdas, out IReadOnlyList<JsonNode> materializedDelegateAdapters)
-    {
-        _refs = refs;
-        _fired = false;
-        _materializedDelegateAdapters = new List<JsonNode>();
-        _retLambdas = retLambdas;
-        // #170 — a lifted lambda bound into a delegate whose declared RETURN is the synthetic `dotkt$CharSequence`
-        // (CharSeqStringLowering recorded these before it collapsed the CharSequence-return signal to `string`). Retype
-        // its lifted `ret` back to the synthetic BEFORE the walk, so `Env.WithDecl` sees `RetType = dotkt$CharSequence`
-        // and the existing WrapReturn adapter-wraps every String return — the lifted ldftn signature then matches the
-        // `Func<…,dotkt$CharSequence>` ilemit rewraps the literal into (else ilverify DelegateCtor). Point ① of the
-        // 3-point sync; point ② is WrapReturn during the walk; point ③ is the funcType sync in Transform.
-        if (retLambdas != null && root is JsonObject rootObj) RetypeLiftedRets(rootObj, retLambdas);
-        // Seed the shared static-type resolver for THIS file so IsStaticString can recover a receiver's static type
-        // uniformly (a property-getter call, an app top-level fun result, a `!!`/elvis valueBlock — none carry a `ret`).
-        var walked = Walk(root, new Env());
-        // Emit the app-local adapter type into this file's `types` if a wrap fired here and no other file already got
-        // it (one per assembly). ilemit resolves a wrap in a sibling file against it via the assembly-wide `_types`.
-        if (!_adapterEmitted && (_fired || UsesCharSequenceView(walked)) && walked is JsonObject fileObj) EmitAdapter(fileObj);
-        materializedDelegateAdapters = _materializedDelegateAdapters;
-        return walked;
-    }
-
-    // An opaque result may acquire its concrete view during later member binding.
-    // Publish the shared adapter before declaration/property allocation, not during that late conversion.
-    static bool UsesCharSequenceView(JsonNode node) => node switch
-    {
-        JsonObject obj => IsCharSeqT(TypeJson.Read(obj)) || obj.Any(pair => UsesCharSequenceView(pair.Value)),
-        JsonArray array => array.Any(UsesCharSequenceView),
-        _ => false,
-    };
 
     internal static JsonObject RestoreMaterializedValue(JsonObject value, TypeNode source, TypeNode target) =>
         source is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" } && IsScalarCharSequence(target)
@@ -152,18 +71,20 @@ static partial class StringCharSequenceBridge
         {
             var types = fileObj["types"] as JsonArray;
             if (types == null) { types = new JsonArray(); fileObj["types"] = types; }
-            types.Add(JsonNode.Parse(AdapterTypeJson));
+            // This is a newly authored declaration at a genuine late DOM
+            // materialization boundary, not a conversion of an input graph.
+            types.Add(BuildAdapterDeclaration().ToDom());
             _adapterEmitted = true;
         }
     }
 
-    // Exact-return bridges are created after the main file walk. Adapt only their newly materialized returns,
+    // Exact-return bridges are created after the owning source bridge. Adapt only their newly materialized returns,
     // using the same conversion rule and adapter declaration as source returns; do not sweep existing bodies.
     public static void ApplyMaterializedReturns(JsonObject method)
     {
         if (!IsCharSeqT(TypeJson.Read(method["ret"])) || method["body"] is not JsonArray body) return;
         _fired = false;
-        method["body"] = WalkArray(body, new Env().WithDecl(method), returnsOnly: true);
+        method["body"] = WalkMaterializedReturnArray(body, new Env().WithDecl(method));
         MaterializedExecutable.Normalize(method);
         if (!_fired) return;
         JsonNode root = method;
@@ -171,15 +92,14 @@ static partial class StringCharSequenceBridge
         EmitAdapter((JsonObject)root);
     }
 
-    static JsonNode Walk(JsonNode node, Env env, bool returnsOnly = false)
+    static JsonNode WalkMaterializedReturns(JsonNode node, Env env)
     {
         if (node is JsonObject obj)
         {
             var childEnv = env.WithDecl(obj);
-            // A valueBlock's `stmts` declare locals that scope into its sibling `result` (a spliced inline body is a
-            // valueBlock: `var it = element; result = first(it)`). The generic per-key walk would visit `result` with
-            // only childEnv, so a String local declared in stmts stays invisible to a wrap site in result -> a raw
-            // String flows into a CharSequence-ext arg unwrapped. Thread the stmts' var decls into the result env.
+            // A valueBlock's statements declare locals that scope into its
+            // sibling result. Preserve that environment for nested returns;
+            // statement initializers still see only preceding declarations.
             var resultEnv = childEnv;
             if (Str(obj["k"]) == "valueBlock" && obj["stmts"] is JsonArray sarr)
                 foreach (var s in sarr)
@@ -188,18 +108,13 @@ static partial class StringCharSequenceBridge
                         resultEnv = resultEnv.WithVar(sn, st);
             var copy = new JsonObject();
             foreach (var kv in obj)
-                copy[kv.Key] = kv.Value is JsonArray arr ? WalkArray(arr, childEnv, returnsOnly)
+                copy[kv.Key] = kv.Value is JsonArray arr ? WalkMaterializedReturnArray(arr, childEnv)
                              : kv.Value == null ? null
-                             : Walk(kv.Value, kv.Key == "result" ? resultEnv : childEnv, returnsOnly);
-            if (returnsOnly)
-            {
-                if (Str(copy["k"]) == "return") WrapReturn(copy, env);
-                return copy;
-            }
-            WrapDelegationArgs(copy, childEnv);
-            return Transform(copy, env);   // this node's own coercion sites use its ENCLOSING env
+                             : WalkMaterializedReturns(kv.Value, kv.Key == "result" ? resultEnv : childEnv);
+            if (Str(copy["k"]) == "return") WrapReturn(copy, env);
+            return copy;
         }
-        if (node is JsonArray topArr) return WalkArray(topArr, env, returnsOnly);
+        if (node is JsonArray topArr) return WalkMaterializedReturnArray(topArr, env);
         return node.DeepClone();
     }
 
@@ -207,153 +122,19 @@ static partial class StringCharSequenceBridge
     // statement's read of that local resolves its static type (a `var`'s own init is walked BEFORE the var is added,
     // so `val x = <x>` can't see itself). Non-body arrays (args/params/…) contain no `var` nodes, so this is a no-op
     // for them.
-    static JsonArray WalkArray(JsonArray arr, Env env, bool returnsOnly = false)
+    static JsonArray WalkMaterializedReturnArray(JsonArray arr, Env env)
     {
         var copy = new JsonArray();
         var cur = env;
         foreach (var item in arr)
         {
-            var walked = item == null ? null : Walk(item, cur, returnsOnly);
+            var walked = item == null ? null : WalkMaterializedReturns(item, cur);
             copy.Add(walked);
             if (walked is JsonObject wo && Str(wo["k"]) == "var"
                 && Str(wo["name"]) is string vn && TypeJson.Read(wo["type"]) is TypeNode vt)
                 cur = cur.WithVar(vn, vt);
         }
         return copy;
-    }
-
-    static JsonNode Transform(JsonObject node, Env env)
-    {
-        switch (Str(node["k"]))
-        {
-            case "callStatic":
-                WrapCallArgs(node, env);
-                return node;
-            case "callInstance":
-                // The resolved receiver is a physical interface slot just like a declared argument. Inline
-                // splicing can put a String directly here without an intervening CharSequence-typed local.
-                if (TypeJson.Read(node["ownerType"]) is TypeNode.Fqn { Name: CharSeq }
-                    && node["recv"] is JsonNode receiver)
-                {
-                    var converted = CoerceCharSeqArg(receiver, env, nonNullSlot: true);
-                    if (!ReferenceEquals(receiver, converted)) node["recv"] = converted;
-                }
-                WrapCallArgs(node, env);
-                return node;
-            case "cond":
-                // A conditional materializes its own declared join even when its consumer only needs object.
-                // Honor that slot here, rather than waiting for a later CharSequence argument or assignment.
-                if (TypeJson.Read(node["type"]) is TypeNode.Fqn { Name: CharSeq }
-                    or TypeNode.Nullable { Of: TypeNode.Fqn { Name: CharSeq } })
-                    CoerceCharSeqArg(node, env, nonNullSlot: TypeJson.Read(node["type"]) is TypeNode.Fqn);
-                return node;
-            case "delegateInvoke":
-                WrapDelegateInvokeArgs(node, env);
-                return node;
-            case "newDelegate":
-            case "newClosure":
-                SyncDelegateFuncRet(node);
-                return node;
-            case "new":
-                WrapNewCtorArgs(node, env);
-                return node;
-            case "var":
-                WrapVarInit(node, env);
-                return node;
-            case "setLocal":
-                WrapLocalStore(node, env);
-                return node;
-            case "return":
-                WrapReturn(node, env);
-                return node;
-            case "cast":
-                return WrapCast(node, env) ?? node;
-            default:
-                return node;
-        }
-    }
-
-    static void WrapDelegationArgs(JsonObject constructor, Env env)
-    {
-        if (constructor["delegationSig"] is not JsonArray signature) return;
-        var arguments = constructor["thisArgs"] as JsonArray ?? constructor["baseArgs"] as JsonArray;
-        if (arguments == null) return;
-        var ownerArgs = constructor["thisArgs"] is JsonArray ? Array.Empty<TypeNode>()
-            : env.BaseType?.Args ?? Array.Empty<TypeNode>();
-        for (var i = 0; i < Math.Min(arguments.Count, signature.Count); i++)
-        {
-            var slot = SubstCallTvs(TypeJson.Read(signature[i]), ownerArgs, Array.Empty<TypeNode>());
-            if (!IsCharSeqT(slot) || arguments[i] is not JsonNode argument) continue;
-            var converted = CoerceCharSeqArg(argument, env, nonNullSlot: slot is TypeNode.Fqn);
-            if (!ReferenceEquals(argument, converted)) arguments[i] = converted;
-        }
-    }
-
-    // Read the already-authored declaration vector without consuming the frontend's open source shape. A source
-    // shape does not include hidden ABI arguments (for example nullable witnesses); promoting it to `sig` here
-    // would prematurely claim physical arity before the descriptor owner has finalized those extra slots.
-    // An existing `sig` wins because a preceding binding may already have authored the physical target.
-    static void WrapCallArgs(JsonObject node, Env env)
-    {
-        if (node["args"] is not JsonArray args
-            || (node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray) is not JsonArray sig) return;
-        var n = Math.Min(sig.Count, args.Count);
-        for (var i = 0; i < n; i++)
-        {
-            if (TypeJson.Read(sig[i]) is not TypeNode openSlot || args[i] is not JsonNode a) continue;
-            // `sig` is declaration-relative. Close an interface/class/method type variable against this call before
-            // asking whether its physical slot is CharSequence; generated and ordinary generic calls share this rule.
-            var slot = SpecializeCallType(openSlot, node);
-            if (IsCharSeqT(slot))
-            {
-                var c = CoerceCharSeqArg(a, env, nonNullSlot: slot is TypeNode.Fqn);
-                if (!ReferenceEquals(c, a)) args[i] = c;
-                continue;
-            }
-            // #190: Kotlin function-return covariance is not CLR delegate covariance when the logical relation
-            // `String : CharSequence` is represented physically by `String` plus an adapter object. A stored
-            // `(P...) -> String` value (or a callable reference) therefore cannot flow directly into a
-            // `(P...) -> CharSequence` call slot: Func<P...,String> is not assignable to
-            // Func<P...,dotkt$CharSequence>. Materialize a closure that captures the SOURCE delegate, forwards the
-            // same parameters, invokes it exactly once, and wraps its String result. This is a call-boundary rule,
-            // not a lambda-kind rule, so locals, callable refs, bound refs, and future delegate producers agree.
-            //
-            // A generic callee's sig is declaration-relative (`tv{method,i}` / `tv{type,i}`); specialize it with
-            // the call's own typeArgs/owner args before comparing its delegate parameters with the caller-static
-            // source type. The synthesized closure remains generic over any CALLER-frame TVs that survive.
-            if (TryDelegateReturnAdapter(node, openSlot, a, env) is JsonNode adapted)
-                args[i] = adapted;
-        }
-    }
-
-    // A function value's `funcType` is its complete CLR delegate signature (including an extension receiver through
-    // DelegateParams). Treat invocation arguments exactly like ordinary call arguments: a Kotlin String flowing into
-    // a CharSequence parameter must be materialized as the synthetic interface adapter. This is deliberately a
-    // delegate-boundary rule, independent of whether the producer was a lambda, callable reference, or stored value.
-    static void WrapDelegateInvokeArgs(JsonObject node, Env env)
-    {
-        if (TypeJson.Read(node["funcType"]) is not TypeNode.Fn function
-            || node["args"] is not JsonArray args
-            || args.Count != function.DelegateParams.Length)
-            return;
-        for (var i = 0; i < args.Count; i++)
-        {
-            var slot = function.DelegateParams[i];
-            if (!IsCharSeqT(slot) || args[i] is not JsonNode argument) continue;
-            var coerced = CoerceCharSeqArg(argument, env, nonNullSlot: slot is TypeNode.Fqn);
-            if (!ReferenceEquals(coerced, argument)) args[i] = coerced;
-        }
-    }
-
-    static JsonNode TryDelegateReturnAdapter(JsonObject call, TypeNode slotType, JsonNode value, Env env)
-    {
-        if (UnwrapFn(slotType) is not TypeNode.Fn openTarget || !IsCharSeqT(openTarget.Ret)) return null;
-        var target = SpecializeCallType(openTarget, call) as TypeNode.Fn;
-        var source = ExprType(value, env) is TypeNode st ? UnwrapFn(st) : null;
-        if (target == null || source == null || source.Suspend || target.Suspend
-            || !IsStringTokT(source.Ret) || !SameDelegateParams(source, target))
-            return null;
-        return BuildDelegateReturnAdapter(value, source, target);
     }
 
     static TypeNode.Fn UnwrapFn(TypeNode t) => t switch
@@ -364,12 +145,6 @@ static partial class StringCharSequenceBridge
         _ => null,
     };
 
-    static TypeNode ExprType(JsonNode value, Env env)
-    {
-        if (value is JsonObject o && TypeJson.Read(o["funcType"]) is TypeNode ft) return ft;
-        return StaticType.Surface(value, BirScope.FromVars(env.Vars));
-    }
-
     static bool SameDelegateParams(TypeNode.Fn source, TypeNode.Fn target)
     {
         var sp = source.DelegateParams;
@@ -378,22 +153,6 @@ static partial class StringCharSequenceBridge
         for (var i = 0; i < sp.Length; i++)
             if (sp[i] != tp[i]) return false;
         return true;
-    }
-
-    static TypeNode SpecializeCallType(TypeNode type, JsonObject call)
-    {
-        var methodArgs = ReadTypes(call["typeArgs"]);
-        TypeNode[] ownerArgs = Array.Empty<TypeNode>();
-        if (TypeJson.Read(call["ownerType"] ?? call["owner"]) is TypeNode.Fqn { Args: { } oa })
-            ownerArgs = oa;
-        return SubstCallTvs(type, ownerArgs, methodArgs);
-    }
-
-    static TypeNode[] ReadTypes(JsonNode node)
-    {
-        if (node is not JsonArray arr) return Array.Empty<TypeNode>();
-        var result = arr.Select(TypeJson.Read).ToArray();
-        return result.Any(t => t == null) ? Array.Empty<TypeNode>() : result;
     }
 
     static TypeNode SubstCallTvs(TypeNode type, TypeNode[] ownerArgs, TypeNode[] methodArgs) => type switch
@@ -412,78 +171,6 @@ static partial class StringCharSequenceBridge
             fn.Clr, fn.Ctx?.Select(c => SubstCallTvs(c, ownerArgs, methodArgs)).ToArray()),
         _ => type,
     };
-
-    static JsonObject BuildDelegateReturnAdapter(JsonNode value, TypeNode.Fn source, TypeNode.Fn target)
-    {
-        _fired = true;
-        var n = System.Threading.Interlocked.Increment(ref _delegateAdapterCounter);
-        var name = "dotkt$StringCharSequenceDelegateAdapter$" + n;
-        var owner = TypeJson.Fqn(name);
-        var sourceType = TypeNode.Write(source);
-        var targetType = TypeNode.Write(target);
-        var fields = new JsonArray
-        {
-            new JsonObject { ["name"] = "source", ["type"] = sourceType.DeepClone() },
-        };
-        var parameters = new JsonArray();
-        var invokeArgs = new JsonArray();
-        var p = target.DelegateParams;
-        for (var i = 0; i < p.Length; i++)
-        {
-            var pn = "p" + i;
-            parameters.Add(new JsonObject { ["name"] = pn, ["type"] = TypeNode.Write(p[i]) });
-            invokeArgs.Add(new JsonObject { ["k"] = "local", ["name"] = pn });
-        }
-        var sourceRead = new JsonObject
-        {
-            ["k"] = "field",
-            ["sty"] = sourceType.DeepClone(),
-            ["ownerType"] = owner.DeepClone(),
-            ["recv"] = new JsonObject { ["k"] = "this" },
-            ["name"] = "source",
-        };
-        var invoke = new JsonObject
-        {
-            ["k"] = "delegateInvoke",
-            ["funcType"] = sourceType.DeepClone(),
-            ["recv"] = sourceRead,
-            ["args"] = invokeArgs,
-        };
-        var body = new JsonArray
-        {
-            new JsonObject { ["k"] = "return", ["value"] = WrapAdapter(invoke) },
-        };
-
-        // ClosureSynthesis rebinds each surviving caller-frame TV to this generated class's type-parameter frame.
-        // List a TV once, in deterministic first-use order, and pass the same outer tokens as construction typeArgs.
-        var typeArgs = new List<TypeNode.Tv>();
-        CollectTvs(source, typeArgs);
-        CollectTvs(target, typeArgs);
-        var synth = new JsonObject
-        {
-            ["name"] = name,
-            ["fields"] = fields,
-            ["params"] = parameters,
-            ["ret"] = TypeNode.Write(target.Ret),
-            ["body"] = body,
-        };
-        if (typeArgs.Count > 0)
-            synth["typeParams"] = new JsonArray(typeArgs.Select((_, i) => (JsonNode)new TypeParameterDeclaration("T" + i).ToDom()).ToArray());
-
-        var closure = new JsonObject
-        {
-            ["k"] = "newClosure",
-            ["closureType"] = owner,
-            ["captures"] = new JsonArray { value.DeepClone() },
-            ["method"] = "invoke",
-            ["funcType"] = targetType,
-            ["synthClass"] = synth,
-        };
-        if (typeArgs.Count > 0)
-            closure["typeArgs"] = new JsonArray(typeArgs.Select(t => TypeNode.Write(t)).ToArray());
-        _materializedDelegateAdapters.Add(closure);
-        return closure;
-    }
 
     static void CollectTvs(TypeNode type, List<TypeNode.Tv> result)
     {
@@ -507,7 +194,6 @@ static partial class StringCharSequenceBridge
     }
 
     static int _delegateAdapterCounter;
-    static List<JsonNode> _materializedDelegateAdapters = new();
 
     // Coerce a value flowing into a `dotkt$CharSequence` slot into an interface-implementing value:
     //   - a statically-String value            -> `new dotkt$StringCharSequence(str)` (WrapAdapter).
@@ -524,24 +210,42 @@ static partial class StringCharSequenceBridge
     static JsonNode CoerceCharSeqArg(JsonNode a, Env env, bool nonNullSlot)
     {
         if (a is not JsonObject o) return a;
-        if (IsStaticString(a, env, allowNullable: nonNullSlot || IsNotNullAssertion(a))) return WrapAdapter(a);
-        if (IsStaticStringBuilder(a, env)) return WrapStringBuilder(a);
+        var conversion = SelectCharSequenceConversion(StaticType.Surface(a, BirScope.FromVars(env.Vars)),
+            nonNullSlot, IsNotNullAssertion(a), Str(o["k"]) == "cond");
+        if (conversion == CharSequenceConversion.String) return WrapAdapter(a);
+        if (conversion == CharSequenceConversion.StringBuilder) return WrapStringBuilder(a);
         // #156 — a genuinely-nullable String value (`z: String? = null`) into a NULLABLE `CharSequence?` slot (the strict
         // path, nonNullSlot=false): the checks above deliberately leave it RAW to preserve null, but a raw `String` into a
         // `dotkt$CharSequence` interface slot is ilverify-UNSOUND (String does not implement the synthetic adapter iface) —
         // it only runs because a null short-circuits (isNullOrEmpty). Emit a runtime-conditional wrap
         // `v == null ? (dotkt$CharSequence)null : new dotkt$StringCharSequence(v)`: the slot receives a genuine adapter or
         // a typed null, ilverify-clean, null-preserving. The non-null-String and `!!`/elvis cases already wrapped above.
-        if (!nonNullSlot && IsStaticNullableString(a, env)) return WrapAdapterNullable(a, env);
+        if (conversion == CharSequenceConversion.NullableString) return WrapAdapterNullable(a, env);
         // The target slot is CharSequence, so adapt each conditional result branch independently. This includes
         // conditionals inside valueBlock results, such as the frontend's elvis and non-null-assertion shapes.
-        if (Str(o["k"]) == "cond")
+        if (conversion == CharSequenceConversion.Branches)
         {
             if (o["then"] is JsonNode t) { var ct = CoerceCharSeqArg(t, env, nonNullSlot); if (!ReferenceEquals(ct, t)) o["then"] = ct; }
             if (o["else"] is JsonNode e) { var ce = CoerceCharSeqArg(e, env, nonNullSlot); if (!ReferenceEquals(ce, e)) o["else"] = ce; }
             return o;
         }
         return a;
+    }
+
+    enum CharSequenceConversion { None, String, StringBuilder, NullableString, Branches }
+
+    // The source owner and the late materialized-return owner share the exact
+    // positive recognition/order. Their graph access and construction differ.
+    static CharSequenceConversion SelectCharSequenceConversion(TypeNode type, bool nonNullSlot,
+        bool notNullAssertion, bool conditional)
+    {
+        var stringType = (nonNullSlot || notNullAssertion) && type is TypeNode.Nullable nullable ? nullable.Of : type;
+        if (IsStringTokT(stringType)) return CharSequenceConversion.String;
+        if (type is TypeNode.Fqn { Args: null } builder && StringBuilderTokens.Contains(builder.Name))
+            return CharSequenceConversion.StringBuilder;
+        if (!nonNullSlot && type is TypeNode.Nullable optional && IsStringTokT(optional.Of))
+            return CharSequenceConversion.NullableString;
+        return conditional ? CharSequenceConversion.Branches : CharSequenceConversion.None;
     }
 
     // A `!!` non-null assertion desugars to `valueBlock{ var t = <e>; result = if (!(t == null)) t else throw }`. In the
@@ -563,11 +267,6 @@ static partial class StringCharSequenceBridge
         return lhsName != null && lhsName == thenName;
     }
 
-    // A StringBuilder value: static type is one of the StringBuilder spellings (never String / the adapter / a user CS).
-    static bool IsStaticStringBuilder(JsonNode n, Env env)
-        => n is JsonObject && StaticType.Surface(n, BirScope.FromVars(env.Vars)) is TypeNode.Fqn { Args: null } f
-           && StringBuilderTokens.Contains(f.Name);
-
     // Snapshot a StringBuilder to a String via the null-safe `kotlin.LibraryKt.toString(object)` (the same coercion
     // CharSeqStringLowering uses for a non-String value flowing into a `string` slot), then wrap that String in the
     // adapter. StringBuilder.split/replace consume the sequence immediately, so the snapshot is faithful (#149-2).
@@ -584,89 +283,12 @@ static partial class StringCharSequenceBridge
         return WrapAdapter(snapshot);
     }
 
-    // (f): a static-String arg flowing into a carried compiler-generated implementation type's `CharSequence` ctor
-    // slot. The body captures its receiver as `kotlin.CharSequence`, but the carried `new` has no source argTypes and
-    // CharSeqStringLowering already collapsed the receiver value to `System.String`. The exact single-constructor shape
-    // comes from the producer ref.dll; absence means this is not a structurally supported carried implementation type.
-    static void WrapNewCtorArgs(JsonObject node, Env env)
-    {
-        if (_refs == null || node["args"] is not JsonArray args) return;
-        if (TypeJson.Read(node["type"]) is not TypeNode.Fqn tf) return;
-        var ctorParams = _refs.OwnerCtorParamTypes(tf.Name);
-        // Require an EXACT arity match: a positional skew (a synthetic `__outer` present on one side only) would align the
-        // CharSequence-slot check against the wrong argument and wrap a genuine value. Skip rather than risk it.
-        if (ctorParams == null || ctorParams.Length != args.Count) return;
-        for (var i = 0; i < args.Count; i++)
-            if ((IsCharSeqT(ctorParams[i]) || IsSourceCharSeqT(ctorParams[i]))
-                && args[i] is JsonNode a && IsStaticString(a, env))
-                args[i] = WrapAdapter(a);
-    }
-
-    // (d): a store into a CharSequence-typed local `var cs: CharSequence = <String | StringBuilder | if/else>`.
-    static void WrapVarInit(JsonObject node, Env env)
-    {
-        if (TypeJson.Read(node["type"]) is TypeNode tn && IsCharSeqT(tn) && node["init"] is JsonNode init
-            && CoerceCharSeqArg(init, env, nonNullSlot: tn is TypeNode.Fqn) is JsonNode ci && !ReferenceEquals(ci, init))
-            node["init"] = ci;
-    }
-
-    // Inline returns and ordinary reassignment both store into an already declared local.
-    // Its destination type owns the same conversion as an initializer or a method return.
-    static void WrapLocalStore(JsonObject node, Env env)
-    {
-        if (Str(node["name"]) is string name && env.Vars.TryGetValue(name, out var type)
-            && IsCharSeqT(type) && node["value"] is JsonNode value
-            && CoerceCharSeqArg(value, env, nonNullSlot: type is TypeNode.Fqn) is JsonNode converted
-            && !ReferenceEquals(converted, value))
-            node["value"] = converted;
-    }
-
     // (c): a return of a String | StringBuilder | polymorphic if/else into a CharSequence return type.
     static void WrapReturn(JsonObject node, Env env)
     {
         if (env.RetType is TypeNode rt && IsCharSeqT(rt) && node["value"] is JsonNode v
             && CoerceCharSeqArg(v, env, nonNullSlot: rt is TypeNode.Fqn) is JsonNode cv && !ReferenceEquals(cv, v))
             node["value"] = cv;
-    }
-
-    // #170 point ① — retype each recorded lifted lambda's declared `ret` from `System.String`/`kotlin.String` back to
-    // the synthetic `dotkt$CharSequence`, so the walk's WrapReturn adapter-wraps its String returns and the ldftn
-    // signature matches the CharSequence-returning delegate. A `newDelegate` target is a top-level lifted static in
-    // `methods`; a `newClosure` target is the `invoke` of the synthetic class in `types`. Only retype an actual String
-    // ret (idempotent for a `(…) -> CharSequence` lambda whose ret already survived as the synthetic).
-    static void RetypeLiftedRets(JsonObject root, CharSeqStringLowering.CharSeqRetLambdas rl)
-    {
-        if (root["methods"] is JsonArray methods)
-            foreach (var m in methods)
-                if (m is JsonObject mo && Str(mo["name"]) is string mn && rl.Statics.Contains(mn))
-                    RetypeRetToCharSeq(mo);
-        if (root["types"] is JsonArray types)
-            foreach (var t in types)
-                if (t is JsonObject to && Str(to["name"]) is string tn && rl.Closures.Contains(tn)
-                    && to["methods"] is JsonArray tms)
-                    foreach (var tm in tms)
-                        if (tm is JsonObject tmo && Str(tmo["name"]) == "invoke")
-                            RetypeRetToCharSeq(tmo);
-    }
-
-    static void RetypeRetToCharSeq(JsonObject decl)
-    {
-        if (TypeJson.Read(decl["ret"]) is TypeNode rt && IsStringTokT(rt))
-            decl["ret"] = new JsonObject { ["t"] = "fqn", ["name"] = CharSeq };
-    }
-
-    // #170 point ③ — sync a recorded delegate's `funcType` RETURN to the synthetic, so a self-build fallback
-    // (ilemit's `DelegateCtor(MapType(funcType))` path, taken when the callee slot is an open/TypeBuilder generic)
-    // constructs a `Func<…,dotkt$CharSequence>` consistent with the now-CharSequence-returning lifted body.
-    static void SyncDelegateFuncRet(JsonObject node)
-    {
-        if (_retLambdas == null) return;
-        var isTarget = Str(node["k"]) == "newDelegate"
-            ? Str(node["method"]) is string mn && _retLambdas.Statics.Contains(mn)
-            : TypeJson.Read(node["closureType"]) is TypeNode.Fqn { Name: { } ct } && _retLambdas.Closures.Contains(ct);
-        if (!isTarget || node["funcType"] is not JsonObject ft) return;
-        if (TypeJson.Read(ft["ret"]) is TypeNode rt && IsStringTokT(rt))
-            ft["ret"] = new JsonObject { ["t"] = "fqn", ["name"] = CharSeq };
     }
 
     // A structured Type is (nullable/array of) the CharSequence synthetic.
@@ -692,20 +314,6 @@ static partial class StringCharSequenceBridge
         _ => false,
     };
     static bool IsStringTokT(TypeNode t) => t is TypeNode.Fqn { Args: null } f && StringTokens.Contains(f.Name);
-
-    // (e): `as CharSequence` on a static String -> REPLACE the (would-be InvalidCast) `castclass dotkt$CharSequence`
-    // with the materializing adapter. An opaque value can also contain a String; restore its
-    // physical interface view at this consumption boundary without changing value transport.
-    static JsonNode WrapCast(JsonObject node, Env env)
-    {
-        var functionRestore = node.Remove(FunctionValueRepresentation.RestorationKey);
-        if (IsScalarCharSequence(TypeJson.Read(node["type"])) && node["e"] is JsonNode value
-            && (functionRestore || ExprType(value, env) is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" }))
-            return RestoreErasedCharSequence(value, node["type"]);
-        if (IsScalarCharSequence(TypeJson.Read(node["type"])) && node["e"] is JsonNode e && IsStaticString(e, env))
-            return WrapAdapter(e);
-        return null;
-    }
 
     // Opaque carriers retain the original boxed value. Restore its CharSequence representation
     // only at typed consumption, evaluating the value once and preserving null and existing views.
@@ -759,12 +367,6 @@ static partial class StringCharSequenceBridge
         };
     }
 
-    // #156 — the value's recovered static type is a NULLABLE String (`String?`): a `Nullable`-wrapped String token. The
-    // genuine-null value the strict `CharSequence?`-slot path keeps unwrapped; it gets the runtime-conditional adapter wrap.
-    static bool IsStaticNullableString(JsonNode n, Env env)
-        => n is JsonObject
-           && StaticType.Surface(n, BirScope.FromVars(env.Vars)) is TypeNode.Nullable nn && IsStringTokT(nn.Of);
-
     // #156 — the runtime-conditional adapter wrap for a nullable String into a `CharSequence?` slot:
     //   v == null ? (dotkt$CharSequence)null : new dotkt$StringCharSequence(v)
     // The value is read in BOTH legs (the null test and the adapter construction), so it is bound to a temp via a
@@ -802,21 +404,5 @@ static partial class StringCharSequenceBridge
     }
 
     static int _counter;
-
-    // POSITIVE static-String detection: only an expression whose recovered static type is provably a bare String. The
-    // static type comes from the SHARED StaticType.Surface resolver (#59) — so EVERY String origin is covered uniformly:
-    // a const/local/cast, a property-getter `callInstance` (`h.text`), an app top-level fun result (`get()`), a BCL call
-    // (`Encoding.GetString(...)`), a `!!`/elvis `valueBlock`, a map indexer. Anything else (a StringBuilder, a user
-    // CharSequence, an already-wrapped `dotkt$StringCharSequence`, an unknown expr) resolves to a non-String type -> no
-    // wrap. Prior to #148 this was an ad-hoc switch that only saw const/local/cast/field + a `ret`-carrying call, so a
-    // ret-less String receiver (property read / app-fun result / `!!`) reached the `dotkt$CharSequence` slot RAW and the
-    // stdlib extension's `subSequence`/`get_length` interface call hit the body-less synthetic -> EntryPointNotFound.
-    static bool IsStaticString(JsonNode n, Env env, bool allowNullable = false)
-    {
-        if (n is not JsonObject) return false;
-        var t = StaticType.Surface(n, BirScope.FromVars(env.Vars));
-        if (allowNullable && t is TypeNode.Nullable nn) t = nn.Of;
-        return IsStringTokT(t);
-    }
 
 }

@@ -45,6 +45,13 @@ static partial class NullableTvErasureCallRealign
         return file;
     }
 
+    // MCS has supplied the selected referenced owner. Reuse the original
+    // per-file view, including its source application order/admission ceiling;
+    // neither the declaration snapshot nor source flow is rediscovered here.
+    internal static BirFileDeclaration ApplyAfterReferencedOwnerBinding(BirFileDeclaration file, DeclIndex index,
+        ValueTypeOracle isValue, ReferenceMetadataIndex references)
+        => ApplySourceUses(file, index, isValue, references);
+
     static void SourceUseOwner(IBirTypeDeclaration owner, DeclIndex index)
     {
         var frame = NullableRepresentationViews.TypeFacts((BirGraphValue)owner)?.NullableFrame;

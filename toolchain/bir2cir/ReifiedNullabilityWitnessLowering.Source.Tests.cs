@@ -9,6 +9,7 @@ static partial class ReifiedNullabilityWitnessLowering
     internal static void SourceSelfTest()
     {
         SourceMethodWitnessSelfTest();
+        SourceCallWitnessMaterializationSelfTest();
         SourceGeneratedDelegateSelfTest();
         SourceCaptureWitnessSelfTest();
         SourceSuspendWitnessSelfTest();
@@ -74,14 +75,58 @@ static partial class ReifiedNullabilityWitnessLowering
             && !ReferenceEquals(classifierKnown, predicateKnown)
             && !ReferenceEquals(flagsKnown.Args.Value[1], classifierKnown.Args.Value[1])
             && !ReferenceEquals(classifierKnown.Args.Value[1], predicateKnown.Args.Value[1]), "known nullable flags/classifier/predicate");
-        // Exercise the still-live DOM consumer after the single frontier, not a typed round-trip adapter.
-        var physical = call.ToDom();
-        MaterializeCallWitnesses(physical);
-        SourceCheck(physical["nullablePendingWitnesses"] == null && physical["args"] is System.Text.Json.Nodes.JsonArray { Count: 2 }
-            && physical["sig"] is System.Text.Json.Nodes.JsonArray { Count: 2 }, "late witness consumption and signature finalization");
+        var pending = call.NullablePendingWitnesses.Value[0];
+        var originalArgument = call.Args.Value[0];
+        var pendingFile = (BirFileDeclaration)file.DeepClone();
+        MaterializeCallWitnesses(file);
+        SourceCheck(!call.NullablePendingWitnesses.IsPresent && call.NullableWitnessCount.Value == 1
+            && call.Args.Value.Length == 2 && ReferenceEquals(call.Args.Value[0], originalArgument)
+            && call.Sig.Value.Length == 2 && call.Sig.Value[1] == KotlinRuntimeTypeWitness.Type
+            && !ReferenceEquals(call.Args.Value[1], pending)
+            && ((BirGraphValue)call.Args.Value[1]).StructurallyEquals((BirGraphValue)pending),
+            "owning witness consumption, independent argument copy and signature finalization");
         var rejected = false;
-        try { SourceRun(file); } catch (InvalidOperationException error) when (error.Message.Contains("assigned nullable witnesses twice", StringComparison.Ordinal)) { rejected = true; }
+        try { SourceRun(pendingFile); } catch (InvalidOperationException error) when (error.Message.Contains("assigned nullable witnesses twice", StringComparison.Ordinal)) { rejected = true; }
         SourceCheck(rejected, "pending witness non-reentrance");
+    }
+
+    static void SourceCallWitnessMaterializationSelfTest()
+    {
+        var witness = KotlinRuntimeTypeWitness.KnownValue(new TypeNode.Fqn("kotlin.String"), null);
+        var construction = new BirNew { Type = new TypeNode.Fqn("Generated"), Args = Array.Empty<IBirExpression>(),
+            ArgTypes = Array.Empty<TypeNode>(), MemberSignature = OptionalField<TypeNode[]>.Null,
+            NullablePendingWitnesses = new[] { witness } };
+        var call = new BirCallStatic { Method = "consume", Args = new IBirExpression[] { construction },
+            Sig = new TypeNode[] { new TypeNode.Fqn("Generated") }, ArgTypes = OptionalField<TypeNode[]>.Null,
+            NullablePendingWitnesses = new[] { (IBirExpression)((BirGraphValue)witness).DeepClone() } };
+        var instance = new BirCallInstance { Method = "instance", Recv = call, Args = Array.Empty<IBirExpression>(),
+            Sig = OptionalField<TypeNode[]>.Null, MemberSignature = Array.Empty<TypeNode>(),
+            NullablePendingWitnesses = new[] { (IBirExpression)((BirGraphValue)witness).DeepClone() } };
+        var constrained = new BirConstrainedCall { Method = "invoke", Recv = instance,
+            Args = Array.Empty<IBirExpression>(), Sig = Array.Empty<TypeNode>(), ArgTypes = Array.Empty<TypeNode>(),
+            NullablePendingWitnesses = new[] { (IBirExpression)((BirGraphValue)witness).DeepClone() } };
+        var method = SourceMethod("nested", "witness:nested", Array.Empty<BirTypeParameter>(), SourceReturn(constrained));
+        var file = SourceFile(method);
+        MaterializeCallWitnesses(file);
+        SourceCheck(ReferenceEquals(file.Methods.Value[0], method)
+            && ReferenceEquals(((BirReturn)method.Body.Value[0]).Value.Value, constrained)
+            && ReferenceEquals(constrained.Recv.Value, instance) && ReferenceEquals(instance.Recv.Value, call)
+            && ReferenceEquals(call.Args.Value[0], construction), "nested call/declaration occurrences remain owned in place");
+        SourceCheck(!construction.NullablePendingWitnesses.IsPresent && construction.Args.Value.Length == 1
+            && construction.ArgTypes.Value.SequenceEqual(new[] { KotlinRuntimeTypeWitness.Type }) && construction.MemberSignature.IsNull
+            && !call.NullablePendingWitnesses.IsPresent && call.Args.Value.Length == 2 && call.Sig.Value.Length == 2
+            && call.ArgTypes.IsNull && !call.MemberSignature.IsPresent
+            && !instance.NullablePendingWitnesses.IsPresent && instance.Args.Value.Length == 1
+            && instance.Sig.IsNull && !instance.ArgTypes.IsPresent && instance.MemberSignature.Value.Length == 1
+            && !constrained.NullablePendingWitnesses.IsPresent && constrained.Args.Value.Length == 1
+            && constrained.Sig.Value.Length == 1 && constrained.ArgTypes.Value.Length == 1,
+            "all four call forms consume pending postorder without manufacturing absent/null descriptors");
+        SourceCheck(!ReferenceEquals(construction.Args.Value[0], witness)
+            && !ReferenceEquals(construction.Args.Value[0], call.Args.Value[1]), "witness occurrences are independent");
+        MaterializeCallWitnesses(file);
+        SourceCheck(construction.Args.Value.Length == 1 && call.Args.Value.Length == 2
+            && instance.Args.Value.Length == 1 && constrained.Args.Value.Length == 1,
+            "materialized calls cannot append their witnesses again");
     }
 
     static void SourceGeneratedDelegateSelfTest()

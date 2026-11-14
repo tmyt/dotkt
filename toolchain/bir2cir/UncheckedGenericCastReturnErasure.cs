@@ -52,87 +52,12 @@ static partial class UncheckedGenericCastReturnErasure
         && castType is TypeNode.Tv variable && variable == expected
         && IsNullableOrObjectSource(sourceType);
 
-    // Consumer-side half of the object-return ABI.  dll2klib has already restored the Kotlin expression type into
-    // BIR's `sty`, while the reference index sees the producer's physical Object return and trusted [KotlinType]
-    // declaration carrier.  Turn that exact pair into CIR's explicit `ret`: BirTypeLowering then lowers the concrete
-    // Kotlin type and ilemit mechanically emits the required unbox/cast at the call boundary.
-    public static void ApplyReferenced(JsonNode root, ReferenceMetadataIndex refs)
-    {
-        RewriteReferencedCalls(root, refs);
-    }
-
     // An inherited call initially names its receiver rather than the declaration owner. Only after owner binding
     // can the selected object-returning declaration be closed in its exact frame. Preserve its Kotlin result as an
     // explicit use projection before BirTypeLowering consumes sty; PhysicalValueCoercion materializes the cast.
     public static void ApplyAfterInheritedOwnerBinding(JsonNode root, DeclIndex index)
     {
         ApplyCallsOnly(root, index);
-    }
-
-    static void RewriteReferencedCalls(JsonNode node, ReferenceMetadataIndex refs)
-    {
-        switch (node)
-        {
-            case JsonObject call:
-            {
-                var kind = Str(call["k"]);
-                if (kind is "callStatic" or "callInstance"
-                    && KotlinPropertyAccessors.TryCallIdentity(call, out _, out var propertyRole)
-                    && propertyRole == "get"
-                    && TypeJson.Read(call["sty"]) is TypeNode propertyUse
-                    && !IsObject(propertyUse) && !IsUnit(propertyUse)
-                    && TryReferencedOwner(call, kind == "callStatic", out var propertyOwner, out _)
-                    && refs.IsUncheckedGenericObjectGetter(Str(call[DeclarationIdentityBinding.Key]), propertyOwner,
-                        kind == "callStatic", (call["args"] as JsonArray)?.Count ?? 0,
-                        ReadTypes(call["typeArgs"]).Length))
-                {
-                    // The selected getter supplies the Object ABI; kotc already instantiated the Kotlin result
-                    // in the caller's frame. The declaration-relative ret on a property call is not that result.
-                    call["ret"] = call["sty"].DeepClone();
-                }
-                else if (kind is "callStatic" or "callInstance"
-                    && call["ret"] == null
-                    && TypeJson.Read(call["sty"]) is TypeNode expected
-                    // A Unit-valued expression statement deliberately ignores the physical Object result.  Turning
-                    // Kotlin Unit into CIR `ret:void` would suppress exprStmt's pop while the CLR call still pushes
-                    // Object, leaving a value on the enclosing void method's return stack.
-                    && !IsObject(expected) && !IsUnit(expected)
-                    && Str(call["method"]) is string name
-                    && TryReferencedOwner(call, kind == "callStatic", out var ownerName, out var ownerArgs)
-                    && refs.TryUncheckedGenericCastReturn(
-                        ownerName,
-                        name,
-                        kind == "callStatic",
-                        (call["args"] as JsonArray)?.Count ?? 0,
-                        ReadTypes(call["typeArgs"]).Length,
-                        out var declaredReturn))
-                {
-                    var actual = Substitute(declaredReturn, ownerArgs, ReadTypes(call["typeArgs"]));
-                    if (actual != null && actual.Equals(expected))
-                        call["ret"] = call["sty"].DeepClone();
-                }
-                foreach (var child in call.Select(kv => kv.Value).Where(v => v != null).ToList())
-                    RewriteReferencedCalls(child, refs);
-                break;
-            }
-            case JsonArray array:
-                foreach (var child in array.Where(v => v != null).ToList())
-                    RewriteReferencedCalls(child, refs);
-                break;
-        }
-    }
-
-    static bool TryReferencedOwner(JsonObject call, bool isStatic, out string ownerName, out TypeNode[] ownerArgs)
-    {
-        ownerName = null;
-        ownerArgs = Array.Empty<TypeNode>();
-        var ownerNode = isStatic
-            ? TypeJson.Read(call["ownerType"]) ?? TypeJson.Read(call["owner"]) ?? TypeJson.Read(call["calleeOwner"])
-            : TypeJson.Read(call["ownerType"]);
-        if (ownerNode is not TypeNode.Fqn owner) return false;
-        ownerName = owner.Name;
-        ownerArgs = owner.Args ?? Array.Empty<TypeNode>();
-        return true;
     }
 
     static bool IsObject(TypeNode type) =>

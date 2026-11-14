@@ -1315,7 +1315,7 @@ bare-FQN strings the wire format forbids):
   receiver-first because those descriptors supply the state-machine field names and `create` arguments. Receiver
   reads in `body` name that leading parameter explicitly; a bare `this` is therefore reserved for a captured enclosing
   dispatch receiver and bir2cir never guesses which meaning was intended.
-- The `StringCharSequenceBridge` adapter (bir2cir `AdapterTypeJson` literal + `WrapAdapter`) — every `type`/`ret`/
+- The `StringCharSequenceBridge` adapter (bir2cir typed `BuildAdapterDeclaration` builder + owning wrappers) — every `type`/`ret`/
   `elem`/`argTypes`/`interfaces`/`ownerType` slot rewritten to `{t:"fqn",…}`; the retired `@<name>` this-assembly
   marker dropped (bir2cir/ilemit derive local-vs-referenced from the FQN via `_types`).
 

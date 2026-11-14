@@ -69,6 +69,9 @@ static class Bir2Cir
                 ClrMemberResolution.DeclarationBindingsSelfTest();
                 BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
+                StringCharSequenceBridge.SelfTestSource();
+                IteratorConsumerNormalization.SelfTestSource();
+                CatchClauseWidening.SelfTestSource();
                 CharSeqStringLowering.SelfTestSource();
                 PrimitiveOperatorLowering.SelfTest();
                 SourceGraphRewrite.SelfTest();
@@ -536,6 +539,7 @@ sealed class Pipeline
         // Finish every source-use pass before representation/name allocation
         // mutates declarations shared by the module's prepared authorities.
         // Preserve the original per-file alias -> selected ID -> override order.
+        var charSeqReturnViews = new CharSeqStringLowering.CharSeqRetLambdas[captured.Length];
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
@@ -588,17 +592,54 @@ sealed class Pipeline
             if (!referenceBuild)
                 MemberCallSubstitution.Apply(source, refs, inventory.LocalTopLevelFunctions, appBuild, isValueFqn,
                     localPropertyDeclarations, genericRepresentations, localFactories, sourceIndex.DeclarationIds);
+            charSeqReturnViews[index] = charSeqReturns;
+        }
+
+        localEventDeclarations.ReleaseSourceRecipes();
+        // Complete every file's member substitution before these consumers
+        // inspect sibling declarations. Keep each file's original nullable
+        // visibility view, rather than recapturing the canonical module index.
+        for (var index = 0; index < captured.Length; index++)
+        {
+            var source = captured[index];
+            // Hidden witness arguments must not participate in the preceding
+            // Kotlin-visible enum/array/collection recognition.
+            ReifiedNullabilityWitnessLowering.MaterializeCallWitnesses(source);
+            if (!referenceBuild)
+            {
+                // The selected referenced top-level declaration now has its
+                // actual owner. Reuse the same return/argument flow authority.
+                UncheckedGenericCastReturnErasure.ApplyReferenced(source, refs);
+                NullableTvErasureCallRealign.ApplyAfterReferencedOwnerBinding(
+                    source, sourceUseViews[index], isValueFqn, refs);
+            }
+            if (appBuild) IteratorConsumerNormalization.Apply(source);
+            if (!referenceBuild)
+            {
+                // Preserve real CharSequence implementations in both runtime
+                // and application builds; a sealed String needs an adapter.
+                var bridge = StringCharSequenceBridge.Apply(source, refs, charSeqReturnViews[index]);
+                var callbacks = ClosureSynthesis.ApplyMaterialized(
+                    source, bridge.DelegateAdapters, refs, scalarSlots.ProjectMethod);
+                // Both producers report their actual append order. Neither is
+                // a new logical source declaration or a second semantic index.
+                aliasTransitions.AdmitMaterializedTypes(source,
+                    bridge.AppendedTypes.Concat(callbacks.AppendedTypes).ToArray());
+                foreach (var owner in callbacks.AppendedTypes) SharedSyntheticSynthesis.DropSyntheticTypeArgs(owner);
+                CatchClauseWidening.Apply(source);
+            }
             captured[index] = null;
-            // The remaining owners still use DOM. Project once after the owning
-            // representation and name allocation, never through an old adapter.
+            sourceUseViews[index] = null;
+            charSeqReturnViews[index] = null;
+            // The remaining middle owners still use DOM. This is the single
+            // continuing projection, after call-boundary materialization.
             var root = source.ToDom();
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
                 root,
-                inputsWithSources[index].Suspend, sourceUseViews[index], charSeqReturns));
+                inputsWithSources[index].Suspend));
         }
 
-        localEventDeclarations.ReleaseSourceRecipes();
         var continuingRoots = files.Select(file => file.Root).ToArray();
         // Retired generated targets still supply source declaration facts. Put
         // those explicitly reported declarations through the same frontier once;
@@ -662,74 +703,12 @@ sealed class Pipeline
         var localBasicEnums = module.Preparation.Enums.Basic;
 
         var genericDowncastHierarchy = module.Preparation.Bindings.GenericDowncastHierarchy;
-        // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
-        // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
-        // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
+        // Call-boundary materialization has completed in the owning prefix.
+        // The remaining type/slot/suspend owners consume this module-wide set.
         var staged = new List<(JsonNode Root, string OutputName)>();
         var sharedCells = module.Preparation.SharedCells;
         foreach (var bir in birFiles)
-        {
-            var outputName = OutputNameFor(bir.Path);
-            // The canonical index already contains later files' synthetic facts,
-            // but these early per-file capabilities retain the same visibility
-            // as this file's owning source-use pass. Global stages use canonical.
-            var sourceUses = bir.NullableSourceUses;
-            // Initial nullable-use flow already ran on owning source BIR.
-            // Subsequent calls below follow only their actual late capability transitions.
-            var substituted = bir.Root;
-            // Reified-nullability witnesses were prepared while declaration identities and Kotlin type arguments were
-            // still authoritative. Materialize them only after semantic calls (enum/array/collection intrinsics) have
-            // either been replaced or deliberately retained, so a physical hidden ABI argument cannot interfere with
-            // recognition of the Kotlin-visible argument vector.
-            ReifiedNullabilityWitnessLowering.MaterializeCallWitnesses(substituted);
-            // Cross-module half of UncheckedGenericCastReturnErasure.  MemberCallSubstitution has now attributed a
-            // referenced top-level call to its real file-class owner; bind the trusted physical-Object/logical-T
-            // metadata boundary to an explicit CIR return conversion before `sty` is consumed by type lowering.
-            if (!_options.RefBuild) UncheckedGenericCastReturnErasure.ApplyReferenced(substituted, refs);
-            // Cross-module half of the nullable-Tv use realignment (#86 D1). The initial typed source-use pass in
-            // LoadModule re-derived every use whose callee it could name; a REFERENCED top-level fun reaches it as
-            // `callStatic owner=null` — kotc has no
-            // file class for it — and only MemberCallSubstitution has now attributed it to the owner the reference index
-            // is keyed by. Same formula, same code, run once more so those calls' returns and arguments are derived from
-            // the producing assembly's declaration too. Idempotent on everything the earlier run already corrected.
-            if (!_options.RefBuild)
-                NullableTvErasureCallRealign.ApplyAfterReferencedOwnerBinding(
-                    substituted, sourceUses, isValueFqn, refs);
-            // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
-            // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
-            // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
-            if (attributeTopLevelOwner) IteratorConsumerNormalization.Apply(substituted);
-            // String -> CharSequence adapter bridge: materialize a bare `System.String` flowing into a synthetic
-            // `dotkt$CharSequence` slot as `new dotkt$StringCharSequence(str)` (String is sealed, can't implement
-            // the synthetic interface). Runs on EVERY non-ref build — app AND the RT stdlib self-build. The RT build
-            // NEEDS it too: the stdlib's own CharSequence-extension bodies widen a `String` into a `dotkt$CharSequence`
-            // slot INTERNALLY (`CharSequence.indexOf(string: String)` -> the private `indexOf(other: CharSequence)`;
-            // `String.trim()` -> `(this as CharSequence).trim()`), and without the wrap those compiled rt.dll bodies pass
-            // a raw String where the interface is required -> InvalidProgram / EntryPointNotFound at run. The adapter is
-            // synthesized in the rt assembly exactly once (dedup), implementing the RT's canonical `dotkt$CharSequence`,
-            // so an app that then routes a String op to a real stdlib body works. Skipped only for the ref build (its
-            // bodies are squashed to `throw` anyway). Purely additive: only positively-String values are wrapped.
-            // CharSeqStringLowering already selected the pure-app System.String representation while calls still
-            // carried explicit property identity. Materialize any remaining synthetic/StringBuilder adapters after
-            // call substitution; a user CharSequence implementation keeps the synthetic representation verbatim.
-            IReadOnlyList<JsonNode> materializedDelegateAdapters = Array.Empty<JsonNode>();
-            if (!_options.RefBuild)
-                substituted = StringCharSequenceBridge.Apply(
-                    substituted, refs, bir.CharSeqReturns, out materializedDelegateAdapters);
-            // The String/CharSequence call-boundary bridge may materialize a closure that captures a non-literal
-            // `(P...) -> String` delegate and exposes `(P...) -> CharSequence` (#190). Assemble those late closure
-            // ingredients now; all earlier source/inline/event closures were already consumed by the main passes.
-            var materializedDelegateAdapterTypes = ClosureSynthesis.ApplyMaterialized(
-                substituted, materializedDelegateAdapters, refs, scalarSlots.ProjectMethod);
-            foreach (var materializedType in materializedDelegateAdapterTypes)
-                SharedSyntheticSynthesis.DropSyntheticTypeArgs(materializedType);
-            // CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (IndexOutOfBoundsException)` @ClrTypeAlias-es to a
-            // SINGLE .NET type, but .NET index ops throw TWO distinct ones (List.get_Item -> ArgumentOutOfRangeException,
-            // array -> IndexOutOfRangeException). Expand each such clause into two clauses covering BOTH so the Kotlin
-            // "one catch handles any out-of-range access" semantics hold. Non-ref only (the ref surface stays pure Kotlin).
-            if (!_options.RefBuild) CatchClauseWidening.Apply(substituted);
-            staged.Add((substituted, outputName));
-        }
+            staged.Add((bir.Root, OutputNameFor(bir.Path)));
 
         // Event subscriptions can target a Kotlin-declared event in a sibling source file. Every
         // implementation now has its concrete delegate-derived declaration, so bind all call sites to those exact
@@ -1697,9 +1676,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
     }
 }
 
-sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend,
-    NullableTvErasureCallRealign.DeclIndex NullableSourceUses,
-    CharSeqStringLowering.CharSeqRetLambdas CharSeqReturns);
+sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
     SourceModuleIndex SourceIndex,
     GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots,
