@@ -16,6 +16,9 @@ internal abstract record BirGraphValue
     public virtual TypeNode? FunctionTypeStamp => null;
     public virtual TypeNode? CallBindingTypeHint => null;
     public virtual TypeNode? ExplicitSourceType => null;
+    // Structural own-field projection for MapVarianceRealign's existing read
+    // contract. This is not StaticType/Surface inference and never reads sty.
+    public virtual TypeNode? OwnTypeOrReturnStamp => null;
     public virtual OptionalField<string> DeclarationIdentityFact => default;
     public virtual bool HasDeclaredDelegateSlot => false;
     // An erased body value retains its ordinary lexical variable for later

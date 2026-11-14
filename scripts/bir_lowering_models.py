@@ -432,6 +432,10 @@ def outputs(root, definitions):
                                  if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
         if explicit_source_types:
             model += ["    public override TypeNode? ExplicitSourceType => " + " ?? ".join(explicit_source_types) + ";"]
+        own_type_or_return = [member(field) + ".OrDefault()" for field in ("type", "ret")
+                              if node and field in shape["properties"] and cs(shape["properties"][field]) == "TypeNode"]
+        if own_type_or_return:
+            model += ["    public override TypeNode? OwnTypeOrReturnStamp => " + " ?? ".join(own_type_or_return) + ";"]
         if "declarationId" in shape["properties"]:
             model += ["    public override OptionalField<string> DeclarationIdentityFact => DeclarationId;"]
         if "dotktDelegateSlot" in shape["properties"]:
