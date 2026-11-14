@@ -83,7 +83,7 @@ static partial class KotlinRuntimeTypeWitness
         void Walk(BirGraphValue node)
         {
             if (node == null || node is IBirExecutablePayload) return;
-            node.VisitNameFields(names.Add, includeVariableNames: false);
+            node.VisitNameFields(name => names.Add(name), includeVariableNames: false);
             node.VisitChildren(Walk);
         }
         Walk(root);
