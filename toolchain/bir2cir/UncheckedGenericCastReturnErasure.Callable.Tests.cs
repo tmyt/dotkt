@@ -46,7 +46,7 @@ static partial class UncheckedGenericCastReturnErasure
             && ReferenceEquals(root.Types.Value[0], closureType) && invoke.Ret.Value == erased && invoke.Params.Value[0].Type.Value == erased,
             "reference returns, selected signatures or closure declarations changed their contract");
         var declarations = NullableTvErasureCallRealign.CollectDeclaredMemberRets(new[] { root });
-        NullableTvErasureCallRealign.ApplySourceUses(root, declarations, type => type.Name == "kotlin.Int", null);
+        NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(root, declarations, type => type.Name == "kotlin.Int", null);
         Require(((BirReturn)target.Body.Value[1]).Value.Value is BirCast { Type.Value: var returnTarget } && returnTarget == erased,
             "moved declaration was not reflowed by the typed nullable-use capability");
         Require(!pending.AlignDelegateTargets(root, type => type.Name == "kotlin.Int"), "alignment is not idempotent");

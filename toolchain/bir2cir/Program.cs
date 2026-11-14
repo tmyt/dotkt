@@ -496,7 +496,7 @@ sealed class Pipeline
             // Function constructions now state their consuming slots. Align
             // their owned targets, then reflow only when a declaration changed.
             if (uncheckedDeclarations.AlignDelegateTargets(source, isValueFqn))
-                NullableTvErasureCallRealign.ApplySourceUses(source, sourceUses, isValueFqn, refs);
+                NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(source, sourceUses, isValueFqn, refs);
             // Keep unchecked generic results object-typed until a real typed
             // consumer; the captured body-Tv facts retain their exact identity.
             UncheckedGenericCastReturnErasure.Apply(source, uncheckedDeclarations);

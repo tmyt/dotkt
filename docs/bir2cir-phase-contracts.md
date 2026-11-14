@@ -14,7 +14,8 @@ must not repair the containing file by repeating an idempotent whole-tree pass.
 | `StringCharSequenceBridge` | New delegate-adapter closure ingredient graph | exact returned roots through `ClosureSynthesis.ApplyMaterialized` |
 | interface/collection/comparable and suspend synthesizers | New receiver-relative call result and possible `Nothing` value position | `MaterializedExecutable.Normalize` before appending the executable graph |
 | `InheritedMemberOwnerBinding` | Rebinding may make a constructed declaring-owner frame available | `ConstructedMemberReturnSubstitution.ApplyCall` on the same visited call |
-| `DelegateTargetSlotAlignment` | Existing target declaration slots moved to the delegate's erased shape | the explicit `ApplyAfterDelegateSlotAlignment` body-flow transition, only when a slot moved |
+| Initial typed `DelegateTargetSlotAlignment` | Existing target declaration slots moved to the delegate's erased shape | typed `ApplyAfterDelegateSlotAlignment` re-enters source-use flow only when a slot moved, retaining the same per-file declaration view |
+| Late materialized `DelegateTargetSlotAlignment` | A newly materialized target's declaration slots moved | the DOM `ApplyAfterDelegateSlotAlignment` capability entry, only when a slot moved |
 | `MemberCallSubstitution` referenced-owner attribution | A referenced declaration becomes resolvable for nullable-Tv use realignment | `ApplyAfterReferencedOwnerBinding`; this is a distinct owner-capability transition |
 
 The initial `ConstructedMemberReturnSubstitution` remains module-wide because suspend lowering must receive every
