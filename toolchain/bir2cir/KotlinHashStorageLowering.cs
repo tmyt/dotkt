@@ -6,7 +6,7 @@ using DotKt.Bir;
 
 // Kotlin-owned hash storage uses the same equality/hash contract as Kotlin calls.
 // Explicit projected CLR constructors retain their selected native comparer.
-static class KotlinHashStorageLowering
+static partial class KotlinHashStorageLowering
 {
     const string StorageSignature = "kotlinHashStorageSignature";
 
