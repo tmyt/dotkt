@@ -25,7 +25,7 @@ static partial class ClrMemberResolution
 {
     const string KotlinSigSnapshotId = "dotktKotlinSigId";
     const string DeclarationIdentityBoundKey = "dotktDeclarationIdentityBound";
-    static readonly Dictionary<int, JsonArray> KotlinSigSnapshots = new();
+    static readonly Dictionary<int, TypeNode[]> KotlinSigSnapshots = new();
     static int _nextKotlinSigSnapshotId;
     static ReferenceMetadataIndex _refs;
     static IReadOnlyDictionary<string, string> _localCarriers;
@@ -536,27 +536,6 @@ static partial class ClrMemberResolution
     // Nullable-generic/function erasure runs before top-level owner attribution. Preserve the frontend-resolved
     // descriptor out-of-band across those transforms. A scalar identity token rides the call while transforms clone
     // it; the token is removed after resolution and never enters CIR.
-    public static void CaptureReferencedStaticCallSignatures(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            if ((obj["k"] as JsonValue)?.GetValue<string>() == "callStatic"
-                && obj["sig"] is JsonArray sig && obj[KotlinSigSnapshotId] == null)
-            {
-                var id = ++_nextKotlinSigSnapshotId;
-                KotlinSigSnapshots.Add(id, (JsonArray)sig.DeepClone());
-                obj[KotlinSigSnapshotId] = id;
-            }
-            foreach (var kv in obj.ToList())
-                if (kv.Value != null) CaptureReferencedStaticCallSignatures(kv.Value);
-        }
-        else if (node is JsonArray arr)
-        {
-            foreach (var item in arr.ToList())
-                if (item != null) CaptureReferencedStaticCallSignatures(item);
-        }
-    }
-
     // Suspend lowering replaces a hot call with a cold call and supplies its appended ABI parameter.
     // Project the preserved descriptor in this pass's side table; only its scalar token rides the call
     // and is removed before CIR emission.
@@ -568,11 +547,7 @@ static partial class ClrMemberResolution
         {
             // The caller owns this ABI extension (the cold entry's completion parameter).
             // A hot signature snapshot must not validate the newly selected cold MethodDef.
-            var projected = snapshot.DeepClone().AsArray();
-            projected.Add(appendedParameter.DeepClone());
-            var projectedId = ++_nextKotlinSigSnapshotId;
-            KotlinSigSnapshots.Add(projectedId, projected);
-            target[KotlinSigSnapshotId] = projectedId;
+            target[KotlinSigSnapshotId] = RememberKotlinSignature(snapshot.Append(TypeJson.Read(appendedParameter)));
         }
     }
 
@@ -646,12 +621,10 @@ static partial class ClrMemberResolution
         if ((node[DeclarationIdentityBinding.Key] as JsonValue)?.TryGetValue<string>(out var carriedIdentity) == true
             && _localDeclarationIds.Contains(carriedIdentity))
             return;
-        var selectionSig = sig;
-        if ((node[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
-            && KotlinSigSnapshots.TryGetValue(snapshotId, out var snapshot))
-            selectionSig = snapshot;
-        var callSig = selectionSig.Select(TypeJson.Read).Where(t => t != null).ToArray();
-        if (callSig.Length != selectionSig.Count) return;
+        var callSig = (node[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
+            && KotlinSigSnapshots.TryGetValue(snapshotId, out var snapshot)
+                ? snapshot : sig.Select(TypeJson.Read).ToArray();
+        if (callSig.Any(type => type == null)) return;
         var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
         // A referenced extension-property accessor can still arrive here with its preserved source-property identity
         // (or, before preservation, the Kotlin name plus `prop` role). Ask the reference index for the accessor's
