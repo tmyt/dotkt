@@ -7,6 +7,8 @@ static partial class ValueElementIterableCoercion
         Dictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex refs)
     {
         isValue ??= _ => false;
+        // Refresh this file's declarations: synthesis may add classes after
+        // the original module snapshot was captured.
         foreach (var entry in SupertypeGraph.CollectSource(new[] { root })) definitions[entry.Key] = entry.Value;
         Walk(root);
 

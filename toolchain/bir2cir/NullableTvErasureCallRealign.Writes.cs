@@ -563,12 +563,6 @@ static partial class NullableTvErasureCallRealign
         bool exactPropertyTarget = false) =>
         CoerceForTarget(value, src, target, exactPropertyTarget, _isValue, _refs);
 
-    // A late bir2cir pass that obtains a reflected fixed slot after this walk may apply the same complete concrete
-    // slot rule without depending on Apply's per-run oracle state.
-    internal static JsonNode CoerceForFixedSlot(
-        JsonNode value, TypeNode src, TypeNode target, ValueTypeOracle isValue, ReferenceMetadataIndex refs) =>
-        CoerceForTarget(value, src, target, exactPropertyTarget: false, isValue, refs);
-
     static JsonNode CoerceForTarget(JsonNode value, TypeNode src, TypeNode target,
         bool exactPropertyTarget, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
     {

@@ -19,6 +19,7 @@ using DotKt.Bir.Lowering;
 // Runs in BIR-space BEFORE BirTypeLowering, which is where the Nullable wrapper on the type operand is erased
 // (every CLR reference is nullable, so the lowered type cannot carry the signal). `!is T?` needs nothing extra: kotc
 // emits it as `unaryOp !` over this same `isInst`.
+// Run after inline expansion so spliced bodies' nullable tests are marked too.
 static partial class NullableIsInstMatch
 {
     internal static void Apply(BirFileDeclaration root)
