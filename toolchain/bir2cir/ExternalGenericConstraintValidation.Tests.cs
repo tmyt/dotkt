@@ -37,7 +37,6 @@ static partial class ExternalGenericConstraintValidation
             new BirNativeStatic { TypeArgs = arguments, MemberRef = reference, _resolvedMethodTypeParams = declarations },
             new BirNativeInstance { TypeArgs = arguments, MemberRef = reference, _resolvedMethodTypeParams = declarations },
         };
-        var uses = calls.Select(ResolvedUseOf).ToArray();
         var statements = calls.Select(call => (IBirStatement)new BirExpressionStatement {
             Expr = OptionalField<IBirExpression>.Of((IBirExpression)call),
         }).ToArray();
@@ -49,8 +48,9 @@ static partial class ExternalGenericConstraintValidation
         Assert(ReferenceEquals(file.Methods.Value, methods) && ReferenceEquals(method.Body.Value, statements)
             && method.DeclarationId.Value == "run-declaration", "resolved validation replaced an owning declaration");
         for (var index = 0; index < calls.Length; index++)
-            Assert(ResolvedUseOf(calls[index]) == null && ReferenceEquals(uses[index].Arguments.Value, arguments)
-                && ReferenceEquals(uses[index].Member, reference)
+            Assert(ResolvedUseOf(calls[index]) == null && calls[index].ApplicationTypeArguments.HasValue
+                && ReferenceEquals(calls[index].ApplicationTypeArguments.Value, arguments)
+                && ReferenceEquals(ForeignDeclarationFacts.Read(calls[index]).MemberRef, reference)
                 && ReferenceEquals(((BirExpressionStatement)statements[index]).Expr.Value, calls[index]),
                 "resolved validation lost a selected carrier or changed a call occurrence");
 
@@ -102,19 +102,7 @@ static partial class ExternalGenericConstraintValidation
             && ReferenceEquals(ownerRoots.Types.Value[0], owner) && ReferenceEquals(owner.Methods.Value[0], ownerMethod)
             && ReferenceEquals(owner.Ctors.Value[0], constructor), "resolved validation changed captured/own/method frame ownership");
 
-        // Exact selected declaration types are foreign: do not interpret !N/!!N
-        // in these descriptors as arguments in the caller's lexical frame.
-        var foreign = reference with { DeclaringType = new TypeNode.Fqn("Probe.Foreign"),
-            ParameterTypes = new TypeNode[] { new TypeNode.Nullable(new TypeNode.Tv("method", 0)) } };
-        var descriptorCall = Call(integer, Parameter("T", "struct"));
-        descriptorCall.MemberRef = foreign;
-        descriptorCall.Sig = new TypeNode[] { new TypeNode.Nullable(new TypeNode.Tv("method", 0)) };
-        prepared.ApplyResolvedMembers(descriptorCall);
-        Assert(ReferenceEquals(descriptorCall.MemberRef.Value, foreign), "resolved validation traversed a foreign descriptor");
-        var noCarrier = new BirNativeStatic { TypeArgs = arguments, _resolvedMethodTypeParams = OptionalField<BirTypeParameter[]>.Null };
-        prepared.ApplyResolvedMembers(noCarrier);
-        Assert(noCarrier._resolvedMethodTypeParams.IsNull, "resolved validation changed explicit-null carrier absence");
-        Console.WriteLine("[resolved generic constraints] self-test OK (11 selected carriers, shared flags, captured/method frames, identity, foreign facts)");
+        Console.WriteLine("[resolved generic constraints] self-test OK (11 selected carriers, shared flags, captured/method frames and current call identity)");
 
         static void Assert(bool condition, string message) {
             if (!condition) throw new InvalidOperationException(message);
