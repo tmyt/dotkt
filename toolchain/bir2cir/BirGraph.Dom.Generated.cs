@@ -4762,6 +4762,7 @@ internal static class BirGraphDom
                 case "recv": break;
                 case "args": break;
                 case "invokeRef": break;
+                case "sty": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirDelegateInvoke at {source.GetPath()}");
             }
         return new BirDelegateInvoke
@@ -4770,6 +4771,7 @@ internal static class BirGraphDom
             Recv = Field<IBirExpression>(fields, "recv", value => ReadBirExpression(value!)),
             Args = Field<IBirExpression[]>(fields, "args", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             InvokeRef = Field<BirMemberReference>(fields, "invokeRef", value => ReadBirMemberReference(value!)),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 

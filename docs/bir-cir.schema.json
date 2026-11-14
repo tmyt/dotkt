@@ -2240,7 +2240,7 @@
       "properties": { "k": { "const": "concat" }, "parts": { "type": "array", "items": { "$ref": "#/$defs/cirExpressionNode" } } }, "required": ["k", "parts"], "additionalProperties": false
     },
     "cirDelegateInvokeNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirDelegateInvoke", "domain": "cirExecutable", "roles": ["expression"] },
+      "type": "object", "x-dotkt-model": { "name": "CirDelegateInvoke", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": { "sty": { "x-dotkt-representation-role": "ResultStamp", "$ref": "#/$defs/type" } } },
       "properties": { "k": { "const": "delegateInvoke" }, "funcType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/cirExpressionNode" }, "args": { "type": "array", "items": { "$ref": "#/$defs/cirExpressionNode" } }, "invokeRef": { "$ref": "#/$defs/memberRef" } }, "required": ["k", "funcType", "recv", "args", "invokeRef"], "additionalProperties": false
     },
     "cirEnumBitsNode": {

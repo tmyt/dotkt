@@ -35,21 +35,7 @@ static partial class NullableTvErasureCallRealign
             {
                 var name = type.Name.OrDefault();
                 if (name == null || index.ByOwner.ContainsKey(name)) continue;
-                var signatures = new Dictionary<string, DeclSig>(StringComparer.Ordinal);
-                var properties = new Dictionary<string, List<DeclSig>>(StringComparer.Ordinal);
-                foreach (var method in type.Methods.OrEmpty())
-                    if (ReadMethodSnapshot(method) is { } snapshot)
-                        AddMethodSnapshot(index, name, snapshot, signatures, properties);
-                index.ByOwner[name] = signatures;
-                index.PropertiesByOwner[name] = properties;
-                var constructors = new Dictionary<int, TypeNode[]>();
-                foreach (var constructor in type.Ctors.OrEmpty())
-                    if (ReadParams(constructor.Params.OrEmpty(), preferCarrier: false) is { } parameters)
-                        AddConstructorSnapshot(constructors, parameters);
-                index.Ctors[name] = constructors;
-                var slots = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-                CollectSlots(type.Fields.OrEmpty(), type.Properties.OrEmpty(), slots);
-                index.Slots[name] = slots;
+                AdmitNewType(index, name, () => CaptureRecipe(type));
             }
         }
         return index;

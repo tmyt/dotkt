@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // INHERITED kotlin.Any universal-method rebind for REFERENCE types (issue #96) — the reference-type sibling of
 // EnumMemberBinding (which closes the same gap for value-type enums).
@@ -77,12 +79,34 @@ static class AnySlotRebind
                                     // dead-ends. (A method literally named `ToString`/`GetHashCode`/`Equals` DOES emit
                                     // under that name, so ilemit resolves it -> count it.)
                                     var isOverride = (mo["objectOverride"] as JsonValue)?.TryGetValue<bool>(out var ov) == true && ov;
-                                    var emitted = isOverride && KotlinToSlot.TryGetValue(mn, out var slot) ? slot : mn;
+                                    var emitted = EmittedObjectSlot(mn, isOverride);
                                     if (ObjectSlots.Contains(emitted)) slots.Add(emitted);
                                 }
                         map[n] = new TypeInfo(slots, to["base"] != null ? TypeJson.OwnerName(to["base"]) : null);
                     }
         return map;
+    }
+
+    static string EmittedObjectSlot(string name, bool objectOverride)
+        => objectOverride && KotlinToSlot.TryGetValue(name, out var slot) ? slot : name;
+
+    public static Dictionary<string, TypeInfo> CollectLocalTypes(IEnumerable<BirFileDeclaration> roots)
+    {
+        var result = new Dictionary<string, TypeInfo>(System.StringComparer.Ordinal);
+        foreach (var file in roots)
+            foreach (var type in file.Types.OrEmpty())
+            {
+                if (type.Kind.OrDefault() is not ("class" or "interface") || !type.Name.HasValue) continue;
+                var slots = new HashSet<string>(System.StringComparer.Ordinal);
+                foreach (var method in type.Methods.OrEmpty())
+                    if (method.Name.HasValue)
+                    {
+                        var emitted = EmittedObjectSlot(method.Name.Value, method.ObjectOverride.OrDefault());
+                        if (ObjectSlots.Contains(emitted)) slots.Add(emitted);
+                    }
+                result[type.Name.Value] = new TypeInfo(slots, (type.Base.OrDefault() as TypeNode.Fqn)?.Name);
+            }
+        return result;
     }
 
     // Unbound method-reference lifts carry the selected Any slot without a virtual flag.

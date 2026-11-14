@@ -45,6 +45,14 @@ static partial class KotlinPropertyAccessors
         sourceName = declaration.PropertyName.OrDefault(); kind = declaration.PropertyAccessor.OrDefault();
         return HasIdentity(sourceName, kind);
     }
+
+    internal static void PreserveCallIdentity(BirCallStatic call, string sourceName, string kind)
+    {
+        if (sourceName == null || kind is not ("get" or "set"))
+            throw new InvalidOperationException("incomplete Kotlin property call identity");
+        call.PropertyName = sourceName;
+        call.PropertyAccessor = kind;
+    }
     internal static void SetPhysicalName(BirFunctionDeclaration declaration, string physicalName)
     {
         if (!TryIdentity(declaration, out _, out _)) throw new InvalidOperationException("cannot allocate a physical accessor name without Kotlin identity");
