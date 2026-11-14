@@ -11,6 +11,29 @@ static class TypedCallEvalLowering
     static OptionalField<IBirExpression> Field(IBirExpression value) => value == null
         ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(value);
 
+    // A physical mapping may have no value slot for a source receiver. Its
+    // evaluation still precedes the new operands; only the shared unread-binding
+    // rule may discard it. Do not reconstruct a field value type from its owner.
+    internal static IBirExpression PreserveUnreadValueBefore(IBirExpression value,
+        IBirExpression lowered, string context)
+    {
+        if (value == null) return lowered;
+        var type = StaticTypeOf(Graph(value));
+        if (type == null && value is BirStaticFieldGet)
+            throw new InvalidOperationException(
+                $"bir2cir: cannot type the static-field value whose evaluation must be preserved before {context}; "
+                + "its producer must carry the field's exact node-local result type.");
+        var binding = new BirCallBinding {
+            Id = CallEvalLowering.FreshBindingId(), Expr = Field(Expr(Graph(value).DeepClone())),
+            Stable = ValueStability.IsReReadable((Graph(value) as BirGraphNode)?.Tag,
+                value is BirEnumValue { Underlying.HasValue: true, PhysicalValue.HasValue: true }),
+        };
+        if (type != null) binding.Type = type;
+        var (statements, replacements) = Materialise(new[] { binding }, new[] { Graph(lowered) }, context);
+        var result = Expr(Substitute(Graph(lowered), replacements));
+        return statements.Length == 0 ? result : new BirValueBlock { Stmts = statements, Result = Field(result) };
+    }
+
     internal static T Apply<T>(T root, ValueTypeOracle isValue) where T : BirGraphValue
     {
         var lowered = (T)Walk(root, isValue ?? (_ => false));

@@ -13,17 +13,20 @@ static partial class CollectionHelperBinding
     {
         internal readonly Dictionary<string, TypeNode> Variables;
         internal readonly Dictionary<string, List<TypeNode>> Constraints;
+        internal readonly HashSet<string> ProjectedCollectionVars;
         internal NullableRepresentationFrame OwnerFrame;
         internal NullableRepresentationFrame MethodFrame;
         internal CollectionSourceContext()
         {
             Variables = new(StringComparer.Ordinal);
             Constraints = new(StringComparer.Ordinal);
+            ProjectedCollectionVars = new(StringComparer.Ordinal);
         }
         CollectionSourceContext(CollectionSourceContext parent)
         {
             Variables = new(parent.Variables, StringComparer.Ordinal);
             Constraints = new(parent.Constraints, StringComparer.Ordinal);
+            ProjectedCollectionVars = new(parent.ProjectedCollectionVars, StringComparer.Ordinal);
             OwnerFrame = parent.OwnerFrame;
             MethodFrame = parent.MethodFrame;
         }
@@ -84,20 +87,37 @@ static partial class CollectionHelperBinding
                 if (typeParameters[index].Constraints.HasValue)
                     result.Constraints[typeScope + ":" + index] = typeParameters[index].Constraints.Value.Where(type => type != null).ToList();
             if (body != null)
-                foreach (var statement in body) RecordLocals((BirGraphValue)statement, result.Variables);
+                foreach (var statement in body) RecordLocals((BirGraphValue)statement, result.Variables, result.ProjectedCollectionVars);
             return result;
         }
 
-        static void RecordLocals(BirGraphValue node, IDictionary<string, TypeNode> variables)
+        static void RecordLocals(BirGraphValue node, IDictionary<string, TypeNode> variables,
+            ISet<string> projectedCollections)
         {
             if (node == null || node is IBirExecutablePayload) return;
             if (node is BirVariable { Name.HasValue: true, Type.HasValue: true } variable)
+            {
                 variables[variable.Name.Value] = MemberCallSubstitution.CollectionVariableType(variable.Type.Value);
+                if (ProducesProjectedCollection(variable.Init.OrDefault() as BirGraphValue))
+                    projectedCollections.Add(variable.Name.Value);
+            }
             if (Parameters(node).Length != 0) return;
-            node.VisitChildren(child => RecordLocals(child, variables));
+            node.VisitChildren(child => RecordLocals(child, variables, projectedCollections));
         }
 
-        internal TypeNode Receiver(IBirExpression expression)
+        // Provenance follows only the value-producing spine, never an arbitrary
+        // argument containing a projected collection inside an unrelated call.
+        internal static bool ProducesProjectedCollection(BirGraphValue node) => node switch {
+            BirCast value when value.DotktProjectedCollection.OrDefault() => true,
+            BirCallStatic value when value.DotktProjectedCollection.OrDefault() => true,
+            BirValueBlock value => ProducesProjectedCollection(value.Result.OrDefault() as BirGraphValue),
+            BirConditional value => ProducesProjectedCollection(value.Then.OrDefault() as BirGraphValue)
+                || ProducesProjectedCollection(value.Else.OrDefault() as BirGraphValue),
+            BirNullableWrap value => ProducesProjectedCollection(value.E.OrDefault() as BirGraphValue),
+            _ => false,
+        };
+
+        internal TypeNode Receiver(IBirExpression expression, bool allowExprShapes = true)
         {
             if (expression is not BirGraphNode node) return null;
             var stamp = node switch {
@@ -117,7 +137,7 @@ static partial class CollectionHelperBinding
                 BirArrayGet value => value.Elem.OrDefault(), BirCast value => value.Type.OrDefault(), _ => null,
             };
             return MemberCallSubstitution.CollectionReceiverType(node.Tag, stamp,
-                expression is BirLocal local ? local.Name.OrDefault() : null, fallback, Variables);
+                expression is BirLocal local ? local.Name.OrDefault() : null, fallback, Variables, allowExprShapes);
         }
     }
 }
