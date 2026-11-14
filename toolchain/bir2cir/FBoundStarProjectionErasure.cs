@@ -67,6 +67,7 @@ static partial class FBoundStarProjectionErasure
                 Arity = owner.Arity, Needed = owner.Needed,
             });
         var localClrAliases = preparation.LocalClrAliases;
+        _valueSlots.RegisterLocalDefinitions(defs, localClrAliases);
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
         foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
         var supertypeDefs = preparation.BindSourceSupertypes();

@@ -110,7 +110,10 @@ static partial class AliasHelperHoist
         file.Types = new IBirTypeDeclaration[] { host, helper, kept, first, second };
         Refused(() => transitions.AdmitMaterializedTypes(file, new[] { first }));
         transitions.AdmitMaterializedTypes(file, new[] { second });
-        var projection = file.ToDom();
+        var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { file }, policy, out var preparation);
+        var nativeProofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
+        var projection = file.ToDom(declarations.ObserveProjection);
+        declarations.BindProjected();
         transitions.ValidateProjection(new JsonNode[] { projection });
         var owners = transitions.LogicalOwners(0, projection).ToArray();
         if (owners.Length != 2 || owners[0]["name"]?.GetValue<string>() != "Alias"
@@ -194,6 +197,10 @@ static partial class AliasHelperHoist
             || !ReferenceEquals(index.ByIdentity["retired-alias"].Method, retiredMap[firstMethod])
             || !ReferenceEquals(index.ByIdentity["kept-member"].Method, projection["types"][1]["methods"][0]))
             throw new InvalidOperationException("Alias logical facts, retired method or shifted exact owner handoff changed");
+        FBoundStarProjectionErasure.ApplyAll(new JsonNode[] { projection }, refs, preparation, nativeProofs, policy);
+        if (!ReferenceEquals(policy.LocalDeclaration(first.Name.Value), projection["types"][0])
+            || KotlinSupertypesRecord.ReadNullableFrame(policy.LocalDeclaration(first.Name.Value)) != null)
+            throw new InvalidOperationException("FBound kept a retired logical alias header instead of its actual physical host");
         policy.CheckAliasNativeHandoff(projection, retired);
         var retainedFields = host.Fields.Value;
         host.Fields = new[] { (BirFieldDeclaration)moved.DeepClone() };
