@@ -15,7 +15,7 @@ using DotKt.Bir;
 // lowers the inner). Scoped per method (the `<iterator>` name is per-loop synthetic); the stdlib self-build is gated
 // OFF at the call site (it emits Iterator itself). Producer-side (`class C : Iterator<T>`) is a separate, deeper gap
 // and is intentionally not touched here.
-static class IteratorConsumerNormalization
+static partial class IteratorConsumerNormalization
 {
     const string Bridge = "kotlin.collections.ClrIteratorBridgeKt";
 

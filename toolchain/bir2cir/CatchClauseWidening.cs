@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-static class CatchClauseWidening
+static partial class CatchClauseWidening
 {
     static readonly string[] IndexOobNet = { "System.ArgumentOutOfRangeException", "System.IndexOutOfRangeException" };
 
