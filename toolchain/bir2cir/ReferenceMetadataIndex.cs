@@ -2524,11 +2524,10 @@ sealed partial class ReferenceMetadataIndex
     // Proof obligations come from the shipped declaration, not the Kotlin reference surface. In particular,
     // stdlib reference/runtime twins need not carry the same physical GenericParamConstraint rows.
     internal JsonArray PhysicalOwnerTypeParamDeclarations(string owner)
-    {
-        if (owner == null) return null;
-        var type = PhysicalGenericOwner(owner, OwnerArity(owner));
-        return type == null ? null : new JsonArray(type.GetGenericArguments().Select(GenericParamDeclaration).ToArray());
-    }
+        => PhysicalOwnerForParameterFacts(owner) is { } type
+            ? new JsonArray(type.GetGenericArguments().Select(GenericParamDeclaration).ToArray()) : null;
+
+    Type PhysicalOwnerForParameterFacts(string owner) => owner == null ? null : PhysicalGenericOwner(owner, OwnerArity(owner));
 
     // Variance is a physical GenericParam fact, including for Kotlin-authored owners. ResolveNetType intentionally
     // excludes those owners for semantic call binding; the reference twin's flags are not runtime proof either.
@@ -2570,6 +2569,10 @@ sealed partial class ReferenceMetadataIndex
     }
 
     internal JsonArray PhysicalMethodTypeParamDeclarations(string declarationIdentity)
+        => PhysicalMethodForParameterFacts(declarationIdentity) is { } method
+            ? new JsonArray(method.GetGenericArguments().Select(GenericParamDeclaration).ToArray()) : null;
+
+    MethodBase PhysicalMethodForParameterFacts(string declarationIdentity)
     {
         if (declarationIdentity == null || !_declarationById.TryGetValue(declarationIdentity, out var declaration))
             return null;
@@ -2583,7 +2586,7 @@ sealed partial class ReferenceMetadataIndex
         if (physicalOwner == null) return null;
         var physical = physicalOwner == owner ? selected : PhysicalTwinOf(selected, owner)
             ?? throw new InvalidOperationException($"Selected declaration '{declarationIdentity}' has no shipped MethodDef");
-        return new JsonArray(physical.GetGenericArguments().Select(GenericParamDeclaration).ToArray());
+        return physical;
     }
 
     Type PhysicalProofOwner(Type reference)
