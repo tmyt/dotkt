@@ -670,8 +670,9 @@ static partial class FBoundStarProjectionErasure
         || key is "type" or "sty" or "memberType" or "ret" or "ownerType"
             && (Bool(node[ExactOuterKey]) || Str(node["k"]) == "this");
 
-    static bool IsTypeDefinition(JsonObject node) =>
-        Str(node["kind"]) is "class" or "interface" or "enum" or "struct" or "delegate";
+    static bool IsTypeDefinition(JsonObject node) => IsTypeDefinition(Str(node["kind"]));
+
+    static bool IsTypeDefinition(string kind) => kind is "class" or "interface" or "enum" or "struct" or "delegate";
 
     static bool IsInterfaceDeclarationList(JsonArray entries) =>
         entries.Parent is JsonObject definition && IsTypeDefinition(definition)
