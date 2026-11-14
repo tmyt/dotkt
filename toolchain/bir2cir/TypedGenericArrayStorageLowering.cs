@@ -49,19 +49,19 @@ static class TypedGenericArrayStorageLowering
     static IBirExpression RuntimeCall(ReferenceMetadataIndex refs, string owner, string method,
         IBirExpression receiver, string result, string[] parameters, params IBirExpression[] arguments)
     {
-        var reference = BirMemberReference.FromPhysical(
-            ClrMemberResolution.ArrayStorageMethodOf(refs, method, parameters, owner, receiver == null));
+        var plan = ClrMemberResolution.PlanArrayStorageCall(refs, method, parameters, owner, receiver == null);
+        var reference = BirMemberReference.FromPhysical(plan.Reference);
         var args = arguments.Select(UseOperand).ToArray();
         var parameterTypes = parameters.Select(name => (TypeNode)Type(name)).ToArray();
         if (receiver == null) return new BirNativeStatic {
             Type = Type(owner), Method = method, Recv = OptionalField<IBirExpression>.Null,
             Args = args, ArgTypes = parameterTypes, Ret = Type(result), Sty = Type(result),
-            Dispatch = "call", MemberRef = reference,
+            Dispatch = plan.Dispatch, MemberRef = reference,
         };
         return new BirNativeInstance {
             Type = Type(owner), Method = method, Recv = OptionalField<IBirExpression>.Of(UseOperand(receiver)), Args = args,
             ArgTypes = parameterTypes, Ret = Type(result), Sty = Type(result),
-            Dispatch = "callvirt", MemberRef = reference,
+            Dispatch = plan.Dispatch, MemberRef = reference,
         };
     }
 
@@ -170,6 +170,10 @@ static class TypedGenericArrayStorageLowering
         var array = Type("System.Array");
         var integer = Type("System.Int32");
         var element = Type("System.Object");
+        if (ClrMemberResolution.PlanArrayStorageCall(refs, "get_Length", Array.Empty<string>()).Dispatch != "call"
+            || ClrMemberResolution.PlanArrayStorageCall(refs, "GetValue", new[] { "System.Int32" }).Dispatch != "call"
+            || ClrMemberResolution.PlanArrayStorageCall(refs, "GetElementType", Array.Empty<string>(), "System.Type").Dispatch != "callvirt")
+            throw new InvalidOperationException("Array storage calls lost their selected nonvirtual/virtual dispatch");
         var source = new BirGraphValue[] {
             new BirArrayGet { Array = Local("array", array), Index = Int(2), Elem = element },
             new BirArraySet { Array = Local("receiverEffect", array), Index = Local("indexEffect", integer),

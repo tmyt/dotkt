@@ -141,15 +141,15 @@ static partial class GenericArrayStorageLowering
     static IBirExpression SourceTypeOperationCall(ReferenceMetadataIndex refs, string owner, string method,
         IBirExpression receiver, string result, string[] parameters, params IBirExpression[] arguments)
     {
-        var reference = BirMemberReference.FromPhysical(
-            ClrMemberResolution.ArrayStorageMethodOf(refs, method, parameters, owner, receiver == null));
+        var plan = ClrMemberResolution.PlanArrayStorageCall(refs, method, parameters, owner, receiver == null);
+        var reference = BirMemberReference.FromPhysical(plan.Reference);
         if (receiver == null) return new BirNativeStatic { Type = new TypeNode.Fqn(owner), Method = method,
             Recv = OptionalField<IBirExpression>.Null, Args = arguments,
             ArgTypes = parameters.Select(name => (TypeNode)new TypeNode.Fqn(name)).ToArray(), Ret = new TypeNode.Fqn(result),
-            Sty = new TypeNode.Fqn(result), Dispatch = "call", MemberRef = reference };
+            Sty = new TypeNode.Fqn(result), Dispatch = plan.Dispatch, MemberRef = reference };
         return new BirNativeInstance { Type = new TypeNode.Fqn(owner), Method = method,
             Recv = OptionalField<IBirExpression>.Of(receiver), Args = arguments,
             ArgTypes = parameters.Select(name => (TypeNode)new TypeNode.Fqn(name)).ToArray(), Ret = new TypeNode.Fqn(result),
-            Sty = new TypeNode.Fqn(result), Dispatch = "callvirt", MemberRef = reference };
+            Sty = new TypeNode.Fqn(result), Dispatch = plan.Dispatch, MemberRef = reference };
     }
 }
