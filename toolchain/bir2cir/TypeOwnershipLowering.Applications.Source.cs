@@ -4,8 +4,8 @@ using DotKt.Cir;
 
 static partial class TypeOwnershipLowering
 {
-    // Lexical source paths are scalar declaration facts. Both owning source
-    // recording and the remaining DOM entry use this one path-selection rule.
+    // Lexical source paths are scalar declaration facts; metadata capture uses
+    // this one path-selection rule before physical application projection.
     static Func<string, string> NestedSourceNames(IEnumerable<(string Name, string Owner)> declarations)
     {
         var owners = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -43,6 +43,8 @@ static partial class TypeOwnershipLowering
         return hasNestedClassifier ? captured : null;
     }
 
+    // Preserve source classifier paths and own-first arguments before physical
+    // projection. '+' explicitly marks a class segment, not a guessed package boundary.
     internal static void RecordNestedSourceTypes(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         var sourceName = NestedSourceNames(roots.SelectMany(file => file.Types.OrEmpty())
@@ -76,6 +78,8 @@ static partial class TypeOwnershipLowering
         foreach (var root in roots) Visit(root);
     }
 
+    // Kotlin applications are own-first; ECMA-335 nested TypeSpecs are enclosing-first.
+    // Project once before CLR-oriented callee-relative substitution.
     internal static void ProjectInnerApplications(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         var order = new InnerApplicationOrder(roots, refs);

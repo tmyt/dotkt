@@ -9,7 +9,7 @@ static partial class ClrEventImplBinding
     sealed record LocalAccessorRow(string Name, bool Special, bool HasParameters,
         Func<TypeNode[]> Signature, Func<string> Identity, Action<string> BindIdentity, string Visibility);
 
-    // Both graph owners supply live declaration readers to this selection rule.
+    // Owning declarations supply live readers to this selection rule.
     // The graph's constructed-edge authority remains SupertypeGraph; no event
     // catalog or declaration provenance is reconstructed from an emitted body.
     sealed class LocalEventResolver(
@@ -92,6 +92,8 @@ static partial class ClrEventImplBinding
         }
     }
 
+    // Bind cross-file local subscriptions after every event backing has its concrete
+    // declaration. Referenced events remain for ClrMemberResolution's EventInfo path.
     internal static void BindLocalSubscriptionsAll(IReadOnlyList<BirFileDeclaration> roots)
     {
         var definitions = SupertypeGraph.CollectSource(roots);
@@ -190,6 +192,8 @@ static partial class ClrEventImplBinding
         return node;
     }
 
+    // Resolve cross-file raises after all synthesized raise methods exist. Copy the
+    // exact selected signature; ilemit links it without selecting by name/arity.
     internal static void BindRaisesAll(IEnumerable<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         var files = roots.ToArray();
