@@ -5,7 +5,7 @@ using DotKt.Cir;
 
 // A representation owner reports its exact source occurrences, never a new
 // semantic catalog. The original vectors remain intact for strict association.
-sealed class AliasDeclarationTransitions
+sealed partial class AliasDeclarationTransitions
 {
     internal sealed record Replacement(IBirTypeDeclaration Source, BirClassDefinition Host,
         BirClassDefinition Helper);
@@ -38,6 +38,8 @@ sealed class AliasDeclarationTransitions
                 .Any(value => ReferenceEquals(value, declaration)))
             .Select(declaration => (replacement.Source.Name.OrDefault(), declaration))).ToArray();
         files.Add(new(file, original, continuing, replacements.ToArray(), retiredFields));
+        foreach (var source in original)
+            if (replacements.Any(row => ReferenceEquals(row.Source, source))) retiredLogicalOwners.Add(source);
     }
 
     static bool Same(IEnumerable<IBirTypeDeclaration> left, IEnumerable<IBirTypeDeclaration> right)
@@ -129,25 +131,8 @@ sealed class AliasDeclarationTransitions
     // declaration view cross here. Bodies and native fields have their own
     // single projections; they are not copied into this logical header.
     internal static JsonObject LogicalHeader(IBirTypeDeclaration source)
-    {
-        var header = new JsonObject();
-        void Add<T>(string key, OptionalField<T> value, Func<T, JsonNode> project)
-        { if (value.IsPresent) header[key] = value.IsNull ? null : project(value.Value); }
-        Add("name", source.Name, value => JsonValue.Create(value));
-        Add("kind", source.Kind, value => JsonValue.Create(value));
-        Add("generated", source.Generated, value => JsonValue.Create(value));
-        Add("typeParams", source.TypeParams, values => new JsonArray(values.Select(value => (JsonNode)value.ToDom()).ToArray()));
-        Add("attrs", source.Attrs, values => new JsonArray(values.Select(value => (JsonNode)value.ToDom()).ToArray()));
-        var facts = source switch {
-            BirClassDefinition value => value.KotlinSupertypesPre,
-            BirInterfaceDefinition value => value.KotlinSupertypesPre,
-            BirEnumDefinition value => value.KotlinSupertypesPre,
-            _ => default,
-        };
-        Add(KotlinSupertypesRecord.PreKey, facts, SourceTypeFacts.ToDom);
-        return header;
-    }
+        => ProjectLogicalHeader(ReadLogicalHeaderFacts(source));
 
-    internal void Release() => files.Clear();
+    internal void Release() { files.Clear(); retiredLogicalOwners.Clear(); }
     static InvalidOperationException Mismatch() => new("Alias representation does not match its reported source occurrences");
 }

@@ -25,6 +25,7 @@ sealed class CurrentDeclarationBindings
     readonly Dictionary<JsonObject, DeclarationBinding> physical = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<BirGraphValue, JsonObject> projected = new(ReferenceEqualityComparer.Instance);
     bool bound;
+    internal bool IsBound => bound;
 
     internal IReadOnlyList<DeclarationBinding> SourceRoots { get; }
     internal IReadOnlyDictionary<string, DeclarationBinding> SourceDefinitions { get; }

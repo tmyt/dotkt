@@ -38,6 +38,7 @@ static class Bir2Cir
                 CirFinalizationTests.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
+                AliasDeclarationTransitions.HeaderFactsSelfTest();
                 DeclarationRename.SourceSelfTest();
                 MemberStrip.SelfTestSource();
                 InheritedDefaultFakeOverrideElision.SelfTestSource();
@@ -47,6 +48,9 @@ static class Bir2Cir
                 FBoundStarProjectionErasure.FieldAccessorsSourceSelfTest();
                 FBoundStarProjectionErasure.MethodPreparationSourceSelfTest();
                 FBoundStarProjectionErasure.CarrierDemandSourceSelfTest();
+                FBoundStarProjectionErasure.ProjectionContextSelfTest();
+                FBoundStarProjectionErasure.AlignmentSourceSelfTest();
+                FBoundStarProjectionErasure.ParameterProjectionSourceSelfTest();
                 SourceDeclarationSignatures.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();
@@ -680,6 +684,15 @@ sealed class Pipeline
             currentDeclarationPreparation, nativeProofs, refs, genericRepresentations,
             (owner, appended) => pendingOverrideParameters.AdmitMaterializedMethods(owner, appended, currentDeclarations));
 
+        // Surface preparation snapshots the original method parameter types.
+        // Align every body's captured-inner values before projecting any source
+        // parameter ABI, preserving the module-wide dependency order.
+        foreach (var source in captured)
+            FBoundStarProjectionErasure.AlignCapturedInnerBaseValuesSource(source, carrierSurface.Demand, refs);
+        var carrierProjection = FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(
+            carrierSurface.Demand, refs, aliasTransitions);
+        FBoundStarProjectionErasure.ProjectParameterDeclarations(captured, carrierProjection, scalarSlots.Parameters);
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
@@ -773,7 +786,7 @@ sealed class Pipeline
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
                 module.Preparation.CarrierSurface, sharedCells,
-                physicalParameterIndices, physicalDeclarationSources);
+                physicalDeclarationSources);
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
         // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
