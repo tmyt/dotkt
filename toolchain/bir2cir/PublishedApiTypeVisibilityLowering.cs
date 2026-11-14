@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Kotlin keeps @PublishedApi declarations source-internal while making them part of the cross-module inline ABI.
 // BIR retains both facts. This CLR-representation boundary consumes the explicit annotation into public TypeDef
@@ -37,8 +39,15 @@ static class PublishedApiTypeVisibilityLowering
     internal static string ResolveVisibility(JsonObject type)
     {
         var visibility = type["vis"]?.GetValue<string>();
-        return visibility == "internal" && HasMarker(type) ? "public" : visibility;
+        return ResolveVisibility(visibility, HasMarker(type));
     }
+
+    internal static string ResolveVisibility(IBirTypeDeclaration type) =>
+        ResolveVisibility(type.Vis.OrDefault(), type.Attrs.OrEmpty().Any(attribute =>
+            attribute.Attr.OrDefault() is TypeNode.Fqn { Name: Marker }));
+
+    static string ResolveVisibility(string visibility, bool published) =>
+        visibility == "internal" && published ? "public" : visibility;
 
     static bool HasMarker(JsonObject type) =>
         type["attrs"] is JsonArray attrs

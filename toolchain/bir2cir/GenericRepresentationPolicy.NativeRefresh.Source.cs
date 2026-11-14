@@ -11,6 +11,8 @@ sealed partial class GenericRepresentationPolicy
         (string Owner, string Name, bool Static, string Receiver) Key);
     NativePhysicalOccurrence[] _refreshedNativeLocations;
     BirFileDeclaration[] _nativeRefreshRoots;
+    sealed record NativeRefreshTypeVector(IBirTypeDeclaration[] Original, IBirTypeDeclaration[] Continuing);
+    NativeRefreshTypeVector[] _nativeRefreshTypeVectors;
     readonly Dictionary<BirGraphValue, BirGraphValue> _nativeStorageMaterializations = new(ReferenceEqualityComparer.Instance);
 
     // Only the producer of a replacement storage record can establish this
@@ -135,7 +137,31 @@ sealed partial class GenericRepresentationPolicy
         }
         foreach (var root in roots) Walk(root);
         _nativeRefreshRoots = roots.ToArray();
+        _nativeRefreshTypeVectors = roots.Select(file => {
+            var original = file.Types.OrEmpty().ToArray();
+            return new NativeRefreshTypeVector(original, original);
+        }).ToArray();
         _refreshedNativeLocations = occurrences.ToArray();
+    }
+
+    // A later representation producer may append actual physical declarations.
+    // This reports structure only: it neither reselects native storage nor
+    // changes source origins, eligibility, fields or the captured type prefix.
+    internal void AdmitMaterializedNativeTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> appended)
+    {
+        if (!_sourceAwaitingDom || _refreshedNativeLocations == null || _nativeRefreshRoots == null
+            || _nativeRefreshTypeVectors == null || appended == null)
+            throw new InvalidOperationException("Native materialized types have no pending physical refresh");
+        var index = Array.FindIndex(_nativeRefreshRoots, root => ReferenceEquals(root, file));
+        if (index < 0 || Array.FindLastIndex(_nativeRefreshRoots, root => ReferenceEquals(root, file)) != index)
+            throw new InvalidOperationException("Native materialized types changed their owning file");
+        var prior = _nativeRefreshTypeVectors[index];
+        var continuing = prior.Continuing.Concat(appended).ToArray();
+        if (continuing.Any(type => type == null)
+            || !file.Types.OrEmpty().SequenceEqual(continuing, ReferenceEqualityComparer.Instance)
+            || new HashSet<IBirTypeDeclaration>(continuing, ReferenceEqualityComparer.Instance).Count != continuing.Length)
+            throw new InvalidOperationException("Native materialized types do not match their exact appended occurrences");
+        _nativeRefreshTypeVectors[index] = prior with { Continuing = continuing };
     }
 
     static (TypeNode[] Parameters, IBirExpression[] Arguments) NativeRefreshArguments(BirGraphValue node) => node switch {
@@ -157,21 +183,29 @@ sealed partial class GenericRepresentationPolicy
         if (_refreshedNativeLocations == null) return;
         if (roots.Count != _nativeRefreshRoots.Length)
             throw new InvalidOperationException("Native physical admission changed module occurrences");
+        for (var index = 0; index < roots.Count; index++)
+            if (!_nativeRefreshRoots[index].Types.OrEmpty().SequenceEqual(
+                    _nativeRefreshTypeVectors[index].Continuing, ReferenceEqualityComparer.Instance)
+                || roots[index] is not JsonObject root
+                || ((root["types"] as JsonArray)?.Count ?? 0) != _nativeRefreshTypeVectors[index].Continuing.Length)
+                throw new InvalidOperationException("Native physical admission changed its reported type occurrences");
         var admitted = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
         foreach (var occurrence in _refreshedNativeLocations)
         {
             ValidateOriginalNativeAdmission(occurrence);
+            var typeVector = _nativeRefreshTypeVectors[occurrence.FileIndex];
             if (!ReferenceEquals(_nativeRefreshRoots[occurrence.FileIndex], occurrence.File)
                 || occurrence.File.FileClass.OrDefault() != occurrence.FileClass
-                || occurrence.File.Types.OrEmpty().Length != occurrence.TypeCount
+                || typeVector.Original.Length != occurrence.TypeCount
                 || roots[occurrence.FileIndex] is not JsonObject file
                 || Text(file["fileClass"]) != occurrence.FileClass
-                || ((file["types"] as JsonArray)?.Count ?? 0) != occurrence.TypeCount)
+                || ((file["types"] as JsonArray)?.Count ?? 0) != typeVector.Continuing.Length)
                 throw new InvalidOperationException("Native physical admission changed its owning file");
             var sourceOwner = occurrence.TypeIndex < 0 ? (BirGraphValue)occurrence.File
                 : (BirGraphValue)occurrence.File.Types.Value[occurrence.TypeIndex];
             var owner = occurrence.TypeIndex < 0 ? file : (file["types"] as JsonArray)?[occurrence.TypeIndex] as JsonObject;
             if (!ReferenceEquals(sourceOwner, occurrence.Owner) || owner == null
+                || occurrence.TypeIndex >= 0 && !ReferenceEquals(typeVector.Original[occurrence.TypeIndex], occurrence.Owner)
                 || occurrence.TypeIndex >= 0 && (Text(owner["name"]) != occurrence.OwnerName
                     || Text(owner["kind"]) != occurrence.OwnerKind
                     || ((IBirTypeDeclaration)sourceOwner).Name.OrDefault() != occurrence.OwnerName
@@ -217,5 +251,6 @@ sealed partial class GenericRepresentationPolicy
         foreach (var declaration in admitted) _nativeFields.Add(declaration);
         _refreshedNativeLocations = null;
         _nativeRefreshRoots = null;
+        _nativeRefreshTypeVectors = null;
     }
 }

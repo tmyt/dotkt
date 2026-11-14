@@ -325,6 +325,7 @@
     },
     "birCallStatic": {
       "type": "object", "x-dotkt-model": { "name": "BirCallStatic", "domain": "birCore", "role": "expression", "loweringProperties": { "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "_innerFactoryArguments": { "type": "boolean" },
         "declarationReferencedIntrinsic": { "type": "boolean" },
         "declarationReferencedFactory": { "type": "boolean" },
         "dotktProjectedCollection": { "type": "boolean" },
@@ -357,6 +358,7 @@
     },
     "birCallInstance": {
       "type": "object", "x-dotkt-model": { "name": "BirCallInstance", "domain": "birCore", "role": "expression", "loweringProperties": { "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "_innerFactoryArguments": { "type": "boolean" },
         "declarationReferencedIntrinsic": { "type": "boolean" },
         "_resolvedMethodTypeParams": { "x-dotkt-frame-role": "ResolvedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
         "nullableWitnessCount": { "type": "integer" },
@@ -550,6 +552,7 @@
     },
     "birFunctionDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": { "lexicalOwnerTypeParamCount": { "type": "integer" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+        "existentialSourceMember": { "type": "string", "x-dotkt-frame-role": "FrozenSourceFact" },
         "roundtripMetadataPending": { "type": "boolean" },
         "roundtripDeclarationIdentity": { "$ref": "#/$defs/birRoundtripDeclarationIdentity", "x-dotkt-frame-role": "FrozenSourceFact" },
         "roundtripMethodBounds": { "$ref": "#/$defs/sourceMethodBoundsText", "x-dotkt-frame-role": "FrozenSourceFact" },

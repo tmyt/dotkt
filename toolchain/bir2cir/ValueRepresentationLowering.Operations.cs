@@ -15,13 +15,16 @@ sealed partial class ValueRepresentationLowering
             new IBirExpression[] { ShapeValue(shape) }, new[] { new TypeNode.Fqn("kotlin.String") }, KotlinRuntimeTypeWitness.PredicateType) : null;
     }
     BirCallStatic HelperValue(string target, IReadOnlyList<IBirExpression> arguments, IReadOnlyList<TypeNode> parameters, TypeNode result)
+        => HelperValueOwned(target, arguments.Select(CloneValue).ToArray(), parameters, result);
+
+    BirCallStatic HelperValueOwned(string target, IReadOnlyList<IBirExpression> arguments, IReadOnlyList<TypeNode> parameters, TypeNode result)
     {
         var split = target.LastIndexOf('.');
         var owner = target[..split];
         var name = target[(split + 1)..];
         return new BirCallStatic { Owner = new TypeNode.Fqn(owner), Method = name,
             DeclarationId = HelperIdentity(owner, name, parameters), Sig = parameters.Select(BirGraphValue.CopyType).ToArray(),
-            Args = arguments.Select(CloneValue).ToArray(), Ret = BirGraphValue.CopyType(result), Sty = BirGraphValue.CopyType(result) };
+            Args = arguments.ToArray(), Ret = BirGraphValue.CopyType(result), Sty = BirGraphValue.CopyType(result) };
     }
 
     readonly record struct OperationLexicalContext(BirGraphValue Type, BirGraphValue Callable)

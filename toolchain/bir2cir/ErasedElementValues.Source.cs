@@ -4,6 +4,13 @@ using DotKt.Cir;
 
 static partial class ErasedElementValues
 {
+    internal static void ClearRetainedVariables(BirGraphValue node)
+    {
+        if (node is IBirExecutablePayload) return;
+        if (node.ErasedValueVariableFact.IsPresent) node.ErasedValueVariableFact = default;
+        node.VisitChildren(ClearRetainedVariables);
+    }
+
     sealed class SourceSlot(BirGraphValue declaration, string name, TypeNode type)
     {
         internal readonly BirGraphValue Declaration = declaration;

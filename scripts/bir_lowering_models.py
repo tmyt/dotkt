@@ -466,6 +466,20 @@ def outputs(root, definitions):
                 expression = rewrite_type(value, prop + ".Value", prefix=prefix)
                 model += [f"        if ({prop}.HasValue) {prop} = OptionalField<{cs(value)}>.Of({expression});"]
         model += ["    }"]
+        model += ["    public override void RewriteOwnFieldsInPlace(",
+                  "        Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,",
+                  "        Action<string, BirGenericFrameRole, BirGraphSlot> visit)", "    {"]
+        for field, value in fields:
+            prop = member(field)
+            role = value.get("x-dotkt-frame-role", "Lexical")
+            prefix = f"{json.dumps(field)}, BirGenericFrameRole.{role}, "
+            if is_type_slot(value):
+                expression = rewrite_type(value, prop + ".Value", prefix=prefix)
+                model += [f"        if ({prop}.HasValue) {prop} = OptionalField<{cs(value)}>.Of({expression});"]
+            elif is_child(value):
+                body = slots(value, prop + ".Value", target=prop, optional=True, prefix=prefix)
+                model += [f"        if ({prop}.HasValue) {{ {body} }}"]
+        model += ["    }"]
         if any(field == "sty" and is_type_slot(value) for field, value in fields):
             model += ["    public override void ClearResultTypeStamp() => Sty = default;"]
         model += ["    public override void VisitStringFields(Action<string> visit)", "    {"]
@@ -797,5 +811,27 @@ def outputs(root, definitions):
             model += ["        " + line for line in type_name_fields(shape, "value", all_strings, nodes)]
             model += ["    }"]
     model += ["}", ""]
+    source_call = shapes["birCallInstance"]["properties"]
+    target_call = shapes["birCallStatic"]["properties"]
+    consumed = {"k", "recv", "ownerType", "virtual", "super", "memberRef", "memberOwnerTypeParams",
+                "memberVisibility", "shapeTypes", "declarationId",
+                # These selected-instance declaration/dispatch facts have no
+                # static-call field. The producer authors the new target; they
+                # must not survive this structural move as facts about it.
+                "overrides", "clrOwnerResolved", "static", "_erasedConstraintDispatch",
+                "_exactExistentialBridgeOwnerCall", "_physicalDeclarationSignature"}
+    model += ["// Structural move only; the producer authors the new selected target.",
+              "internal static class BirCallConversion", "{",
+              "    internal static BirCallStatic MoveInstanceToStatic(BirCallInstance source) => new()", "    {"]
+    for field, value in source_call.items():
+        if field in consumed:
+            continue
+        if field not in target_call:
+            raise ValueError(f"Unclassified instance/static call field omission: {field}")
+        if cs(value) != cs(target_call[field]):
+            raise ValueError(f"Instance/static call field {field} has incompatible owning shapes")
+        prop = member(field)
+        model += [f"        {prop} = source.{prop},"]
+    model += ["    };", "}", ""]
     return {root / "toolchain/bir2cir/BirGraph.Model.Generated.cs": "\n".join(model),
             root / "toolchain/bir2cir/BirGraph.Json.Generated.cs": "\n".join(codec)}

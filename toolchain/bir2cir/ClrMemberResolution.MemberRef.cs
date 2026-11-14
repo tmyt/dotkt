@@ -156,6 +156,14 @@ static partial class ClrMemberResolution
 
     internal static MemberRefNode ArrayStorageMethodOf(ReferenceMetadataIndex refs, string name, string[] parameters,
         string ownerName = "System.Array", bool isStatic = false)
+        => PlanArrayStorageCall(refs, name, parameters, ownerName, isStatic).Reference;
+
+    internal sealed record ArrayStorageCall(MemberRefNode Reference, string Dispatch);
+
+    // Native vocabulary already carries its final dispatch. Select it from the
+    // same MethodDef as the reference, rather than relying on a later resolver.
+    internal static ArrayStorageCall PlanArrayStorageCall(ReferenceMetadataIndex refs, string name, string[] parameters,
+        string ownerName = "System.Array", bool isStatic = false)
     {
         _refs = refs;
         var owner = refs.ResolveRefType(ownerName);
@@ -163,7 +171,7 @@ static partial class ClrMemberResolution
                 | BindingFlags.Public | BindingFlags.DeclaredOnly)
             .Single(m => m.Name == name && m.GetParameters().Select(p => p.ParameterType.FullName)
                 .SequenceEqual(parameters));
-        return MemberRefOf(method, "method", owner, null);
+        return new(MemberRefOf(method, "method", owner, null), isStatic ? "call" : Dispatch(method, owner, false));
     }
 
     // A member reflected off a CONSTRUCTED generic type reports its signature ALREADY SUBSTITUTED —

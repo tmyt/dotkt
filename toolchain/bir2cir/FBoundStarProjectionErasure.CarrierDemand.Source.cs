@@ -20,6 +20,7 @@ static partial class FBoundStarProjectionErasure
         internal NativeProofPlan NativeProofs { get; }
         internal GenericRepresentationPolicy Values { get; }
         internal IReadOnlyDictionary<string, Owner> Owners => owners;
+        internal HashSet<string> ReservedNames => usedNames;
         internal IReadOnlyDictionary<string, (TypeNode.Fqn spec, bool isInterface)[]> BaseContracts { get; }
 
         internal CarrierDemandPlan(CurrentDeclarationPreparation preparation, NativeProofPlan nativeProofs,

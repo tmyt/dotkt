@@ -47,13 +47,25 @@ static class Bir2Cir
                 FBoundStarProjectionErasure.CurrentDeclarationPreparationSelfTest();
                 FBoundStarProjectionErasure.FieldAccessorsSourceSelfTest();
                 FBoundStarProjectionErasure.MethodPreparationSourceSelfTest();
+                FBoundStarProjectionErasure.NativeProofSourceTransferSelfTest();
                 FBoundStarProjectionErasure.CarrierDemandSourceSelfTest();
                 FBoundStarProjectionErasure.ProjectionContextSelfTest();
                 FBoundStarProjectionErasure.AlignmentSourceSelfTest();
                 FBoundStarProjectionErasure.ParameterProjectionSourceSelfTest();
+                FBoundStarProjectionErasure.SynthesisSourceSelfTest();
+                FBoundStarProjectionErasure.ReferenceContractsSourceSelfTest();
+                FBoundStarProjectionErasure.ConstructionSourceSelfTest();
+                OwnerConstrainedMethodLowering.ContinuationSourceSelfTest();
+                FBoundStarProjectionErasure.ConstraintSurfacesSourceSelfTest();
+                FBoundStarProjectionErasure.NormalizationSourceSelfTest();
+                FBoundStarProjectionErasure.RewriteSourceSelfTest();
+                GenericArrayStorageLowering.SourceTypeOperationSelfTest();
+                ExistentialSharedCellAlignment.SelfTestSource();
                 SourceDeclarationSignatures.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();
+                ForeignStarProjectionBinding.SelfTestSource();
+                ExactMutableViewDispatch.SelfTestSource();
                 MemberCallSubstitution.StaticCollectionPreferenceSelfTest();
                 MemberCallSubstitution.SourceDeclarationSnapshotsSelfTest();
                 MemberCallSubstitution.FactoriesSourceSelfTest();
@@ -693,12 +705,27 @@ sealed class Pipeline
             carrierSurface.Demand, refs, aliasTransitions);
         FBoundStarProjectionErasure.ProjectParameterDeclarations(captured, carrierProjection, scalarSlots.Parameters);
 
+        var carrierRealization = new FBoundStarProjectionErasure.CarrierRealizationContext(
+            carrierSurface, carrierProjection, refs, carrierSurface.Demand.ReservedNames,
+            (owner, appended) => pendingOverrideParameters.AdmitMaterializedMethods(owner, appended, currentDeclarations),
+            (file, type) => {
+                aliasTransitions.AdmitMaterializedTypes(file, new[] { type });
+                genericRepresentations.AdmitMaterializedNativeTypes(file, new[] { type });
+            });
+        FBoundStarProjectionErasure.RealizeCarriersSource(captured, carrierRealization, sharedCells,
+            (type, actual) => valueRepresentations.ComponentPredicate(type, actual),
+            (file, appended) => {
+                aliasTransitions.AdmitMaterializedTypes(file, appended);
+                genericRepresentations.AdmitMaterializedNativeTypes(file, appended);
+            });
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
-            // continuing projection, after module-wide type/slot preparation.
+            // continuing projection, after carrier realization and its body,
+            // constraint, shared-storage and consumer fixed-point rewrites.
             var root = source.ToDom(currentDeclarations.ObserveProjection);
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
@@ -718,13 +745,14 @@ sealed class Pipeline
         var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
             continuingRoots.Cast<JsonObject>().ToArray(), retiredDom, aliasTransitions);
         var overrideSourceParameters = pendingOverrideParameters.BindDom(continuingRoots);
+        var carrierContinuation = FBoundStarProjectionErasure.BindRealizationContinuation(carrierRealization);
         aliasTransitions.Release();
         retiredDeclarations.Clear();
         retiredDom.Clear();
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums, sharedCells,
-                moduleBindings, overrideSourceParameters, carrierSurface));
+                moduleBindings, overrideSourceParameters, carrierContinuation));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -782,11 +810,8 @@ sealed class Pipeline
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         var overrideSourceParameters = module.Preparation.OverrideSourceParameters;
-        var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
-        var localExistentialOwners =
-            FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
-                module.Preparation.CarrierSurface, sharedCells,
-                physicalDeclarationSources);
+        var physicalDeclarationSources = module.Preparation.Carriers.PhysicalDeclarationSources;
+        var localExistentialOwners = module.Preparation.Carriers.LocalOwners;
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
         // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
@@ -1714,7 +1739,7 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
     IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings,
     IReadOnlyDictionary<JsonObject, TypeNode[]> OverrideSourceParameters,
-    FBoundStarProjectionErasure.CarrierSurfacePreparation CarrierSurface);
+    FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);

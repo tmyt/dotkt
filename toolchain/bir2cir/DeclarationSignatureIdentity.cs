@@ -591,6 +591,7 @@ static partial class DeclarationSignatureIdentity
 
     public static void SelfTest()
     {
+        SourceWritersSelfTest();
         SelfTestTypedCapture();
         // Fixtures enter the same typed capture path as the driver; only the
         // downstream signature-allocation tests still consume the DOM frontier.

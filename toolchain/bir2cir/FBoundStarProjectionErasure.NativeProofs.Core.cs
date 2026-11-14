@@ -152,6 +152,7 @@ static partial class FBoundStarProjectionErasure
 
         static IReadOnlyList<BirTypeParameter> SourceParameters(BirGraphValue source) => source switch {
             IBirTypeDeclaration value => value.TypeParams.OrEmpty(), BirFunctionDeclaration value => value.TypeParams.OrEmpty(),
+            BirMethodImpl value => value.TypeParams.OrEmpty(),
             BirNewSuspendLambda value => value.TypeParams.OrEmpty(), BirClosureDefinition value => value.TypeParams.OrEmpty(),
             BirFileDeclaration or BirConstructor or BirInlineLambda => Array.Empty<BirTypeParameter>(),
             _ => throw new InvalidOperationException("Unaccounted native proof declaration: " + source.GetType().Name),

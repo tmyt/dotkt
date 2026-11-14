@@ -107,12 +107,15 @@ sealed partial class ValueRepresentationLowering
     internal TypeNode ClassifierType(TypeNode type) => OpaqueScalar(type) ? new TypeNode.Fqn("kotlin.Any") : type;
 
     internal JsonNode ComponentPredicate(TypeNode type, JsonNode actualType)
-    {
-        var (binding, shape) = Classifier(type);
-        return !referenceBuild && binding != null && shape.Length == 0
-            ? Helper(binding.ComponentClassifier, new[] { actualType },
+        => ComponentClassifier(type) is { } target
+            ? Helper(target, new[] { actualType },
                 new TypeNode[] { new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType") }, new TypeNode.Fqn("kotlin.Boolean"))
             : null;
+
+    string ComponentClassifier(TypeNode type)
+    {
+        var (binding, shape) = Classifier(type);
+        return !referenceBuild && binding != null && shape.Length == 0 ? binding.ComponentClassifier : null;
     }
 
     (ValueRepresentationBinding Binding, string Shape) Classifier(TypeNode type) => sourcePolicy.Classifier(type);
@@ -374,6 +377,7 @@ sealed partial class ValueRepresentationLowering
             "overrides":[{"declarationId":"convert"}],"abstract":false}]}],"methods":[
           {"name":"matches","declarationId":"matches","params":[{"type":{"t":"nullable","of":{"t":"fqn","name":"kotlin.Any"}}},{"type":{"t":"fqn","name":"kotlin.String"}}]},
           {"name":"classifier","declarationId":"classifier","params":[{"type":{"t":"fqn","name":"kotlin.String"}}]},
+          {"name":"component","declarationId":"component","params":[{"type":{"t":"fqn","name":"DotKt.Runtime.CompilerServices.StarProjectionType"}}]},
           {"name":"convert","declarationId":"helper-convert","params":[{"type":{"t":"fqn","name":"kotlin.Any"}}]},
           {"name":"use","params":[{"name":"value","type":{"t":"fqn","name":"Union"}}],
            "ret":{"t":"array","elem":{"t":"fqn","name":"Union"}},
@@ -407,6 +411,15 @@ sealed partial class ValueRepresentationLowering
         source = sourcePolicy.EraseBounds(source);
         var sourceIndex = CaptureSource(new[] { source });
         var policy = CreateSource(new[] { source }, null, false, sourcePolicy, sourceIndex, null);
+        var actualComponent = new BirLocal { Name = "componentType",
+            Sty = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType") };
+        var component = policy.ComponentPredicate(new TypeNode.Fqn("Union"), (IBirExpression)actualComponent);
+        var componentDom = policy.ComponentPredicate(new TypeNode.Fqn("Union"), actualComponent.ToDom());
+        if (component is not BirCallStatic componentCall || !ReferenceEquals(componentCall.Args.Value[0], actualComponent)
+            || componentCall.DeclarationId.OrDefault() != "component"
+            || !JsonNode.DeepEquals(componentCall.ToDom(), componentDom)
+            || policy.ComponentPredicate(new TypeNode.Array(new TypeNode.Fqn("Union")), (IBirExpression)actualComponent) != null)
+            throw new InvalidOperationException("Owning component predicate changed classifier selection, exact helper or operand identity");
         var inheritedCall = JsonNode.Parse("""
             {"k":"callInstance","overrides":[{"declarationId":"convert"}],
              "recv":{"k":"local","name":"value"},"args":[],"sig":[],"ret":{"t":"fqn","name":"kotlin.Int"}}
@@ -451,7 +464,7 @@ sealed partial class ValueRepresentationLowering
             || materializedBound["body"][0]["expr"]["e"]?["e"]?["k"]?.GetValue<string>() != "valueBlock")
             throw new InvalidOperationException("Source and materialized value operations diverged on their shared saved-bound decision");
         assertNestedBoundGuards();
-        var method = root["methods"][3];
+        var method = root["methods"].AsArray().OfType<JsonObject>().Single(method => Text(method["name"]) == "use");
         foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
             method[key] = JsonNode.Parse("""
             [{"owner":{"t":"fqn","name":"Source"},"member":"value","arity":0,"params":[],

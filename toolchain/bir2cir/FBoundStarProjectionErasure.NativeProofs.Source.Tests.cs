@@ -60,7 +60,7 @@ static partial class FBoundStarProjectionErasure
             } };
         var original = root.DeepClone();
         var values = GenericRepresentationPolicy.CreateSource(new[] { root }, refs.Aliases, refs);
-        var bindings = PrepareCurrentDeclarations(new[] { root }, values);
+        var bindings = PrepareCurrentDeclarations(new[] { root }, values, out var preparation);
         var plan = PrepareNativeProofs(bindings, refs, values);
         var donorBinding = bindings.GetSource(donor);
         var ctorBinding = bindings.GetSource(constructor);
@@ -92,6 +92,16 @@ static partial class FBoundStarProjectionErasure
         sourceDemand.Args[0] = new TypeNode.Fqn("System.Object");
         Require(capturedDemand.Args[0] == methodTag, "a source constraint mutation changed captured demand");
 
+        var surface = PrepareCarrierSurface(preparation, plan, refs, values);
+        var projection = CarrierProjectionContext.ForSource(surface.Demand, refs);
+        var realization = new CarrierRealizationContext(surface, projection, refs, surface.Demand.ReservedNames);
+        var constructionState = new SourceRewriteState(realization, (_, _) => null);
+        var projectedMarker = new TypeNode.Fqn("Marker", new TypeNode[] { new TypeNode.Star() });
+        var requiredConstruction = new TypeNode.Fqn("Owner", new TypeNode[] {
+            new TypeNode.Fqn("System.String"), projectedMarker, projectedMarker });
+        Require(projection.Rewrite(projectedMarker) == new TypeNode.Fqn(surface.Demand.Owners["Marker"].ErasedName)
+            && ConstructionHasHiddenWitnessSource(requiredConstruction, constructionState),
+            "carrier construction discarded its demanded native witness");
         var projected = root.ToDom(bindings.ObserveProjection);
         bindings.BindProjected();
         Require(ReferenceEquals(ctorBinding.Physical, projected["types"][1]["ctors"][0])
@@ -136,29 +146,15 @@ static partial class FBoundStarProjectionErasure
         Require(!plan.Bounds(sourceMethod, 1).Contains(disposable), "late query froze captured constraints instead of reading the live declaration");
         sourceMethod["typeParams"][1]["constraints"] = before;
 
-        var oldProofs = _nativeProofs;
-        var oldValues = _valueSlots;
-        var oldGraph = _sourceSupertypes;
-        try
-        {
-            _nativeProofs = plan; _valueSlots = values; _sourceSupertypes = bindings.SourceSupertypes;
-            var constructionOwners = bindings.SourceDefinitions.ToDictionary(pair => pair.Key, pair => new Owner {
-                Name = pair.Key, ErasedName = pair.Key + "View", Def = pair.Value.Physical, Needed = true,
-            });
-            var projectedMarker = new TypeNode.Fqn("Marker", new TypeNode[] { new TypeNode.Star() });
-            var requiredConstruction = new TypeNode.Fqn("Owner", new TypeNode[] {
-                new TypeNode.Fqn("System.String"), projectedMarker, projectedMarker });
-            Require(RewriteType(projectedMarker, constructionOwners, refs) == new TypeNode.Fqn("MarkerView")
-                && ConstructionHasHiddenWitness(requiredConstruction, constructionOwners, refs),
-                "carrier construction discarded its demanded native witness");
-        }
-        finally { _nativeProofs = oldProofs; _valueSlots = oldValues; _sourceSupertypes = oldGraph; }
-
+        // Carrier-surface preparation above legitimately authored methods and
+        // source-bound facts. A fresh proof plan must leave THAT current graph
+        // unchanged, just as the initial planner left its own input unchanged.
+        var currentBeforePlanning = root.DeepClone();
         var missingBindings = PrepareCurrentDeclarations(new[] { root }, values);
         _ = PrepareNativeProofs(missingBindings, refs, values);
         root.ToDom((source, actual) => { if (!ReferenceEquals(source, donor)) missingBindings.ObserveProjection(source, actual); });
         Reject(missingBindings.BindProjected);
-        Require(root.StructurallyEquals(original), "proof planning mutated the continuing typed graph");
+        Require(root.StructurallyEquals(currentBeforePlanning), "proof planning mutated the continuing typed graph");
         Console.WriteLine("[owning native proof plan] self-test OK (source/physical constraints, fixed-point demand, native witnesses, ID-less handoff, live late rows and independent transfers)");
     }
 }
