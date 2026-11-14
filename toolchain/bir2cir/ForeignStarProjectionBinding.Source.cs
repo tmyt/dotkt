@@ -309,6 +309,11 @@ static partial class ForeignStarProjectionBinding
             owner, declaringView, refs, preferExplicit) is { } hint ? SourceClassRef(hint)
             : SourceConstant(TypeN, new BirLiteral.NullLiteral());
 
+    internal static IBirExpression TypeClassifierCheck(TypeNode.Fqn owner, IBirExpression runtimeType,
+        ReferenceMetadataIndex refs) => OpenType(owner, refs) is string open
+        ? SourceCall("starProjectionHasView", new[] { Type, Type }, Bool,
+            runtimeType, SourceClassRef(new TypeNode.Fqn(open))) : null;
+
     static IBirExpression SourceExactViewCall(IBirExpression receiver, IBirExpression[] arguments,
         TypeNode.Fqn view, int family, TypeNode result,
         Func<BirLocal, IReadOnlyList<IBirExpression>, IBirExpression> direct,
