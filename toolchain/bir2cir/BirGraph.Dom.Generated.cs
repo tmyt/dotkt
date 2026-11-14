@@ -5162,6 +5162,7 @@ internal static class BirGraphDom
                 case "memberRef": break;
                 case "methodTypeParameterBoundsPre": break;
                 case "dotktValueReturn": break;
+                case "referenceMember": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirMethodImpl at {source.GetPath()}");
             }
         return new BirMethodImpl
@@ -5175,6 +5176,7 @@ internal static class BirGraphDom
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
             DotktValueReturn = Field<bool>(fields, "dotktValueReturn", value => value!.GetValue<bool>()),
+            ReferenceMember = Field<string>(fields, "referenceMember", value => value!.GetValue<string>()),
         };
     }
 
