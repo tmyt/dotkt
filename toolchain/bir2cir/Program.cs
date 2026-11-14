@@ -38,6 +38,7 @@ static class Bir2Cir
                 CirFinalizationTests.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
                 AliasHelperHoist.SelfTest();
+                MemberStrip.SelfTestSource();
                 DeclarationIdentityBinding.SelfTest();
                 SourceDeclarationSignatures.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
@@ -89,6 +90,7 @@ static class Bir2Cir
                 LexicalDeclarationIds.SelfTest();
                 ClrEventSubscriptionBinding.SelfTest();
                 ClrEventImplBinding.SelfTestSourceFacts();
+                ClrEventImplBinding.SelfTestLocalEventRecipes();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 InlineBirStashTests.SelfTest();
@@ -487,6 +489,7 @@ sealed class Pipeline
                     genericRepresentations, call => scalarSlots.Result(call, refs));
         }
         var files = new List<BirFile>();
+        var localEventDeclarations = new ClrEventImplBinding.LocalEvents();
         for (var index = 0; index < inputsWithSources.Count; index++)
         {
             var source = captured[index];
@@ -503,6 +506,11 @@ sealed class Pipeline
             // Keep unchecked generic results object-typed until a real typed
             // consumer; the captured body-Tv facts retain their exact identity.
             UncheckedGenericCastReturnErasure.Apply(source, uncheckedDeclarations);
+            // Event delegate selection owns the pre-strip accessor recipe.
+            // Capture it before retiring bound stubs; later event binding uses
+            // this same authority even when that accessor no longer emits.
+            localEventDeclarations.CaptureSource(source);
+            if (!referenceBuild) MemberStrip.Apply(source, refs, RetireDeclaration);
             captured[index] = null;
             // The remaining passes still own DOM graphs. Construct that frontier
             // directly; never serialize/reparse the typed input between passes.
@@ -514,6 +522,7 @@ sealed class Pipeline
                 inputsWithSources[index].Suspend, sourceUses));
         }
 
+        localEventDeclarations.BindDomRecipes();
         var continuingRoots = files.Select(file => file.Root).ToArray();
         // Retired generated targets still supply source declaration facts. Put
         // those explicitly reported declarations through the same frontier once;
@@ -529,7 +538,7 @@ sealed class Pipeline
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames, placement,
             new ModulePreparation(inventory, forwardedEvents, nullableDeclarations, uncheckedReturns, enums, sharedCells,
-                moduleBindings));
+                moduleBindings, localEventDeclarations));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -607,7 +616,7 @@ sealed class Pipeline
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
         var staged = new List<(JsonNode Root, string OutputName)>();
-        var localEventDeclarations = new ClrEventImplBinding.LocalEvents(birFiles.Select(file => file.Root));
+        var localEventDeclarations = module.Preparation.LocalEvents;
         var sharedCells = module.Preparation.SharedCells;
         foreach (var bir in birFiles)
         {
@@ -636,10 +645,8 @@ sealed class Pipeline
             // Regex/unsigned) alike — and synthesizes NO dotkt$ClrH_* helper itself. This pass reads the ref.dll
             // @ClrTypeAlias index, turns each such plain type into the static helper + drops it, BEFORE call substitution
             // so the (already-BCL) member bodies and the rule-3 call routing both see a consistent helper. No-op for ref.
-            // MEMBER-STRIP (clrName migration): drop the @ClrIntrinsic-bound stub declarations kotc used to exclude
-            // (once it stops reading @ClrIntrinsic). BEFORE the hoist so an alias class's bound stubs / @ClrIntrinsic
-            // overrides don't over-hoist into the rule-3 helper.
-            if (!_options.RefBuild) MemberStrip.Apply(bir.Root, refs);
+            // Bound stubs were retired on owning typed source declarations,
+            // before this hoist can turn them into helper implementations.
             // Kotlin IR fake overrides are BIR facts, not CLR declarations. Consume the frontend's explicit selected
             // implementation fact instead of rediscovering a DIM from hierarchy bodies or reference metadata.
             // This is representation-independent and therefore applies to reference builds too.
@@ -1726,7 +1733,8 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     IReadOnlyDictionary<(string Owner, string Event), TypeNode> ForwardedEvents,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
-    IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings);
+    IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings,
+    ClrEventImplBinding.LocalEvents LocalEvents);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,
