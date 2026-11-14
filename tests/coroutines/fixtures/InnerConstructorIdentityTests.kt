@@ -30,7 +30,29 @@ private class InnerConstructorBatch<T>(private val values: Array<T>) {
     }
 }
 
+private open class InnerCallbackBase(val callback: suspend () -> Int)
+
+private class InnerCallbackOuter<T>(private val seed: T) {
+    var constructions = 0
+        private set
+
+    inner class Node(callback: suspend () -> Int) : InnerCallbackBase(callback) {
+        init { constructions++ }
+    }
+
+    fun make(): InnerCallbackBase = Node { if (seed == null) -1 else 42 }
+}
+
 class InnerConstructorIdentityTests {
+    @TestAttribute
+    fun alignedInnerConstructionRetainsNestedSuspendCallable() {
+        val outer = InnerCallbackOuter("captured")
+        val base = outer.make()
+        assertEquals(1, outer.constructions)
+        assertEquals(42, blockOn { base.callback() })
+        assertEquals(1, outer.constructions)
+    }
+
     @TestAttribute
     fun capturedOuterSelectsSiblingArrayConstructor() {
         val batch = InnerConstructorBatch(arrayOf("left", "right"))

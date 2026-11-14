@@ -112,8 +112,8 @@ static partial class FBoundStarProjectionErasure
         Require(returned.Value.Value is BirCast { Type.HasValue: true, Sty.HasValue: true, _exactBridgeCast.Value: true } cast
             && cast.Type.Value == nullableBase && cast.Sty.Value == nullableBase
             && !ReferenceEquals(cast.Type.Value, nullableBase) && !ReferenceEquals(cast.Type.Value, cast.Sty.Value)
-            && cast.E.Value is BirCallStatic { Method.Value: "once" } && !ReferenceEquals(cast.E.Value, sideEffect),
-            "bridge cast lost exact target/nullability, its physical marker or independent operand ownership");
+            && cast.E.Value is BirCallStatic { Method.Value: "once" } && ReferenceEquals(cast.E.Value, sideEffect),
+            "bridge cast lost exact target/nullability, its physical marker or the owning operand");
         var calls = 0;
         root.Visit(node => { if (node is BirCallStatic { Method.Value: "once" }) calls++; });
         Require(calls == 1 && ReferenceEquals(methods, root.Methods.Value) && ReferenceEquals(types, root.Types.Value)
@@ -122,5 +122,47 @@ static partial class FBoundStarProjectionErasure
             && method.DeclarationId.Value == "exact-probe" && method.Static.Value && ReferenceEquals(method.Ret.Value, nullableBase),
             "alignment changed evaluation multiplicity, declaration identity, frame facts or opaque executable metadata");
         Console.WriteLine("[owning inner-base alignment] self-test OK (scope, signatures, source frames, exact base proof, ownership and evaluation)");
+        AlignmentDeclarationHandoffSelfTest(refs);
+    }
+
+    static void AlignmentDeclarationHandoffSelfTest(ReferenceMetadataIndex refs)
+    {
+        var unit = new TypeNode.Fqn("kotlin.Unit");
+        var baseType = new TypeNode.Fqn("Base");
+        var innerType = new TypeNode.Fqn("Outer.Inner", new TypeNode[] { new TypeNode.Fqn("kotlin.String") });
+        var donor = new BirNewSuspendLambda { Params = Array.Empty<BirLambdaParameter>(),
+            Body = Array.Empty<IBirStatement>(), SuspendRet = unit };
+        var construction = new BirNew { Type = innerType, Args = new IBirExpression[] { donor } };
+        var returned = new BirReturn { Value = construction };
+        var method = new BirFunctionDeclaration { Name = "make", Ret = baseType,
+            Params = Array.Empty<BirParameter>(), Body = new IBirStatement[] { returned } };
+        var root = new BirFileDeclaration { FileClass = "Handoff", Methods = new[] { method },
+            Types = new IBirTypeDeclaration[] {
+                new BirClassDefinition { Name = "Base", Kind = "class" },
+                new BirClassDefinition { Name = "Outer.Inner", Kind = "class", Vis = "public",
+                    Mods = new BirModifiers { Inner = true }, OuterTypeParamCount = 1, Base = baseType,
+                    TypeParams = new[] { new BirTypeParameter { Name = "T" } } },
+            } };
+        var roots = new[] { root };
+        var values = GenericRepresentationPolicy.CreateSource(roots, refs.Aliases, refs);
+        var bindings = PrepareCurrentDeclarations(roots, values, out var preparation);
+        var proofs = PrepareNativeProofs(bindings, refs, values);
+        var donorBinding = bindings.GetSource(donor);
+        var surface = PrepareCarrierSurface(preparation, proofs, refs, values);
+        AlignCapturedInnerBaseValuesSource(root, surface.Demand, refs);
+        ProjectParameterDeclarations(roots, CarrierProjectionContext.ForSource(surface.Demand, refs));
+        if (returned.Value.Value is not BirCast cast || !ReferenceEquals(cast.E.Value, construction)
+            || !ReferenceEquals(construction.Args.Value[0], donor))
+            throw new InvalidOperationException("Inner-base wrapping replaced a captured operand or callable");
+        System.Text.Json.Nodes.JsonObject actualDonor = null;
+        var occurrences = 0;
+        root.ToDom((source, physical) => {
+            bindings.ObserveProjection(source, physical);
+            if (ReferenceEquals(source, donor)) { actualDonor = physical; occurrences++; }
+        });
+        bindings.BindProjected();
+        if (occurrences != 1 || actualDonor == null || !ReferenceEquals(donorBinding.Physical, actualDonor))
+            throw new InvalidOperationException("Aligned nested callable lost its unique observed continuation");
+        Console.WriteLine("[owning alignment handoff] self-test OK (captured operand, nested suspend donor and exact one-way binding)");
     }
 }

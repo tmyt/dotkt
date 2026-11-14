@@ -54,7 +54,6 @@ static partial class FBoundStarProjectionErasure
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
         CarrierSurfacePreparation surface,
         IReadOnlyList<SharedSyntheticSynthesis.CellStorage> sharedCells = null,
-        IDictionary<string, int[]> physicalParameterIndices = null,
         IDictionary<string, string> physicalDeclarationSources = null)
     {
         var preparation = surface.Demand.Preparation;
