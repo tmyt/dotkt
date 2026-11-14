@@ -3097,9 +3097,15 @@ static partial class FBoundStarProjectionErasure
                 ? new TypeNode.Fqn(carrier) : null;
 
     static bool ProjectsCapturedBound(JsonObject declaration, int index, TypeNode bound) =>
-        ContainsOwnerPrefixTv(bound, Int(declaration["outerTypeParamCount"]) ?? 0)
-        || OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index,
+        ProjectsCapturedBound(bound, index, Int(declaration["outerTypeParamCount"]) ?? 0,
             KotlinSupertypesRecord.ReadNullableFrame(declaration));
+
+    static bool ProjectsCapturedBound(TypeNode bound, int index, int outerTypeParamCount,
+        NullableRepresentationFrame frame, ReferenceMetadataIndex references = null) =>
+        ContainsOwnerPrefixTv(bound, outerTypeParamCount)
+        || (references == null
+            ? OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index, frame)
+            : OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index, frame, references));
 
     static void ProjectDependentTypeConstraints(JsonObject declaration,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)

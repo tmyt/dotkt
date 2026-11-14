@@ -39,9 +39,14 @@ static partial class OwnerConstrainedMethodLowering
 
     internal static bool ProjectsBound(JsonObject method, int index, TypeNode bound,
         Func<TypeNode, bool> dependsOnOwner = null) =>
+        ProjectsBound(index, bound, ReadMethodFrame(method), ReadOverrideBounds(method), References, dependsOnOwner);
+
+    internal static bool ProjectsBound(int index, TypeNode bound, NullableRepresentationFrame frame,
+        OwnerConstraintOverrideBounds overrides, ReferenceMetadataIndex references,
+        Func<TypeNode, bool> dependsOnOwner = null) =>
         (dependsOnOwner ?? FBoundStarProjectionErasure.ContainsOwnerTv)(bound)
-        || HasConstructedDependency(bound, "method", index, ReadMethodFrame(method))
-        || ReadOverrideBounds(method)?.Rows.Any(row => row.Index == index && row.Bound.Equals(bound)) == true;
+        || HasConstructedDependency(bound, "method", index, frame, references)
+        || overrides?.Rows.Any(row => row.Index == index && row.Bound.Equals(bound)) == true;
 
     static bool SameSourceParameter(int first, int second, NullableRepresentationFrame frame) =>
         frame == null ? first == second
@@ -51,6 +56,10 @@ static partial class OwnerConstrainedMethodLowering
     // can instead be satisfied through Kotlin variance without satisfying that exact closed CLR construction.
     internal static bool HasConstructedDependency(TypeNode bound, string scope, int self,
         NullableRepresentationFrame frame = null)
+        => HasConstructedDependency(bound, scope, self, frame, References);
+
+    internal static bool HasConstructedDependency(TypeNode bound, string scope, int self,
+        NullableRepresentationFrame frame, ReferenceMetadataIndex references)
     {
         if (bound is TypeNode.Tv) return false;
         // An invariant foreign construction is already an exact CLR contract. Foreign constrained methods
@@ -65,7 +74,7 @@ static partial class OwnerConstrainedMethodLowering
             && BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(erased.Name))
             return false;
         if (nominal is TypeNode.Fqn named
-            && References.ResolveForeignProjectionType(named.Name, named.Args) is { IsGenericTypeDefinition: true } foreign
+            && references.ResolveForeignProjectionType(named.Name, named.Args) is { IsGenericTypeDefinition: true } foreign
             && foreign.GetGenericArguments().All(parameter =>
                 (parameter.GenericParameterAttributes & System.Reflection.GenericParameterAttributes.VarianceMask) == 0)
             && named.Args?.Any(argument => argument is TypeNode.Projection or TypeNode.Star) != true)
