@@ -146,17 +146,14 @@ static class ClrEventImplBinding
         Console.WriteLine("[event source facts] self-test OK (declared/forwarded/inherited association, source frame, first writer, typed leaf codec)");
     }
 
-    // Snapshot declaration recipes before per-file lowering mutates their bodies. A local override uses the base
+    // Snapshot canonical declaration recipes after carrier preparation but before per-file body lowering. A local override uses the base
     // delegate ABI, even when its covariant ClrEvent handler is narrower or inferred as Nothing. Input file order
     // must not decide which delegate is selected. Hoisting may add newly materialized owners to the same index.
     public sealed class LocalEvents
     {
         readonly Dictionary<(string Owner, string Event), (JsonObject Backing, JsonObject Add)> declarations = new();
-        readonly ValueTypeOracle isByRefLike;
-
-        public LocalEvents(IEnumerable<JsonNode> roots, ValueTypeOracle isByRefLike)
+        public LocalEvents(IEnumerable<JsonNode> roots)
         {
-            this.isByRefLike = isByRefLike;
             foreach (var root in roots) Index(root);
         }
 
@@ -172,9 +169,6 @@ static class ClrEventImplBinding
                         {
                             if (declarations.ContainsKey((owner, name))) continue;
                             var recipe = (JsonObject)backing.DeepClone();
-                            // Event binding follows ordinary function-value representation. Snapshot the same ABI
-                            // here, not a new Action/Func allocation from the un-erased source function signature.
-                            FunctionValueRepresentation.Apply(recipe, isByRefLike);
                             declarations.Add((owner, name), (recipe, (JsonObject)add.DeepClone()));
                         }
                 if (obj["types"] is JsonArray nested) foreach (var value in nested) if (value != null) Index(value);

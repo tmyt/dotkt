@@ -71,6 +71,8 @@ static class Bir2Cir
                 LocalStaticOwnerBinding.SelfTestSource();
                 NullableTvErasureCallRealign.SelfTestSourceFixedSlots();
                 ValueSlotNullableWrite.SelfTestSource();
+                NullableGenericErasure.SourceSelfTest();
+                ClrMemberResolution.SourceSignatureSelfTest();
                 EnumMemberBinding.SelfTestSource();
                 AnySlotRebind.SelfTestSource();
                 RoundtripMetadata.SourceSuspendResultSelfTest();
@@ -446,8 +448,9 @@ sealed class Pipeline
         var iterableHierarchy = SupertypeGraph.CollectSource(captured);
         var syntheticTypes = captured.Select(source =>
             NullableTvErasureCallRealign.CaptureNewSyntheticTypes(source, nullableDeclarations)).ToArray();
-        foreach (var source in captured)
+        for (var sourceIndexInModule = 0; sourceIndexInModule < captured.Length; sourceIndexInModule++)
         {
+            var source = captured[sourceIndexInModule];
             PropertyReferenceFunctionLowering.Apply(source, propertyFunctionFields);
             LocalStaticOwnerBinding.Apply(source, localStatics);
             // Resolve physical value slots before erasure, retaining the
@@ -467,6 +470,12 @@ sealed class Pipeline
                 AnySlotRebind.Apply(source, localReferenceTypes, refs);
                 KotlinEqualityLowering.Apply(source);
             }
+            // Preserve the selected Kotlin overload and logical suspend result
+            // before declaration erasure; function values consume erased slots.
+            if (appBuild) ClrMemberResolution.CaptureReferencedStaticCallSignatures(source);
+            RoundtripMetadata.FreezeSuspendResults(new[] { source });
+            NullableGenericErasure.Apply(source, isValueFqn);
+            captured[sourceIndexInModule] = (BirFileDeclaration)FunctionValueRepresentation.Apply(source, refs.IsByRefLikeFqn);
         }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
@@ -556,10 +565,8 @@ sealed class Pipeline
         // captured module-wide before override or per-file declaration changes.
         var calleeTypeParams = module.Preparation.Inventory.CalleeTypeParameters;
 
-        // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
-        // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds
-        // NullableTvErasureCallRealign so a `Box<Int>.get_a()` call across the generic boundary re-derives its
-        // return from the (erased) declaration instead of kotc's over-substituted `Ref<Nullable<Int>>` (#4).
+        // Declaration returns were snapshotted before typed erasure. Re-derive
+        // each use from that declaration, not the frontend's substituted return.
         var nullableTvDeclRets = module.Preparation.NullableDeclarations;
         // Snapshot every method whose source-level `T` return is produced by an unchecked cast from a nullable/object
         // carrier.  Its physical CLR ABI must return object so narrowing can be delayed until the value is consumed;
@@ -579,36 +586,19 @@ sealed class Pipeline
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
         var staged = new List<(JsonNode Root, string OutputName)>();
-        var localEventDeclarations = new ClrEventImplBinding.LocalEvents(birFiles.Select(file => file.Root), refs.IsByRefLikeFqn);
+        var localEventDeclarations = new ClrEventImplBinding.LocalEvents(birFiles.Select(file => file.Root));
         var sharedCells = module.Preparation.SharedCells;
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
-            // Owning typed preparation materialized heap ref-cell declarations. Preserve their pristine element
-            // slots in the nullable-generic use index before the declaration erasure below. Otherwise a late
+            // Owning typed preparation snapshotted heap ref-cell declarations before erasure. Admit their pristine
+            // element slots to the nullable-generic use index at the original per-file clock. Otherwise a late
             // inherited protected-property read may be correctly realigned to object[] while its store into a
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
             NullableTvErasureCallRealign.ApplyNewSyntheticTypes(bir.SyntheticTypes, nullableTvDeclRets);
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
-            // NULLABLE-GENERIC erasure — THE DECLARATION AXIS of #86's erasure invariant (ALL builds, so ref.dll +
-            // rt.dll + the app's view of a signature agree). `Nullable(Tv)` (a nullable UNCONSTRAINED type variable
-            // `T?`) has no CLR type of its own: `Nullable<T>` is inexpressible for an unconstrained T, and a bare `!T`
-            // slot collapses a null to `default(T)` = 0 at a value instantiation (firstOrNull on a value-type list
-            // returning 0 rather than null-for-empty; `ldnull` into an int32 slot failing JIT verification). The one
-            // CLR-faithful representation is `System.Object` — the spec-defined boxed form of `Nullable<V>`, which
-            // carries a real null for a value AND a reference instantiation alike. This pass applies
-            // `physical(s) = Erase(declaredKotlinType(s))` to EVERY declaration slot (return, method param, ctor param,
-            // field, property, body local, nested type-arg, array element, function-type position, call `sig`) and
-            // records the pre-erasure Kotlin type — plus, at an erased HEAD, its NRT byte — for the
-            // [KotlinNullableGeneric] round-trip. Runs BEFORE the rest so type-lowering/substitution see it.
-            if (attributeTopLevelOwner) ClrMemberResolution.CaptureReferencedStaticCallSignatures(bir.Root);
-            // A suspend result is Kotlin declaration meaning. Freeze it while the frontend TypeNode is still pristine;
-            // NullableGenericErasure below is allowed to change the declaration's physical CLR representation but not
-            // the cross-module fact. Later synthesis must copy this explicit fact rather than reconstructing it from an
-            // already-erased `suspendRet`.
-            RoundtripMetadata.FreezeSuspendResults(new[] { bir.Root });
-            NullableGenericErasure.Apply(bir.Root, isValueFqn);
-            FunctionValueRepresentation.Apply(bir.Root, refs.IsByRefLikeFqn);
+            // Typed preparation already erased declaration/function carriers.
+            // Realign scalar call values before the remaining nullable use axis.
             if (!_options.RefBuild)
                 ErasedElementValues.ApplyAll(new[] { bir.Root }, refs, isValueFqn, genericRepresentations,
                     call => scalarSlots.Result(call, refs), scalarCallsOnly: true);

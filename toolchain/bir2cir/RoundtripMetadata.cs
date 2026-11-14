@@ -133,30 +133,6 @@ static partial class RoundtripMetadata
         }
     }
 
-    // Freeze the logical result at the pristine Kotlin declaration boundary. Representation passes may subsequently
-    // erase nested nullable/value generic arguments in `suspendRet`; this opaque fact is the source-owned result and
-    // must be copied explicitly by any pass that synthesizes another suspend declaration.
-    public static void FreezeSuspendResults(IEnumerable<JsonNode> roots)
-    {
-        foreach (var root in roots) FreezeSuspendResults(root);
-    }
-
-    static void FreezeSuspendResults(JsonNode node)
-    {
-        if (node is not JsonObject obj) return;
-        if (obj["methods"] is JsonArray methods)
-            foreach (var method in methods.OfType<JsonObject>())
-            {
-                if (method.ContainsKey("suspendResult") || !ModFlag(method, "suspend")) continue;
-                var logical = method["suspendRet"]?.ToJsonString()
-                    ?? throw new InvalidOperationException(
-                        $"bir2cir: suspend declaration '{method["name"]}' carries no `suspendRet` slot");
-                method["suspendResult"] = logical;
-            }
-        if (obj["types"] is JsonArray types)
-            foreach (var type in types) FreezeSuspendResults(type);
-    }
-
     public static void RequireSuspendResults(IEnumerable<JsonNode> roots)
     {
         foreach (var root in roots) RequireSuspendResults(root);

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Function value storage is uniform; declaration identity still distinguishes
 // the pre-carrier signature. This fact describes a CLR signature, never a value.
@@ -18,6 +19,29 @@ static class FunctionSignatureIdentity
             foreach (var parameter in parameters.OfType<JsonObject>())
                 if (parameter[Key] == null && FunctionValueRepresentation.ContainsOrdinaryFunction(parameter["type"]))
                     parameter[Key] = parameter["type"].DeepClone();
+    }
+
+    internal static void Capture(BirGraphValue root)
+    {
+        void Parameters(OptionalField<BirParameter[]> parameters)
+        {
+            foreach (var parameter in parameters.OrEmpty())
+                if (!parameter.FunctionSignatureType.HasValue
+                    && FunctionValueRepresentation.ContainsOrdinaryFunction(parameter.Type.OrDefault()))
+                    parameter.FunctionSignatureType = BirGraphValue.CopyType(parameter.Type.Value);
+        }
+        void Declarations(OptionalField<BirFunctionDeclaration[]> methods, OptionalField<BirConstructor[]> constructors)
+        {
+            foreach (var method in methods.OrEmpty()) Parameters(method.Params);
+            foreach (var constructor in constructors.OrEmpty()) Parameters(constructor.Params);
+        }
+        void Owner(IBirTypeDeclaration owner) => Declarations(owner.Methods, owner.Ctors);
+        if (root is BirFileDeclaration file)
+        {
+            Declarations(file.Methods, default);
+            foreach (var owner in file.Types.OrEmpty()) Owner(owner);
+        }
+        else if (root is IBirTypeDeclaration owner) Owner(owner);
     }
 
     internal static JsonNode SignatureType(JsonObject parameter) => TypeJson.Write(SignatureType(

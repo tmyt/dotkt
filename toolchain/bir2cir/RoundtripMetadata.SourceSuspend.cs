@@ -4,8 +4,8 @@ using DotKt.Cir;
 
 static partial class RoundtripMetadata
 {
-    // Only actual source declarations are frozen here. The later DOM entry
-    // remains for suspend declarations authored by still-unmigrated synthesis.
+    // Freeze actual declarations before representation erasure, including the
+    // declarations added by inline and closure synthesis since the early pass.
     internal static void FreezeSuspendResults(IEnumerable<BirFileDeclaration> roots)
     {
         static void Freeze(IEnumerable<BirFunctionDeclaration> methods)

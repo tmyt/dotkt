@@ -17,6 +17,7 @@ internal abstract record BirGraphValue
     public virtual TypeNode? CallBindingTypeHint => null;
     public virtual TypeNode? ExplicitSourceType => null;
     public virtual OptionalField<string> DeclarationIdentityFact => default;
+    public virtual bool HasDeclaredDelegateSlot => false;
     public virtual OptionalField<TypeNode[]> ApplicationTypeArguments
     {
         get => default;
@@ -40,6 +41,12 @@ internal abstract record BirGraphValue
     // Direct structural leaves only; callers own graph descent. Field names
     // distinguish explicit phase facts without reflecting over CLR properties.
     public abstract void VisitOwnTypeFields(Action<string, TypeNode> visit);
+    // Field context is generated from the owning record's maintained schema;
+    // callers choose policy without rediscovering a serialized graph shape.
+    public abstract void RewriteOwnTypeFieldsInPlace(
+        Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite);
+    public abstract void VisitOwnChildSlots(Action<string, BirGenericFrameRole, BirGraphSlot> visit);
+    public virtual void ClearResultTypeStamp() { }
     public abstract void VisitStringFields(Action<string> visit);
     public virtual void ClearSyntheticFrameFacts() { }
     // Source recognition extends declaration parameters and walks each schema

@@ -404,9 +404,10 @@ static partial class NullableRepresentationMaterialization
         var carrierMethod = TestMethod("use", sourceCarrier, TestValue("value", sourceCarrier));
         var carrierRoot = TestFile("CarrierProbe", carrierBox, carrierStore); carrierRoot.Methods = new[] { carrierMethod };
         Apply(new[] { carrierRoot }, type => type.Name == "kotlin.Int");
-        var carrierDom = carrierRoot.ToDom(); NullableGenericErasure.Apply(carrierDom, type => type.Name == "kotlin.Int");
-        var carrier = BirGraphDom.ReadBirFileDeclaration(carrierDom).Methods.Value[0];
-        TestRequire(TestSame(carrier.NullableGenericRet.Value, sourceCarrier) && TestSame(carrier.Params.Value[0].NullableGeneric.Value, sourceCarrier),
+        NullableGenericErasure.Apply(carrierRoot, type => type.Name == "kotlin.Int");
+        var carrier = carrierRoot.Methods.Value[0];
+        TestRequire(ReferenceEquals(carrier, carrierMethod) && TestSame(carrier.NullableGenericRet.Value, sourceCarrier)
+            && TestSame(carrier.Params.Value[0].NullableGeneric.Value, sourceCarrier),
             "A physical companion argument replaced a Kotlin source slot carrier");
         var bound = TestClass("Bound", TestParameter("A"), TestParameter("B"));
         var sourceBound = TestType("Bound", TestNullable(TestTv(0)), TestNullable(TestType("kotlin.Int")));
@@ -415,9 +416,9 @@ static partial class NullableRepresentationMaterialization
         var boundRoot = TestFile("BoundProbe", bound); boundRoot.Methods = new[] { method };
         Apply(new[] { boundRoot }, type => type.Name == "kotlin.Int");
         TestRequire(method.TypeParams.Value.Length == 3, "Method-bound probe did not materialize its nullable companion");
-        var boundDom = boundRoot.ToDom(); NullableGenericErasure.Apply(boundDom, type => type.Name == "kotlin.Int");
-        var boundResult = BirGraphDom.ReadBirFileDeclaration(boundDom).Methods.Value[0];
-        TestRequire(TestTypes(boundResult.MethodTypeParameterBoundsPre.Value.Bounds[1], sourceBound),
+        NullableGenericErasure.Apply(boundRoot, type => type.Name == "kotlin.Int");
+        var boundResult = boundRoot.Methods.Value[0];
+        TestRequire(ReferenceEquals(boundResult, method) && TestTypes(boundResult.MethodTypeParameterBoundsPre.Value.Bounds[1], sourceBound),
             "A physical companion index replaced a Kotlin method-bound carrier");
         var cell = TestClass("Cell", TestParameter("T"));
         var nodeBound = TestType("Node", TestTv(0, "type"));
@@ -425,9 +426,10 @@ static partial class NullableRepresentationMaterialization
         node.Fields = new[] { new BirFieldDeclaration { Name = "previous", Type = TestType("Cell", TestNullable(TestTv(0, "type"))) } };
         var classRoot = TestFile("ClassBounds", cell, node);
         Apply(new[] { classRoot }, _ => false);
-        var classDom = classRoot.ToDom(); NullableGenericErasure.Apply(classDom, _ => false);
-        var classResult = (BirClassDefinition)BirGraphDom.ReadBirFileDeclaration(classDom).Types.Value[1];
-        TestRequire(classResult.TypeParams.Value.Length == 2 && TestTypes(classResult.KotlinSupertypesPre.Value.Bounds[0], nodeBound),
+        NullableGenericErasure.Apply(classRoot, _ => false);
+        var classResult = (BirClassDefinition)classRoot.Types.Value[1];
+        TestRequire(ReferenceEquals(classResult, node) && classResult.TypeParams.Value.Length == 2
+            && TestTypes(classResult.KotlinSupertypesPre.Value.Bounds[0], nodeBound),
             "Physical companion arguments replaced a Kotlin class-bound carrier");
         var bodyEntry = TestMethod("entry", TestType("kotlin.Unit"));
         bodyEntry.Static = false; bodyEntry.Virtual = true; bodyEntry.TypeParams = new[] { TestParameter("T") };
