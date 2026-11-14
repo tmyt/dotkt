@@ -106,7 +106,7 @@ static partial class FBoundStarProjectionErasure
         Require(AddFieldAccessorsSource("Owner", 1, definition, bindings).Count == 0
             && ReferenceEquals(definition.Methods.Value, methodsAfter), "second preparation appended competing accessors");
 
-        // This is the one real frontier, not a comparison with the retired owner.
+        // Validate each generated declaration's actual one-way projection.
         var projected = root.ToDom(bindings.ObserveProjection);
         bindings.BindProjected();
         for (var index = 0; index < appended.Count; index++)
