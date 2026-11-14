@@ -21,7 +21,7 @@ using DotKt.Bir;
 // following StringCharSequenceBridge still adapter-wraps the (now-`string`) argument for the un-rebuilt stdlib. Lowering
 // the STDLIB's own CharSequence-ext params to `string` (which would let the retire-B string ops route cleanly) needs a
 // stdlib rebuild + a cross-assembly call-site coercion and is a documented follow-up — NOT done here.
-static class CharSeqStringLowering
+static partial class CharSeqStringLowering
 {
     const string CharSeq = "dotkt$CharSequence";
     // Monotonic counter for unique subSequence receiver/start spill-temp names (BUG-4 single-eval rewrite).
@@ -162,8 +162,9 @@ static class CharSeqStringLowering
     }
 
     // A function type whose RETURN is a bare `dotkt$CharSequence`.
-    static bool FuncTypeHasCharSeqRet(JsonNode ftNode) =>
-        TypeJson.Read(ftNode) is TypeNode.Fn
+    static bool FuncTypeHasCharSeqRet(JsonNode ftNode) => FuncTypeHasCharSeqRet(TypeJson.Read(ftNode));
+    static bool FuncTypeHasCharSeqRet(TypeNode type) =>
+        type is TypeNode.Fn
         {
             Ret: TypeNode.Fqn { Name: CharSeqSynthetic }
         };
@@ -171,8 +172,9 @@ static class CharSeqStringLowering
     const string CharSeqSynthetic = "dotkt$CharSequence";
 
     // A function type any of whose PARAMS is CharSequence (the delegate-target exemption).
-    static bool FuncTypeHasCharSeqParam(JsonNode ftNode) =>
-        TypeJson.Read(ftNode) is TypeNode.Fn fn
+    static bool FuncTypeHasCharSeqParam(JsonNode ftNode) => FuncTypeHasCharSeqParam(TypeJson.Read(ftNode));
+    static bool FuncTypeHasCharSeqParam(TypeNode type) =>
+        type is TypeNode.Fn fn
         && fn.DelegateParams.Any(IsCharSeqT);
 
     static JsonNode Walk(JsonNode node, Env env)
