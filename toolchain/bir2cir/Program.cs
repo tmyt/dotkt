@@ -150,6 +150,7 @@ static class Bir2Cir
                 GenericArrayStorageLowering.SelfTest();
                 ErasedElementValues.SelfTest();
                 RoundtripMetadata.RuntimeLinkageSelfTest();
+                RoundtripMetadata.TypeHeaderSelfTest();
                 RoundtripMetadata.SourceTypeAliasSelfTest();
                 SuspendColdLowering.DeclarationRegistrySelfTest();
                 ReferenceMetadataIndex.SelfTest();
@@ -1397,11 +1398,11 @@ sealed class Pipeline
         bool runtimeRepresentationTypes = false;
         foreach (var (lowered, outputName) in loweredRoots)
         {
-            // ROUNDTRIP METADATA (#71 S2): GENERATE every [Kotlin*]/[Nullable]/[NullableContext] attribute as ordinary
-            // CIR `attrs`/`retAttrs` entries (ilemit then only STAMPS them via its generic BuildCab path — no Kotlin
-            // knowledge left in ilemit). Runs on the fully-lowered decls so the materialized facts (nullableFlags,
+            // ROUNDTRIP METADATA (#71 S2): stamp member/parameter attributes here and grant type-header obligations
+            // for StampTypeHeaders at the typed seam. All become ordinary CIR attrs/retAttrs emitted by ilemit's
+            // generic BuildCab path, with no Kotlin knowledge there. Materialized facts (nullableFlags,
             // suspendFnType, inlineBir, mods, suspendBridge, readOnly) are all present. SKIPPED in the runtime build
-            // (`!SubstituteStdlibBuild`) except for runtime linkage and representation-type associations. Placed after
+            // (`SubstituteStdlibBuild`) except for runtime linkage and representation-type associations. Placed after
             // the earlier reference-body squash, which preserves all captured metadata. The attribute-class DEFS
             // are emitted ONCE below (SynthDefsFile), not per-file.
             if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
@@ -1410,7 +1411,6 @@ sealed class Pipeline
             else
             {
                 RoundtripMetadata.StripRuntimeAttrs(lowered);
-                runtimeRepresentationTypes |= RoundtripMetadata.HasRepresentationTypeAssociations(lowered);
             }
             // The Kotlin `suspend` modifier has no CLR meaning and every consumer of it is a bir2cir pass: the cold
             // lowering, and the [KotlinFunction(Suspend)] stamp just written (which is how a referenced module still
@@ -1447,6 +1447,15 @@ sealed class Pipeline
         // declarations and caller frames rather than rebuilding their authority.
         foreach (var root in physicalDocuments)
             externalGenericConstraintValidation.ApplyResolvedMembers(root);
+        // Only declarations marked at the original metadata phase own a header
+        // obligation. Later synthesized types do not acquire source metadata;
+        // pending source facts are opaque to the intervening physical binders.
+        foreach (var root in physicalDocuments)
+        {
+            RoundtripMetadata.StampTypeHeaders(root, _options.SubstituteStdlibBuild);
+            if (_options.SubstituteStdlibBuild)
+                runtimeRepresentationTypes |= RoundtripMetadata.HasRepresentationTypeAssociations(root);
+        }
         // Interface obligations resolve against the complete final declaration
         // graph, using the same owning records as the following consumers.
         ClrMemberResolution.ResolveInterfaceSlots(physicalDocuments, refs);

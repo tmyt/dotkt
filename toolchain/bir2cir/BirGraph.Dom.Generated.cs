@@ -1949,6 +1949,9 @@ internal static class BirGraphDom
                 case "kotlinSupertypesPre": break;
                 case "staticCarrier": break;
                 case "companionCarrier": break;
+                case "roundtripSupertypesPre": break;
+                case "roundtripTypeHeaderPending": break;
+                case "managedReferenceContract": break;
                 case "generated": break;
                 case "abstract": break;
                 case "final": break;
@@ -1985,6 +1988,9 @@ internal static class BirGraphDom
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
             StaticCarrier = Field<BirStaticCarrier>(fields, "staticCarrier", value => ReadBirStaticCarrier(value!)),
             CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),
+            RoundtripSupertypesPre = Field<SourceTypeFacts>(fields, "roundtripSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
+            RoundtripTypeHeaderPending = Field<bool>(fields, "roundtripTypeHeaderPending", value => value!.GetValue<bool>()),
+            ManagedReferenceContract = Field<BirManagedReferenceContract>(fields, "managedReferenceContract", value => ReadBirManagedReferenceContract(value!)),
             Generated = Field<bool>(fields, "generated", value => value!.GetValue<bool>()),
             Abstract = Field<bool>(fields, "abstract", value => value!.GetValue<bool>()),
             Final = Field<bool>(fields, "final", value => value!.GetValue<bool>()),
@@ -2028,6 +2034,27 @@ internal static class BirGraphDom
         };
     }
 
+    internal static BirManagedReferenceContract ReadBirManagedReferenceContract(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "owner": break;
+                case "declaration": break;
+                case "invoke": break;
+                case "slots": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirManagedReferenceContract at {source.GetPath()}");
+            }
+        return new BirManagedReferenceContract
+        {
+            Owner = Field<string>(fields, "owner", value => value!.GetValue<string>()),
+            Declaration = Field<string>(fields, "declaration", value => value!.GetValue<string>()),
+            Invoke = Field<string>(fields, "invoke", value => value!.GetValue<string>()),
+            Slots = Field<int[]>(fields, "slots", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
+        };
+    }
+
     internal static BirClrEnumDeclaration ReadBirClrEnumDeclaration(JsonNode source)
     {
         var fields = source.AsObject();
@@ -2061,6 +2088,7 @@ internal static class BirGraphDom
                 case "staticCarrier": break;
                 case "companionCarrier": break;
                 case "basicEnum": break;
+                case "roundtripTypeHeaderPending": break;
                 case "generated": break;
                 case "abstract": break;
                 case "final": break;
@@ -2098,6 +2126,7 @@ internal static class BirGraphDom
             StaticCarrier = Field<BirStaticCarrier>(fields, "staticCarrier", value => ReadBirStaticCarrier(value!)),
             CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),
             BasicEnum = Field<BirBasicEnumCarrier>(fields, "basicEnum", value => ReadBirBasicEnumCarrier(value!)),
+            RoundtripTypeHeaderPending = Field<bool>(fields, "roundtripTypeHeaderPending", value => value!.GetValue<bool>()),
             Generated = Field<bool>(fields, "generated", value => value!.GetValue<bool>()),
             Abstract = Field<bool>(fields, "abstract", value => value!.GetValue<bool>()),
             Final = Field<bool>(fields, "final", value => value!.GetValue<bool>()),
@@ -2160,6 +2189,8 @@ internal static class BirGraphDom
                 case "_syntheticFrameBound": break;
                 case "staticCarrier": break;
                 case "companionCarrier": break;
+                case "roundtripSupertypesPre": break;
+                case "roundtripTypeHeaderPending": break;
                 case "final": break;
                 case "specialName": break;
                 case "beforeFieldInit": break;
@@ -2207,6 +2238,8 @@ internal static class BirGraphDom
             _syntheticFrameBound = Field<bool>(fields, "_syntheticFrameBound", value => value!.GetValue<bool>()),
             StaticCarrier = Field<BirStaticCarrier>(fields, "staticCarrier", value => ReadBirStaticCarrier(value!)),
             CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),
+            RoundtripSupertypesPre = Field<SourceTypeFacts>(fields, "roundtripSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
+            RoundtripTypeHeaderPending = Field<bool>(fields, "roundtripTypeHeaderPending", value => value!.GetValue<bool>()),
             Final = Field<bool>(fields, "final", value => value!.GetValue<bool>()),
             SpecialName = Field<bool>(fields, "specialName", value => value!.GetValue<bool>()),
             BeforeFieldInit = Field<bool>(fields, "beforeFieldInit", value => value!.GetValue<bool>()),

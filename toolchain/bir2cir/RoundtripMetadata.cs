@@ -112,8 +112,7 @@ static partial class RoundtripMetadata
         StampProps(o["properties"]);
         if (o["types"] is JsonArray types)
         {
-            MaterializeCompanionCarriers(types);
-            foreach (var t in types) if (t is JsonObject to) StampType(to);
+            foreach (var t in types) if (t is JsonObject to) StampTypeMembers(to);
         }
     }
 
@@ -135,130 +134,16 @@ static partial class RoundtripMetadata
             foreach (var type in types) RequireSuspendResults(type);
     }
 
-    // CompanionRepresentationLowering has already selected and materialized the physical representation. Metadata
-    // emission consumes only that explicit hand-off; declaration counts and object flags are not representation facts.
-    static void MaterializeCompanionCarriers(JsonArray roots)
+    // Eligibility belongs to this phase. Later declaration synthesis does not acquire
+    // permission to emit a source header merely by being present at the typed seam.
+    static void StampTypeMembers(JsonObject to)
     {
-        var types = new List<JsonObject>();
-        void Collect(JsonArray declarations)
-        {
-            foreach (var node in declarations)
-                if (node is JsonObject type)
-                {
-                    types.Add(type);
-                    if (type["types"] is JsonArray nested) Collect(nested);
-                }
-        }
-        Collect(roots);
-
-        foreach (var type in types)
-            if (type["companionCarrier"] is JsonObject carrier)
-            {
-                if (type["kotlinCompanion"] is not null)
-                    throw new InvalidOperationException("companion carrier has an unconsumed semantic association");
-                type["kotlinCompanion"] = carrier.DeepClone();
-                type.Remove("companionCarrier");
-            }
-        foreach (var type in types)
-            if (type["kotlinCompanion"] is JsonObject fact && fact["kind"] is null)
-                throw new InvalidOperationException("semantic companion reached metadata emission without representation lowering");
-    }
-
-    static void StampBasicEnum(JsonObject to)
-    {
-        // [KotlinBasicEnum(codec, content)] carries every basic enum's producer-owned ordinal/value map, including
-        // ordinary contiguous enums. Stamp it before the reference-type early return: downstream Kotlin operations
-        // must not rediscover declaration order from FieldDef layout or Enum.GetValues.
-        if (to["basicEnum"] is JsonObject basicEnum)
-        {
-            if (to["entries"] is not JsonArray physicalEntries || basicEnum["entries"] is not JsonArray semanticEntries
-                || physicalEntries.Count != semanticEntries.Count)
-                throw new InvalidOperationException("basic-enum metadata does not match its physical entry declarations");
-            for (var i = 0; i < physicalEntries.Count; i++)
-            {
-                if (physicalEntries[i] is not JsonObject physical || semanticEntries[i] is not JsonObject semantic
-                    || (physical["name"] as JsonValue)?.GetValue<string>()
-                        != (semantic["name"] as JsonValue)?.GetValue<string>()
-                    || (semantic["ordinal"] as JsonValue)?.GetValue<int>() != i)
-                    throw new InvalidOperationException("basic-enum metadata entry does not match its physical declaration");
-                Append(physical, Marker(AKBasicEnumOrdinal, IntArg(i)));
-            }
-            Append(to, JsonCarrierAttr(AKBasicEnum, basicEnum));
-            to.Remove("basicEnum");
-        }
-    }
-
-    static void StampType(JsonObject to)
-    {
-        if (to["managedReferenceContract"] is JsonObject referenceContract)
-        {
-            Append(to, JsonCarrierAttr(AKManagedReferenceContract, referenceContract));
-            to.Remove("managedReferenceContract");
-        }
-        StampBasicEnum(to);
-        // A real CLR enum does not need the nullable/type-class carriers below. A rich enum is a `kind:"class"`
-        // singleton and does take the normal reference-type metadata path.
+        to["roundtripTypeHeaderPending"] = true;
         if ((to["kind"] as JsonValue)?.GetValue<string>() == "enum") return;
-        Prepend(to, ByteMarker(ANullableCtx, 1));                     // [NullableContext(1)]
-        if (ModFlag(to, "fun")) Append(to, Marker(AKFunInterface));  // `fun interface` (SAM)
-        if (ModFlag(to, "sealed")) Append(to, Marker(AKSealed));     // `sealed` class/interface
-        // `value`/inline class (`IrClass.isValue`). The 2.4.0 frontend no longer materializes @kotlin.jvm.JvmInline
-        // into the IR, so this [KotlinValue] marker is the ROUND-TRIP carrier of value-ness that ReferenceMetadataIndex
-        // reads back off the ref/rt DLL to drive the single-field erase-to-underlying lowering.
-        if (ModFlag(to, "value")) Append(to, Marker(AKValue));       // `value` class (@JvmInline)
-        if (ModFlag(to, "object")) Append(to, Marker(AKObject));     // `object` singleton
-        if (ModFlag(to, "inner"))
-        {
-            var capturedCount = to["capturedTypeParams"] is JsonArray captured ? captured.Count : 0;
-            Append(to, Marker(AKInner, IntArg(capturedCount)));
-        }
-        // [KotlinRichEnum(version, bytes)] — a rich enum is physically a reference class so its entry-specific
-        // subclasses can derive from it. The payload is the explicit Kotlin declaration-to-physical-member map;
-        // downstream projection must not rediscover enum meaning from field or values()/valueOf() conventions.
-        if (to["richEnum"] is JsonObject richEnum)
-        {
-            Append(to, JsonCarrierAttr(AKRichEnum, richEnum));
-            to.Remove("richEnum");
-            to.Remove("enumRich");
-        }
-        // [KotlinCompanion(version, bytes)] (#275) — the association, source name, and bir2cir-resolved physical
-        // representation. MaterializeCompanionCarriers above consumes kotc's semantic-only {owner,name} fact.
-        if (to["kotlinCompanion"] is JsonObject companion)
-        {
-            Append(to, JsonCarrierAttr(AKCompanion, companion));
-            to.Remove("kotlinCompanion");
-        }
-        // A non-generic CLR implementation carrier for the one logical static surface of a generic Kotlin owner.
-        // The payload names the semantic declaration owner; the attributed TypeDef itself is the physical owner.
-        if (to["staticCarrier"] is JsonObject staticCarrier)
-        {
-            Append(to, JsonCarrierAttr(AKStaticCarrier, staticCarrier));
-            to.Remove("staticCarrier");
-        }
-        // CLR GenericParam variance cannot state Kotlin declaration-site variance on classes. ClrTypeVariance also
-        // omits interface flags that conflict with physical signatures or inherited invariant interfaces.
-        // Preserve every authored variant parameter by source frame index in the same type-level source carrier as
-        // pre-erasure bounds. dll2klib and bir2cir's reference index consume this fact instead of guessing it back
-        // from the necessarily weaker CLR row.
-        RecordTypeParameterVariances(to);
-        // [KotlinType(version, bytes)] — a compiler-synthesized CLR type whose Kotlin surface is a different TypeNode.
-        // FBoundStarProjectionErasure uses this on its non-generic existential interface so a downstream reader restores
-        // the original G<*> projection rather than exposing the CLR implementation type or degrading it to Any?.
-        // [KotlinSupertypes(version, bytes)] (#86) — the type's PRE-ERASURE supertype edges, type-parameter
-        // bounds, and Kotlin declaration-site variance. A supertype argument erases like any other reified argument,
-        // and unlike a member slot there is no
-        // per-slot attribute to hang the Kotlin type on: the edge itself is what a consumer binds to when it writes
-        // `val s: Sink<Int?> = E()`. Same opaque TypeNode payload as every other carrier.
-        if ((to[KotlinSupertypesRecord.PreKey] as JsonValue)?.GetValue<string>() is string sup)
-        {
-            var sourceFacts = JsonNode.Parse(sup);
-            if (sourceFacts[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode)
-                ValidateNullableFrame(frameNode, to);
-            Append(to, Marker(AKSupertypes, StringArg(BirCarrier.JsonV1),
-                BytesArg(Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, sourceFacts)))));
-            to.Remove(KotlinSupertypesRecord.PreKey);
-        }
-        StampRepresentationType(to);
+        // Consume the source-type semantic capability here, just as Stamp did.
+        // Only the frozen metadata hand-off crosses the remaining resolver passes.
+        if (to.Remove(KotlinSupertypesRecord.PreKey, out var supertypes))
+            to["roundtripSupertypesPre"] = supertypes;
         StampMethods(to["methods"]);
         StampFields(to["fields"]);
         StampProps(to["properties"]);
@@ -269,7 +154,7 @@ static partial class RoundtripMetadata
                 StampParams(co["params"]);
             }
         if (to["types"] is JsonArray nested)
-            foreach (var t in nested) if (t is JsonObject nto) StampType(nto);
+            foreach (var t in nested) if (t is JsonObject nto) StampTypeMembers(nto);
     }
 
     static void StampConstructorIdentity(JsonObject constructor)
@@ -284,28 +169,6 @@ static partial class RoundtripMetadata
             constructor.Remove("declarationSourceName");
         }
         constructor.Remove(DeclarationSignatureIdentity.AllocatedKey);
-    }
-
-    static void RecordTypeParameterVariances(JsonObject type)
-    {
-        if (type["typeParams"] is not JsonArray parameters) return;
-        var offset = type["capturedTypeParams"] is JsonArray captured ? captured.Count : 0;
-        var frame = KotlinSupertypesRecord.ReadNullableFrame(type);
-        if (frame != null && offset + parameters.Count > frame.PhysicalArity)
-            throw new InvalidOperationException(
-                $"Type '{type["name"]}' has {offset + parameters.Count} physical generic parameters "
-                + $"but its declaration frame describes only {frame.PhysicalArity}");
-        var variances = new JsonObject();
-        for (var index = 0; index < parameters.Count; index++)
-        {
-            var variance = parameters[index] is JsonObject parameter
-                ? (parameter["variance"] as JsonValue)?.GetValue<string>() : null;
-            var sourceIndex = frame is null ? (int?)(offset + index) : frame.SourceIndex(offset + index);
-            if (variance is "in" or "out" && sourceIndex is int source)
-                variances[source.ToString()] = variance;
-        }
-        if (variances.Count != 0)
-            KotlinSupertypesRecord.Merge(type, new JsonObject { ["variances"] = variances });
     }
 
     static void StampMethods(JsonNode methods)
@@ -671,28 +534,21 @@ static partial class RoundtripMetadata
     static void StripRuntimeAttrs(JsonNode root, bool typeDeclaration)
     {
         if (root is not JsonObject o) return;
-        // A representation TypeDef's source association describes that declaration in either twin. Ordinary
-        // source slots remain reference-only: a consumer reads those from the frontend KLIB/reference assembly.
-        var representationType = typeDeclaration ? o["kotlinType"]?.DeepClone() : null;
-        o.Remove("kotlinType");
-        o.Remove("retKotlinType");
-        o.Remove(KotlinSupertypesRecord.PreKey);
-        o.Remove("kotlinCompanion");
-        // Runtime twins retain the physical carriers, not the reference-only companion/static associations.
-        o.Remove("companionCarrier");
-        o.Remove("staticCarrier");
-        var runtimeRichEnum = o["richEnum"]?.DeepClone();
-        o.Remove("richEnum");
-        o.Remove("enumRich");
-        StripAttrs(o, "attrs");
-        if (representationType != null)
+        if (typeDeclaration)
+            o["roundtripTypeHeaderPending"] = true;
+        else
         {
-            o["kotlinType"] = representationType;
-            StampRepresentationType(o);
+            o.Remove("kotlinType");
+            o.Remove("kotlinCompanion");
+            o.Remove("companionCarrier");
+            o.Remove("staticCarrier");
+            o.Remove("richEnum");
+            o.Remove("enumRich");
+            StripAttrs(o, "attrs");
         }
-        // Generic enum operations need this exact physical API map at runtime, including for stdlib-owned enums.
-        if (runtimeRichEnum != null) Append(o, JsonCarrierAttr(AKRichEnum, runtimeRichEnum));
-        StampBasicEnum(o);
+        o.Remove("retKotlinType");
+        // Runtime twins have no source-supertype carrier.
+        o.Remove(KotlinSupertypesRecord.PreKey);
         StripDecls(o["methods"], hasParams: true);
         StripDecls(o["fields"]);
         StripDecls(o["properties"]);
@@ -701,20 +557,8 @@ static partial class RoundtripMetadata
             foreach (var t in types) if (t is JsonObject to) StripRuntimeAttrs(to, typeDeclaration: true);
     }
 
-    static void StampRepresentationType(JsonObject declaration)
-    {
-        if ((declaration["kotlinType"] as JsonValue)?.GetValue<string>() is not string sourceType) return;
-        Append(declaration, KotlinTypeAttr(sourceType));
-        // The hand-off is consumed here; ilemit only emits the complete ordinary CIR attribute.
-        declaration.Remove("kotlinType");
-    }
 
-    internal static bool HasRepresentationTypeAssociations(JsonNode root)
-    {
-        if (root is not JsonObject o || o["types"] is not JsonArray types) return false;
-        return types.OfType<JsonObject>().Any(type => HasAttr(type, AKType)
-            || HasRepresentationTypeAssociations(type));
-    }
+
 
     // The nullable-generic slot record (`nullableGeneric`/`nullableGenericRet`) is deliberately NOT dropped here,
     // though this build mints nothing from it. It has a second reader that runs after every file is lowered —
@@ -832,27 +676,7 @@ static partial class RoundtripMetadata
             || constructorPayload["id"]?.GetValue<string>() != "probe:constructor"
             || constructor["params"].ToJsonString() != constructorSignature)
             throw new InvalidOperationException("Constructor identity lost allocation ownership or exact signature");
-        var sourceType = TypeJson.Fqn("Probe.Source").ToJsonString();
-        var representation = new JsonObject {
-            ["name"] = "Probe.Physical", ["kotlinType"] = sourceType,
-            ["fields"] = new JsonArray(new JsonObject { ["name"] = "value", ["kotlinType"] = sourceType }),
-            ["methods"] = new JsonArray(new JsonObject {
-                ["name"] = "get", ["retKotlinType"] = sourceType,
-                ["params"] = new JsonArray(new JsonObject { ["name"] = "value", ["kotlinType"] = sourceType }),
-            }),
-        };
-        var representationRoot = new JsonObject { ["types"] = new JsonArray(representation) };
-        StripRuntimeAttrs(representationRoot);
-        var representationArgs = representation["attrs"][0]["args"];
-        var restored = BirCarrier.DecodeBody(representationArgs[0]["value"].GetValue<string>(),
-            Convert.FromBase64String(representationArgs[1]["bytes"].GetValue<string>()));
-        if (!HasRepresentationTypeAssociations(representationRoot)
-            || restored.ToJsonString() != sourceType || representation.ContainsKey("kotlinType")
-            || representation["fields"][0]["kotlinType"] != null
-            || representation["methods"][0]["retKotlinType"] != null
-            || representation["methods"][0]["params"][0]["kotlinType"] != null)
-            throw new InvalidOperationException("Runtime representation association lost ownership or retained slot facts");
-        Console.WriteLine("[runtime linkage] self-test OK (distinct IDs, opaque slots, exact modifiers, representation types)");
+        Console.WriteLine("[runtime linkage] self-test OK (distinct IDs, opaque slots, exact modifiers)");
     }
 
     // A compile-time-only carrier (round-trip surface / @Clr* binding / NRT) — dropped from the shipping runtime dll.
@@ -909,8 +733,8 @@ static partial class RoundtripMetadata
         return Marker(AKCollIdentity, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
     }
 
-    // [KotlinType(version, bytes)] — the complete Kotlin surface TypeNode corresponding to a compiler-synthesized CLR
-    // type. The fact is kept opaque through CLR lowering and decoded only by dll2klib.
+    // Callable/parameter/field source slots still consume this carrier at the
+    // original DOM metadata phase. Type headers use their owning TypeNode writer.
     static JsonObject KotlinTypeAttr(string typeJson)
     {
         byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(typeJson));

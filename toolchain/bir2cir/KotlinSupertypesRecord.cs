@@ -43,7 +43,6 @@ static class KotlinSupertypesRecord
 
         MergeInterfaces(merged, additions);
         MergeBounds(merged, additions);
-        MergeVariances(merged, additions);
         if (additions[NullableRepresentationFrame.MetadataKey] is JsonNode frameNode)
         {
             var frame = NullableRepresentationFrame.Read(frameNode).ToJson();
@@ -103,19 +102,6 @@ static class KotlinSupertypesRecord
         // earlier list already preserves every sibling at its least-erased form.
         foreach (var bound in added)
             if (!target.ContainsKey(bound.Key)) target[bound.Key] = bound.Value?.DeepClone();
-    }
-
-    static void MergeVariances(JsonObject merged, JsonObject additions)
-    {
-        if (additions["variances"] is not JsonObject added || added.Count == 0) return;
-        var target = merged["variances"] as JsonObject;
-        if (target == null)
-        {
-            target = new JsonObject();
-            merged["variances"] = target;
-        }
-        foreach (var variance in added)
-            if (!target.ContainsKey(variance.Key)) target[variance.Key] = variance.Value?.DeepClone();
     }
 
     static bool SameHead(TypeNode left, TypeNode right) => left is TypeNode.Fqn lf && right is TypeNode.Fqn rf

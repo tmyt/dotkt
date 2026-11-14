@@ -8,9 +8,10 @@ static partial class CirDeclarationProjection
 {
     // Current source fixtures enter the real owning projection directly. These
     // helpers are test-only, not a second implementation of physical projection.
-    internal static CirFileDeclaration ReadCirFileDeclaration(JsonNode source)
+    internal static CirFileDeclaration ReadCirFileDeclaration(JsonNode source, bool runtimeMode = false)
     {
         var graph = BirGraphDom.ReadBirFileDeclaration(source);
+        RoundtripMetadata.StampTypeHeaders(graph, runtimeMode);
         var emitted = graph.Types.OrEmpty().Select(TypedCirProjection.TypeName).ToHashSet(StringComparer.Ordinal);
         return new TypedCirProjection(emitted).ProjectCirFileDeclaration(graph);
     }
@@ -65,7 +66,7 @@ static partial class CirDeclarationProjection
         });
         RoundtripMetadata.StripRuntimeAttrs(runtime);
         AddCarrierDefinition(runtime, "KotlinDeclarationIdentityAttribute");
-        var runtimeDeclarations = ReadCirFileDeclaration(runtime);
+        var runtimeDeclarations = ReadCirFileDeclaration(runtime, runtimeMode: true);
         var physical = runtimeDeclarations.Types[0].Methods.Value[0];
         if (physical.Name != "M" || physical.TypeParams.Value.Length != 2 || !physical.Body.HasValue
             || physical.Attrs.OrEmpty().Count(a => a.Attr is TypeNode.Fqn { Name: "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute" }) != 1)
