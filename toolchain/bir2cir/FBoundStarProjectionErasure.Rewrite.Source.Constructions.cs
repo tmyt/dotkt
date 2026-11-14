@@ -46,7 +46,11 @@ static partial class FBoundStarProjectionErasure
                 $"bir2cir: star-projected inner construction '{inner.Name}' resolves to {matches.Length} exact local constructors");
             var original = context.Bindings.GetCapturedSource(matches[0]);
             var factory = context.Declarations.InnerFactories(outer)[original];
-            declarationParameters = factory.Signature.Select(BirGraphValue.CopyType).ToArray();
+            // The factory is an authored physical declaration. Its selected
+            // signature stays live until this call binds; only original method
+            // matching uses the independently frozen source signatures.
+            declarationParameters = factory.Slot.Params.OrEmpty()
+                .Select(parameter => BirGraphValue.CopyType(FunctionSignatureIdentity.SignatureType(parameter))).ToArray();
             physicalOwner = outer.ErasedName;
             physicalMethod = factory.Slot.Name.OrDefault();
             parameters = factory.Slot.Params.OrEmpty().Select(parameter => BirGraphValue.CopyType(parameter.Type.OrDefault())).ToArray();

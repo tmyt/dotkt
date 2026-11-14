@@ -137,6 +137,12 @@ sealed partial class GenericRepresentationPolicy
         var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { root }, policy, out var preparation);
         var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
         var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, policy);
+        var realization = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
+            FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs,
+            surface.Demand.ReservedNames, materializedType: (owner, type) => transitions.AdmitMaterializedTypes(owner, new[] { type }));
+        FBoundStarProjectionErasure.RealizeCarriersSource(new[] { root }, realization,
+            Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null,
+            (owner, types) => transitions.AdmitMaterializedTypes(owner, types));
         var continuation = root.ToDom(declarations.ObserveProjection);
         declarations.BindProjected();
         policy.BindDomDeclarations(new JsonNode[] { continuation }, transitions);
@@ -149,8 +155,7 @@ sealed partial class GenericRepresentationPolicy
                 is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.String" }] }
             || policy.LocalDeclaration("PhysicalStorage") != null)
             throw new InvalidOperationException("Native physical placement lost selected identity or recomputed source eligibility");
-        policy.RecordNativeFields(new JsonNode[] { continuation });
-        FBoundStarProjectionErasure.ApplyAll(new JsonNode[] { continuation }, refs, surface);
+        FBoundStarProjectionErasure.BindRealizationContinuation(realization);
         if (TypeJson.Read(continuation["methods"][0]["body"][0]["value"]["sty"]) is not TypeNode.Fqn { Name: "Payload", Args: [TypeNode.Fqn { Name: "kotlin.String" }] }
             || !TypeNodeDataEquality.Equal(TypeJson.Read(continuation["types"][2]["fields"][0]["type"]), valueType))
             throw new InvalidOperationException("Native source-owner use lost its closed field witness before late physical binding");

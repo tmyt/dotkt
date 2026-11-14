@@ -107,7 +107,6 @@ static partial class FBoundStarProjectionErasure
                         factory.Bridge.ClrInterfaceImpls.Value[0].Owner = BirGraphValue.CopyType(reference.Owner);
                     }
                     else methods.Add(factory.Slot);
-                    factory = factory with { Signature = factory.Slot.Params.Value.Select(FunctionSignatureIdentity.SignatureType).ToArray() };
                     factory.SlotBinding = factory.ReferenceContract?.SlotBinding;
                     context.Declarations.Add(owner, factory);
                     context.AttachMethod(definition, factory.Bridge);

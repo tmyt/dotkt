@@ -81,8 +81,7 @@ static partial class FBoundStarProjectionErasure
             ClrInterfaceImpls = new[] { implementation },
         };
         if (typeParameters.Length > 0) bridge.TypeParams = typeParameters;
-        return new(outer, inner, context.Bindings.GetCapturedSource(constructor), slot, bridge,
-            slot.Params.Value.Select(FunctionSignatureIdentity.SignatureType).ToArray(), typeArgs);
+        return new(outer, inner, context.Bindings.GetCapturedSource(constructor), slot, bridge, typeArgs);
     }
 
     static BirTypeParameter[] InnerFactoryTypeParamsSource(Owner inner, int captured, IReadOnlySet<int> direct,

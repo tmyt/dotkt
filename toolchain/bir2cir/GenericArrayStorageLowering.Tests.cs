@@ -103,7 +103,7 @@ static partial class GenericArrayStorageLowering
             var values = GenericRepresentationPolicy.CreateSource(sources, refs.Aliases, refs);
             values.PrepareDomLocations(sources);
             JsonObject first, second;
-            FBoundStarProjectionErasure.CarrierSurfacePreparation surface = null;
+            FBoundStarProjectionErasure.CarrierRealizationContext realization = null;
             if (physical)
             {
                 first = sources[0].ToDom();
@@ -113,7 +113,11 @@ static partial class GenericArrayStorageLowering
             {
                 var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(sources, values, out var preparation);
                 var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, values);
-                surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, values);
+                var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, values);
+                realization = new(surface, FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs),
+                    refs, surface.Demand.ReservedNames);
+                FBoundStarProjectionErasure.RealizeCarriersSource(sources, realization,
+                    Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null, (_, _) => { });
                 first = sources[0].ToDom(declarations.ObserveProjection);
                 second = sources[1].ToDom(declarations.ObserveProjection);
                 declarations.BindProjected();
@@ -125,7 +129,7 @@ static partial class GenericArrayStorageLowering
                     () => throw new InvalidOperationException("Unexpected array Unit conversion"),
                     type => type.Name == "System.Int32", references: refs);
             else
-                FBoundStarProjectionErasure.ApplyAll(roots, refs, surface);
+                FBoundStarProjectionErasure.BindRealizationContinuation(realization);
             var firstBody = first["methods"]?[0]?["body"]?[0]?["body"];
             var secondBody = second["methods"]?[0]?["body"]?[0]?["body"];
             if (Text(firstBody?[0]?["name"]) != "$arrayStorage$0"

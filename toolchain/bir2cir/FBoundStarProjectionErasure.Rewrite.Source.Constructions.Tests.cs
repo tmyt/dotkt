@@ -53,17 +53,30 @@ static partial class FBoundStarProjectionErasure
             var nestedBinding = context.Bindings.GetCapturedSource(nested);
             SynthesizeSource(context.Owners[outer.Name.Value], context);
             var state = new SourceRewriteState(context, (_, _) => null);
+            var factory = context.Declarations.InnerFactories(context.Owners[outer.Name.Value]).Values.Single();
+            var baseline = (BirCallInstance)BindStarInnerConstructionSource(construction, null, null, state);
+            Require(baseline.Sig.Value.Single() is TypeNode.Tv { Scope: "method", I: 0 }
+                && baseline.CalleeParams.Value.SequenceEqual(factory.Slot.Params.Value.Select(FunctionSignatureIdentity.SignatureType)),
+                "an unmodified inner factory lost its selected method-frame signature");
+            var selectedSignature = new TypeNode.Fqn("System.Collections.Generic.List`1",
+                new TypeNode[] { new TypeNode.Tv("method", 0) });
+            factory.Slot.Params.Value[0].Type = new TypeNode.Fqn("System.Object");
+            factory.Slot.Params.Value[0].FunctionSignatureType = selectedSignature;
             var replacement = BindStarInnerConstructionSource(construction, null, null, state);
             ((BirExpressionStatement)caller.Body.Value[0]).Expr = OptionalField<IBirExpression>.Of((IBirExpression)replacement);
-            var factory = context.Declarations.InnerFactories(context.Owners[outer.Name.Value]).Values.Single();
             Require(replacement is BirCallInstance call && call.Method.Value == factory.Slot.Name.Value
                 && call.OwnerType.Value == new TypeNode.Fqn(context.Owners[outer.Name.Value].ErasedName)
                 && ReferenceEquals(call.Recv.Value, receiver) && ReferenceEquals(call.Args.Value.Single(), operand)
                 && call.TypeArgs.Value is [TypeNode.Fqn { Name: "kotlin.String" }] && call._innerFactoryArguments.Value
-                && call.Sig.Value.Single() is TypeNode.Tv { Scope: "method", I: 0 }
-                && call.CalleeParams.Value.SequenceEqual(factory.Signature)
+                && call.Sig.Value.Single() == new TypeNode.Fqn("System.Object")
+                && call.CalleeParams.Value.Single() == selectedSignature
+                && !ReferenceEquals(((TypeNode.Fqn)call.CalleeParams.Value[0]).Args, selectedSignature.Args)
                 && ReferenceEquals(((BirLocalFunction)operand.Stmts.Value[0]).Decl.Value, nested),
                 "inner factory lost selected binding/signature/frame, actual receiver or nested operand declaration");
+            selectedSignature.Args[0] = text;
+            Require(((TypeNode.Fqn)((BirCallInstance)replacement).CalleeParams.Value[0]).Args[0]
+                is TypeNode.Tv { Scope: "method", I: 0 },
+                "binding captured an early factory signature or retained its live mutable argument vector");
             var noSignature = new BirNew { Type = construction.Type, ConstructorDeclarationId = constructor.DeclarationId,
                 Args = new IBirExpression[] { new BirLocal { Name = "outer", Sty = outerApplication }, new BirConstant {
                     Type = text, Value = new BirLiteral.TextLiteral("value") } },

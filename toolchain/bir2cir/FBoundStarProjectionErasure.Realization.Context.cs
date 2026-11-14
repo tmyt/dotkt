@@ -30,7 +30,7 @@ static partial class FBoundStarProjectionErasure
     }
 
     internal sealed record SourceInnerFactory(Owner Outer, Owner Inner, DeclarationBinding Constructor,
-        BirFunctionDeclaration Slot, BirFunctionDeclaration Bridge, TypeNode[] Signature, int[] TypeArgs)
+        BirFunctionDeclaration Slot, BirFunctionDeclaration Bridge, int[] TypeArgs)
     {
         internal SourceReferenceContract ReferenceContract { get; set; }
         internal DeclarationBinding SlotBinding { get; set; }
