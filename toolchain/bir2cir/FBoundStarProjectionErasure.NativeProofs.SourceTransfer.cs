@@ -16,6 +16,18 @@ static partial class FBoundStarProjectionErasure
             TransferIndependentMethodProofRows(Rows(original), target, projection.DeclarationId.OrDefault());
         }
 
+        // The producer calls this only after attaching the actual descriptor
+        // to the emitted bridge's clrInterfaceImpls. A candidate slot used for
+        // selection is not an owning declaration and must not be admitted.
+        internal void TransferIndependentMethodProofs(BirFunctionDeclaration source, BirMethodImpl projection)
+        {
+            var original = bindings.GetCapturedSource(source);
+            var target = bindings.GetSource(projection);
+            // MethodImpl carries its own typeParams, but no declaration ID or
+            // nullable method frame. Do not borrow either from its bridge.
+            TransferIndependentMethodProofRows(Rows(original), target, null);
+        }
+
         // Both owning source and actual late physical renderers delegate to
         // this one transfer rule. Add owns arity, nullable companion positions,
         // duplicate admission and independent copies of the proof TypeNodes.

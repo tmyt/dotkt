@@ -50,12 +50,29 @@ static partial class FBoundStarProjectionErasure
         projection.NullableRepresentationFrame = new NullableRepresentationFrame(2, Array.Empty<int>(), storageIndices: new[] { 1 });
         var shortProjection = Method("shortProjection", 1);
         var privateProjection = Method("privateProjection");
+        // Admit descriptors only once their exact objects are attached to an
+        // emitted method. Their arity is their own, not the bridge's frame.
+        BirMethodImpl Descriptor(int arity) => new() {
+            Owner = new TypeNode.Fqn("Contract"), Member = "slot", Arity = arity,
+            Params = Array.Empty<TypeNode>(), Ret = new TypeNode.Fqn("kotlin.Unit"),
+            TypeParams = Enumerable.Range(0, arity).Select(index => Parameter("D" + index)).ToArray(),
+        };
+        var descriptor = Descriptor(3);
+        var shortDescriptor = Descriptor(1);
+        projection.ClrInterfaceImpls = new[] { descriptor, shortDescriptor };
+        owner.Methods = owner.Methods.Value.Concat(new[] { projection, shortProjection, privateProjection }).ToArray();
+        Reject(() => plan.TransferIndependentMethodProofs(source with { }, descriptor));
+        Reject(() => bindings.GetCapturedSource(descriptor));
         plan.TransferIndependentMethodProofs(source, projection);
         plan.TransferIndependentMethodProofs(source, shortProjection);
         plan.TransferIndependentMethodProofs(privateSource, privateProjection);
+        plan.TransferIndependentMethodProofs(source, descriptor);
+        plan.TransferIndependentMethodProofs(source, shortDescriptor);
         var projected = bindings.GetCapturedSource(projection);
         var shortBinding = bindings.GetCapturedSource(shortProjection);
         var privateBinding = bindings.GetCapturedSource(privateProjection);
+        var descriptorBinding = bindings.GetCapturedSource(descriptor);
+        var shortDescriptorBinding = bindings.GetCapturedSource(shortDescriptor);
         Require(plan.Bounds(projected, 0).Contains(disposable)
             && plan.Bounds(projected, 1).Single() is TypeNode.Fqn {
                 Name: "System.Collections.Generic.IComparer`1", Args: [TypeNode.Tv { Scope: "method", I: 0 }] }
@@ -64,20 +81,28 @@ static partial class FBoundStarProjectionErasure
         Require(plan.Bounds(shortBinding, 0).Contains(disposable) && !plan.Bounds(shortBinding, 1).Any()
             && !plan.Bounds(shortBinding, 2).Any() && !plan.Bounds(privateBinding, 1).Any(),
             "target arity was ignored or a separate private source borrowed another method's proofs");
+        Require(plan.Bounds(descriptorBinding, 0).Contains(disposable)
+            && plan.Bounds(descriptorBinding, 1).Single() is TypeNode.Fqn {
+                Name: "System.Collections.Generic.IComparer`1", Args: [TypeNode.Tv { Scope: "method", I: 0 }] }
+            && plan.Bounds(descriptorBinding, 2).Contains(disposable)
+            && plan.Bounds(shortDescriptorBinding, 0).Contains(disposable)
+            && !plan.Bounds(shortDescriptorBinding, 1).Any(),
+            "attached MethodImpl lost independent proofs, borrowed the bridge storage frame or ignored its own arity");
         var originalProof = plan.Bounds(original, 1).OfType<TypeNode.Fqn>()
             .Single(proof => proof.Args is [TypeNode.Tv { Scope: "method" }]);
         var copiedProof = (TypeNode.Fqn)plan.Bounds(projected, 1).Single();
         Require(!ReferenceEquals(originalProof.Args, copiedProof.Args), "proof transfer shared a mutable argument vector");
         originalProof.Args[0] = new TypeNode.Fqn("System.String");
         Require(copiedProof.Args[0] == methodVariable, "source proof mutation changed its authored projection");
+        Require(((TypeNode.Fqn)plan.Bounds(descriptorBinding, 1).Single()).Args[0] == methodVariable,
+            "source proof mutation changed its attached MethodImpl projection");
         Require(ReferenceEquals(bindings.SourceLocalDeclarations, localDeclarations)
             && ReferenceEquals(bindings.SourceLocalMethods, localMethods) && localDeclarations.Count == originalCount
             && !localDeclarations.ContainsKey(("Owner", "projection")) && !localMethods.ContainsKey("Owner\0projection"),
             "physical projection admission rebuilt or extended the original selection catalog");
 
-        // These are actual generated methods appended by the owning renderer,
-        // not same-name reconstructions admitted at a later missing-node check.
-        owner.Methods = owner.Methods.Value.Concat(new[] { projection, shortProjection, privateProjection }).ToArray();
+        // The observer sees the actual emitted methods and their attached
+        // descriptors, not same-name reconstructions at a missing-node check.
         var physicalRoot = root.ToDom(bindings.ObserveProjection);
         bindings.BindProjected();
         var physicalOwner = physicalRoot["types"][0].AsObject();
@@ -88,6 +113,13 @@ static partial class FBoundStarProjectionErasure
             && !plan.IsPhysicalConstraint(physicalProjection["typeParams"][1]["constraints"].AsArray(), dependent)
             && !plan.IsPhysicalConstraint(physicalProjection["typeParams"][2]["constraints"].AsArray(), disposable),
             "the single frontier lost generated identity, proof rows or exact companion positions");
+        var physicalDescriptor = physicalProjection["clrInterfaceImpls"][0].AsObject();
+        Require(ReferenceEquals(descriptorBinding.Physical, physicalDescriptor)
+            && plan.IsPhysicalConstraint(physicalDescriptor["typeParams"][1]["constraints"].AsArray(), independent)
+            && !plan.IsPhysicalConstraint(physicalDescriptor["typeParams"][1]["constraints"].AsArray(), dependent)
+            && plan.IsPhysicalConstraint(physicalDescriptor["typeParams"][2]["constraints"].AsArray(), disposable)
+            && ReferenceEquals(plan.LocalMethod("projection"), physicalProjection),
+            "attached MethodImpl lost the same proof rows at the frontier or replaced the method identity catalog");
         Reject(() => plan.TransferIndependentMethodProofs(source, Method("afterFrontier")));
 
         var late = Method("late").ToDom();
@@ -97,6 +129,6 @@ static partial class FBoundStarProjectionErasure
             && !plan.IsPhysicalConstraint(late["typeParams"][1]["constraints"].AsArray(), dependent)
             && ReferenceEquals(plan.LocalMethod("late"), late),
             "actual late DOM transfer did not consume the same bound proof rows and generated identity");
-        Console.WriteLine("[owning native proof transfer] self-test OK (captured source, exact generated admission, arity/frame restrictions, copies and one frontier)");
+        Console.WriteLine("[owning native proof transfer] self-test OK (captured source, emitted methods/attached MethodImpls, arity/frame restrictions, copies and one frontier)");
     }
 }
