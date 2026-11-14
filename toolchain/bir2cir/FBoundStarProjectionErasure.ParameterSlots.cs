@@ -13,17 +13,25 @@ static partial class FBoundStarProjectionErasure
             || method[DeclarationIdentityBinding.Key] == null
             || KotlinPropertyAccessors.TryIdentity(method, out _, out _)
             || method.Parent is not JsonArray entries || entries.Parent is not JsonObject owner
-            || !ReferenceEquals(owner["methods"], entries)
-            || Bool(method["generated"]) || Bool(owner["generated"]) || HasClrTypeAlias(owner)
-            || (method["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-                .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic")) return false;
-        foreach (var edge in (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
+            || !ReferenceEquals(owner["methods"], entries)) return false;
+        return OrdinaryKotlinParameterPolicy(Bool(method["generated"]), Bool(owner["generated"]), HasClrTypeAlias(owner),
+            (method["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrIntrinsic"),
+            (method["overrides"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
+                .Select(edge => TypeJson.OwnerName(edge["owner"])),
+            name => definitions.TryGetValue(name, out var local) ? HasClrTypeAlias(local) : null, refs);
+    }
+
+    static bool OrdinaryKotlinParameterPolicy(bool generatedMethod, bool generatedOwner, bool aliasOwner, bool intrinsic,
+        IEnumerable<string> overrideOwners, Func<string, bool?> localAlias, ReferenceMetadataIndex refs)
+    {
+        if (generatedMethod || generatedOwner || aliasOwner || intrinsic) return false;
+        foreach (var name in overrideOwners)
         {
-            var name = TypeJson.OwnerName(edge["owner"]);
             if (name == null) continue;
-            if (definitions.TryGetValue(name, out var local))
+            if (localAlias(name) is { } alias)
             {
-                if (HasClrTypeAlias(local)) return false;
+                if (alias) return false;
             }
             else if (!refs.HasDotKtOwner(name) || refs.TryResolveClrOwner(name, out _, out _)) return false;
         }

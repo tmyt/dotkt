@@ -9,7 +9,7 @@ static partial class FBoundStarProjectionErasure
     // A managed reference cannot pass through the object-valued existential ABI. Retain exactly the owner
     // parameters required by its physical pointee in a separate, invariant interface contract.
     // Other owner arguments remain erased: an unchecked view of an unrelated argument must not change this call.
-    sealed record ReferenceContract(TypeNode.Fqn Owner, JsonObject Slot, string Invoke);
+    internal sealed record ReferenceContract(TypeNode.Fqn Owner, JsonObject Slot, string Invoke);
 
     static JsonArray ReferenceCallShape(JsonObject call) => call["shapeTypes"] is JsonArray shape
         && shape.Any(type => SignatureValueTypes.Of(TypeJson.Read(type)) is TypeNode.ByRef) ? shape : null;
