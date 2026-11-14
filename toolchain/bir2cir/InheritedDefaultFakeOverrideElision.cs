@@ -1,77 +1,66 @@
-using System;
-using System.Collections.Generic;
-using System.Text.Json.Nodes;
+using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
-// Kotlin IR materializes inherited interface members as fake overrides. The frontend has already selected whether such
-// a member inherits a concrete implementation and records that answer as "inheritedImplementation". Consuming that
-// explicit fact here avoids shadowing a DIM with a fresh abstract CLR slot. bir2cir must not rediscover the answer from
-// ancestor bodies, CLR metadata, or a physical method name.
-static class InheritedDefaultFakeOverrideElision
+// Consume the frontend-selected inherited implementation, never rediscover it
+// from ancestor bodies, CLR metadata or an allocated physical member spelling.
+static partial class InheritedDefaultFakeOverrideElision
 {
-    public static void Apply(JsonNode root)
+    public static void Apply(BirFileDeclaration root, Action<BirFunctionDeclaration> retireActual)
     {
-        if (root is not JsonObject ro || ro["types"] is not JsonArray types) return;
-        var local = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        CollectTypes(types, local);
-        foreach (var type in local.Values)
+        // Selection is per file and last declaration wins, including a later
+        // non-interface shadow. Current owning type placement is flat.
+        var local = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
+        foreach (var declaration in root.Types.OrEmpty())
+            if (declaration.Name.HasValue) local[declaration.Name.Value] = declaration;
+        foreach (var declaration in local.Values)
         {
-            if (Str(type["kind"]) != "interface" || type["methods"] is not JsonArray methods) continue;
+            if (declaration.Kind.OrDefault() != "interface" || declaration is not BirInterfaceDefinition type
+                || !type.Methods.HasValue) continue;
+            var methods = type.Methods.Value;
             var removedAccessors = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-            var inheritedMethods = type[KotlinPropertyAccessors.InheritedDefaultMethodsKey] as JsonArray;
-            for (var i = methods.Count - 1; i >= 0; i--)
+            HashSet<BirFunctionDeclaration> removed = null;
+            List<BirInheritedDefaultMethod> added = null;
+            for (var index = methods.Length - 1; index >= 0; index--)
             {
-                if (methods[i] is not JsonObject method || !Bool(method["fakeOverride"])
-                    || method[KotlinPropertyAccessors.InheritedImplementationKey] is not JsonObject implementation) continue;
-                if (KotlinPropertyAccessors.TryIdentity(method, out _, out var accessorKind)
-                    && Str(method[KotlinPropertyAccessors.AssociationKey]) is string association)
+                var method = methods[index];
+                if (!method.FakeOverride.OrDefault() || !method.InheritedImplementation.HasValue) continue;
+                if (KotlinPropertyAccessors.TryIdentity(method, out _, out var role) && method.PropertyAssociation.HasValue)
                 {
-                    if (!removedAccessors.TryGetValue(association, out var roles))
-                        removedAccessors[association] = roles = new HashSet<string>(StringComparer.Ordinal);
-                    roles.Add(accessorKind);
+                    if (!removedAccessors.TryGetValue(method.PropertyAssociation.Value, out var roles))
+                        removedAccessors[method.PropertyAssociation.Value] = roles = new(StringComparer.Ordinal);
+                    roles.Add(role);
                 }
-                else if (Str(method["name"]) is string member && method["params"] is JsonArray parameters
-                    && method["ret"] is JsonNode ret)
+                else if (method.Name.HasValue && method.Params.HasValue && method.Ret.HasValue)
                 {
-                    inheritedMethods ??= new JsonArray();
-                    inheritedMethods.Add(new JsonObject
-                    {
-                        ["member"] = member,
-                        ["params"] = new JsonArray(parameters.OfType<JsonObject>()
-                            .Select(parameter => parameter["type"]?.DeepClone()).ToArray()),
-                        ["ret"] = ret.DeepClone(),
-                        ["implementation"] = implementation.DeepClone(),
+                    (added ??= new()).Add(new BirInheritedDefaultMethod {
+                        Member = method.Name,
+                        Params = method.Params.Value.Select(parameter => BirGraphValue.CopyType(parameter.Type.OrDefault())).ToArray(),
+                        Ret = BirGraphValue.CopyType(method.Ret.Value),
+                        Implementation = (BirInheritedImplementation)method.InheritedImplementation.Value.DeepClone(),
                     });
                 }
-                methods.RemoveAt(i);
+                retireActual(method);
+                (removed ??= new(ReferenceEqualityComparer.Instance)).Add(method);
             }
-            if (inheritedMethods is { Count: > 0 })
-                type[KotlinPropertyAccessors.InheritedDefaultMethodsKey] = inheritedMethods;
-            if (removedAccessors.Count != 0 && type["properties"] is JsonArray properties)
-                for (var i = properties.Count - 1; i >= 0; i--)
-                    if (properties[i] is JsonObject property
-                        && Str(property[KotlinPropertyAccessors.AssociationKey]) is string association
-                        && removedAccessors.TryGetValue(association, out var removedRoles)
-                        && property[KotlinPropertyAccessors.PropertyRolesKey] is JsonArray roles)
-                    {
-                        for (var roleIndex = roles.Count - 1; roleIndex >= 0; roleIndex--)
-                            if (removedRoles.Contains(Str(roles[roleIndex]))) roles.RemoveAt(roleIndex);
-                        if (roles.Count == 0) properties.RemoveAt(i);
-                    }
+            if (removed != null) type.Methods = methods.Where(method => !removed.Contains(method)).ToArray();
+            // Preserve the pre-existing rows, then append in the original
+            // reverse-method traversal order. Do not copy extra declaration
+            // facts which the old row producer did not own.
+            if (added != null) type.InheritedDefaultMethods = type.InheritedDefaultMethods.OrEmpty().Concat(added).ToArray();
+            if (removedAccessors.Count == 0 || !type.Properties.HasValue) continue;
+            var properties = type.Properties.Value;
+            HashSet<BirPropertyDeclaration> removedProperties = null;
+            foreach (var property in properties)
+            {
+                if (!property.PropertyAssociation.HasValue || !property.KotlinAccessors.HasValue
+                    || !removedAccessors.TryGetValue(property.PropertyAssociation.Value, out var roles)) continue;
+                var retained = property.KotlinAccessors.Value.Where(role => !roles.Contains(role)).ToArray();
+                if (retained.Length != property.KotlinAccessors.Value.Length) property.KotlinAccessors = retained;
+                if (retained.Length == 0) (removedProperties ??= new(ReferenceEqualityComparer.Instance)).Add(property);
+            }
+            if (removedProperties != null)
+                type.Properties = properties.Where(property => !removedProperties.Contains(property)).ToArray();
         }
     }
-
-    static void CollectTypes(JsonArray types, Dictionary<string, JsonObject> result)
-    {
-        foreach (var node in types.OfType<JsonObject>())
-        {
-            if (Str(node["name"]) is string name) result[name] = node;
-            if (node["types"] is JsonArray nested) CollectTypes(nested, result);
-        }
-    }
-
-    static bool Bool(JsonNode node) =>
-        node is JsonValue value && value.TryGetValue<bool>(out var result) && result;
-
-    static string Str(JsonNode node) =>
-        node is JsonValue value && value.TryGetValue<string>(out var result) ? result : null;
 }

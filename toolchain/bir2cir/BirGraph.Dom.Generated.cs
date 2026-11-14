@@ -2031,6 +2031,7 @@ internal static class BirGraphDom
                 case "roundtripSupertypesPre": break;
                 case "roundtripTypeHeaderPending": break;
                 case "managedReferenceContract": break;
+                case "inheritedDefaultMethods": break;
                 case "generated": break;
                 case "abstract": break;
                 case "final": break;
@@ -2071,6 +2072,7 @@ internal static class BirGraphDom
             RoundtripSupertypesPre = Field<SourceTypeFacts>(fields, "roundtripSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
             RoundtripTypeHeaderPending = Field<bool>(fields, "roundtripTypeHeaderPending", value => value!.GetValue<bool>()),
             ManagedReferenceContract = Field<BirManagedReferenceContract>(fields, "managedReferenceContract", value => ReadBirManagedReferenceContract(value!)),
+            InheritedDefaultMethods = Field<BirInheritedDefaultMethod[]>(fields, "inheritedDefaultMethods", value => ((JsonArray)value!).Select(item0 => ReadBirInheritedDefaultMethod(item0!)).ToArray()),
             Generated = Field<bool>(fields, "generated", value => value!.GetValue<bool>()),
             Abstract = Field<bool>(fields, "abstract", value => value!.GetValue<bool>()),
             Final = Field<bool>(fields, "final", value => value!.GetValue<bool>()),

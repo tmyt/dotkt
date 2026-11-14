@@ -11007,21 +11007,22 @@ internal static class BirGraphMessagePack
         OptionalField<SourceTypeFacts> field18 = default;
         OptionalField<bool> field19 = default;
         OptionalField<BirManagedReferenceContract> field20 = default;
-        OptionalField<bool> field21 = default;
+        OptionalField<BirInheritedDefaultMethod[]> field21 = default;
         OptionalField<bool> field22 = default;
         OptionalField<bool> field23 = default;
         OptionalField<bool> field24 = default;
         OptionalField<bool> field25 = default;
-        OptionalField<string> field26 = default;
-        OptionalField<BirTypeParameter[]> field27 = default;
-        OptionalField<BirDeclarationPosition> field28 = default;
-        OptionalField<BirInterfaceSlotSet[]> field29 = default;
-        OptionalField<BirClrEventBacking[]> field30 = default;
-        OptionalField<TypeNode> field31 = default;
-        OptionalField<BirEnumEntryDeclaration[]> field32 = default;
-        OptionalField<BirParameter[]> field33 = default;
-        OptionalField<TypeNode> field34 = default;
-        OptionalField<BirAttribute[]> field35 = default;
+        OptionalField<bool> field26 = default;
+        OptionalField<string> field27 = default;
+        OptionalField<BirTypeParameter[]> field28 = default;
+        OptionalField<BirDeclarationPosition> field29 = default;
+        OptionalField<BirInterfaceSlotSet[]> field30 = default;
+        OptionalField<BirClrEventBacking[]> field31 = default;
+        OptionalField<TypeNode> field32 = default;
+        OptionalField<BirEnumEntryDeclaration[]> field33 = default;
+        OptionalField<BirParameter[]> field34 = default;
+        OptionalField<TypeNode> field35 = default;
+        OptionalField<BirAttribute[]> field36 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -11110,65 +11111,69 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 20);
                     field20 = reader.TryReadNil() ? OptionalField<BirManagedReferenceContract>.Null : OptionalField<BirManagedReferenceContract>.Of(ReadBirManagedReferenceContract(ref reader));
                     break;
-                case "generated":
+                case "inheritedDefaultMethods":
                     Seen(ref seen, 1UL << 21);
-                    field21 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    field21 = reader.TryReadNil() ? OptionalField<BirInheritedDefaultMethod[]>.Null : OptionalField<BirInheritedDefaultMethod[]>.Of(ReadArray<BirInheritedDefaultMethod>(ref reader, (ref MessagePackReader reader) => ReadBirInheritedDefaultMethod(ref reader)));
                     break;
-                case "abstract":
+                case "generated":
                     Seen(ref seen, 1UL << 22);
                     field22 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "final":
+                case "abstract":
                     Seen(ref seen, 1UL << 23);
                     field23 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "specialName":
+                case "final":
                     Seen(ref seen, 1UL << 24);
                     field24 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "beforeFieldInit":
+                case "specialName":
                     Seen(ref seen, 1UL << 25);
                     field25 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "nestedIn":
+                case "beforeFieldInit":
                     Seen(ref seen, 1UL << 26);
-                    field26 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    field26 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "nestedIn":
+                    Seen(ref seen, 1UL << 27);
+                    field27 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
                 case "capturedTypeParams":
-                    Seen(ref seen, 1UL << 27);
-                    field27 = reader.TryReadNil() ? OptionalField<BirTypeParameter[]>.Null : OptionalField<BirTypeParameter[]>.Of(ReadArray<BirTypeParameter>(ref reader, (ref MessagePackReader reader) => ReadBirTypeParameter(ref reader)));
+                    Seen(ref seen, 1UL << 28);
+                    field28 = reader.TryReadNil() ? OptionalField<BirTypeParameter[]>.Null : OptionalField<BirTypeParameter[]>.Of(ReadArray<BirTypeParameter>(ref reader, (ref MessagePackReader reader) => ReadBirTypeParameter(ref reader)));
                     break;
                 case "pos":
-                    Seen(ref seen, 1UL << 28);
-                    field28 = reader.TryReadNil() ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
+                    Seen(ref seen, 1UL << 29);
+                    field29 = reader.TryReadNil() ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
                     break;
                 case "interfaceSlotRefs":
-                    Seen(ref seen, 1UL << 29);
-                    field29 = reader.TryReadNil() ? OptionalField<BirInterfaceSlotSet[]>.Null : OptionalField<BirInterfaceSlotSet[]>.Of(ReadArray<BirInterfaceSlotSet>(ref reader, (ref MessagePackReader reader) => ReadBirInterfaceSlotSet(ref reader)));
+                    Seen(ref seen, 1UL << 30);
+                    field30 = reader.TryReadNil() ? OptionalField<BirInterfaceSlotSet[]>.Null : OptionalField<BirInterfaceSlotSet[]>.Of(ReadArray<BirInterfaceSlotSet>(ref reader, (ref MessagePackReader reader) => ReadBirInterfaceSlotSet(ref reader)));
                     break;
                 case "clrEvents":
-                    Seen(ref seen, 1UL << 30);
-                    field30 = reader.TryReadNil() ? OptionalField<BirClrEventBacking[]>.Null : OptionalField<BirClrEventBacking[]>.Of(ReadArray<BirClrEventBacking>(ref reader, (ref MessagePackReader reader) => ReadBirClrEventBacking(ref reader)));
+                    Seen(ref seen, 1UL << 31);
+                    field31 = reader.TryReadNil() ? OptionalField<BirClrEventBacking[]>.Null : OptionalField<BirClrEventBacking[]>.Of(ReadArray<BirClrEventBacking>(ref reader, (ref MessagePackReader reader) => ReadBirClrEventBacking(ref reader)));
                     break;
                 case "underlying":
-                    Seen(ref seen, 1UL << 31);
-                    field31 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    Seen(ref seen, 1UL << 32);
+                    field32 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 case "entries":
-                    Seen(ref seen, 1UL << 32);
-                    field32 = reader.TryReadNil() ? OptionalField<BirEnumEntryDeclaration[]>.Null : OptionalField<BirEnumEntryDeclaration[]>.Of(ReadArray<BirEnumEntryDeclaration>(ref reader, (ref MessagePackReader reader) => ReadBirEnumEntryDeclaration(ref reader)));
+                    Seen(ref seen, 1UL << 33);
+                    field33 = reader.TryReadNil() ? OptionalField<BirEnumEntryDeclaration[]>.Null : OptionalField<BirEnumEntryDeclaration[]>.Of(ReadArray<BirEnumEntryDeclaration>(ref reader, (ref MessagePackReader reader) => ReadBirEnumEntryDeclaration(ref reader)));
                     break;
                 case "params":
-                    Seen(ref seen, 1UL << 33);
-                    field33 = reader.TryReadNil() ? OptionalField<BirParameter[]>.Null : OptionalField<BirParameter[]>.Of(ReadArray<BirParameter>(ref reader, (ref MessagePackReader reader) => ReadBirParameter(ref reader)));
+                    Seen(ref seen, 1UL << 34);
+                    field34 = reader.TryReadNil() ? OptionalField<BirParameter[]>.Null : OptionalField<BirParameter[]>.Of(ReadArray<BirParameter>(ref reader, (ref MessagePackReader reader) => ReadBirParameter(ref reader)));
                     break;
                 case "ret":
-                    Seen(ref seen, 1UL << 34);
-                    field34 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    Seen(ref seen, 1UL << 35);
+                    field35 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 case "retAttrs":
-                    Seen(ref seen, 1UL << 35);
-                    field35 = reader.TryReadNil() ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray<BirAttribute>(ref reader, (ref MessagePackReader reader) => ReadBirAttribute(ref reader)));
+                    Seen(ref seen, 1UL << 36);
+                    field36 = reader.TryReadNil() ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray<BirAttribute>(ref reader, (ref MessagePackReader reader) => ReadBirAttribute(ref reader)));
                     break;
                 default: throw new FormatException();
             }
@@ -11197,28 +11202,29 @@ internal static class BirGraphMessagePack
             RoundtripSupertypesPre = field18,
             RoundtripTypeHeaderPending = field19,
             ManagedReferenceContract = field20,
-            Generated = field21,
-            Abstract = field22,
-            Final = field23,
-            SpecialName = field24,
-            BeforeFieldInit = field25,
-            NestedIn = field26,
-            CapturedTypeParams = field27,
-            Pos = field28,
-            InterfaceSlotRefs = field29,
-            ClrEvents = field30,
-            Underlying = field31,
-            Entries = field32,
-            Params = field33,
-            Ret = field34,
-            RetAttrs = field35,
+            InheritedDefaultMethods = field21,
+            Generated = field22,
+            Abstract = field23,
+            Final = field24,
+            SpecialName = field25,
+            BeforeFieldInit = field26,
+            NestedIn = field27,
+            CapturedTypeParams = field28,
+            Pos = field29,
+            InterfaceSlotRefs = field30,
+            ClrEvents = field31,
+            Underlying = field32,
+            Entries = field33,
+            Params = field34,
+            Ret = field35,
+            RetAttrs = field36,
         };
     }
 
     internal static void WriteBirInterfaceDefinition(ref MessagePackWriter writer, BirInterfaceDefinition value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Name.IsPresent ? 1 : 0) + (value.Kind.IsPresent ? 1 : 0) + (value.SemanticOwner.IsPresent ? 1 : 0) + (value.Vis.IsPresent ? 1 : 0) + (value.Mods.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.Base.IsPresent ? 1 : 0) + (value.Interfaces.IsPresent ? 1 : 0) + (value.Fields.IsPresent ? 1 : 0) + (value.Ctors.IsPresent ? 1 : 0) + (value.Methods.IsPresent ? 1 : 0) + (value.Properties.IsPresent ? 1 : 0) + (value.Attrs.IsPresent ? 1 : 0) + (value.KotlinType.IsPresent ? 1 : 0) + (value.KotlinSupertypesPre.IsPresent ? 1 : 0) + (value._ownerConstraintDispatchBounds.IsPresent ? 1 : 0) + (value.StaticCarrier.IsPresent ? 1 : 0) + (value.CompanionCarrier.IsPresent ? 1 : 0) + (value.RoundtripSupertypesPre.IsPresent ? 1 : 0) + (value.RoundtripTypeHeaderPending.IsPresent ? 1 : 0) + (value.ManagedReferenceContract.IsPresent ? 1 : 0) + (value.Generated.IsPresent ? 1 : 0) + (value.Abstract.IsPresent ? 1 : 0) + (value.Final.IsPresent ? 1 : 0) + (value.SpecialName.IsPresent ? 1 : 0) + (value.BeforeFieldInit.IsPresent ? 1 : 0) + (value.NestedIn.IsPresent ? 1 : 0) + (value.CapturedTypeParams.IsPresent ? 1 : 0) + (value.Pos.IsPresent ? 1 : 0) + (value.InterfaceSlotRefs.IsPresent ? 1 : 0) + (value.ClrEvents.IsPresent ? 1 : 0) + (value.Underlying.IsPresent ? 1 : 0) + (value.Entries.IsPresent ? 1 : 0) + (value.Params.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.RetAttrs.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Name.IsPresent ? 1 : 0) + (value.Kind.IsPresent ? 1 : 0) + (value.SemanticOwner.IsPresent ? 1 : 0) + (value.Vis.IsPresent ? 1 : 0) + (value.Mods.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.Base.IsPresent ? 1 : 0) + (value.Interfaces.IsPresent ? 1 : 0) + (value.Fields.IsPresent ? 1 : 0) + (value.Ctors.IsPresent ? 1 : 0) + (value.Methods.IsPresent ? 1 : 0) + (value.Properties.IsPresent ? 1 : 0) + (value.Attrs.IsPresent ? 1 : 0) + (value.KotlinType.IsPresent ? 1 : 0) + (value.KotlinSupertypesPre.IsPresent ? 1 : 0) + (value._ownerConstraintDispatchBounds.IsPresent ? 1 : 0) + (value.StaticCarrier.IsPresent ? 1 : 0) + (value.CompanionCarrier.IsPresent ? 1 : 0) + (value.RoundtripSupertypesPre.IsPresent ? 1 : 0) + (value.RoundtripTypeHeaderPending.IsPresent ? 1 : 0) + (value.ManagedReferenceContract.IsPresent ? 1 : 0) + (value.InheritedDefaultMethods.IsPresent ? 1 : 0) + (value.Generated.IsPresent ? 1 : 0) + (value.Abstract.IsPresent ? 1 : 0) + (value.Final.IsPresent ? 1 : 0) + (value.SpecialName.IsPresent ? 1 : 0) + (value.BeforeFieldInit.IsPresent ? 1 : 0) + (value.NestedIn.IsPresent ? 1 : 0) + (value.CapturedTypeParams.IsPresent ? 1 : 0) + (value.Pos.IsPresent ? 1 : 0) + (value.InterfaceSlotRefs.IsPresent ? 1 : 0) + (value.ClrEvents.IsPresent ? 1 : 0) + (value.Underlying.IsPresent ? 1 : 0) + (value.Entries.IsPresent ? 1 : 0) + (value.Params.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.RetAttrs.IsPresent ? 1 : 0));
         if (value.Name.IsPresent)
         {
             writer.Write("name");
@@ -11441,6 +11447,20 @@ internal static class BirGraphMessagePack
             else
             {
                 WriteBirManagedReferenceContract(ref writer, value.ManagedReferenceContract.Value, depth + 1);
+            }
+        }
+        if (value.InheritedDefaultMethods.IsPresent)
+        {
+            writer.Write("inheritedDefaultMethods");
+            if (value.InheritedDefaultMethods.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.InheritedDefaultMethods.Value.Length);
+                foreach (var item0 in value.InheritedDefaultMethods.Value)
+                {
+                    WriteBirInheritedDefaultMethod(ref writer, item0, depth + 1 + 1);
+                }
             }
         }
         if (value.Generated.IsPresent)
