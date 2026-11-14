@@ -93,18 +93,27 @@ sealed partial class GenericRepresentationPolicy
 
         // Original native origins remain strict even if the refresh discovers
         // an otherwise valid current physical declaration with the same role.
-        var origin = new BirFieldDeclaration { Name = "original", Type = text,
-            Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("kotlin.clr.ClrField") } } };
-        var missing = new BirFileDeclaration { FileClass = "Missing", Fields = new[] { origin } };
-        var missingPolicy = CreateSource(new[] { missing }, new Dictionary<string, string>(), null);
-        missingPolicy.PrepareDomLocations(new[] { missing });
-        missing.Fields = new[] { new BirFieldDeclaration { Name = "newPhysical", Type = text,
-            Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("kotlin.clr.ClrField") } } } };
-        missingPolicy.RefreshPhysicalNativeLocations(new[] { missing });
-        Reject(() => missingPolicy.BindDomDeclarations(new[] { missing.ToDom() }), "missing original source native origin");
-        Require(missingPolicy._sourceNativeStorage.Contains(origin)
-            && missingPolicy._pendingNativePhysicalBindings.Count == 1 && missingPolicy._refreshedNativeLocations != null,
-            "failed original-origin binding consumed or widened its expected ledger");
+        foreach (var replacementName in new[] { "original", "newPhysical" })
+        {
+            var origin = new BirFieldDeclaration { Name = "original", Type = text,
+                Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("kotlin.clr.ClrField") } } };
+            var missing = new BirFileDeclaration { FileClass = "Missing", Fields = new[] { origin } };
+            var missingPolicy = CreateSource(new[] { missing }, new Dictionary<string, string>(), null);
+            missingPolicy.PrepareDomLocations(new[] { missing });
+            var replacement = new BirFieldDeclaration { Name = replacementName, Type = text,
+                Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("kotlin.clr.ClrField") } } };
+            missing.Fields = new[] { replacement };
+            Reject(() => {
+                missingPolicy.RefreshPhysicalNativeLocations(new[] { missing });
+                missingPolicy.BindDomDeclarations(new[] { missing.ToDom() });
+            }, "missing original source native origin (" + replacementName + ")");
+            Require(missingPolicy._sourceNativeStorage.Contains(origin)
+                && missingPolicy._pendingNativePhysicalBindings.Count == 1
+                && missingPolicy._pendingNativeOrigins.ContainsKey(origin)
+                && missingPolicy._nativeStorageMaterializations.Count == 0
+                && (replacementName != "original" || !replacement._nativeLocation.IsPresent),
+                "failed original-origin admission consumed/widened its ledger or stamped a same-key replacement");
+        }
 
         // Admission carries an actual owning occurrence, not a recoverable
         // name. Replacing it by an equal snapshot must not silently rebind it.

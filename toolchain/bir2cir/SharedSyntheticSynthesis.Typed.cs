@@ -7,7 +7,8 @@ static partial class SharedSyntheticSynthesis
     // Source declarations remain the actual owning occurrences. This pass only
     // appends representation declarations and consumes the explicit cell registry.
     public static void Apply(BirFileDeclaration file, ReferenceMetadataIndex refs,
-        ICollection<CellStorage> sharedCells = null)
+        ICollection<CellStorage> sharedCells = null,
+        Action<BirRefTypeDeclaration, BirFieldDeclaration> materializedStorage = null)
     {
         if (!file.Types.HasValue) file.Types = Array.Empty<IBirTypeDeclaration>();
         var present = file.Types.Value.Where(type => type.Name.HasValue)
@@ -31,7 +32,8 @@ static partial class SharedSyntheticSynthesis
                     && FieldLegality.Classify(spec.Elem, refs.IsByRefLikeFqn, out _) == FieldRejection.ByRefLike)
                     continue;
                 if (!present.Add(spec.Name)) continue;
-                var cell = BuildRefCell(spec);
+                var cell = BuildRefCell(spec, out var storageField);
+                materializedStorage?.Invoke(spec.Declaration, storageField);
                 var position = file.Pos.OrDefault();
                 ClosureSynthesis.RecordCaptureLegality(spec.Name,
                     cell.Fields.Value.Select(field => (field.Name.Value, field.Type.Value)),
@@ -64,6 +66,7 @@ static partial class SharedSyntheticSynthesis
 
     sealed class RefCellSpec
     {
+        internal BirRefTypeDeclaration Declaration { get; }
         internal string Name { get; }
         internal TypeNode Elem { get; }
         internal OptionalField<SourceTypeFacts> KotlinFacts { get; }
@@ -73,6 +76,7 @@ static partial class SharedSyntheticSynthesis
 
         internal RefCellSpec(BirRefTypeDeclaration declaration)
         {
+            Declaration = declaration;
             Name = declaration.Name.Value;
             Elem = BirGraphValue.CopyType(declaration.Elem.Value);
             KotlinFacts = declaration.KotlinSupertypesPre.HasValue ? declaration.KotlinSupertypesPre : default;
@@ -121,7 +125,7 @@ static partial class SharedSyntheticSynthesis
         => TypedExecutableFrames.RewriteType(type, variable => positions.TryGetValue(new(variable.Scope, variable.I), out var index)
             ? new TypeNode.Tv("type", index) : null);
 
-    static BirClassDefinition BuildRefCell(RefCellSpec spec)
+    static BirClassDefinition BuildRefCell(RefCellSpec spec, out BirFieldDeclaration storageField)
     {
         var positions = spec.Positions();
         var parameters = spec.Free.Select((key, index) => {
@@ -132,13 +136,14 @@ static partial class SharedSyntheticSynthesis
         }).ToArray();
         var self = new TypeNode.Fqn(spec.Name, spec.Free.Count == 0 ? null : Enumerable.Range(0, spec.Free.Count)
             .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray());
+        storageField = new BirFieldDeclaration {
+            Name = "v", Type = spec.ElementInFrame(), _nativeLocation = spec.NativeLocation,
+        };
         return new BirClassDefinition {
             Name = spec.Name, Kind = "class", Generated = true, Abstract = false, Vis = "public",
             TypeParams = parameters, Base = OptionalField<TypeNode>.Null, Interfaces = Array.Empty<TypeNode>(),
             KotlinSupertypesPre = spec.KotlinFacts,
-            Fields = new[] { new BirFieldDeclaration {
-                Name = "v", Type = spec.ElementInFrame(), _nativeLocation = spec.NativeLocation,
-            } },
+            Fields = new[] { storageField },
             Ctors = new[] { new BirConstructor {
                 Params = new[] { new BirParameter { Name = "v", Type = spec.ElementInFrame() } },
                 BaseArgs = OptionalField<IBirExpression[]>.Null, ThisArgs = OptionalField<IBirExpression[]>.Null, Vis = "public",

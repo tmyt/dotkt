@@ -11,6 +11,33 @@ sealed partial class GenericRepresentationPolicy
         (string Owner, string Name, bool Static, string Receiver) Key);
     NativePhysicalOccurrence[] _refreshedNativeLocations;
     BirFileDeclaration[] _nativeRefreshRoots;
+    readonly Dictionary<BirGraphValue, BirGraphValue> _nativeStorageMaterializations = new(ReferenceEqualityComparer.Instance);
+
+    // Only the producer of a replacement storage record can establish this
+    // edge. It does not select a new origin or grant source carrier eligibility.
+    internal void RegisterNativeStorageMaterialization(BirGraphValue origin, BirGraphValue physical)
+    {
+        if (!_sourceNativeStorage.Contains(origin)) return;
+        if (!_sourceAwaitingDom || _pendingNativeOrigins == null || _pendingNativePhysicalBindings == null
+            || !_pendingNativeOrigins.TryGetValue(origin, out var key)
+            || !_pendingNativePhysicalBindings.Contains(key))
+            throw new InvalidOperationException("Native storage materialization has no pending selected source origin");
+        if (physical == null || _nativeStorageMaterializations.ContainsKey(origin)
+            || _nativeStorageMaterializations.Values.Any(value => ReferenceEquals(value, physical)))
+            throw new InvalidOperationException("Native source storage has more than one materialization association");
+        _nativeStorageMaterializations.Add(origin, physical);
+    }
+
+    void ValidateOriginalNativeAdmission(NativePhysicalOccurrence occurrence)
+    {
+        if (!_pendingNativePhysicalBindings.Contains(occurrence.Key)) return;
+        if (_pendingNativeOrigins.TryGetValue(occurrence.Declaration, out var originalKey)
+            && originalKey == occurrence.Key) return;
+        foreach (var (origin, physical) in _nativeStorageMaterializations)
+            if (ReferenceEquals(physical, occurrence.Declaration)
+                && _pendingNativeOrigins.TryGetValue(origin, out var key) && key == occurrence.Key) return;
+        throw new InvalidOperationException("Native physical admission replaced a selected original source occurrence");
+    }
 
     // This is a physical admission at the complete pre-FBound clock. It must
     // not add source origins or reconsider source existential eligibility.
@@ -26,6 +53,9 @@ sealed partial class GenericRepresentationPolicy
         var occurrences = new List<NativePhysicalOccurrence>();
         void Select(NativePhysicalOccurrence occurrence)
         {
+            // Otherwise stamping a same-key replacement would manufacture the
+            // marker that the original-origin frontier is required to check.
+            ValidateOriginalNativeAdmission(occurrence);
             if (!selected.Add(occurrence.Declaration)) return;
             switch (occurrence.Declaration)
             {
@@ -130,6 +160,7 @@ sealed partial class GenericRepresentationPolicy
         var admitted = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
         foreach (var occurrence in _refreshedNativeLocations)
         {
+            ValidateOriginalNativeAdmission(occurrence);
             if (!ReferenceEquals(_nativeRefreshRoots[occurrence.FileIndex], occurrence.File)
                 || occurrence.File.FileClass.OrDefault() != occurrence.FileClass
                 || occurrence.File.Types.OrEmpty().Length != occurrence.TypeCount
