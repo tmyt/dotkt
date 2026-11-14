@@ -1136,13 +1136,10 @@ static partial class ClrMemberResolution
 
     // ---- bound .NET method-reference (newBoundClrDelegate) --------------------------------------
 
-    // W1-S5 (#46/#183) — RESOLVED-CLR-IR carry for a BOUND .NET method-reference (`netObj::method`, produced by
-    // NetInteropBinding.ReshapeBoundDelegate). The target is a source-visible public/protected INSTANCE method on the owner `clrType`
-    // (Codex-confirmed: the bound receiver comes from an IR dispatch receiver — statics have none, extensions are
-    // excluded). Until now ilemit resolved it with `type.GetMethod(name, argTypes) ?? type.GetMethod(name)` — a
-    // name+params match with a NAME-ONLY first-pick fallback (exactly the class #46 removes). The internal
-    // `resolvedMemberParams` selects the unique target (0 = hard ABI error, >1 = malformed), then this pass authors its
-    // complete memberRef. The ldftn-vs-ldvirtftn choice stays driven by the node's existing `virtual` field.
+    // A bound CLR method reference names an instance method on clrType.
+    // resolvedMemberParams selects its declaration and this pass authors the
+    // exact memberRef. The virtual fact chooses ldftn versus ldvirtftn; it does
+    // not participate in overload selection.
     static void ResolveBoundClrDelegate(JsonObject node)
     {
         if (ReadOwnerNode(node["clrType"]) is not TypeNode.Fqn ownerFqn) return;

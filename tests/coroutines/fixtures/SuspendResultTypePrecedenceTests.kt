@@ -202,7 +202,7 @@ suspend fun suspendResultTypeApplyOnInt(v: Int, f: SuspendResultTypeSuspendOnInt
 // says the refusal was about the suspension and not about the expression. The suspending operand is the SECOND one,
 // so the operand plan really does have to spill the first into a typed local across the suspension.
 //
-//   A `.NET` FIELD read (`Vector3.X` -> ReshapeField -> `clrPropGet`) — the reshape that dropped the stamp
+//   A `.NET` FIELD read (`Vector3.X` -> native field binding -> `clrPropGet`) — the reshape that dropped the stamp
 //   outright, and the shape this fixture is RED on without the fix.
 //   A `.NET` static call (`Math.Max` -> `clrStatic`) and a GENERIC one (`Activator.CreateInstance<T>()` ->
 //   `clrGenericStatic`) — the kinds the issue names. Both already carried a `sty` the reshape forwarded, so they

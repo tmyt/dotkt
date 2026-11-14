@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // An immutable declaration-frame signature, not executable children. Frozen text
 // is bookkeeping for the remaining ForeignStarProjectionBinding DOM frontier;
@@ -11,6 +12,19 @@ sealed class SourceTypeVector
     internal IReadOnlyList<TypeNode> Types { get; }
     internal string FrozenText { get; }
     SourceTypeVector(TypeNode[] types, string text) { Types = types; FrozenText = text; }
+
+    internal static SourceTypeVector Create(IReadOnlyList<TypeNode> types)
+    {
+        var copy = types.Select(BirGraphValue.CopyType).ToArray();
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartArray();
+            foreach (var type in copy) TypeNode.WriteJson(writer, type);
+            writer.WriteEndArray();
+        }
+        return new(copy, Encoding.UTF8.GetString(buffer.WrittenSpan));
+    }
 
     internal static SourceTypeVector Read(ref Utf8JsonReader reader) => ReadFrozenText(reader.GetString());
     internal static SourceTypeVector ReadFrozenText(string text)

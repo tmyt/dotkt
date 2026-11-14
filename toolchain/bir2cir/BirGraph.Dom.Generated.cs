@@ -2692,6 +2692,7 @@ internal static class BirGraphDom
                 case "overrides": break;
                 case "companionReceiver": break;
                 case "suspendFnTypePre": break;
+                case "ret": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirEventGet at {source.GetPath()}");
             }
         return new BirEventGet
@@ -2706,6 +2707,7 @@ internal static class BirGraphDom
             Overrides = Field<BirOverride[]>(fields, "overrides", value => ((JsonArray)value!).Select(item0 => ReadBirOverride(item0!)).ToArray()),
             CompanionReceiver = Field<TypeNode>(fields, "companionReceiver", value => TypeNode.Parse(value!.GetValue<string>())),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            Ret = Field<TypeNode>(fields, "ret", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 
