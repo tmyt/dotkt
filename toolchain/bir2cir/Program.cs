@@ -432,7 +432,8 @@ sealed class Pipeline
         foreach (var source in captured)
         {
             ClosureSynthesis.Apply(source, refs, scalarSlots.ProjectMethod);
-            SharedSyntheticSynthesis.Apply(source, refs, sharedCells);
+            SharedSyntheticSynthesis.Apply(source, refs, sharedCells,
+                genericRepresentations.RegisterNativeStorageMaterialization);
         }
         // Classify source loops, realize range access, then consume membership
         // endpoints before materializing range values. Keep that semantic order
