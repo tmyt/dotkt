@@ -425,10 +425,11 @@ static partial class NullableRepresentationDemand
         DeclarationIdentityBinding.ApplyLocal(new[] { root },
             new Dictionary<string, string> { ["frame-test-method"] = "physical" }, new HashSet<string>(),
             signatures, new Dictionary<string, int[]>(), null);
-        RoundtripMetadata.Stamp(root);
+        RoundtripMetadata.PrepareMetadata(root, runtimeMode: false);
         var stamped = BirGraphDom.ReadBirFileDeclaration(root);
-        RoundtripMetadata.StampTypeHeaders(stamped, runtimeMode: false);
+        RoundtripMetadata.CompleteMetadata(stamped, runtimeMode: false);
         owner = ((BirGraphValue)stamped.Types.Value[0]).ToDom();
+        method = stamped.Methods.Value[0].ToDom();
 
         static JsonNode Payload(JsonObject declaration, string name)
         {
@@ -446,11 +447,15 @@ static partial class NullableRepresentationDemand
             || methodPayload["signature"]["params"] is not JsonArray { Count: 0 }
             || owner[KotlinSupertypesRecord.PreKey] != null || method[NullableRepresentationTypes.MethodFrameKey] != null)
             throw new InvalidOperationException("Nullable representation metadata lost source facts or leaked transient frames");
-        RoundtripMetadata.StripRuntimeAttrs(runtime);
+        RoundtripMetadata.PrepareMetadata(runtime, runtimeMode: true);
         var stripped = BirGraphDom.ReadBirFileDeclaration(runtime);
-        RoundtripMetadata.StampTypeHeaders(stripped, runtimeMode: true);
-        if (((BirGraphValue)stripped.Types.Value[0]).ToDom()[KotlinSupertypesRecord.PreKey] != null
-            || runtime["methods"][0][NullableRepresentationTypes.MethodFrameKey] != null)
+        RoundtripMetadata.CompleteMetadata(stripped, runtimeMode: true);
+        var runtimeOwner = (BirClassDefinition)stripped.Types.Value[0];
+        var runtimeMethod = stripped.Methods.Value[0];
+        if (runtimeOwner.KotlinSupertypesPre.IsPresent || runtimeOwner.RoundtripSupertypesPre.IsPresent
+            || runtimeOwner.RoundtripTypeHeaderPending.IsPresent || runtimeMethod.NullableRepresentationFrame.IsPresent
+            || runtimeMethod.RoundtripDeclarationIdentity.IsPresent || runtimeMethod.DeclarationId.IsPresent
+            || runtimeMethod.DeclarationSourceName.IsPresent || runtimeMethod.RoundtripMetadataPending.IsPresent)
             throw new InvalidOperationException("Runtime metadata stripping leaked nullable representation facts");
     }
 }

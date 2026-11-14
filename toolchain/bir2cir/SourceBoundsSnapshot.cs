@@ -28,6 +28,8 @@ sealed class SourceBoundsSnapshot
 
     internal string FrozenText => facts.FrozenText;
 
+    internal void WritePayload(Utf8JsonWriter writer) => facts.WritePayload(writer);
+
     internal static void Write(Utf8JsonWriter writer, SourceBoundsSnapshot value) => SourceTypeFacts.Write(writer, value.facts);
     internal static JsonNode ToDom(SourceBoundsSnapshot value) => SourceTypeFacts.ToDom(value.facts);
 }

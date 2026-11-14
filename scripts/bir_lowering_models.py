@@ -354,6 +354,7 @@ def outputs(root, definitions):
             return f"{left}.FrozenText == {right}.FrozenText"
         if kind == "NullableRepresentationFrame": return f"EqualFrame({left}, {right})"
         if kind == "PhysicalMemberTable": return f"{left}.StructurallyEquals({right})"
+        if kind == "SourceDeclarationSignature": return f"{left}.SameContent({right})"
         if kind == "SourceTypeAlias": return f"SourceMetadataDataEquality.Equal({left}, {right})"
         if is_child(field): return f"((BirGraphValue){left}).StructurallyEquals((BirGraphValue){right})"
         return f"EqualityComparer<{kind}>.Default.Equals({left}, {right})"

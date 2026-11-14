@@ -18,7 +18,7 @@ static partial class RoundtripMetadata
             new BirClassDefinition { Name = "Probe.Handoff", Kind = "class", KotlinSupertypesPre = source },
         } }.ToDom();
         var oldFact = handoff["types"][0][KotlinSupertypesRecord.PreKey];
-        Stamp(handoff);
+        PrepareMetadata(handoff, runtimeMode: false);
         if (oldFact == null || handoff["types"][0][KotlinSupertypesRecord.PreKey] != null
             || !ReferenceEquals(handoff["types"][0]["roundtripSupertypesPre"], oldFact)
             || handoff["types"][0]["roundtripTypeHeaderPending"]?.GetValue<bool>() != true)

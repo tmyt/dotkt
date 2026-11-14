@@ -15,11 +15,11 @@ using DotKt.Bir;
 // The physical-head query determines which generic arguments still occupy signature positions, without
 // discarding the semantic annotation wrappers on surviving arguments. It uses the current build's representation.
 //
-// The CONSUMER is RoundtripMetadata (Stamp), which turns each flags key into a real `[Nullable]` entry in the decl's
+// The CONSUMER is RoundtripMetadata.CompleteMetadata, which turns each flags key into a real `[Nullable]` entry in the decl's
 // `attrs`/`retAttrs` array; ilemit then stamps those entries through its generic BuildCab path and never reads the
 // flags keys itself. Producer and consumer traversals must therefore agree on the decl kinds they visit — a slot this
-// pass skips silently loses its `[Nullable]` at stamp time (the #251 ctor bug). RoundtripMetadata.StampTypeMembers visits
-// methods / fields / properties / ctors, so ApplyRec visits the same four; StampTypeMembers additionally skips a
+// pass skips silently loses its `[Nullable]` at stamp time (the #251 ctor bug). PrepareMetadata grants normal metadata
+// obligations to methods / fields / properties / ctors, so ApplyRec visits the same four; both traversals skip a
 // `kind:"enum"` type outright (a real CLR enum has no ctors and no nullable slot, so nothing is stamped there).
 //
 // A VALUE `T?` (`Nullable<Int>`) contributes NO byte (it is the structural Nullable<T>, kept by BirTypeLowering); a

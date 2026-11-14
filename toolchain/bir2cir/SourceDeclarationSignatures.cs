@@ -1,15 +1,90 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
+using MessagePack;
 
 // Selected Kotlin signatures are facts, not executable DOM subtrees. Physical
 // ownership binding may rename their classifiers without changing their frame.
 sealed record SourceDeclarationSignature(IReadOnlyList<TypeNode> Parameters, TypeNode Return)
 {
+    internal void WritePayload(Utf8JsonWriter writer)
+    {
+        writer.WriteStartObject();
+        writer.WritePropertyName("params");
+        writer.WriteStartArray();
+        foreach (var parameter in Parameters) TypeNode.WriteJson(writer, parameter);
+        writer.WriteEndArray();
+        writer.WritePropertyName("ret");
+        TypeNode.WriteJson(writer, Return);
+        writer.WriteEndObject();
+    }
+
+    internal static void Write(Utf8JsonWriter writer, SourceDeclarationSignature value) => value.WritePayload(writer);
+    internal static JsonNode ToDom(SourceDeclarationSignature value) => value.ToDom();
+    internal static SourceDeclarationSignature Read(JsonNode node)
+        => new(node["params"].AsArray().Select(value => TypeNode.Read(value) ?? throw new FormatException()).ToArray(),
+            TypeNode.Read(node["ret"]) ?? throw new FormatException());
+
+    internal static SourceDeclarationSignature Read(ref Utf8JsonReader reader)
+    {
+        if (reader.TokenType != JsonTokenType.StartObject) throw new FormatException();
+        TypeNode[] parameters = null;
+        TypeNode result = null;
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            if (reader.TokenType != JsonTokenType.PropertyName) throw new FormatException();
+            var key = reader.GetString();
+            if (!reader.Read()) throw new FormatException();
+            if (key == "params")
+            {
+                if (reader.TokenType != JsonTokenType.StartArray || parameters != null) throw new FormatException();
+                var items = new List<TypeNode>();
+                while (reader.Read() && reader.TokenType != JsonTokenType.EndArray) items.Add(TypeNode.ReadJson(ref reader));
+                if (reader.TokenType != JsonTokenType.EndArray) throw new FormatException();
+                parameters = items.ToArray();
+            }
+            else if (key == "ret" && result == null) result = TypeNode.ReadJson(ref reader);
+            else throw new FormatException();
+        }
+        if (reader.TokenType != JsonTokenType.EndObject || parameters == null || result == null) throw new FormatException();
+        return new(parameters, result);
+    }
+
+    internal static SourceDeclarationSignature ReadMessagePack(ref MessagePackReader reader)
+    {
+        var count = reader.ReadMapHeader();
+        TypeNode[] parameters = null;
+        TypeNode result = null;
+        for (var index = 0; index < count; index++)
+        {
+            var key = IrMessagePack.ReadString(ref reader);
+            if (key == "params" && parameters == null)
+            {
+                parameters = new TypeNode[reader.ReadArrayHeader()];
+                for (var slot = 0; slot < parameters.Length; slot++) parameters[slot] = CirMessagePack.ReadType(ref reader);
+            }
+            else if (key == "ret" && result == null) result = CirMessagePack.ReadType(ref reader);
+            else throw new FormatException();
+        }
+        return new(parameters ?? throw new FormatException(), result ?? throw new FormatException());
+    }
+
+    internal static void WriteMessagePack(ref MessagePackWriter writer, SourceDeclarationSignature value, int depth)
+    {
+        if (depth >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteMapHeader(2);
+        IrMessagePack.WriteString(ref writer, "params");
+        writer.WriteArrayHeader(value.Parameters.Count);
+        foreach (var parameter in value.Parameters) CirMessagePack.WriteType(ref writer, parameter, depth + 1);
+        IrMessagePack.WriteString(ref writer, "ret");
+        CirMessagePack.WriteType(ref writer, value.Return, depth + 1);
+    }
+
     internal JsonObject ToDom() => new() {
         ["params"] = new JsonArray(Parameters.Select(TypeJson.Write).ToArray()),
         ["ret"] = TypeJson.Write(Return),
