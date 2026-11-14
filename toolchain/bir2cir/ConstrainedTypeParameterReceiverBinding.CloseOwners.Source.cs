@@ -33,10 +33,14 @@ static partial class ConstrainedTypeParameterReceiverBinding
     }
 
     static void CloseBody(BirParameter[] parameters, IBirStatement[] body, ConstraintSlot[] owner, ConstraintSlot[] method)
+        => CloseBody(parameters.Select(parameter => (parameter.Name.OrDefault(), parameter.Type.OrDefault())), body, owner, method, null);
+
+    static void CloseBody(IEnumerable<(string Name, TypeNode Type)> parameters, IBirStatement[] body,
+        ConstraintSlot[] owner, ConstraintSlot[] method, ReferenceMetadataIndex refs)
     {
         var locals = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         var ambiguous = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var parameter in parameters) RecordLocal(locals, ambiguous, parameter.Name.OrDefault(), parameter.Type.OrDefault());
+        foreach (var parameter in parameters) RecordLocal(locals, ambiguous, parameter.Name, parameter.Type);
         void Collect(BirGraphValue node)
         {
             if (node is IBirExecutablePayload) return;
@@ -70,19 +74,24 @@ static partial class ConstrainedTypeParameterReceiverBinding
                 BirPropertySet call => (call.Type.OrDefault(), call.Recv.OrDefault()),
                 _ => ((TypeNode)null, (IBirExpression)null),
             };
-            if (selectedOwner is TypeNode.Fqn named && receiver != null && Receiver(receiver) is { } variable
-                && ConstraintAt(variable, named.Name, owner, method, out var erased) is { } bound)
+            if (selectedOwner is TypeNode.Fqn named && receiver != null && Receiver(receiver) is { } variable)
             {
-                var closed = (named.Args == null || erased) && bound.Args != null ? bound : named;
-                // Preserve the actual node and every unrelated call fact. Only
-                // the direct owner and selected-route provenance belong here.
-                switch (node)
+                var erased = false;
+                var bound = refs == null ? ConstraintAt(variable, named.Name, owner, method, out erased)
+                    : ConstraintAtPhysical(variable, named.Name, owner, method, refs, out erased);
+                if (bound != null)
                 {
-                    case BirCallInstance call: call.OwnerType = closed; call._erasedConstraintDispatch = erased; break;
-                    case BirNativeInstance call: call.Type = closed; call._erasedConstraintDispatch = erased; break;
-                    case BirGenericInstance call: call.Type = closed; call._erasedConstraintDispatch = erased; break;
-                    case BirPropertyGet call: call.Type = closed; call._erasedConstraintDispatch = erased; break;
-                    case BirPropertySet call: call.Type = closed; call._erasedConstraintDispatch = erased; break;
+                    var closed = (named.Args == null || erased) && bound.Args != null ? bound : named;
+                    // Preserve the actual node and every unrelated call fact. Only
+                    // the direct owner and selected-route provenance belong here.
+                    switch (node)
+                    {
+                        case BirCallInstance call: call.OwnerType = closed; call._erasedConstraintDispatch = erased; break;
+                        case BirNativeInstance call: call.Type = closed; call._erasedConstraintDispatch = erased; break;
+                        case BirGenericInstance call: call.Type = closed; call._erasedConstraintDispatch = erased; break;
+                        case BirPropertyGet call: call.Type = closed; call._erasedConstraintDispatch = erased; break;
+                        case BirPropertySet call: call.Type = closed; call._erasedConstraintDispatch = erased; break;
+                    }
                 }
             }
             node.VisitChildren(Bind);
