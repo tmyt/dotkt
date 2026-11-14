@@ -1,6 +1,7 @@
 using System;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 static partial class StringCharSequenceBridge
 {
@@ -63,19 +64,16 @@ static partial class StringCharSequenceBridge
             "opaque consumption must evaluate once, adapt strings, and preserve the existing/null view");
         Require(Str(body[5]["value"]["k"]) == "cast",
             "a CharSequence array must retain its array cast rather than restore one scalar view");
-        var member = JsonNode.Parse("""
-        {"k":"callInstance", "ownerType":{"t":"fqn","name":"dotkt$CharSequence"},
-         "method":"length", "prop":"get", "args":[],
-         "recv":{"k":"callInstance", "ownerType":{"t":"fqn","name":"ImportedSlot"},
-          "method":"read", "args":[], "ret":{"t":"fqn","name":"dotkt$CharSequence"}}}
-        """);
+        var member = new BirCallInstance { OwnerType = new TypeNode.Fqn("dotkt$CharSequence"),
+            Method = "length", Prop = "get", Args = Array.Empty<IBirExpression>(),
+            Recv = new BirCallInstance { OwnerType = new TypeNode.Fqn("ImportedSlot"), Method = "read",
+                Args = Array.Empty<IBirExpression>(), Ret = new TypeNode.Fqn("dotkt$CharSequence") } };
         var stringMember = CharSeqStringLowering.Apply(member, null);
-        Require(Str(stringMember["k"]) == "clrPropGet"
-            && Str(stringMember["recv"]["method"]) == "toString"
-            && Str(stringMember["recv"]["args"][0]["method"]) == "read",
+        Require(stringMember is BirPropertyGet { Recv.Value: BirCallStatic {
+                Method.Value: "toString", Args.Value: [BirCallInstance { Method.Value: "read" }] } },
             "a String member must normalize an imported generic result before native consumption");
-        member["recv"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.String"), ["value"] = "ok" };
-        Require(Str(CharSeqStringLowering.Apply(member, null)["k"]) == "clrPropGet",
+        member.Recv = new BirConstant { Type = new TypeNode.Fqn("kotlin.String"), Value = new BirLiteral.TextLiteral("ok") };
+        Require(CharSeqStringLowering.Apply(member, null) is BirPropertyGet,
             "a proven String receiver must retain its direct native member lowering");
         Console.WriteLine("[selftest] String/CharSequence receiver and conditional boundaries: OK");
     }

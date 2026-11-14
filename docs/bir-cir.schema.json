@@ -2108,7 +2108,7 @@
       }, "required": ["k", "type", "args"], "additionalProperties": false
     },
     "cirNewClrNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirNewClr", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": { "memberSignature": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "resolvedMemberParams": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "resolvedMemberReturn": { "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ResolvedDeclaration", "$ref": "#/$defs/type" } }, "sourceConsumed": ["argTypes"], "sourceProperties": { "argTypes": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } } } },
+      "type": "object", "x-dotkt-model": { "name": "CirNewClr", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": { "kotlinHashStorageSignature": { "type": "boolean" }, "memberSignature": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "resolvedMemberParams": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "resolvedMemberReturn": { "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ResolvedDeclaration", "$ref": "#/$defs/type" } }, "sourceConsumed": ["argTypes"], "sourceProperties": { "argTypes": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } } } },
       "properties": { "k": { "const": "newClr" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" }, "args": { "type": "array", "items": { "$ref": "#/$defs/cirExpressionNode" } }, "memberRef": { "$ref": "#/$defs/memberRef" } },
       "required": ["k", "type", "args", "memberRef"], "additionalProperties": false
     },
@@ -2267,6 +2267,7 @@
     },
     "cirNativeInstanceNode": {
       "type": "object", "x-dotkt-model": { "name": "CirNativeInstance", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": {
+        "kotlinHashStorageSignature": { "type": "boolean" },
         "suspendCall": { "type": "boolean" }, "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } }, "_capturedGenericResult": { "$ref": "#/$defs/type" },
         "_erasedConstraintDispatch": { "type": "boolean" }, "resolvedMemberParams": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } },
         "_foreignDeclarationSignature": { "$ref": "#/$defs/sourceTypeVectorText" },

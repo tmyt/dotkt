@@ -298,43 +298,6 @@ static partial class CallEvalLowering
     /// are different namespaces (spec §2.7 *Id namespaces*).
     internal static string FreshBindingId() => FreshLocal();
 
-    /// Preserve a source value whose physical rewrite has no operand slot for it. Kotlin still evaluates the value
-    /// at this position (notably a companion receiver can trigger its carrier's type initializer) before evaluating
-    /// the rewritten expression's operands. Route the decision through the same unread-binding rule as every other
-    /// mapped-away call value: only Q2 may discard it, otherwise it becomes a leading statement in a valueBlock.
-    internal static JsonNode PreserveUnreadValueBefore(JsonNode value, JsonObject lowered, string context)
-    {
-        if (value == null) return lowered;
-        var id = FreshBindingId();
-        var binding = new JsonObject
-        {
-            ["id"] = id,
-            ["expr"] = value.DeepClone(),
-            ["stable"] = ValueStability.IsReReadable(value),
-        };
-        var valueType = StaticTypeOf(value);
-        // A field's declaring type is not its value type. In particular, companion singleton loads are self-typed
-        // only because their producer defines them that way; require that producer to state the fact on the node
-        // instead of reconstructing it here from ownerType. Other historically untyped values retain their existing
-        // handling — this check is the field-specific ownership boundary exercised by the companion spill path.
-        if (valueType == null && value is JsonObject valueObject && Str(valueObject["k"]) == "staticField")
-            throw new InvalidOperationException(
-                $"bir2cir: cannot type the static-field value whose evaluation must be preserved before {context}; "
-                + "its producer must carry the field's exact node-local result type.");
-        if (valueType is TypeNode type)
-            binding["type"] = TypeJson.Write(type);
-        var (stmts, repl) = Materialise(
-            new JsonArray { binding }, new List<JsonNode> { lowered }, context);
-        var result = Substitute(lowered, repl);
-        if (stmts.Count == 0) return result;
-        return new JsonObject
-        {
-            ["k"] = "valueBlock",
-            ["stmts"] = stmts,
-            ["result"] = result,
-        };
-    }
-
     /// Q5 of the four value questions (roster in bir-common/ValueStability.cs) — is this node an LVALUE FORMER, a
     /// shape that DESIGNATES storage without evaluating anything itself? Those are the locations whose operands can
     /// be pinned while the location stays in the slot. Anything else producing an address is a call whose invocation

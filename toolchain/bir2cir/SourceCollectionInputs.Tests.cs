@@ -34,7 +34,6 @@ sealed partial class SourceCollectionInputs
         var typed = new SourceCollectionInputs(new[] { root }, null);
         var dom = root.ToDom();
         var domApplications = new InnerApplicationOrder(new JsonNode[] { dom }, null);
-        var domIterators = MemberCallSubstitution.CollectDeclaredIteratorTypes(dom);
         var domDefinitions = SupertypeGraph.Collect(new JsonNode[] { dom });
         var sourceArgs = new TypeNode[] { new TypeNode.Star() };
         var call = new BirCallStatic {
@@ -51,7 +50,7 @@ sealed partial class SourceCollectionInputs
                 || !ReferenceEquals(selected.Args.Value, call.Args.Value)
                 || application[0] != text || application[1] != slot
                 || !application.SequenceEqual(domApplications.DeclarationArguments(applied))
-                || !typed.DeclaredIterators.SetEquals(new[] { "probe.Inner" }) || !typed.DeclaredIterators.SetEquals(domIterators)
+                || !typed.DeclaredIterators.SetEquals(new[] { "probe.Inner" })
                 || typed.Definitions["probe.Inner"].Arity != 2 || typed.Definitions["probe.Inner"].Arity != domDefinitions["probe.Inner"].Arity
                 || typed.Definitions["probe.Inner"].Interfaces.Single().Name != "probe.Contract"
                 || !typed.Definitions["probe.Inner"].Interfaces.SequenceEqual(domDefinitions["probe.Inner"].Interfaces))
