@@ -76,16 +76,34 @@ sealed partial class GenericRepresentationPolicy
                 == new TypeNode.Fqn("Capture", new TypeNode[] { text }),
             "late physical admission changed original source eligibility/origins or selected the wrong vector/staticness");
         Reject(() => policy.RefreshPhysicalNativeLocations(new[] { file }), "duplicate refresh");
+        // Carrier/foreign producers append after refresh. They report exact
+        // records, without rerunning physical/native selection or source capture.
+        var originalTypes = file.Types.Value;
+        var carrier = new BirInterfaceDefinition { Name = "Carrier", Kind = "interface", Generated = true };
+        file.Types = file.Types.Value.Append(carrier).ToArray();
+        policy.AdmitMaterializedNativeTypes(file, new IBirTypeDeclaration[] { carrier });
+        var notSelected = new BirFieldDeclaration { Name = "notSelectedByRefresh", Type = text,
+            Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("kotlin.clr.ClrField") } } };
+        var materialized = new BirClassDefinition { Name = "Materialized", Kind = "class", Generated = true,
+            Fields = new[] { notSelected } };
+        file.Types = file.Types.Value.Append(materialized).ToArray();
+        policy.AdmitMaterializedNativeTypes(file, new IBirTypeDeclaration[] { materialized });
+        Require(policy._nativeRefreshTypeVectors[0].Original.SequenceEqual(originalTypes, ReferenceEqualityComparer.Instance)
+            && policy._nativeRefreshTypeVectors[0].Continuing.SequenceEqual(file.Types.Value, ReferenceEqualityComparer.Instance)
+            && ReferenceEquals(originalExpected, policy._pendingNativePhysicalBindings)
+            && ReferenceEquals(originalOrigins, policy._pendingNativeOrigins) && !notSelected._nativeLocation.IsPresent,
+            "reported type append changed the original vector/origin authority or selected new native storage");
         // The following normalization clock can change structured type facts,
         // but not the field's physical identity or actual owning occurrence.
         exported.Type = new TypeNode.Fqn("Normalized", new TypeNode[] { text });
         continuation = file.ToDom();
         policy.BindDomDeclarations(new[] { continuation });
-        Require(policy._refreshedNativeLocations == null && policy._nativeRefreshRoots == null
+        Require(policy._refreshedNativeLocations == null && policy._nativeRefreshRoots == null && policy._nativeRefreshTypeVectors == null
             && policy._pendingNativeOrigins == null && policy._pendingNativePhysicalBindings == null
             && policy._nativeFields.Count == 4
             && TypeNodeDataEquality.Equal(exported.Type.Value, TypeJson.Read(continuation["fields"][2]["type"])),
             "physical/native source handoff did not preserve live normalization or release exactly once");
+        Reject(() => policy.AdmitMaterializedNativeTypes(file, Array.Empty<IBirTypeDeclaration>()), "type admission after handoff");
         var bound = continuation["fields"][0].AsObject();
         bound.Remove(NativeLocationKey);
         bound["name"] = "renamedAfterBinding";
@@ -132,6 +150,50 @@ sealed partial class GenericRepresentationPolicy
         duplicatePolicy.PrepareDomLocations(new[] { duplicateFile });
         duplicateFile.Fields = new[] { selected, selected };
         Reject(() => duplicatePolicy.RefreshPhysicalNativeLocations(new[] { duplicateFile }), "duplicate owning native admission");
-        Console.WriteLine("[physical native refresh] self-test OK (late source/capture/cell locations, selected vectors, strict original origins, occurrence handoff and release)");
+
+        (GenericRepresentationPolicy Policy, BirFileDeclaration File, BirClassDefinition Owner) Pending()
+        {
+            var field = new BirFieldDeclaration { Name = "original", Type = text,
+                Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("kotlin.clr.ClrField") } } };
+            var originalOwner = new BirClassDefinition { Name = "Original", Kind = "class", Fields = new[] { field } };
+            var pendingFile = new BirFileDeclaration { FileClass = "Append",
+                Types = new IBirTypeDeclaration[] { originalOwner, new BirInterfaceDefinition { Name = "Second", Kind = "interface" } } };
+            var pendingPolicy = CreateSource(new[] { pendingFile }, new Dictionary<string, string>(), null);
+            pendingPolicy.PrepareDomLocations(new[] { pendingFile });
+            pendingPolicy.RefreshPhysicalNativeLocations(new[] { pendingFile });
+            return (pendingPolicy, pendingFile, originalOwner);
+        }
+        foreach (var change in new[] { "reorder", "replace", "delete", "wrongReportedRecord", "duplicate", "unknownFile" })
+        {
+            var pending = Pending();
+            var before = pending.File.Types.Value;
+            var appended = new BirClassDefinition { Name = "Appended", Kind = "class", Generated = true };
+            pending.File.Types = before.Append(appended).ToArray();
+            if (change == "reorder") pending.File.Types = new IBirTypeDeclaration[] { before[1], before[0], appended };
+            if (change == "replace") pending.File.Types = new IBirTypeDeclaration[] { (BirClassDefinition)pending.Owner.DeepClone(), before[1], appended };
+            if (change == "delete") pending.File.Types = new IBirTypeDeclaration[] { before[0], appended };
+            if (change == "duplicate") pending.File.Types = before.Concat(new[] { appended, appended }).ToArray();
+            Reject(() => pending.Policy.AdmitMaterializedNativeTypes(
+                change == "unknownFile" ? (BirFileDeclaration)pending.File.DeepClone() : pending.File,
+                change == "duplicate" ? new IBirTypeDeclaration[] { appended, appended }
+                    : new IBirTypeDeclaration[] { change == "wrongReportedRecord" ? (BirClassDefinition)appended.DeepClone() : appended }),
+                "unreported type disposition (" + change + ")");
+            Require(pending.Policy._nativeRefreshTypeVectors[0].Continuing.SequenceEqual(before, ReferenceEqualityComparer.Instance),
+                "failed append admission changed the continuation vector");
+        }
+        foreach (var report in new[] { false, true })
+        {
+            var pending = Pending();
+            var appended = new BirClassDefinition { Name = "Appended", Kind = "class", Generated = true };
+            pending.File.Types = pending.File.Types.Value.Append(appended).ToArray();
+            if (report)
+            {
+                pending.Policy.AdmitMaterializedNativeTypes(pending.File, new IBirTypeDeclaration[] { appended });
+                pending.Owner.Fields = new[] { (BirFieldDeclaration)pending.Owner.Fields.Value[0].DeepClone() };
+            }
+            Reject(() => pending.Policy.BindDomDeclarations(new[] { pending.File.ToDom() }),
+                report ? "original field replacement after a reported append" : "unreported appended type");
+        }
+        Console.WriteLine("[physical native refresh] self-test OK (late storage, exact appended types, strict original prefixes/origins, one handoff and release)");
     }
 }
