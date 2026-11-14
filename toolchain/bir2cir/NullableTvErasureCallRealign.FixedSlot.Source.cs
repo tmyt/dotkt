@@ -7,12 +7,13 @@ static partial class NullableTvErasureCallRealign
     // Selection stays shared with the live DOM consumers. Materialization uses
     // owning typed values directly, never a JSON projection of the operand.
     internal static IBirExpression CoerceForFixedSlot(
-        IBirExpression value, TypeNode src, TypeNode target, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
+        IBirExpression value, TypeNode src, TypeNode target, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
+        bool exactPropertyTarget = false)
     {
         if (value is not BirGraphNode graph) return null;
         var selection = SelectFixedSlotCoercion(graph.Tag,
             value is BirCast cast ? cast.Type.OrDefault() : null,
-            src, target, exactPropertyTarget: false, isValue, refs);
+            src, target, exactPropertyTarget, isValue, refs);
         if (selection.Kind == SlotCoercionKind.None) return null;
         var operand = OptionalField<IBirExpression>.Of((IBirExpression)graph.DeepClone());
         var type = BirGraphValue.CopyType(selection.Type);
