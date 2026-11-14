@@ -27,7 +27,7 @@ using DotKt.Cir;
 // add_/remove_<E> to the interface's add_/remove_ event-accessor slots by name+signature (DefineMethodOverride).
 // A RAISE (`clrEventRaise`) is bound below to the selected static/instance accessor on its physical declaring type,
 // with the §6 guard: raise is legal ONLY for a Kotlin-DECLARED event (one that has a synthesized `raise_<E>`).
-static class ClrEventImplBinding
+static partial class ClrEventImplBinding
 {
     const string RaiseDeclarationKey = "eventRaiseDeclarationId";
     sealed record RaiseBinding(string Name, JsonArray Signature, string DeclarationId, bool IsStatic);
@@ -144,40 +144,6 @@ static class ClrEventImplBinding
             || !JsonNode.DeepEquals(nullFacts.ToDom(), roundtrip.ToDom()))
             throw new InvalidOperationException("Typed event facts changed absent/null metadata at the codec boundary");
         Console.WriteLine("[event source facts] self-test OK (declared/forwarded/inherited association, source frame, first writer, typed leaf codec)");
-    }
-
-    // Snapshot canonical declaration recipes after carrier preparation but before per-file body lowering. A local override uses the base
-    // delegate ABI, even when its covariant ClrEvent handler is narrower or inferred as Nothing. Input file order
-    // must not decide which delegate is selected. Hoisting may add newly materialized owners to the same index.
-    public sealed class LocalEvents
-    {
-        readonly Dictionary<(string Owner, string Event), (JsonObject Backing, JsonObject Add)> declarations = new();
-        public LocalEvents(IEnumerable<JsonNode> roots)
-        {
-            foreach (var root in roots) Index(root);
-        }
-
-        public void Index(JsonNode node)
-        {
-            if (node is JsonObject obj)
-            {
-                if (Str(obj["name"]) is string owner && obj["clrEvents"] is JsonArray events
-                    && obj["methods"] is JsonArray methods)
-                    foreach (var backing in events.OfType<JsonObject>())
-                        if (Str(backing["k"]) == "clrEventBacking" && Str(backing["name"]) is string name
-                            && FindAccessor(methods, "add_" + name, "add") is JsonObject add)
-                        {
-                            if (declarations.ContainsKey((owner, name))) continue;
-                            var recipe = (JsonObject)backing.DeepClone();
-                            declarations.Add((owner, name), (recipe, (JsonObject)add.DeepClone()));
-                        }
-                if (obj["types"] is JsonArray nested) foreach (var value in nested) if (value != null) Index(value);
-            }
-            else if (node is JsonArray array) foreach (var value in array) if (value != null) Index(value);
-        }
-
-        public bool TryGet(TypeNode.Fqn owner, string name, out (JsonObject Backing, JsonObject Add) declaration) =>
-            declarations.TryGetValue((owner.Name, name), out declaration);
     }
 
     sealed record LocalEventBinding(
@@ -604,11 +570,12 @@ static class ClrEventImplBinding
     // Select the kotc-synthesized shell by its semantic marker, never a user overload that merely shares `add_E`.
     static JsonObject FindAccessor(JsonArray methods, string name, string kind) =>
         methods.OfType<JsonObject>().FirstOrDefault(m =>
-            Str(m["name"]) == name
-            && m["body"] is JsonArray { Count: 1 } body
-            && body[0] is JsonObject marker
-            && Str(marker["k"]) == "clrEventAccessor"
-            && Str(marker["kind"]) == kind);
+            m["body"] is JsonArray body && body.FirstOrDefault() is JsonObject marker
+            && IsEventAccessor(Str(m["name"]), name, body.Count, Str(marker["k"]), Str(marker["kind"]), kind));
+
+    static bool IsEventAccessor(string actualName, string expectedName, int statements,
+        string marker, string actualKind, string expectedKind) => actualName == expectedName
+        && statements == 1 && marker == "clrEventAccessor" && actualKind == expectedKind;
 
     // The frontend names the actual Kotlin delegate field. Its initializer and ordering remain ordinary Kotlin;
     // this pass only supplies the native event accessors. Calls carry the exact stdlib declaration identity, so
