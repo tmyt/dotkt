@@ -198,9 +198,10 @@ static partial class OwnerConstrainedMethodLowering
                             {
                                 if (registered.Add(capturedMethod)) Record(capturedMethod, targetOwner, context.Bindings);
                             }
-                            else if (target is IBirTypeDeclaration targetType && targetType.KotlinSupertypesPre.OrDefault()?.NullableFrame == null)
-                                targetType.KotlinSupertypesPre = (targetType.KotlinSupertypesPre.OrDefault() ?? SourceTypeFacts.Empty)
-                                    .Merge(new Dictionary<int, TypeNode[]> { [index] = parameter.Constraints.OrEmpty().Select(BirGraphValue.CopyType).ToArray() });
+                            else if (target is IBirTypeDeclaration && NullableRepresentationViews.TypeFacts(target)?.NullableFrame == null)
+                                NullableRepresentationViews.SetTypeFacts(target,
+                                    (NullableRepresentationViews.TypeFacts(target) ?? SourceTypeFacts.Empty)
+                                        .Merge(new Dictionary<int, TypeNode[]> { [index] = parameter.Constraints.OrEmpty().Select(BirGraphValue.CopyType).ToArray() }));
                             parameter.Constraints = constraints;
                             parameter.ErasedInnerConstraints = erased != null ? OptionalField<TypeNode[]>.Of(dispatch) : default;
                             var plans = ContinuationDispatch(target)?.Bounds.ToDictionary(pair => pair.Key, pair => pair.Value)

@@ -73,7 +73,7 @@ static partial class FBoundStarProjectionErasure
             if (node is IBirExecutablePayload) return;
             if (node is IBirTypeDeclaration owner && owner.Kind.HasValue)
             {
-                var facts = owner.KotlinSupertypesPre.OrDefault() ?? SourceTypeFacts.Empty;
+                var facts = NullableRepresentationViews.TypeFacts(node) ?? SourceTypeFacts.Empty;
                 if (facts.NullableFrame == null)
                     facts = facts.Merge(Bounds(owner.TypeParams.OrEmpty(), type => Moves(type) || ContainsStarOrTypeVariable(type)));
                 var originalBase = owner.Base.OrDefault();
@@ -81,7 +81,7 @@ static partial class FBoundStarProjectionErasure
                         ? BirGraphValue.CopyType(originalBase) : null,
                     owner.Interfaces.OrEmpty().Where(edge => !context.Projection.Rewrite(edge, preserveConstructedHead: true).Equals(edge))
                         .Select(BirGraphValue.CopyType).ToArray(), null);
-                if (!ReferenceEquals(facts, SourceTypeFacts.Empty)) owner.KotlinSupertypesPre = facts;
+                if (!ReferenceEquals(facts, SourceTypeFacts.Empty)) NullableRepresentationViews.SetTypeFacts(node, facts);
             }
             if (node is BirFunctionDeclaration method && method.Name.HasValue && method.Params.HasValue)
             {
@@ -112,7 +112,7 @@ static partial class FBoundStarProjectionErasure
         void Walk(BirGraphValue node)
         {
             if (node is IBirExecutablePayload) return;
-            node.VisitOwnChildSlots((field, _, slot) => {
+            node.VisitOwnChildSlots((field, role, slot) => {
                 // Only the actual typeParams field participates, not captured
                 // frames, member-owner snapshots or referenced signature rows.
                 if (field == "typeParams" && slot.Value is BirTypeParameter parameter && parameter.Constraints.HasValue)

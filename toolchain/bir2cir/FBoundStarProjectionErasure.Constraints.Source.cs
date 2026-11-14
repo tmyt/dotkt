@@ -13,7 +13,7 @@ static partial class FBoundStarProjectionErasure
             if (!declaration.Generated.OrDefault() || !declaration.TypeParams.HasValue) continue;
             var parameters = declaration.TypeParams.Value;
             var prefix = (declaration as BirClassDefinition)?.OuterTypeParamCount.OrDefault() ?? 0;
-            var facts = declaration.KotlinSupertypesPre.OrDefault();
+            var facts = NullableRepresentationViews.TypeFacts(binding.Source);
             var recorded = new Dictionary<int, TypeNode[]>();
             var dispatch = SourceDispatch(declaration)?.Bounds.ToDictionary(pair => pair.Key, pair => pair.Value)
                 ?? new Dictionary<int, TypeNode[]>();
@@ -41,7 +41,7 @@ static partial class FBoundStarProjectionErasure
             }
             if (recorded.Count == 0 && dispatch.Count == 0) continue;
             if (facts?.NullableFrame == null)
-                declaration.KotlinSupertypesPre = (facts ?? SourceTypeFacts.Empty).Merge(recorded);
+                NullableRepresentationViews.SetTypeFacts(binding.Source, (facts ?? SourceTypeFacts.Empty).Merge(recorded));
             OwnerConstrainedMethodLowering.SetDispatchBoundsSource((BirGraphValue)declaration, dispatch);
             ConstrainedTypeParameterReceiverBinding.CloseTypeOwners(declaration);
         }
@@ -118,8 +118,9 @@ static partial class FBoundStarProjectionErasure
                 if (!result.TryGetValue(inner.Name, out var changed)) result[inner.Name] = changed = new();
                 changed.Add(index);
             }
-            if (recorded.Count > 0 && declaration.KotlinSupertypesPre.OrDefault()?.NullableFrame == null)
-                declaration.KotlinSupertypesPre = (declaration.KotlinSupertypesPre.OrDefault() ?? SourceTypeFacts.Empty).Merge(recorded);
+            var facts = NullableRepresentationViews.TypeFacts((BirGraphValue)declaration);
+            if (recorded.Count > 0 && facts?.NullableFrame == null)
+                NullableRepresentationViews.SetTypeFacts((BirGraphValue)declaration, (facts ?? SourceTypeFacts.Empty).Merge(recorded));
         }
         return result;
     }
