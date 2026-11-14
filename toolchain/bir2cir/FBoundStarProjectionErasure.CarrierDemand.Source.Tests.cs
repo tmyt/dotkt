@@ -125,8 +125,8 @@ static partial class FBoundStarProjectionErasure
             ClosureType = new TypeNode.Fqn("Arrays"), Method = "initialize" } }, ambiguous,
                 CarrierTypeContext.ForSource(ambiguous, refs), out _), "ambiguous local initializer was selected by a name fallback");
 
-        // The explicit one-way projection is the production binding boundary,
-        // not a second DOM demand implementation used as an oracle.
+        // The production binding boundary continues the exact prepared owners
+        // through their actual one-way projection.
         var selectedOwner = plan.Owners["Exported"];
         var projected = root.ToDom(bindings.ObserveProjection);
         bindings.BindProjected();

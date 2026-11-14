@@ -57,7 +57,7 @@ static partial class FBoundStarProjectionErasure
                 bindings.GetSource(method);
             }
         }
-        // As with the original owner, a present fields vector establishes an
+        // A present fields vector establishes an
         // empty methods vector even if it contains no accessor-eligible field.
         if (appended.Count != 0 || !definition.Methods.HasValue) definition.Methods = methods.ToArray();
         return appended.ToArray();
