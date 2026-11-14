@@ -13,6 +13,7 @@ sealed class SourceBoundsSnapshot
     internal SourceBoundsSnapshot(IReadOnlyDictionary<int, TypeNode[]> bounds) => facts = new SourceTypeFacts(bounds);
     SourceBoundsSnapshot(SourceTypeFacts facts) => this.facts = facts;
     internal SourceBoundsSnapshot Merge(IReadOnlyDictionary<int, TypeNode[]> additions) => new(facts.Merge(additions));
+    internal SourceBoundsSnapshot RewriteTypes(Func<TypeNode, TypeNode> rewrite) => new(facts.RewriteTypes(rewrite));
 
     internal static SourceBoundsSnapshot Read(ref Utf8JsonReader reader)
         => FromFacts(SourceTypeFacts.Read(ref reader));

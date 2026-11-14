@@ -434,6 +434,8 @@ def outputs(root, definitions):
             model += ["    public override TypeNode? ExplicitSourceType => " + " ?? ".join(explicit_source_types) + ";"]
         if "declarationId" in shape["properties"]:
             model += ["    public override OptionalField<string> DeclarationIdentityFact => DeclarationId;"]
+        if "dotktDelegateSlot" in shape["properties"]:
+            model += ["    public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;"]
         if "typeArgs" in shape["properties"] and cs(shape["properties"]["typeArgs"]) == "TypeNode[]":
             model += ["    public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }"]
         for field, api in [("suspendFnTypePre", "SuspendFunctionTypeFact"), ("retSuspendFnTypePre", "SuspendFunctionReturnFact"),

@@ -533,9 +533,6 @@ static partial class ClrMemberResolution
             foreach (var item in array.ToList()) if (item != null) EnsurePlainCallDescriptors(item);
     }
 
-    // Nullable-generic/function erasure runs before top-level owner attribution. Preserve the frontend-resolved
-    // descriptor out-of-band across those transforms. A scalar identity token rides the call while transforms clone
-    // it; the token is removed after resolution and never enters CIR.
     // Suspend lowering replaces a hot call with a cold call and supplies its appended ABI parameter.
     // Project the preserved descriptor in this pass's side table; only its scalar token rides the call
     // and is removed before CIR emission.

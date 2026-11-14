@@ -93,6 +93,20 @@ static partial class FunctionValueRepresentation
         Apply(absent, isByRefLike);
         if (!absent.Sig.IsNull || absent.FunctionCallSignature.IsPresent)
             throw new InvalidOperationException("Function signature capture changed absent/null vector facts");
+        foreach (var declared in new BirGraphValue[] {
+            new BirNewClosure { FuncType = ordinary, DotktDelegateSlot = new TypeNode.Fqn("Callback") },
+            new BirNewDelegate { FuncType = ordinary, DotktDelegateSlot = new TypeNode.Fqn("Callback") },
+            new BirNewBoundDelegate { FuncType = ordinary, DotktDelegateSlot = new TypeNode.Fqn("Callback") },
+            new BirBoundClrDelegate { FuncType = ordinary, DotktDelegateSlot = new TypeNode.Fqn("Callback") },
+            new BirClrStaticDelegate { FuncType = ordinary, DotktDelegateSlot = new TypeNode.Fqn("Callback") },
+        })
+        {
+            var declaredExpected = declared.ToDom();
+            Apply(declaredExpected, isByRefLike);
+            var represented = Apply(declared, isByRefLike);
+            if (!represented.HasDeclaredDelegateSlot || !JsonNode.DeepEquals(represented.ToDom(), declaredExpected))
+                throw new InvalidOperationException("Declared delegate signatures diverged from schema-owned slot presence");
+        }
         Console.WriteLine("[owning function values] self-test OK (carrier mutation, declaration/call facts, exact restoration, once evaluation, boundaries, identity and presence)");
     }
 }

@@ -13621,6 +13621,7 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<BirMemberReference> DelegateCtorRef { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
     public override TypeNode? FunctionTypeStamp => FuncType.OrDefault();
+    public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -13836,6 +13837,7 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? FunctionTypeStamp => FuncType.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
+    public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -16217,6 +16219,7 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public override TypeNode? FunctionTypeStamp => FuncType.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
+    public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -26787,6 +26790,7 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
     public override TypeNode? FunctionTypeStamp => FuncType.OrDefault();
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -27086,6 +27090,7 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
     public override TypeNode? FunctionTypeStamp => FuncType.OrDefault();
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
+    public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
