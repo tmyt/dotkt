@@ -18,9 +18,8 @@ static partial class NullableTvErasureCallRealign
             {
                 var context = SourceUseContext(index, constructor.Params.OrEmpty(), null, frame, null);
                 var baseOwner = owner.Base.OrDefault() as TypeNode.Fqn;
-                Dictionary<int, TypeNode[]> baseParameters = null, ownParameters = null;
-                if (baseOwner != null && index.IsVisibleOwner(baseOwner.Name)) index.Ctors.TryGetValue(baseOwner.Name, out baseParameters);
-                if (owner.Name.HasValue && index.IsVisibleOwner(owner.Name.Value)) index.Ctors.TryGetValue(owner.Name.Value, out ownParameters);
+                TryVisibleConstructors(baseOwner?.Name, index, out var baseParameters);
+                TryVisibleConstructors(owner.Name.OrDefault(), index, out var ownParameters);
                 SourceDelegation(constructor.BaseArgs.OrDefault(), baseParameters, OwnerArguments(baseOwner), context);
                 var arity = owner.TypeParams.OrEmpty().Length;
                 var ownArguments = arity == 0 ? null : Enumerable.Range(0, arity)
@@ -289,10 +288,7 @@ static partial class NullableTvErasureCallRealign
     }
 
     static TypeNode SourceSlotType(TypeNode type, string name, Ctx context)
-        => type is TypeNode.Fqn owner && name != null && context.Idx.IsVisibleOwner(owner.Name)
-            && context.Idx.Slots.TryGetValue(owner.Name, out var slots)
-            && slots.GetValueOrDefault(name) is { } declaration
-                ? Subst(NullableGenericErasure.EraseNullableTv(declaration, _isValue), OwnerArguments(owner), null) : null;
+        => SelectFieldSlot(type, name, context.Idx);
 
     static void SourceArrayElements(IBirExpression[] elements, TypeNode element, Ctx context)
     {
