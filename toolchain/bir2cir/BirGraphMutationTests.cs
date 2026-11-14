@@ -61,6 +61,42 @@ internal static class BirGraphMutationTests
             "in-place descendant type fields");
         Require(!root.Types.IsPresent && call.Sty.IsNull && method.RetKotlinType.IsNull,
             "in-place absent and explicit-null facts");
+        var fieldCall = new BirCallStatic {
+            Sig = new[] { source }, ResolvedMemberParams = new[] { source },
+            Sty = OptionalField<TypeNode>.Null,
+            Args = new IBirExpression[] { new BirLocal { Name = "argument", Sty = source } },
+        };
+        var fields = new List<(string Name, BirGenericFrameRole Frame)>();
+        fieldCall.RewriteOwnTypeFieldsInPlace((name, frame, type) => {
+            fields.Add((name, frame));
+            return name == "sig" ? target : type;
+        });
+        var frozenMethod = new BirFunctionDeclaration { RetKotlinType = source };
+        frozenMethod.RewriteOwnTypeFieldsInPlace((name, frame, type) => {
+            fields.Add((name, frame));
+            return target;
+        });
+        Require(fields.Contains(("sig", BirGenericFrameRole.ReferencedDeclaration))
+            && fields.Contains(("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration))
+            && fields.All(field => field.Name != "retKotlinType")
+            && fieldCall.Sig.Value.Single() == target && fieldCall.ResolvedMemberParams.Value.Single() == source
+            && frozenMethod.RetKotlinType.Value == source && fieldCall.Sty.IsNull,
+            "field-context rewrite retains declared frame roles, frozen facts and explicit null");
+        var argumentSlots = 0;
+        var fieldArguments = fieldCall.Args.Value;
+        fieldCall.VisitOwnChildSlots((name, frame, slot) => {
+            if (name != "args") return;
+            Require(frame == BirGenericFrameRole.Lexical, "argument slots belong to the caller frame");
+            slot.Replace(new BirLocal { Name = "replacement" });
+            argumentSlots++;
+        });
+        fieldCall.ClearResultTypeStamp();
+        root.ClearResultTypeStamp();
+        Require(argumentSlots == 1 && ReferenceEquals(fieldCall.Args.Value, fieldArguments)
+            && fieldCall.Args.Value[0] is BirLocal { Name.HasValue: true } replacement
+            && replacement.Name.Value == "replacement" && !fieldCall.Sty.IsPresent
+            && fieldCall.Sig.Value.Single() == target,
+            "field-context child mutation preserves owning vectors and clears only the result stamp");
         var expected = before.Rewrite(node => node.RewriteTypeFields(_ => target));
         Require(root.StructurallyEquals(expected), "in-place type rewrite changes no other data");
 
