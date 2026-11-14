@@ -16,54 +16,6 @@ static partial class StringCharSequenceBridge
     static readonly HashSet<string> StringBuilderTokens = new(StringComparer.Ordinal)
         { "kotlin.text.StringBuilder", "java.lang.StringBuilder", "java.lang.AbstractStringBuilder", "System.Text.StringBuilder" };
 
-    // Synthesized exactly once per app assembly (dedup below). It uses pre-BirTypeLowering kotlin.* signature tokens and
-    // ordinary CIR CLR-call bodies for String.get_Chars/Length/Substring, implementing the same CharSequence slots as a
-    // user class. Type slots are structured `{t:"fqn",…}` nodes (§1 — types are nodes, no bare strings); the subsequent
-    // DeclNullableFlags/ReferenceNullableStrip/
-    // BirTypeLowering passes lower the `kotlin.*` identities to the CLR forms uniformly. (The retired `@<name>`
-    // this-assembly marker is dropped — bir2cir/ilemit derive local-vs-referenced from the FQN via `_types`.)
-    const string AdapterTypeJson = """
-    {
-      "name": "dotkt$StringCharSequence",
-      "kind": "class", "generated": true, "abstract": false, "vis": "public", "base": null,
-      "interfaces": [{"t":"fqn","name":"dotkt$CharSequence"}],
-      "fields": [{"name": "value", "type": {"t":"fqn","name":"kotlin.String"}, "vis": "internal"}],
-      "ctors": [{
-        "params": [{"name": "value", "type": {"t":"fqn","name":"kotlin.String"}}],
-        "baseArgs": null, "thisArgs": null, "vis": "public",
-        "body": [{"k": "setField", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value", "value": {"k": "local", "name": "value"}}]
-      }],
-      "methods": [
-        {"name": "get", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public", "mods": {"operator": true},
-         "params": [{"name": "index", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"kotlin.Char"},
-         "body": [{"k": "return", "value": {"k": "clrInstance", "type": {"t":"fqn","name":"System.String"}, "method": "get_Chars", "argTypes": [{"t":"fqn","name":"System.Int32"}], "ret": {"t":"fqn","name":"System.Char"},
-           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "value", "prop": "get", "args": []},
-           "args": [{"k": "local", "name": "index"}]}}], "attrs": []},
-        {"name": "subSequence", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
-         "params": [{"name": "startIndex", "type": {"t":"fqn","name":"kotlin.Int"}}, {"name": "endIndex", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"dotkt$CharSequence"},
-         "body": [{"k": "return", "value": {"k": "new", "type": {"t":"fqn","name":"dotkt$StringCharSequence"}, "argTypes": [{"t":"fqn","name":"kotlin.String"}],
-           "args": [{"k": "clrInstance", "type": {"t":"fqn","name":"System.String"}, "method": "Substring", "argTypes": [{"t":"fqn","name":"System.Int32"}, {"t":"fqn","name":"System.Int32"}], "ret": {"t":"fqn","name":"System.String"},
-             "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "value", "prop": "get", "args": []},
-             "args": [{"k": "local", "name": "startIndex"}, {"k": "binOp", "op": "-", "lhs": {"k": "local", "name": "endIndex"}, "rhs": {"k": "local", "name": "startIndex"}}]}]}}], "attrs": []},
-        {"name": "value", "propertyName": "value", "propertyAccessor": "get", "propertyAssociation": "string-value", "static": false, "override": false, "virtual": false, "abstract": false, "objectOverride": false, "vis": "public",
-         "params": [], "ret": {"t":"fqn","name":"kotlin.String"},
-         "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]},
-        {"name": "length", "propertyName": "length", "propertyAccessor": "get", "propertyAssociation": "string-length", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
-         "params": [], "ret": {"t":"fqn","name":"kotlin.Int"},
-         "body": [{"k": "return", "value": {"k": "clrPropGet", "type": {"t":"fqn","name":"System.String"}, "name": "Length", "ret": {"t":"fqn","name":"System.Int32"}, "static": false,
-           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "value", "prop": "get", "args": []}}}]},
-        {"name": "ToString", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": true, "vis": "public",
-         "params": [], "ret": {"t":"fqn","name":"kotlin.String"},
-         "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]}
-      ],
-      "properties": [
-        {"name": "value", "type": {"t":"fqn","name":"kotlin.String"}, "kotlinAccessors": ["get"], "propertyAssociation": "string-value"},
-        {"name": "length", "type": {"t":"fqn","name":"kotlin.Int"}, "kotlinAccessors": ["get"], "propertyAssociation": "string-length"}
-      ],
-      "attrs": []
-    }
-    """;
-
     // Process-wide: the app-local adapter type is emitted into EXACTLY ONE file's `types` per assembly (all of an app's
     // BIR files are lowered by a single bir2cir process; other files that also wrap resolve the type assembly-wide via
     // ilemit's `_types`). Fresh per process; app builds only. `_fired` tracks whether the file just walked wrapped.
@@ -152,7 +104,9 @@ static partial class StringCharSequenceBridge
         {
             var types = fileObj["types"] as JsonArray;
             if (types == null) { types = new JsonArray(); fileObj["types"] = types; }
-            types.Add(JsonNode.Parse(AdapterTypeJson));
+            // This is a newly authored declaration at a genuine late DOM
+            // materialization boundary, not a conversion of an input graph.
+            types.Add(BuildAdapterDeclaration().ToDom());
             _adapterEmitted = true;
         }
     }
@@ -524,24 +478,42 @@ static partial class StringCharSequenceBridge
     static JsonNode CoerceCharSeqArg(JsonNode a, Env env, bool nonNullSlot)
     {
         if (a is not JsonObject o) return a;
-        if (IsStaticString(a, env, allowNullable: nonNullSlot || IsNotNullAssertion(a))) return WrapAdapter(a);
-        if (IsStaticStringBuilder(a, env)) return WrapStringBuilder(a);
+        var conversion = SelectCharSequenceConversion(StaticType.Surface(a, BirScope.FromVars(env.Vars)),
+            nonNullSlot, IsNotNullAssertion(a), Str(o["k"]) == "cond");
+        if (conversion == CharSequenceConversion.String) return WrapAdapter(a);
+        if (conversion == CharSequenceConversion.StringBuilder) return WrapStringBuilder(a);
         // #156 — a genuinely-nullable String value (`z: String? = null`) into a NULLABLE `CharSequence?` slot (the strict
         // path, nonNullSlot=false): the checks above deliberately leave it RAW to preserve null, but a raw `String` into a
         // `dotkt$CharSequence` interface slot is ilverify-UNSOUND (String does not implement the synthetic adapter iface) —
         // it only runs because a null short-circuits (isNullOrEmpty). Emit a runtime-conditional wrap
         // `v == null ? (dotkt$CharSequence)null : new dotkt$StringCharSequence(v)`: the slot receives a genuine adapter or
         // a typed null, ilverify-clean, null-preserving. The non-null-String and `!!`/elvis cases already wrapped above.
-        if (!nonNullSlot && IsStaticNullableString(a, env)) return WrapAdapterNullable(a, env);
+        if (conversion == CharSequenceConversion.NullableString) return WrapAdapterNullable(a, env);
         // The target slot is CharSequence, so adapt each conditional result branch independently. This includes
         // conditionals inside valueBlock results, such as the frontend's elvis and non-null-assertion shapes.
-        if (Str(o["k"]) == "cond")
+        if (conversion == CharSequenceConversion.Branches)
         {
             if (o["then"] is JsonNode t) { var ct = CoerceCharSeqArg(t, env, nonNullSlot); if (!ReferenceEquals(ct, t)) o["then"] = ct; }
             if (o["else"] is JsonNode e) { var ce = CoerceCharSeqArg(e, env, nonNullSlot); if (!ReferenceEquals(ce, e)) o["else"] = ce; }
             return o;
         }
         return a;
+    }
+
+    enum CharSequenceConversion { None, String, StringBuilder, NullableString, Branches }
+
+    // The source owner and the late materialized-return owner share the exact
+    // positive recognition/order. Their graph access and construction differ.
+    static CharSequenceConversion SelectCharSequenceConversion(TypeNode type, bool nonNullSlot,
+        bool notNullAssertion, bool conditional)
+    {
+        var stringType = (nonNullSlot || notNullAssertion) && type is TypeNode.Nullable nullable ? nullable.Of : type;
+        if (IsStringTokT(stringType)) return CharSequenceConversion.String;
+        if (type is TypeNode.Fqn { Args: null } builder && StringBuilderTokens.Contains(builder.Name))
+            return CharSequenceConversion.StringBuilder;
+        if (!nonNullSlot && type is TypeNode.Nullable optional && IsStringTokT(optional.Of))
+            return CharSequenceConversion.NullableString;
+        return conditional ? CharSequenceConversion.Branches : CharSequenceConversion.None;
     }
 
     // A `!!` non-null assertion desugars to `valueBlock{ var t = <e>; result = if (!(t == null)) t else throw }`. In the
@@ -562,11 +534,6 @@ static partial class StringCharSequenceBridge
         var thenName = r["then"] is JsonObject t && Str(t["k"]) == "local" ? Str(t["name"]) : null;
         return lhsName != null && lhsName == thenName;
     }
-
-    // A StringBuilder value: static type is one of the StringBuilder spellings (never String / the adapter / a user CS).
-    static bool IsStaticStringBuilder(JsonNode n, Env env)
-        => n is JsonObject && StaticType.Surface(n, BirScope.FromVars(env.Vars)) is TypeNode.Fqn { Args: null } f
-           && StringBuilderTokens.Contains(f.Name);
 
     // Snapshot a StringBuilder to a String via the null-safe `kotlin.LibraryKt.toString(object)` (the same coercion
     // CharSeqStringLowering uses for a non-String value flowing into a `string` slot), then wrap that String in the
@@ -758,12 +725,6 @@ static partial class StringCharSequenceBridge
             ["args"] = new JsonArray { strExpr.DeepClone() },
         };
     }
-
-    // #156 — the value's recovered static type is a NULLABLE String (`String?`): a `Nullable`-wrapped String token. The
-    // genuine-null value the strict `CharSequence?`-slot path keeps unwrapped; it gets the runtime-conditional adapter wrap.
-    static bool IsStaticNullableString(JsonNode n, Env env)
-        => n is JsonObject
-           && StaticType.Surface(n, BirScope.FromVars(env.Vars)) is TypeNode.Nullable nn && IsStringTokT(nn.Of);
 
     // #156 — the runtime-conditional adapter wrap for a nullable String into a `CharSequence?` slot:
     //   v == null ? (dotkt$CharSequence)null : new dotkt$StringCharSequence(v)
