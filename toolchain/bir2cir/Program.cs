@@ -154,6 +154,7 @@ static class Bir2Cir
                 SuspendColdLowering.DeclarationRegistrySelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 MetadataDeclaredMembersTests.SelfTest();
+                ExternalGenericConstraintValidation.SelfTestResolved();
                 NullableTvErasureCallRealign.SelfTest();
                 MapVarianceRealign.SelfTest();
                 TypedModuleInventory.SelfTest();
@@ -1429,11 +1430,6 @@ sealed class Pipeline
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
             CapturedGenericInvocation.Apply(lowered, refs, emittedLocalTypes);
-            // Exact member resolution above selected the authoritative MethodDef and temporarily carried its CLR-only
-            // generic parameter facts. Validate the call's actual method arguments in the caller's lexical frame, then
-            // consume that internal carrier before CIR serialization. Generic Kotlin properties are physical accessor
-            // MethodDefs here and therefore follow the same rule as functions and extension methods.
-            externalGenericConstraintValidation.ApplyResolvedMembers(lowered);
             // Property nodes reveal whether they denote an accessor or a public field only after CLR member
             // resolution. Convert the accessor subset on type-variable receivers to constrained calls now, retaining
             // the exact memberRef just resolved; fields keep their distinct load/store representation.
@@ -1450,6 +1446,12 @@ sealed class Pipeline
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         loweredRoots.Clear();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Exact member resolution selected each MethodDef's CLR-only generic
+        // constraints. Consume those facts on the same owning typed occurrences
+        // before interface/delegate materialization; retain the prepared local
+        // declarations and caller frames rather than rebuilding their authority.
+        foreach (var root in physicalDocuments)
+            externalGenericConstraintValidation.ApplyResolvedMembers(root);
         // Only declarations marked at the original metadata phase own a header
         // obligation. Later synthesized types do not acquire source metadata;
         // pending source facts are opaque to the intervening physical binders.
