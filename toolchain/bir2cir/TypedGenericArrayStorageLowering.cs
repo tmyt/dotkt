@@ -96,7 +96,7 @@ static class TypedGenericArrayStorageLowering
         if (receiverType is TypeNode.Nullable nullable) receiverType = nullable.Of;
         if (receiverType is not TypeNode.Fqn { Name: "System.Array" }) return node;
         return node switch {
-            BirArrayGet value => Read(refs, receiver, value.Index.Value, value.Sty.OrDefault() ?? value.Elem.Value),
+            BirArrayGet value => Read(refs, receiver, value.Index.Value, value.Elem.Value),
             BirArraySet value => Store(value, receiver, refs, names),
             BirArrayLength => (BirGraphValue)Call(refs, "get_Length", receiver, "System.Int32", Array.Empty<string>()),
             BirForArray value => Loop(value, receiver, refs, names),

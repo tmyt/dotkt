@@ -1,5 +1,6 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class FBoundStarProjectionErasure
 {
@@ -9,7 +10,7 @@ static partial class FBoundStarProjectionErasure
     internal static void ProjectDependentTypeConstraintsSource(IBirTypeDeclaration declaration,
         CarrierRealizationContext context)
     {
-        var frame = declaration.KotlinSupertypesPre.OrDefault()?.NullableFrame;
+        var frame = NullableRepresentationViews.TypeFacts((BirGraphValue)declaration)?.NullableFrame;
         var parameters = declaration.TypeParams.OrEmpty();
         for (var index = 0; index < parameters.Length; index++)
         {
