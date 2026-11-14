@@ -91,22 +91,6 @@ static partial class RoundtripMetadata
         Append(declaration, Marker(CallableVisibilityLowering.Carrier, StringArg(BirCarrier.JsonV1),
             BytesArg(Convert.ToBase64String(VisibilityContent(visibility)))));
 
-    // Declaration metadata is opaque to every physical representation pass. Encode it at the input boundary,
-    // before any traversal can confuse a Kotlin alias's classifier or parameter with an executable CLR slot.
-    public static void FreezeTypeAliases(JsonNode root, IReadOnlyList<SourceTypeAlias> aliases)
-    {
-        if (root is not JsonObject file) throw new FormatException();
-        if (aliases.Count == 0) return;
-        var attrs = file["assemblyAttrs"] as JsonArray ?? new JsonArray();
-        file["assemblyAttrs"] = attrs;
-        foreach (var alias in aliases)
-        {
-            var content = BirCarrier.EncodeBody(BirCarrier.MessagePackV1, alias,
-                SourceMetadataJson.Write, SourceMetadataMessagePack.Write);
-            attrs.Add(Marker(AKTypeAlias, StringArg(BirCarrier.MessagePackV1), BytesArg(Convert.ToBase64String(content))));
-        }
-    }
-
     // ---------------------------------------------------------------------------------------------------------------
     // STAMP one lowered CIR file: add `attrs`/`retAttrs` entries derived from the decls' round-trip facts.
     // ---------------------------------------------------------------------------------------------------------------
