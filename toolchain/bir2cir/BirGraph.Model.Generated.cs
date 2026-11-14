@@ -4293,6 +4293,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<TypeNode> MemberReturnType { get; set; }
     public OptionalField<TypeNode> _erasedValueVariable { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
+    public OptionalField<bool> _innerFactoryArguments { get; set; }
     public OptionalField<bool> DeclarationReferencedIntrinsic { get; set; }
     public OptionalField<bool> DeclarationReferencedFactory { get; set; }
     public OptionalField<bool> DotktProjectedCollection { get; set; }
@@ -4764,6 +4765,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
             && EqualField(MemberReturnType, value.MemberReturnType, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(_erasedValueVariable, value._erasedValueVariable, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(RetSuspendFnTypePre, value.RetSuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
+            && EqualField(_innerFactoryArguments, value._innerFactoryArguments, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(DeclarationReferencedIntrinsic, value.DeclarationReferencedIntrinsic, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(DeclarationReferencedFactory, value.DeclarationReferencedFactory, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(DotktProjectedCollection, value.DotktProjectedCollection, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
@@ -4820,6 +4822,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_erasedValueVariable", _erasedValueVariable, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "_innerFactoryArguments", _innerFactoryArguments, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "declarationReferencedIntrinsic", DeclarationReferencedIntrinsic, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "declarationReferencedFactory", DeclarationReferencedFactory, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "dotktProjectedCollection", DotktProjectedCollection, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -4878,6 +4881,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
         if (_erasedValueVariable.IsPresent) result["_erasedValueVariable"] = _erasedValueVariable.IsNull ? null : TypeNode.Write(_erasedValueVariable.Value);
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
+        if (_innerFactoryArguments.IsPresent) result["_innerFactoryArguments"] = _innerFactoryArguments.IsNull ? null : JsonValue.Create(_innerFactoryArguments.Value);
         if (DeclarationReferencedIntrinsic.IsPresent) result["declarationReferencedIntrinsic"] = DeclarationReferencedIntrinsic.IsNull ? null : JsonValue.Create(DeclarationReferencedIntrinsic.Value);
         if (DeclarationReferencedFactory.IsPresent) result["declarationReferencedFactory"] = DeclarationReferencedFactory.IsNull ? null : JsonValue.Create(DeclarationReferencedFactory.Value);
         if (DotktProjectedCollection.IsPresent) result["dotktProjectedCollection"] = DotktProjectedCollection.IsNull ? null : JsonValue.Create(DotktProjectedCollection.Value);
@@ -4941,6 +4945,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<TypeNode> MemberReturnType { get; set; }
     public OptionalField<TypeNode> _erasedValueVariable { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
+    public OptionalField<bool> _innerFactoryArguments { get; set; }
     public OptionalField<bool> DeclarationReferencedIntrinsic { get; set; }
     public OptionalField<BirTypeParameter[]> _resolvedMethodTypeParams { get; set; }
     public OptionalField<int> NullableWitnessCount { get; set; }
@@ -5410,6 +5415,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
             && EqualField(MemberReturnType, value.MemberReturnType, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(_erasedValueVariable, value._erasedValueVariable, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(RetSuspendFnTypePre, value.RetSuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
+            && EqualField(_innerFactoryArguments, value._innerFactoryArguments, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(DeclarationReferencedIntrinsic, value.DeclarationReferencedIntrinsic, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(NullableWitnessCount, value.NullableWitnessCount, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
@@ -5468,6 +5474,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_erasedValueVariable", _erasedValueVariable, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "_innerFactoryArguments", _innerFactoryArguments, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "declarationReferencedIntrinsic", DeclarationReferencedIntrinsic, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "_resolvedMethodTypeParams", _resolvedMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "nullableWitnessCount", NullableWitnessCount, (writer, value) => { writer.WriteNumberValue(value); });
@@ -5528,6 +5535,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
         if (_erasedValueVariable.IsPresent) result["_erasedValueVariable"] = _erasedValueVariable.IsNull ? null : TypeNode.Write(_erasedValueVariable.Value);
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
+        if (_innerFactoryArguments.IsPresent) result["_innerFactoryArguments"] = _innerFactoryArguments.IsNull ? null : JsonValue.Create(_innerFactoryArguments.Value);
         if (DeclarationReferencedIntrinsic.IsPresent) result["declarationReferencedIntrinsic"] = DeclarationReferencedIntrinsic.IsNull ? null : JsonValue.Create(DeclarationReferencedIntrinsic.Value);
         if (_resolvedMethodTypeParams.IsPresent) result["_resolvedMethodTypeParams"] = _resolvedMethodTypeParams.IsNull ? null : new JsonArray(_resolvedMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (NullableWitnessCount.IsPresent) result["nullableWitnessCount"] = NullableWitnessCount.IsNull ? null : JsonValue.Create(NullableWitnessCount.Value);
@@ -8931,6 +8939,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<TypeNode[]> _syntheticTypeArgs { get; set; }
     public OptionalField<int> LexicalOwnerTypeParamCount { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
+    public OptionalField<string> ExistentialSourceMember { get; set; }
     public OptionalField<bool> RoundtripMetadataPending { get; set; }
     public OptionalField<BirRoundtripDeclarationIdentity> RoundtripDeclarationIdentity { get; set; }
     public OptionalField<SourceBoundsSnapshot> RoundtripMethodBounds { get; set; }
@@ -9017,6 +9026,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (PropertyAccessor.HasValue) { visit((string)PropertyAccessor.Value); }
         if (PropertyAssociation.HasValue) { visit((string)PropertyAssociation.Value); }
         if (_syntheticTypeArgs.HasValue) { foreach (var item0 in _syntheticTypeArgs.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
+        if (ExistentialSourceMember.HasValue) { visit((string)ExistentialSourceMember.Value); }
         if (SuspendTaskResult.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)SuspendTaskResult.Value, visit); }
         if (ExtensionCoreDeclarationId.HasValue) { visit((string)ExtensionCoreDeclarationId.Value); }
         if (DeclarationSourceName.HasValue) { visit((string)DeclarationSourceName.Value); }
@@ -9410,6 +9420,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
             && EqualField(_syntheticTypeArgs, value._syntheticTypeArgs, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(LexicalOwnerTypeParamCount, value.LexicalOwnerTypeParamCount, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
             && EqualField(RetSuspendFnTypePre, value.RetSuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
+            && EqualField(ExistentialSourceMember, value.ExistentialSourceMember, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(RoundtripMetadataPending, value.RoundtripMetadataPending, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(RoundtripDeclarationIdentity, value.RoundtripDeclarationIdentity, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(RoundtripMethodBounds, value.RoundtripMethodBounds, (left, right) => left.FrozenText == right.FrozenText)
@@ -9495,6 +9506,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "_syntheticTypeArgs", _syntheticTypeArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "lexicalOwnerTypeParamCount", LexicalOwnerTypeParamCount, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
+        WriteOptional(writer, "existentialSourceMember", ExistentialSourceMember, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "roundtripMetadataPending", RoundtripMetadataPending, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "roundtripDeclarationIdentity", RoundtripDeclarationIdentity, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "roundtripMethodBounds", RoundtripMethodBounds, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
@@ -9582,6 +9594,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (_syntheticTypeArgs.IsPresent) result["_syntheticTypeArgs"] = _syntheticTypeArgs.IsNull ? null : new JsonArray(_syntheticTypeArgs.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (LexicalOwnerTypeParamCount.IsPresent) result["lexicalOwnerTypeParamCount"] = LexicalOwnerTypeParamCount.IsNull ? null : JsonValue.Create(LexicalOwnerTypeParamCount.Value);
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
+        if (ExistentialSourceMember.IsPresent) result["existentialSourceMember"] = ExistentialSourceMember.IsNull ? null : JsonValue.Create(ExistentialSourceMember.Value);
         if (RoundtripMetadataPending.IsPresent) result["roundtripMetadataPending"] = RoundtripMetadataPending.IsNull ? null : JsonValue.Create(RoundtripMetadataPending.Value);
         if (RoundtripDeclarationIdentity.IsPresent) result["roundtripDeclarationIdentity"] = RoundtripDeclarationIdentity.IsNull ? null : ((BirGraphValue)RoundtripDeclarationIdentity.Value).ToDom(projected);
         if (RoundtripMethodBounds.IsPresent) result["roundtripMethodBounds"] = RoundtripMethodBounds.IsNull ? null : SourceBoundsSnapshot.ToDom(RoundtripMethodBounds.Value);
