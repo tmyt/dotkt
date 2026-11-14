@@ -134,6 +134,7 @@ static class Bir2Cir
                 ClrMemberResolution.FunctionSlotComparisonSelfTest();
                 StringCharSequenceBridge.CallSignatureSelfTest();
                 ClrMemberResolution.NullableSlotComparisonSelfTest();
+                ClrMemberResolution.WellKnownTableSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
                 ConstrainedTypeParameterReceiverBinding.AritySnapshotSelfTest();
                 SourceOwnerClosureTests.Run();
@@ -1434,7 +1435,6 @@ sealed class Pipeline
             // resolution. Convert the accessor subset on type-variable receivers to constrained calls now, retaining
             // the exact memberRef just resolved; fields keep their distinct load/store representation.
             ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(new[] { lowered });
-            ClrMemberResolution.ResolveWellKnown(lowered, refs);
         }
 
         var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
@@ -1446,6 +1446,9 @@ sealed class Pipeline
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         loweredRoots.Clear();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Fixed BCL operands depend only on the reference universe. Author their
+        // complete physical role table directly on the continuing typed roots.
+        foreach (var root in physicalDocuments) ClrMemberResolution.ResolveWellKnown(root, refs);
         // Exact member resolution selected each MethodDef's CLR-only generic
         // constraints. Consume those facts on the same owning typed occurrences
         // before interface/delegate materialization; retain the prepared local

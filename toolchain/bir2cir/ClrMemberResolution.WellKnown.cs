@@ -15,6 +15,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 using DotKt.Toolchain;
 
 static partial class ClrMemberResolution
@@ -46,11 +47,10 @@ static partial class ClrMemberResolution
     };
 
     /// <summary>Stamp the fixed-member table on a document root. Every entry resolves or the build stops.</summary>
-    public static void ResolveWellKnown(JsonNode root, ReferenceMetadataIndex refs)
+    public static void ResolveWellKnown(BirFileDeclaration root, ReferenceMetadataIndex refs)
     {
         _refs = refs ?? throw new ArgumentNullException(nameof(refs));
-        if (root is not JsonObject document) return;
-        var table = new JsonObject();
+        var table = new Dictionary<string, MemberRefNode>(StringComparer.Ordinal);
         foreach (var (role, owner, name, parameters) in WellKnownMembers)
         {
             var open = ResolveOwnerType(new TypeNode.Fqn(owner))
@@ -68,7 +68,7 @@ static partial class ClrMemberResolution
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}.{name}({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}'");
-            table[role] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, OwnParameters(open));
+            table[role] = MemberRefOf(win, MemberRefNode.Kinds.Method, open, OwnParameters(open));
         }
         foreach (var (role, owner, parameters) in WellKnownCtors)
         {
@@ -85,9 +85,9 @@ static partial class ClrMemberResolution
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}..ctor({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}'");
-            table[role] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
+            table[role] = MemberRefOf(win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
         }
-        document["wellKnownRefs"] = table;
+        root.WellKnownRefs = PhysicalMemberTable.Create(table);
     }
 
     // An OPEN generic declaration is named over its own parameters — `IEnumerator`1<!0>` — because that is what
