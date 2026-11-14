@@ -565,10 +565,8 @@ sealed class Pipeline
         // captured module-wide before override or per-file declaration changes.
         var calleeTypeParams = module.Preparation.Inventory.CalleeTypeParameters;
 
-        // Snapshot every LOCAL generic type's declared member returns BEFORE the per-file DEF-side EraseNullableTv
-        // (NullableGenericErasure runs inside the transform loop, mutating declarations in place). Feeds
-        // NullableTvErasureCallRealign so a `Box<Int>.get_a()` call across the generic boundary re-derives its
-        // return from the (erased) declaration instead of kotc's over-substituted `Ref<Nullable<Int>>` (#4).
+        // Declaration returns were snapshotted before typed erasure. Re-derive
+        // each use from that declaration, not the frontend's substituted return.
         var nullableTvDeclRets = module.Preparation.NullableDeclarations;
         // Snapshot every method whose source-level `T` return is produced by an unchecked cast from a nullable/object
         // carrier.  Its physical CLR ABI must return object so narrowing can be delayed until the value is consumed;
@@ -588,13 +586,13 @@ sealed class Pipeline
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
         var staged = new List<(JsonNode Root, string OutputName)>();
-        var localEventDeclarations = new ClrEventImplBinding.LocalEvents(birFiles.Select(file => file.Root), refs.IsByRefLikeFqn);
+        var localEventDeclarations = new ClrEventImplBinding.LocalEvents(birFiles.Select(file => file.Root));
         var sharedCells = module.Preparation.SharedCells;
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
-            // Owning typed preparation materialized heap ref-cell declarations. Preserve their pristine element
-            // slots in the nullable-generic use index before the declaration erasure below. Otherwise a late
+            // Owning typed preparation snapshotted heap ref-cell declarations before erasure. Admit their pristine
+            // element slots to the nullable-generic use index at the original per-file clock. Otherwise a late
             // inherited protected-property read may be correctly realigned to object[] while its store into a
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
             NullableTvErasureCallRealign.ApplyNewSyntheticTypes(bir.SyntheticTypes, nullableTvDeclRets);

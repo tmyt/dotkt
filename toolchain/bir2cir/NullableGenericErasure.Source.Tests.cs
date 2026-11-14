@@ -46,6 +46,8 @@ static partial class NullableGenericErasure
         var suspended = new TypeNode.Fn(true, nullableVariable, Array.Empty<TypeNode>());
         var suspendSlot = new BirParameter { Name = "suspendFn", Type = suspended };
         var array = new BirNewArraySized { Elem = nullableInteger };
+        var construction = new BirNew { Type = SourceType("Carrier"), ArgTypes = new TypeNode[] { list } };
+        var referent = new BirByrefLoad { Elem = list };
         var overrideEdge = new BirOverride { Owner = list, Member = "Use", Kind = "function", Arity = 0 };
         var constructorSlot = new BirParameter { Name = "initial", Type = nullableVariable };
         var field = new BirFieldDeclaration { Name = "value", Type = nullableVariable };
@@ -54,7 +56,8 @@ static partial class NullableGenericErasure
             Params = new[] { nullableSlot, concreteSlot, pointer, functionSlot, suspendSlot },
             Overrides = new[] { overrideEdge },
             TypeParams = new[] { new BirTypeParameter { Name = "T", Constraints = new TypeNode[] { list } } },
-            Body = new IBirStatement[] { SourceStatement(signature), SourceStatement(foreign), SourceStatement(array) } };
+            Body = new IBirStatement[] { SourceStatement(signature), SourceStatement(foreign), SourceStatement(array),
+                SourceStatement(construction), SourceStatement(referent) } };
         var owner = new BirClassDefinition { Name = "Owner", Kind = "class", Methods = new[] { method },
             Fields = new[] { field }, Properties = new[] { property }, Base = list,
             Ctors = new[] { new BirConstructor { Params = new[] { constructorSlot } } } };
@@ -67,7 +70,8 @@ static partial class NullableGenericErasure
             && SourceSame(nullableSlot.Type.Value, SourceType("object")) && SourceSame(concreteSlot.Type.Value, nullableInteger)
             && SourceSame(field.Type.Value, SourceType("object")) && SourceSame(property.Type.Value, erasedList)
             && SourceSame(owner.Base.Value, erasedList) && SourceSame(constructorSlot.Type.Value, SourceType("object"))
-            && SourceSame(array.Elem.Value, SourceType("object")) && SourceSame(overrideEdge.Owner.Value, list),
+            && SourceSame(array.Elem.Value, SourceType("object")) && SourceSame(overrideEdge.Owner.Value, list)
+            && SourceSame(construction.ArgTypes.Value[0], erasedList) && SourceSame(referent.Elem.Value, erasedList),
             "Nullable declaration/array slots did not follow positional erasure or an override identity was rewritten");
         SourceRequire(SourceSame(signature.Sig.Value[0], nullableInteger) && SourceSame(signature.Sig.Value[1], SourceType("object"))
             && SourceSame(signature.TypeArgs.Value[0], SourceType("object")) && SourceSame(signature.Ret.Value, erasedList)

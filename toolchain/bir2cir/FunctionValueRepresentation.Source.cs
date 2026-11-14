@@ -19,7 +19,7 @@ static partial class FunctionValueRepresentation
         var invocationResult = node is BirDelegateInvoke { FuncType.HasValue: true } invoke
             && invoke.FuncType.Value is TypeNode.Fn { Suspend: false, Clr: null } function
                 ? function.Ret : null;
-        var declaredDelegate = HasDeclaredSourceDelegateSlot(node);
+        var declaredDelegate = node.HasDeclaredDelegateSlot;
         node.RewriteOwnTypeFieldsInPlace((field, _, type) =>
             PreserveField(field) || field == "funcType" && declaredDelegate ? type : RepresentType(type, isByRefLike));
         node.VisitOwnChildSlots((field, _, slot) => {
@@ -40,15 +40,6 @@ static partial class FunctionValueRepresentation
     static bool PreserveField(string field) => field is
         DeclarationIdentityBinding.SemanticSignatureKey or FunctionSignatureIdentity.Key or FunctionSignatureIdentity.CallKey
         or "memberSignature" or "delegationSig" or "inheritedClassMethods" or "attrs" or "retAttrs";
-
-    static bool HasDeclaredSourceDelegateSlot(BirGraphValue node) => node switch {
-        BirNewClosure value => value.DotktDelegateSlot.IsPresent,
-        BirNewDelegate value => value.DotktDelegateSlot.IsPresent,
-        BirNewBoundDelegate value => value.DotktDelegateSlot.IsPresent,
-        BirBoundClrDelegate value => value.DotktDelegateSlot.IsPresent,
-        BirClrStaticDelegate value => value.DotktDelegateSlot.IsPresent,
-        _ => false,
-    };
 
     static void CaptureCallSignature(BirGraphValue node)
     {
