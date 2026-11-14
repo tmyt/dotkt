@@ -13,14 +13,6 @@ static class FunctionSignatureIdentity
     internal const string Key = "functionSignatureType";
     internal const string CallKey = "functionCallSignature";
 
-    public static void Capture(JsonNode root)
-    {
-        foreach (var parameters in DeclarationParameters(root))
-            foreach (var parameter in parameters.OfType<JsonObject>())
-                if (parameter[Key] == null && FunctionValueRepresentation.ContainsOrdinaryFunction(parameter["type"]))
-                    parameter[Key] = parameter["type"].DeepClone();
-    }
-
     internal static void Capture(BirGraphValue root)
     {
         void Parameters(OptionalField<BirParameter[]> parameters)

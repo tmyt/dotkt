@@ -455,26 +455,6 @@ static partial class NullableTvErasureCallRealign
         ApplyRec(root, idx);
     }
 
-    // DelegateTargetSlotAlignment changes declaration slots rather than materializing a subtree. Re-flow the method
-    // bodies only when that capability changed; this is a distinct phase transition, not a repair for a forgotten
-    // producer.
-    public static void ApplyAfterDelegateSlotAlignment(JsonNode root, DeclIndex idx, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs) => ApplyDeclaredUses(root, idx, isValue, refs);
-
-    // A producer that creates a self-contained executable subtree after the file pass supplies that exact subtree.
-    // The source pass keeps every visited local-read stamp aligned with its flowed declaration type, so a cloned read
-    // can seed this exact-root flow without walking the enclosing method again. This is the construction-boundary
-    // counterpart of ApplyRec's declaration walk.
-    public static void ApplyMaterialized(IEnumerable<JsonNode> roots, DeclIndex idx, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs)
-    {
-        _isValue = isValue ?? (_ => false);
-        _refs = refs;
-        _sourceApplicationOrder = idx.SourceApplicationOrder;
-        foreach (var root in roots)
-            if (root != null) Eval(root, new Ctx { Idx = idx });
-    }
-
     // The CROSS-MODULE half (#86 D1) — the same formula after a distinct capability transition. It exists because of
     // WHEN a referenced callee acquires an owner: kotc emits a referenced top-level call
     // as `callStatic owner=null`, and only MemberCallSubstitution attributes it to the file class the reference index

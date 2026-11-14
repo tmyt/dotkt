@@ -156,15 +156,6 @@ static partial class ClrEventImplBinding
         string AddVisibility,
         string RemoveVisibility);
 
-    public static JsonNode BindImplementations(JsonNode root, ReferenceMetadataIndex refs, LocalEvents locals)
-    {
-        locals.Index(root);
-        if (root is JsonObject obj && obj["types"] is JsonArray types)
-            foreach (var t in types.OfType<JsonObject>())
-                BindType(t, refs, locals);
-        return root;
-    }
-
     // Raise sites and their declaring event may live in different source files. Resolve them only after every local
     // event implementation has its final synthesized raise_<E> declaration, then copy that declaration's exact
     // parameter vector onto the call. ilemit links this descriptor; it never selects a local member by name/arity.
@@ -245,7 +236,7 @@ static partial class ClrEventImplBinding
             // Kotlin callable declarations. State their identity at selection
             // so subsequent carrier/collision projection preserves this edge.
             selected[DeclarationIdentityBinding.Key] ??= DeclarationIdentityBinding.PhysicalOnlyId(
-                "clr-event-accessor:" + new JsonArray(definition.Name, name).ToJsonString(), "accessor");
+                "clr-event-accessor:" + EventAccessorIdentity(definition.Name, name), "accessor");
             return (FunctionSignatureIdentity.Signature((JsonArray)selected["params"]),
                 Str(selected[DeclarationIdentityBinding.Key]), Str(selected["vis"]) ?? "public");
         }
@@ -396,344 +387,18 @@ static partial class ClrEventImplBinding
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
-    // Resolve field-like/custom-policy `clrEvents` and class-delegation `clrEventForwarders` on one type.
-    static void BindType(JsonObject type, ReferenceMetadataIndex refs, LocalEvents locals)
-    {
-        var backings = type["clrEvents"] as JsonArray;
-        var forwarders = type["clrEventForwarders"] as JsonArray;
-        if ((backings == null || backings.Count == 0) && (forwarders == null || forwarders.Count == 0)) return;
-        var methods = type["methods"] as JsonArray ?? new JsonArray();
-        var fields = type["fields"] as JsonArray;
-        if (fields == null) { fields = new JsonArray(); type["fields"] = fields; }
-        var decls = new JsonArray();
-        foreach (var backing in backings?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
-        {
-            var name = Str(backing["name"]);
-            if (name == null) continue;
-            var isStatic = backing["static"]?.GetValue<bool>() == true;
-            var addM = FindAccessor(methods, "add_" + name, "add");
-            var remM = FindAccessor(methods, "remove_" + name, "remove");
-            var raiseM = FindAccessor(methods, "raise_" + name, "raise");
-            if (addM == null || remM == null || raiseM == null)
-                throw new InvalidOperationException($"bir2cir: clrEvent '{name}' is missing a synthesized add/remove/raise accessor — kotc synthesis defect");
-
-            var classOwner = TypeJson.Read(backing["classOverrideOwner"]) as TypeNode.Fqn;
-            var openEvent = Str(backing["modality"]) switch
-            {
-                "open" => true,
-                "final" => false,
-                _ => throw new InvalidOperationException($"bir2cir: clrEvent '{name}' has no concrete source modality"),
-            };
-            if (Str(backing[KotlinPropertyAccessors.AssociationKey]) is string association)
-                foreach (var getter in methods.OfType<JsonObject>().Where(method =>
-                    Str(method[KotlinPropertyAccessors.AssociationKey]) == association
-                    && Str(method[KotlinPropertyAccessors.KindKey]) == "get"))
-                    getter["clrFinal"] = !openEvent && getter["virtual"]?.GetValue<bool>() == true;
-            var baseType = classOwner == null ? null : ClrMemberResolution.ResolveOwnerType(classOwner, refs);
-            EventInfo baseEvent = null;
-            TypeNode[] baseArguments = Array.Empty<TypeNode>();
-            if (baseType != null
-                && !TryResolveDeclaredEvent(baseType, classOwner.Args ?? Array.Empty<TypeNode>(), name,
-                    out baseEvent, out baseArguments))
-                throw new InvalidOperationException($"bir2cir: overridden class event '{classOwner.Name}.{name}' was not found");
-
-            // The concrete delegate `D` + its Invoke param nodes (raise's signature).
-            var (delegateNode, invokeParamNodes, parameterSignature, nativeParameterSignature) =
-                ResolveImplementationDelegate(name, addM, backing, refs, locals);
-
-            if (Str(backing["policyField"]) is string policyField)
-                RewritePolicy(type, fields, name, policyField, addM, remM, raiseM,
-                    delegateNode, invokeParamNodes, refs);
-            else
-            {
-                var fieldName = name + "$delegate";
-                fields.Add(new JsonObject { ["name"] = fieldName, ["type"] = delegateNode.DeepClone(),
-                    ["vis"] = "private", ["static"] = isStatic });
-                RewriteFieldLike(addM, "add", fieldName, delegateNode);
-                RewriteFieldLike(remM, "remove", fieldName, delegateNode);
-                RewriteRaise(raiseM, fieldName, delegateNode, invokeParamNodes);
-            }
-
-            void Slot(JsonObject method, MethodInfo externalSlot, bool reusesSlot, bool needsInterfaceSlot)
-            {
-                var isVirtual = !isStatic && (reusesSlot || openEvent || needsInterfaceSlot);
-                method["override"] = !isStatic && reusesSlot;
-                method["virtual"] = isVirtual;
-                method["clrFinal"] = isVirtual && !openEvent;
-                if (externalSlot == null) return;
-                // The selected native accessor owns its entire signature, including source-function modopts.
-                // Covariant/inferred Kotlin H stays in kotlinType; it must not allocate a new override ABI.
-                var parameters = (JsonArray)method["params"];
-                var signature = externalSlot.GetParameters().Select(parameter =>
-                    SupertypeGraph.SubstOwnerTvs(ReferenceMetadataIndex.DeclarationSignatureSlot(parameter), baseArguments)).ToArray();
-                for (var i = 0; i < signature.Length; i++)
-                {
-                    parameters[i]["type"] = TypeJson.Write(signature[i]);
-                    ((JsonObject)parameters[i]).Remove(FunctionSignatureIdentity.Key);
-                }
-                // A MethodImpl owner is a declaration, not an ordinary covariant value-view type. Keep it in the
-                // existing descriptor path so carrier projection preserves the exact native declaring class.
-                method["clrBaseImpls"] = new JsonArray(new JsonObject
-                {
-                    ["owner"] = TypeJson.Write(new TypeNode.Fqn(externalSlot.DeclaringType.FullName,
-                        baseArguments.Length == 0 ? null : baseArguments)),
-                    ["member"] = externalSlot.Name, ["arity"] = 0,
-                    ["params"] = new JsonArray(signature.Select(TypeJson.Write).ToArray()),
-                    ["ret"] = TypeJson.Write(SupertypeGraph.SubstOwnerTvs(
-                        ReferenceMetadataIndex.DeclarationSignatureSlot(externalSlot.ReturnParameter), baseArguments)),
-                });
-            }
-            MethodInfo Overridable(MethodInfo method) => baseEvent?.DeclaringType?.IsInterface == false
-                && method is { IsVirtual: true, IsFinal: false }
-                && (method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly) ? method : null;
-            var localBase = classOwner != null && baseType == null;
-            if (localBase)
-                foreach (var method in new[] { addM, remM })
-                {
-                    // Optional source-function signature discriminators are part of the declared native slot too.
-                    // A covariant handler or Nothing inference must not allocate a different override signature.
-                    var parameter = (JsonObject)method["params"][0];
-                    parameter.Remove(FunctionSignatureIdentity.Key);
-                    if (nativeParameterSignature != null)
-                        parameter["type"] = TypeJson.Write(nativeParameterSignature);
-                    else if (parameterSignature != null)
-                        parameter[FunctionSignatureIdentity.Key] = TypeJson.Write(parameterSignature);
-                }
-            var baseAdd = Overridable(baseEvent?.GetAddMethod(true));
-            var baseRemove = Overridable(baseEvent?.GetRemoveMethod(true));
-            var baseRaise = Overridable(baseEvent?.GetRaiseMethod(true));
-            // Even a final new declaration can satisfy an interface introduced by a future subclass. CLR requires
-            // virtual accessors for that inherited implementation; final seals source overrides without losing it.
-            Slot(addM, baseAdd, localBase || baseAdd != null, true);
-            Slot(remM, baseRemove, localBase || baseRemove != null, true);
-            Slot(raiseM, baseRaise, localBase || baseRaise != null, false);
-
-            var raiseIdentity = DeclarationIdentityBinding.PhysicalOnlyId(
-                "clr-event-accessor:" + new JsonArray(Str(type["name"]), Str(raiseM["name"])).ToJsonString(), "accessor");
-            raiseM[DeclarationIdentityBinding.Key] = raiseIdentity;
-            decls.Add(new JsonObject {
-                ["k"] = "clrEventDecl", ["name"] = name, ["delegateType"] = delegateNode.DeepClone(),
-                [RaiseDeclarationKey] = raiseIdentity,
-            });
-        }
-        foreach (var forwarder in forwarders?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
-        {
-            var name = Str(forwarder["name"]);
-            if (name == null) continue;
-            var addM = FindAccessor(methods, "add_" + name, "add");
-            var remM = FindAccessor(methods, "remove_" + name, "remove");
-            if (addM == null || remM == null)
-                throw new InvalidOperationException($"bir2cir: delegated clrEvent '{name}' is missing a synthesized add/remove forwarder — kotc synthesis defect");
-            var (delegateNode, _) = ResolveDelegate(name, addM, null, refs, forwarder["ownerType"]);
-            RewriteForwarder(addM, "add", forwarder, delegateNode);
-            RewriteForwarder(remM, "remove", forwarder, delegateNode);
-            decls.Add(new JsonObject { ["k"] = "clrEventDecl", ["name"] = name, ["delegateType"] = delegateNode.DeepClone() });
-        }
-        type["clrEvents"] = decls;
-        type.Remove("clrEventForwarders");
-    }
-
-    static (JsonNode Delegate, List<JsonNode> Parameters, TypeNode Signature, TypeNode NativeSignature) ResolveImplementationDelegate(
-        string name, JsonObject add, JsonObject backing, ReferenceMetadataIndex refs, LocalEvents locals)
-    {
-        if (TypeJson.Read(backing["classOverrideOwner"]) is TypeNode.Fqn owner
-            && locals.TryGet(owner, name, out var declaration))
-        {
-            var (type, parameters, signature, nativeSignature) =
-                ResolveImplementationDelegate(name, declaration.Add, declaration.Backing, refs, locals);
-            var arguments = owner.Args ?? Array.Empty<TypeNode>();
-            JsonNode Substitute(JsonNode node) => TypeJson.Write(SubstituteOwnerTypeVariables(TypeJson.Read(node), arguments));
-            return (Substitute(type), parameters.Select(Substitute).ToList(),
-                signature == null ? null : SubstituteOwnerTypeVariables(signature, arguments),
-                nativeSignature == null ? null : SupertypeGraph.SubstOwnerTvs(nativeSignature, arguments));
-        }
-        var (delegateType, invokeParameters) = ResolveDelegate(name, add, backing["handlerType"], refs,
-            policyArguments: backing["policyField"] != null);
-        if (TypeJson.Read(backing["classOverrideOwner"]) is TypeNode.Fqn externalOwner)
-        {
-            // A local subclass can recurse through a cross-DLL override recipe captured before binding.
-            // Its ABI comes from that recipe's selected native declaration, never the intermediate source H.
-            var type = ClrMemberResolution.ResolveOwnerType(externalOwner, refs);
-            if (type == null || !TryResolveDeclaredEvent(type, externalOwner.Args ?? Array.Empty<TypeNode>(), name,
-                    out var nativeEvent, out var arguments) || nativeEvent.GetAddMethod(true) is not MethodInfo accessor)
-                throw new InvalidOperationException($"bir2cir: overridden class event '{externalOwner.Name}.{name}' was not found");
-            return (delegateType, invokeParameters, null, SupertypeGraph.SubstOwnerTvs(
-                ReferenceMetadataIndex.DeclarationSignatureSlot(accessor.GetParameters().Single()), arguments));
-        }
-        var parameter = add["params"]?[0] as JsonObject;
-        var sourceType = parameter?[FunctionSignatureIdentity.Key] ?? parameter?["type"];
-        var discriminator = FunctionValueRepresentation.ContainsOrdinaryFunction(sourceType)
-            ? FunctionSignatureIdentity.DeclarationType(TypeJson.Read(sourceType)) : null;
-        return (delegateType, invokeParameters, discriminator, null);
-    }
-
     // Select the kotc-synthesized shell by its semantic marker, never a user overload that merely shares `add_E`.
-    static JsonObject FindAccessor(JsonArray methods, string name, string kind) =>
-        methods.OfType<JsonObject>().FirstOrDefault(m =>
-            m["body"] is JsonArray body && body.FirstOrDefault() is JsonObject marker
-            && IsEventAccessor(Str(m["name"]), name, body.Count, Str(marker["k"]), Str(marker["kind"]), kind));
-
     static bool IsEventAccessor(string actualName, string expectedName, int statements,
         string marker, string actualKind, string expectedKind) => actualName == expectedName
         && statements == 1 && marker == "clrEventAccessor" && actualKind == expectedKind;
-
-    // The frontend names the actual Kotlin delegate field. Its initializer and ordering remain ordinary Kotlin;
-    // this pass only supplies the native event accessors. Calls carry the exact stdlib declaration identity, so
-    // the existing member/representation pipeline closes their frames and converts the native handler normally.
-    static void RewritePolicy(JsonObject type, JsonArray fields, string eventName, string fieldName,
-        JsonObject add, JsonObject remove, JsonObject raise, JsonNode delegateType,
-        List<JsonNode> invokeParameters, ReferenceMetadataIndex refs)
-    {
-        bool ObjectArgument(TypeNode argument) => argument switch
-        {
-            TypeNode.Nullable nullable => ObjectArgument(nullable.Of),
-            TypeNode.Oblivious oblivious => ObjectArgument(oblivious.Of),
-            TypeNode.Mod modified => ObjectArgument(modified.Of),
-            TypeNode.ByRef or TypeNode.Ptr or TypeNode.FnPtr => false,
-            TypeNode.Fqn named => !refs.IsByRefLikeFqn(named),
-            _ => true,
-        };
-        for (var i = 0; i < invokeParameters.Count; i++)
-            if (!ObjectArgument(TypeJson.Read(invokeParameters[i])))
-                throw new InvalidOperationException($"bir2cir: custom CLR event '{eventName}' parameter {i} "
-                    + "cannot be represented in the ClrEventPolicy.invoke Any? argument array: "
-                    + invokeParameters[i].ToJsonString());
-        var field = fields.OfType<JsonObject>().Single(f => Str(f["name"]) == fieldName);
-        var policyType = field["type"] ?? throw new InvalidOperationException("CLR event policy field has no type");
-        var ownerArguments = TypeParameterFrame.Declarations(type)
-            .Select((_, index) => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
-        var owner = new TypeNode.Fqn(Str(type["name"]), ownerArguments.Length == 0 ? null : ownerArguments);
-        var isStatic = add["static"]?.GetValue<bool>() == true;
-        JsonObject Receiver()
-        {
-            var receiver = new JsonObject
-            {
-                ["k"] = isStatic ? "staticField" : "field", ["ownerType"] = TypeJson.Write(owner), ["name"] = fieldName,
-                ["sty"] = policyType.DeepClone(),
-            };
-            if (!isStatic) receiver["recv"] = new JsonObject { ["k"] = "this", ["sty"] = TypeJson.Write(owner) };
-            return receiver;
-        }
-        JsonObject Call(string name, TypeNode parameter, JsonNode argument)
-        {
-            var declaration = refs.AuthoredKotlinHelper("kotlin.clr.ClrEventPolicy", name, 0,
-                new[] { parameter }, isStatic: false);
-            return new JsonObject
-            {
-                ["k"] = "callInstance", ["ownerType"] = policyType.DeepClone(), ["recv"] = Receiver(),
-                ["method"] = name, ["virtual"] = true,
-                [DeclarationIdentityBinding.Key] = declaration.DeclarationId,
-                ["sig"] = new JsonArray(TypeJson.Write(parameter)), ["args"] = new JsonArray(argument),
-                ["ret"] = TypeJson.Fqn("kotlin.Unit"), ["sty"] = TypeJson.Fqn("kotlin.Unit"),
-            };
-        }
-        void Accessor(JsonObject method, string name)
-        {
-            method["params"][0]["type"] = delegateType.DeepClone();
-            method["body"] = new JsonArray(new JsonObject
-            {
-                ["k"] = "exprStmt", ["expr"] = Call(name, new TypeNode.Tv("type", 0), new JsonObject
-                {
-                    ["k"] = "local", ["name"] = "value", ["sty"] = delegateType.DeepClone(),
-                }),
-            });
-            method["specialName"] = true;
-            method.Remove("overrides");
-        }
-        Accessor(add, "addHandler");
-        Accessor(remove, "removeHandler");
-        var parameters = new JsonArray();
-        var arguments = new JsonArray();
-        for (var i = 0; i < invokeParameters.Count; i++)
-        {
-            parameters.Add(new JsonObject { ["name"] = "arg" + i, ["type"] = invokeParameters[i].DeepClone() });
-            arguments.Add(new JsonObject { ["k"] = "local", ["name"] = "arg" + i, ["sty"] = invokeParameters[i].DeepClone() });
-        }
-        var element = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
-        var arrayType = new TypeNode.Array(element);
-        raise["params"] = parameters;
-        raise["body"] = new JsonArray(new JsonObject
-        {
-            ["k"] = "exprStmt", ["expr"] = Call("invoke", arrayType, new JsonObject
-            {
-                ["k"] = "newArray", ["elem"] = TypeJson.Write(element), ["elems"] = arguments,
-                ["sty"] = TypeJson.Write(arrayType),
-            }),
-        });
-        raise["specialName"] = true;
-        raise.Remove("overrides");
-    }
-
-    // add_/remove_: param[0].type := D; body := the CAS-loop directive; drop the (consumed) overrides closure.
-    static void RewriteFieldLike(JsonObject m, string kind, string fieldName, JsonNode delegateNode)
-    {
-        if (m["params"] is JsonArray ps && ps.Count > 0 && ps[0] is JsonObject p0)
-            p0["type"] = delegateNode.DeepClone();
-        m["body"] = new JsonArray { AccessorImpl(kind, fieldName, delegateNode, m["static"]?.GetValue<bool>() == true) };
-        m["specialName"] = true;   // ECMA-335 event-accessor convention (ilemit stamps MethodAttributes.SpecialName)
-        m.Remove("overrides");
-    }
-
-    // raise_: params := D.Invoke's params (so `field?.Invoke(args)` forwards them); body := the raise directive.
-    static void RewriteRaise(JsonObject m, string fieldName, JsonNode delegateNode, List<JsonNode> invokeParamNodes)
-    {
-        var ps = new JsonArray();
-        for (int i = 0; i < invokeParamNodes.Count; i++)
-            ps.Add(new JsonObject { ["name"] = "arg" + i, ["type"] = invokeParamNodes[i].DeepClone() });
-        m["params"] = ps;
-        m["body"] = new JsonArray { AccessorImpl("raise", fieldName, delegateNode, m["static"]?.GetValue<bool>() == true) };
-        m["specialName"] = true;   // ECMA-335 event-accessor convention (the .event's Fire)
-        m.Remove("overrides");
-    }
-
-    static JsonObject AccessorImpl(string kind, string fieldName, JsonNode delegateNode, bool isStatic) => new()
-    {
-        ["k"] = "clrEventAccessorImpl",
-        ["kind"] = kind,
-        ["name"] = fieldName,
-        ["delegateType"] = delegateNode.DeepClone(),
-        ["static"] = isStatic,
-    };
-
-    // Class delegation forwards to the exact delegate expression captured by kotc. The referenced interface owns the
-    // CLR relation: resolve D above, then lower the pure BIR directive to the ordinary consume nodes.
-    static void RewriteForwarder(JsonObject method, string kind, JsonObject forwarder, JsonNode delegateNode)
-    {
-        if (method["params"] is JsonArray ps && ps.Count > 0 && ps[0] is JsonObject p0)
-            p0["type"] = delegateNode.DeepClone();
-        var eventAccess = new JsonObject
-        {
-            ["k"] = kind == "add" ? "clrEventAdd" : "clrEventRemove",
-            ["type"] = forwarder["ownerType"]?.DeepClone()
-                ?? throw new InvalidOperationException("bir2cir: delegated clrEvent forwarder is missing its delegate owner type"),
-            ["event"] = forwarder["name"]?.DeepClone(),
-            ["static"] = false,
-            ["recv"] = forwarder["recv"]?.DeepClone()
-                ?? throw new InvalidOperationException("bir2cir: delegated clrEvent forwarder is missing its delegate receiver"),
-            ["handler"] = new JsonObject
-            {
-                ["sty"] = delegateNode.DeepClone(), ["k"] = "local", ["name"] = "value",
-            },
-            // The synthesized accessor parameter was rewritten to the event's exact delegate D above. Passing it
-            // through unchanged preserves delegate identity across add/remove; wrapping D.Invoke again would make
-            // EventSubscription.close unable to remove the instance installed by add.
-            ["handlerExact"] = true,
-        };
-        method["body"] = new JsonArray
-        {
-            new JsonObject { ["k"] = "exprStmt", ["expr"] = eventAccess },
-        };
-        method["specialName"] = true;
-        method.Remove("overrides");
-    }
 
     // The concrete delegate type node for an event + the type nodes of its Invoke's params (raise's signature). For an
     // OVERRIDE (the add_ accessor's `overrides` closure names the interface event slot) the delegate is the interface
     // event's `EventHandlerType`, read off the ref.dll — bir2cir OWNS this resolution (§9). For a NEW event (no override)
     // the handler Kotlin FUNCTION type maps to a System.Action/Func delegate of the same shape.
-    static (JsonNode delegateNode, List<JsonNode> invokeParams) ResolveDelegate(
-        string name, JsonObject addM, JsonNode handlerType, ReferenceMetadataIndex refs,
-        JsonNode constructedOwner = null, bool policyArguments = false)
+    static (TypeNode Delegate, TypeNode[] Parameters) ResolveDelegate(
+        string name, IEnumerable<BirOverride> overrides, TypeNode handlerType, ReferenceMetadataIndex refs,
+        TypeNode constructedOwner = null, bool policyArguments = false)
     {
         // Preserve the native declaration's unboxability fact before a reflection Type is projected to a
         // named Kotlin handler signature. Raw pointers are not object-array values, regardless of spelling.
@@ -746,54 +411,53 @@ static partial class ClrEventImplBinding
                     throw new InvalidOperationException($"bir2cir: custom CLR event '{name}' parameter {i} "
                         + "cannot be represented in the ClrEventPolicy.invoke Any? argument array: native pointer");
         }
-        if (addM["overrides"] is JsonArray ovs)
-            foreach (var o in ovs.OfType<JsonObject>())
+        foreach (var o in overrides)
+        {
+            var owner = (o.Owner.OrDefault() as TypeNode.Fqn)?.Name;
+            var member = o.Member.OrDefault();
+            if (owner == null || member == null) continue;
+            var ownerSpec = constructedOwner as TypeNode.Fqn;
+            Type iface;
+            TypeNode[] ownerArgs;
+            if (ownerSpec != null
+                && TryResolveConstructedInterface(ownerSpec, owner, refs, out var constructedIface, out var constructedArgs))
             {
-                var owner = TypeJson.OwnerName(o["owner"]);
-                var member = Str(o["member"]);
-                if (owner == null || member == null) continue;
-                var ownerSpec = TypeJson.Read(constructedOwner) as TypeNode.Fqn;
-                Type iface;
-                TypeNode[] ownerArgs;
-                if (ownerSpec != null
-                    && TryResolveConstructedInterface(ownerSpec, owner, refs, out var constructedIface, out var constructedArgs))
-                {
-                    iface = constructedIface;
-                    ownerArgs = constructedArgs;
-                }
-                else
-                {
-                    var overrideSpec = TypeJson.Read(o["owner"]) as TypeNode.Fqn;
-                    iface = ClrMemberResolution.ResolveOwnerType(
-                        overrideSpec ?? new TypeNode.Fqn(owner), refs);
-                    ownerArgs = overrideSpec?.Args;
-                }
-                // Kotlin's override closure can name the immediate delegated interface even when the event is inherited
-                // from one of its CLR base interfaces. Locate the declaration while composing the generic arguments at
-                // each interface edge; Type.GetEvent does not itself include inherited interface events.
-                if (iface == null
-                    || !TryResolveDeclaredEvent(iface, ownerArgs ?? Array.Empty<TypeNode>(), member,
-                        out var ev, out var declaringArgs)) continue;
-                ownerArgs = declaringArgs;
-                var d = ev.EventHandlerType;
-                if (d == null) continue;
-                var invoke = d.GetMethod("Invoke");
-                CheckPointerArguments(invoke);
-                var invokeParams = invoke?.GetParameters()
-                    .Select(p => TypeJson.Write(SubstituteOwnerTypeVariables(NetTypeToNode(p.ParameterType), ownerArgs))).ToList()
-                                   ?? new List<JsonNode>();
-                return (TypeJson.Write(SubstituteOwnerTypeVariables(NetTypeToNode(d), ownerArgs)), invokeParams);
+                iface = constructedIface;
+                ownerArgs = constructedArgs;
             }
+            else
+            {
+                var overrideSpec = o.Owner.OrDefault() as TypeNode.Fqn;
+                iface = ClrMemberResolution.ResolveOwnerType(
+                    overrideSpec ?? new TypeNode.Fqn(owner), refs);
+                ownerArgs = overrideSpec?.Args;
+            }
+            // Kotlin's override closure can name the immediate delegated interface even when the event is inherited
+            // from one of its CLR base interfaces. Locate the declaration while composing the generic arguments at
+            // each interface edge; Type.GetEvent does not itself include inherited interface events.
+            if (iface == null
+                || !TryResolveDeclaredEvent(iface, ownerArgs ?? Array.Empty<TypeNode>(), member,
+                    out var ev, out var declaringArgs)) continue;
+            ownerArgs = declaringArgs;
+            var d = ev.EventHandlerType;
+            if (d == null) continue;
+            var invoke = d.GetMethod("Invoke");
+            CheckPointerArguments(invoke);
+            var invokeParams = invoke?.GetParameters()
+                .Select(p => SubstituteOwnerTypeVariables(NetTypeToNode(p.ParameterType), ownerArgs)).ToArray()
+                               ?? Array.Empty<TypeNode>();
+            return (SubstituteOwnerTypeVariables(NetTypeToNode(d), ownerArgs), invokeParams);
+        }
 
         // Nullability belongs to the logical handler contract, already preserved on the accessor metadata.
         // Select the native delegate from its shape, just as for a nullable nominal delegate below.
-        var handler = TypeJson.Read(handlerType);
+        var handler = handlerType;
         while (handler is TypeNode.Nullable nullable) handler = nullable.Of;
         while (handler is TypeNode.Oblivious oblivious) handler = oblivious.Of;
 
         // A NEW event: the overrides closure was empty (no interface slot). Map the handler fn -> Action/Func.
         if (handler is TypeNode.Fn fn)
-            return FnToDelegate((JsonObject)TypeJson.Write(fn));
+            return FnToDelegate(fn);
 
         // A dll2klib-projected nominal delegate is the other natural Kotlin spelling of an event handler. Keep its
         // semantic classifier as the field/accessor type (the ordinary physical type lowering applies ClrExternal),
@@ -807,10 +471,9 @@ static partial class ClrEventImplBinding
                 CheckPointerArguments(invoke);
                 var ownerArgs = named.Args ?? Array.Empty<TypeNode>();
                 var invokeParams = invoke.GetParameters()
-                    .Select(p => TypeJson.Write(SubstituteOwnerTypeVariables(
-                        NetTypeToNode(p.ParameterType), ownerArgs)))
-                    .ToList();
-                return (TypeJson.Write(named), invokeParams);
+                    .Select(p => SubstituteOwnerTypeVariables(NetTypeToNode(p.ParameterType), ownerArgs))
+                    .ToArray();
+                return (BirGraphValue.CopyType(named), invokeParams);
             }
         }
 
@@ -925,23 +588,14 @@ static partial class ClrEventImplBinding
 
     // A handler Kotlin function type `(A,B)->R` -> `System.Action<A,B>` (R = Unit/void) or `System.Func<A,B,R>`, plus the
     // Invoke param nodes (= the handler's params). The natural CLR lowering of a Kotlin fn type for a brand-new event.
-    static (JsonNode, List<JsonNode>) FnToDelegate(JsonObject fn)
+    static (TypeNode, TypeNode[]) FnToDelegate(TypeNode.Fn fn)
     {
-        var pars = (fn["params"] as JsonArray)?.OfType<JsonNode>().Select(p => p.DeepClone()).ToList() ?? new List<JsonNode>();
-        var ret = fn["ret"];
-        bool voidRet = ret == null || (ret is JsonObject ro && Str(ro["name"]) is "kotlin.Unit" or "void");
-        var args = new JsonArray();
-        foreach (var p in pars) args.Add(p.DeepClone());
-        JsonNode delegateNode;
-        if (voidRet)
-            delegateNode = args.Count == 0 ? TypeJson.Fqn("System.Action")
-                : new JsonObject { ["t"] = "fqn", ["name"] = "System.Action", ["args"] = args };
-        else
-        {
-            args.Add(ret.DeepClone());
-            delegateNode = new JsonObject { ["t"] = "fqn", ["name"] = "System.Func", ["args"] = args };
-        }
-        return (delegateNode, pars);
+        var parameters = fn.Params.Select(BirGraphValue.CopyType).ToArray();
+        var voidReturn = fn.Ret == null || fn.Ret is TypeNode.Fqn { Name: "kotlin.Unit" or "void" };
+        var arguments = voidReturn ? parameters.Select(BirGraphValue.CopyType).ToArray()
+            : parameters.Select(BirGraphValue.CopyType).Append(BirGraphValue.CopyType(fn.Ret)).ToArray();
+        return (new TypeNode.Fqn(voidReturn ? "System.Action" : "System.Func",
+            arguments.Length == 0 ? null : arguments), parameters);
     }
 
     // An MLC Type -> its concrete lowered TypeNode (BCL FullName spelling, generic args recursed, Nullable<T> -> T?). Keeps

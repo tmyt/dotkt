@@ -972,6 +972,7 @@ internal static partial class BirGraphJson
         ulong seen = 0;
         OptionalField<TypeNode> field0 = default;
         OptionalField<IBirExpression[]> field1 = default;
+        OptionalField<TypeNode> field2 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -979,7 +980,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 2); if (ReadString(ref reader) != "newArray") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 3); if (ReadString(ref reader) != "newArray") throw new FormatException(); break;
                 case "elem":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
@@ -987,6 +988,10 @@ internal static partial class BirGraphJson
                 case "elems":
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression[]>.Null : OptionalField<IBirExpression[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirExpression(ref reader)));
+                    break;
+                case "sty":
+                    Seen(ref seen, 1UL << 2);
+                    field2 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -996,6 +1001,7 @@ internal static partial class BirGraphJson
         {
             Elem = field0,
             Elems = field1,
+            Sty = field2,
         };
     }
 
@@ -6136,7 +6142,8 @@ internal static partial class BirGraphJson
         OptionalField<string> field5 = default;
         OptionalField<TypeNode> field6 = default;
         OptionalField<string> field7 = default;
-        OptionalField<TypeNode> field8 = default;
+        OptionalField<string> field8 = default;
+        OptionalField<TypeNode> field9 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -6176,9 +6183,13 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 7);
                     field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
-                case "delegateType":
+                case "eventRaiseDeclarationId":
                     Seen(ref seen, 1UL << 8);
-                    field8 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    field8 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
+                    break;
+                case "delegateType":
+                    Seen(ref seen, 1UL << 9);
+                    field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -6194,7 +6205,8 @@ internal static partial class BirGraphJson
             Modality = field5,
             ClassOverrideOwner = field6,
             PolicyField = field7,
-            DelegateType = field8,
+            EventRaiseDeclarationId = field8,
+            DelegateType = field9,
         };
     }
 

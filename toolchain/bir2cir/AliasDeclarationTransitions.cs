@@ -43,6 +43,20 @@ sealed class AliasDeclarationTransitions
     static bool Same(IEnumerable<IBirTypeDeclaration> left, IEnumerable<IBirTypeDeclaration> right)
         => left.SequenceEqual(right, ReferenceEqualityComparer.Instance);
 
+    // Later materialization may append physical declarations, but cannot change
+    // the reported representation of any preceding source occurrence. These
+    // classes extend the physical continuation, not the original logical owners.
+    internal void AdmitMaterializedTypes(BirFileDeclaration file, IReadOnlyList<BirClassDefinition> appended)
+    {
+        if (files.Count == 0) return; // Reference builds have no alias transition ledger.
+        var index = files.FindIndex(entry => ReferenceEquals(entry.File, file));
+        if (index < 0) throw Mismatch();
+        var entry = files[index];
+        var expected = entry.Continuing.Concat(appended).ToArray();
+        if (!Same(file.Types.OrEmpty(), expected)) throw Mismatch();
+        files[index] = entry with { Continuing = expected };
+    }
+
     internal void ValidateProjection(IReadOnlyList<JsonNode> roots)
     {
         if (files.Count == 0) return; // Reference builds do not run the representation owner.

@@ -4,6 +4,30 @@ using DotKt.Cir;
 
 static partial class NullableTvErasureCallRealign
 {
+    // A producer supplies only newly authored executable roots. Earlier source
+    // flow already aligned the cloned local-read stamps with their declarations,
+    // so these exact roots need no enclosing-method repair or visibility recapture.
+    internal static void ApplyMaterialized(IEnumerable<ClosureSynthesis.MaterializedOccurrence> roots,
+        DeclIndex index, ValueTypeOracle isValue, ReferenceMetadataIndex references)
+    {
+        _isValue = isValue ?? (_ => false);
+        _refs = references;
+        _sourceApplicationOrder = index.SourceApplicationOrder;
+        foreach (var root in roots)
+            root.Slot.Replace(SourceUseEval(root.Slot.Value, new Ctx { Idx = index }, out _));
+    }
+
+    // Delegate alignment changed these newly synthesized declarations, not the
+    // enclosing file. Reflow exactly their owned bodies in the same index view.
+    internal static void ApplyAfterDelegateSlotAlignment(BirClassDefinition owner, DeclIndex index,
+        ValueTypeOracle isValue, ReferenceMetadataIndex references)
+    {
+        _isValue = isValue ?? (_ => false);
+        _refs = references;
+        _sourceApplicationOrder = index.SourceApplicationOrder;
+        SourceUseOwner(owner, index);
+    }
+
     // The declaration changed after initial flow; retain the same captured
     // facts and per-file visibility view for this explicit capability entry.
     internal static void ApplyAfterDelegateSlotAlignment(BirFileDeclaration file, DeclIndex index,
@@ -17,25 +41,27 @@ static partial class NullableTvErasureCallRealign
         _refs = references;
         _sourceApplicationOrder = index.SourceApplicationOrder;
         foreach (var method in file.Methods.OrEmpty()) SourceUseMethod(method, index, null);
-        foreach (var owner in file.Types.OrEmpty())
-        {
-            var frame = NullableRepresentationViews.TypeFacts((BirGraphValue)owner)?.NullableFrame;
-            foreach (var constructor in owner.Ctors.OrEmpty())
-            {
-                var context = SourceUseContext(index, constructor.Params.OrEmpty(), null, frame, null);
-                var baseOwner = owner.Base.OrDefault() as TypeNode.Fqn;
-                TryVisibleConstructors(baseOwner?.Name, index, out var baseParameters);
-                TryVisibleConstructors(owner.Name.OrDefault(), index, out var ownParameters);
-                SourceDelegation(constructor.BaseArgs.OrDefault(), baseParameters, OwnerArguments(baseOwner), context);
-                var arity = owner.TypeParams.OrEmpty().Length;
-                var ownArguments = arity == 0 ? null : Enumerable.Range(0, arity)
-                    .Select(position => (TypeNode)new TypeNode.Tv("type", position)).ToArray();
-                SourceDelegation(constructor.ThisArgs.OrDefault(), ownParameters, ownArguments, context);
-                SourceUseStatements(constructor.Body.OrEmpty(), context);
-            }
-            foreach (var method in owner.Methods.OrEmpty()) SourceUseMethod(method, index, frame);
-        }
+        foreach (var owner in file.Types.OrEmpty()) SourceUseOwner(owner, index);
         return file;
+    }
+
+    static void SourceUseOwner(IBirTypeDeclaration owner, DeclIndex index)
+    {
+        var frame = NullableRepresentationViews.TypeFacts((BirGraphValue)owner)?.NullableFrame;
+        foreach (var constructor in owner.Ctors.OrEmpty())
+        {
+            var context = SourceUseContext(index, constructor.Params.OrEmpty(), null, frame, null);
+            var baseOwner = owner.Base.OrDefault() as TypeNode.Fqn;
+            TryVisibleConstructors(baseOwner?.Name, index, out var baseParameters);
+            TryVisibleConstructors(owner.Name.OrDefault(), index, out var ownParameters);
+            SourceDelegation(constructor.BaseArgs.OrDefault(), baseParameters, OwnerArguments(baseOwner), context);
+            var arity = owner.TypeParams.OrEmpty().Length;
+            var ownArguments = arity == 0 ? null : Enumerable.Range(0, arity)
+                .Select(position => (TypeNode)new TypeNode.Tv("type", position)).ToArray();
+            SourceDelegation(constructor.ThisArgs.OrDefault(), ownParameters, ownArguments, context);
+            SourceUseStatements(constructor.Body.OrEmpty(), context);
+        }
+        foreach (var method in owner.Methods.OrEmpty()) SourceUseMethod(method, index, frame);
     }
 
     static Ctx SourceUseContext(DeclIndex index, BirParameter[] parameters, TypeNode result,

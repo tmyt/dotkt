@@ -4,6 +4,27 @@ using DotKt.Cir;
 
 static partial class DelegateTargetSlotAlignment
 {
+    // Late producers publish exact construction roots and their newly appended
+    // target classes. Share the declaration-selection and slot rules without
+    // revisiting unrelated constructions or authored declarations in the file.
+    internal static bool ApplyMaterialized(IEnumerable<ClosureSynthesis.MaterializedOccurrence> roots,
+        IEnumerable<BirClassDefinition> declarations, ValueTypeOracle isValue)
+    {
+        _isValue = isValue ?? (_ => false);
+        var statics = new Dictionary<string, Demand>(StringComparer.Ordinal);
+        var closures = new Dictionary<string, Demand>(StringComparer.Ordinal);
+        foreach (var root in roots) CollectSource(root.Slot.Value, statics, closures);
+        _moved = false;
+        foreach (var owner in declarations)
+        {
+            AlignSourceMethods(owner.Methods.OrEmpty(), owner.Name.OrDefault(), statics, null);
+            if (owner.Name.HasValue && closures.TryGetValue(owner.Name.Value, out var demand))
+                foreach (var method in owner.Methods.OrEmpty())
+                    if (method.Name.OrDefault() == "invoke") AlignSource(method, demand, null);
+        }
+        return _moved;
+    }
+
     internal static bool Apply(BirFileDeclaration root, ValueTypeOracle isValue,
         Action<BirFunctionDeclaration, TypeNode, TypeNode> returnChanged)
     {

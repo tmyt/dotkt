@@ -10,6 +10,9 @@ static partial class ClosureSynthesis
     internal sealed record MaterializedClosures(IReadOnlyList<BirClassDefinition> AppendedTypes,
         IReadOnlyList<ClosureProvenance> Provenance);
 
+    // A prebound payload already owns a dense frame. Construction typeArgs
+    // still name the enclosing frame, possibly repeating an outer variable;
+    // consumers use that explicit correspondence rather than re-deriving it.
     internal static bool HasPreboundFrame(BirGraphValue source) => source switch {
         BirClosureDefinition value => value._syntheticFrameBound.HasValue,
         BirClassDefinition value => value._syntheticFrameBound.HasValue,
@@ -33,10 +36,11 @@ static partial class ClosureSynthesis
     // pass. Slots explicitly publish cross-kind replacements before ingredients
     // are snapshotted; the saved provenance therefore has the normalized shape.
     internal static MaterializedClosures ApplyMaterialized(BirFileDeclaration file,
-        IEnumerable<MaterializedOccurrence> inputs, ReferenceMetadataIndex refs)
+        IEnumerable<MaterializedOccurrence> inputs, ReferenceMetadataIndex refs,
+        Action<BirFunctionDeclaration, NullableRepresentationFrame> projectSamMethod = null)
     {
         var provenance = new List<ClosureProvenance>();
-        var appended = SynthesizeTyped(file, inputs, refs, null, provenance, skipAttributes: true);
+        var appended = SynthesizeTyped(file, inputs, refs, projectSamMethod, provenance, skipAttributes: true);
         return new MaterializedClosures(appended, provenance);
     }
 

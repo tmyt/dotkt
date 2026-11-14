@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
@@ -24,29 +23,29 @@ static partial class ClrEventImplBinding
             var file = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { owner } };
             var events = new LocalEvents();
             events.CaptureSource(file);
-            if (!events.declarations[("Base", "Changed")].SourceOwned)
-                throw new InvalidOperationException("Event recipe was projected before the declaration handoff");
-            bool refused = false;
-            try { events.TryGet(new TypeNode.Fqn("Base"), "Changed", out _); } catch (InvalidOperationException) { refused = true; }
-            if (!refused) throw new InvalidOperationException("Event recipe consumption lazily crossed an unbound frontier");
+            if (!events.TryGetSource(new TypeNode.Fqn("Base"), "Changed", out var captured)
+                || ReferenceEquals(captured.Add, add) || ReferenceEquals(captured.Backing, owner.ClrEvents.Value[0]))
+                throw new InvalidOperationException("Event source recipes do not own independent pre-strip snapshots");
             owner.Methods = owner.Methods.Value.Take(1).ToArray(); // exact accessor is detached, as after stripping
             add.Params.Value[0].Type = new TypeNode.Fqn("ChangedAfterCapture");
             owner.ClrEvents.Value[0].Modality = "final";
-            events.BindDomRecipes();
-            if (!events.TryGet(new TypeNode.Fqn("Base"), "Changed", out var selected)
-                || events.declarations[("Base", "Changed")].SourceOwned || selected.Add.Parent != null
-                || TypeJson.Read(selected.Add["params"][0]["type"]) is not TypeNode.Fn
-                || Str(selected.Backing["modality"]) != "open")
-                throw new InvalidOperationException("Pre-strip event recipe lost its independent accessor or retained typed staging");
-            events.Index(new BirFileDeclaration { Types = new IBirTypeDeclaration[] { Owner("Base"), Owner("Late") } }.ToDom());
-            if (!events.TryGet(new TypeNode.Fqn("Base"), "Changed", out var same)
-                || !ReferenceEquals(same.Add, selected.Add) || !ReferenceEquals(same.Backing, selected.Backing)
-                || !events.TryGet(new TypeNode.Fqn("Late"), "Changed", out _))
-                throw new InvalidOperationException("Late event indexing replaced an authoritative recipe or lost a new owner");
-            refused = false;
+            events.IndexSource(new BirFileDeclaration { Types = new IBirTypeDeclaration[] { Owner("Base"), Owner("Late") } });
+            if (!events.TryGetSource(new TypeNode.Fqn("Base"), "Changed", out var selected)
+                || !ReferenceEquals(selected.Add, captured.Add) || !ReferenceEquals(selected.Backing, captured.Backing)
+                || selected.Add.Params.Value[0].Type.Value is not TypeNode.Fn
+                || selected.Backing.Modality.Value != "open"
+                || !events.TryGetSource(new TypeNode.Fqn("Late"), "Changed", out _))
+                throw new InvalidOperationException("Typed event indexing replaced a captured recipe or lost a synthesized owner");
+            events.ReleaseSourceRecipes();
+            if (!events.released || events.declarations.Count != 0)
+                throw new InvalidOperationException("Finished event preparation retained source staging");
+            bool refused = false;
             try { events.CaptureSource(file); } catch (InvalidOperationException) { refused = true; }
-            if (!refused) throw new InvalidOperationException("Event source recipes were recaptured after handoff");
-            Console.WriteLine("[local event recipes] self-test OK (exact semantic accessor, pre-strip clone, one-way handoff, first writer and late additions)");
+            if (!refused) throw new InvalidOperationException("Finished event preparation admitted another source recipe");
+            refused = false;
+            try { events.TryGetSource(new TypeNode.Fqn("Base"), "Changed", out _); } catch (InvalidOperationException) { refused = true; }
+            if (!refused) throw new InvalidOperationException("Finished event preparation exposed detached source recipes");
+            Console.WriteLine("[local event recipes] self-test OK (exact semantic accessor, pre-strip clone, first writer, late typed additions and explicit release)");
         }
     }
 }

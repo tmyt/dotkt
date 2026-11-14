@@ -94,12 +94,6 @@ static partial class FunctionValueRepresentation
         return node is JsonArray array && array.Any(ContainsOrdinaryFunction);
     }
 
-    public static void Apply(JsonNode root, ValueTypeOracle isByRefLike)
-    {
-        FunctionSignatureIdentity.Capture(root);
-        Walk(root, isByRefLike);
-    }
-
     static TypeNode Carrier(TypeNode type, ValueTypeOracle isByRefLike) => type switch
     {
         // Changing the CLR value representation must not change the slot's nullability contract.
@@ -109,8 +103,7 @@ static partial class FunctionValueRepresentation
         _ => Object,
     };
 
-    // Both owning source occurrences and the still-live late DOM consumers use
-    // this single mapping. A native pointer or already-selected callable is a
+    // Owning source occurrences use this mapping. A native pointer or already-selected callable is a
     // complete signature boundary, including any nested function types.
     static TypeNode RepresentType(TypeNode type, ValueTypeOracle isByRefLike) => type switch {
         TypeNode.Fqn { Name: FunctionPointerVocabulary.Pointer } => type,
@@ -131,62 +124,6 @@ static partial class FunctionValueRepresentation
         TypeNode.Tv or TypeNode.Star => type,
         _ => throw new InvalidOperationException("Unaccounted function-value type: " + type.GetType().Name),
     };
-
-    static void Walk(JsonNode node, ValueTypeOracle isByRefLike)
-    {
-        if (node is JsonObject obj)
-        {
-            // A FunctionN nested here describes a native callable signature,
-            // not a stored Kotlin function value. Its slots cannot be erased.
-            if (IsNativeSignature(obj)) return;
-            if (obj["k"] is JsonValue callTag && callTag.TryGetValue<string>(out var callKind)
-                && callKind is "callStatic" or "callInstance" or "constrainedCall"
-                && obj[FunctionSignatureIdentity.CallKey] == null
-                && obj["sig"] is JsonArray signature && ContainsOrdinaryFunction(signature))
-                obj[FunctionSignatureIdentity.CallKey] = signature.DeepClone();
-            var invocationResult = obj["k"] is JsonValue nodeTag
-                && nodeTag.TryGetValue<string>(out var nodeKind) && nodeKind == "delegateInvoke"
-                && TypeJson.Read(obj["funcType"]) is TypeNode.Fn { Suspend: false, Clr: null } invocation
-                    ? invocation.Ret : null;
-            if (obj["t"] is JsonValue tag && tag.TryGetValue<string>(out _))
-            {
-                var original = TypeJson.Read(obj);
-                var physical = RepresentType(original, isByRefLike);
-                if (TypeNodeDataEquality.Equal(original, physical)) return;
-                var replacement = (JsonObject)TypeJson.Write(physical);
-                obj.Clear();
-                foreach (var pair in replacement.ToList()) obj[pair.Key] = pair.Value?.DeepClone();
-                return;
-            }
-            foreach (var pair in obj.ToList())
-            {
-                // These are authored Kotlin facts, not physical slots.
-                if (pair.Key is DeclarationIdentityBinding.SemanticSignatureKey or FunctionSignatureIdentity.Key or FunctionSignatureIdentity.CallKey
-                    or "memberSignature" or "delegationSig" or "inheritedClassMethods" or "attrs" or "retAttrs") continue;
-                // A literal SAM conversion constructs its declared CLR delegate directly. Its target
-                // signature is not an ordinary Kotlin function value, and can contain unboxable slots.
-                // Stored function conversions still erase their operand and adapt at the SAM boundary.
-                if (pair.Key == "funcType" && ClrMemberResolution.HasDeclaredDelegateSlot(obj)) continue;
-                if (pair.Value != null) Walk(pair.Value, isByRefLike);
-            }
-            if (invocationResult != null)
-            {
-                var call = obj.DeepClone();
-                var resultType = TypeJson.Write(invocationResult);
-                Walk(resultType, isByRefLike);
-                obj.Clear();
-                obj["k"] = "cast";
-                obj["type"] = resultType;
-                // This restores the function's selected result slot. It is not a source-level
-                // unchecked classifier cast and must retain its constructed generic arguments.
-                obj["_exactBridgeCast"] = true;
-                obj[RestorationKey] = true;
-                obj["e"] = call;
-            }
-        }
-        else if (node is JsonArray array)
-            foreach (var child in array) if (child != null) Walk(child, isByRefLike);
-    }
 
     static bool IsNativeSignature(JsonObject type) => type["t"] is JsonValue tag
         && tag.TryGetValue<string>(out var kind) && kind == "fqn"

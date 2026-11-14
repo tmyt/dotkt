@@ -470,12 +470,14 @@ internal static class BirGraphDom
                 case "k": if (field.Value?.GetValue<string>() != "newArray") throw new FormatException(); break;
                 case "elem": break;
                 case "elems": break;
+                case "sty": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirNewArray at {source.GetPath()}");
             }
         return new BirNewArray
         {
             Elem = Field<TypeNode>(fields, "elem", value => TypeNode.Read(value) ?? throw new FormatException()),
             Elems = Field<IBirExpression[]>(fields, "elems", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
+            Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
 
@@ -2532,6 +2534,7 @@ internal static class BirGraphDom
                 case "modality": break;
                 case "classOverrideOwner": break;
                 case "policyField": break;
+                case "eventRaiseDeclarationId": break;
                 case "delegateType": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirClrEventBacking at {source.GetPath()}");
             }
@@ -2545,6 +2548,7 @@ internal static class BirGraphDom
             Modality = Field<string>(fields, "modality", value => value!.GetValue<string>()),
             ClassOverrideOwner = Field<TypeNode>(fields, "classOverrideOwner", value => TypeNode.Read(value) ?? throw new FormatException()),
             PolicyField = Field<string>(fields, "policyField", value => value!.GetValue<string>()),
+            EventRaiseDeclarationId = Field<string>(fields, "eventRaiseDeclarationId", value => value!.GetValue<string>()),
             DelegateType = Field<TypeNode>(fields, "delegateType", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }

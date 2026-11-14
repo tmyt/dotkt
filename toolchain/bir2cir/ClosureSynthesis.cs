@@ -34,14 +34,6 @@ static partial class ClosureSynthesis
     // The referenced-metadata `ref struct` oracle, for the capture legality check (see CheckCaptureLegality).
     static ReferenceMetadataIndex _refs;
 
-    // A prebound payload owns a dense synthetic frame already.  Its construction-side typeArgs still name the
-    // enclosing frame and may contain the same outer TV more than once after inline specialization, so consumers
-    // must map payload `type#i` positions to typeArgs[i] rather than trying to recover the old outer-TV identity.
-    internal static bool HasPreboundFrame(JsonNode source) =>
-        source is JsonObject obj && obj[PreboundFrameKey] != null;
-
-    internal static void MarkPreboundFrame(JsonObject source) => source[PreboundFrameKey] = true;
-
     // A later phase that deliberately constructs executable subtrees supplies those exact roots here. Only the new
     // graph is inspected; already-normalized declarations in the file are not swept again. The returned list contains
     // the physical closure/SAM types actually appended to the file, for the producer's next declared capability.

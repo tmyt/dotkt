@@ -24,7 +24,7 @@ class PersonViewModel : ViewModelBase() { val name by viewModelProperty("John Do
 
 Related reading: `docs/dotkt-semantics.md` §8d (the consume side + the raise deviation this note
 adds), the layer table in `docs/architecture.md` §0, and the existing consume pass
-`toolchain/bir2cir/ClrEventSubscriptionBinding.cs`.
+`toolchain/bir2cir/ClrEventSubscriptionBinding.Materialization.cs`.
 
 ---
 

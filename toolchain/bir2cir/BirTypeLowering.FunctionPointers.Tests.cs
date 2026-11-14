@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 static partial class BirTypeLowering
 {
@@ -17,9 +18,9 @@ static partial class BirTypeLowering
         var nullableConstructor = Named("System.Nullable`1", methodVariable);
         if (CanonicalPhysicalSlotType(nullableConstructor) != new TypeNode.Nullable(methodVariable))
             throw new Exception("Native Nullable constructor and physical nullable signature disagree");
-        var source = TypeNode.Write(callback);
+        var source = new BirVariable { Name = "pointer", Type = callback };
         FunctionValueRepresentation.Apply(source, _ => false);
-        if (TypeJson.Read(source) != callback || FunctionValueRepresentation.ContainsOrdinaryFunction(source)
+        if (source.Type.Value != callback || FunctionValueRepresentation.ContainsOrdinaryFunction(callback)
             || NullableGenericErasure.EraseArgument(callback, _ => false) != callback)
             throw new Exception("Native function-pointer signature was treated as a stored Kotlin function");
         if (SupertypeGraph.SubstOwnerTvs(expected, [Named("System.String")]) is not TypeNode.FnPtr {

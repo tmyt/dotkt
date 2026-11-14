@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -59,8 +58,6 @@ static partial class FunctionValueRepresentation
             Fields = new[] { new BirFieldDeclaration { Name = "callback", Type = new TypeNode.Array(ordinary), KotlinType = ordinary } },
         };
         var root = new BirFileDeclaration { FileClass = "Functions", Types = new IBirTypeDeclaration[] { owner } };
-        var expected = root.ToDom();
-        Apply(expected, isByRefLike);
         var methods = owner.Methods.Value;
         var parameters = method.Params.Value;
         var inheritedBefore = inherited.DeepClone();
@@ -77,15 +74,23 @@ static partial class FunctionValueRepresentation
             || !TypeNodeDataEquality.Equal(parameter.FunctionSignatureType.Value, ordinary)
             || !TypeNodeDataEquality.Equal(parameter.Type.Value, physical)
             || !TypeNodeDataEquality.Equal(call.FunctionCallSignature.Value[0], ordinary)
+            || !TypeNodeDataEquality.Equal(call.FunctionCallSignature.Value[1], native)
+            || !TypeNodeDataEquality.Equal(method.Ret.Value, physical)
+            || !TypeNodeDataEquality.Equal(call.Ret.Value, physical)
+            || !TypeNodeDataEquality.Equal(call.Sig.Value[0], physical)
+            || !TypeNodeDataEquality.Equal(call.Sig.Value[1], native)
             || !TypeNodeDataEquality.Equal(call.MemberSignature.Value[0], ordinary)
             || !TypeNodeDataEquality.Equal(call.MemberReturnType.Value, physical)
             || !TypeNodeDataEquality.Equal(constructor.DelegationSig.Value[0], ordinary)
+            || !TypeNodeDataEquality.Equal(constructor.Params.Value[0].Type.Value, physical)
+            || !TypeNodeDataEquality.Equal(constructor.Params.Value[0].FunctionSignatureType.Value, ordinary)
+            || !TypeNodeDataEquality.Equal(owner.Fields.Value[0].Type.Value, new TypeNode.Array(physical))
+            || !TypeNodeDataEquality.Equal(owner.Fields.Value[0].KotlinType.Value, ordinary)
             || !TypeNodeDataEquality.Equal(construction.FuncType.Value, ordinary)
             || !TypeNodeDataEquality.Equal(((BirLocal)construction.Captures.Value[0]).Sty.Value, physical)
             || !inherited.StructurallyEquals(inheritedBefore)
-            || !ReferenceEquals(method.Attrs.Value, attributes) || !attributes[0].StructurallyEquals(attributesBefore)
-            || !JsonNode.DeepEquals(expected, root.ToDom()))
-            throw new InvalidOperationException("Owning function carrier mutation lost identity, facts, boundaries or late-consumer parity");
+            || !ReferenceEquals(method.Attrs.Value, attributes) || !attributes[0].StructurallyEquals(attributesBefore))
+            throw new InvalidOperationException("Owning function carrier mutation lost identity, facts or exact typed boundaries");
         var once = 0;
         root.Visit(node => { if (node is BirCallStatic { Method.HasValue: true } value && value.Method.Value == "once") once++; });
         if (once != 1) throw new InvalidOperationException("Function result restoration duplicated invocation operands");
@@ -101,10 +106,10 @@ static partial class FunctionValueRepresentation
             new BirClrStaticDelegate { FuncType = ordinary, DotktDelegateSlot = new TypeNode.Fqn("Callback") },
         })
         {
-            var declaredExpected = declared.ToDom();
-            Apply(declaredExpected, isByRefLike);
+            var declaredExpected = declared.DeepClone();
             var represented = Apply(declared, isByRefLike);
-            if (!represented.HasDeclaredDelegateSlot || !JsonNode.DeepEquals(represented.ToDom(), declaredExpected))
+            if (!ReferenceEquals(represented, declared) || !represented.HasDeclaredDelegateSlot
+                || !represented.StructurallyEquals(declaredExpected))
                 throw new InvalidOperationException("Declared delegate signatures diverged from schema-owned slot presence");
         }
         Console.WriteLine("[owning function values] self-test OK (carrier mutation, declaration/call facts, exact restoration, once evaluation, boundaries, identity and presence)");

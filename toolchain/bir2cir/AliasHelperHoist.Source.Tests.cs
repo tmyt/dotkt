@@ -73,8 +73,55 @@ static partial class AliasHelperHoist
         rehomeRoot.Types = retained;
         transitions.Release();
         AliasHandoffSelfTest();
+        MaterializedAppendSelfTest();
         OwnedVisibilitySelfTest();
         Console.WriteLine("[alias helper receiver] self-test OK (owning identities, exact disposition, binding roles, permutation, scope transfer)");
+    }
+
+    static void MaterializedAppendSelfTest()
+    {
+        var alias = new BirClassDefinition { Name = "Alias", Kind = "class" };
+        var kept = new BirClassDefinition { Name = "Kept", Kind = "class" };
+        var host = new BirClassDefinition { Name = "Host", Kind = "class" };
+        var helper = new BirClassDefinition { Name = "Helper", Kind = "class" };
+        var first = new BirClassDefinition { Name = "FirstCallback", Kind = "class" };
+        var second = new BirClassDefinition { Name = "SecondCallback", Kind = "class" };
+        var original = new IBirTypeDeclaration[] { alias, kept };
+        var continuing = new IBirTypeDeclaration[] { host, helper, kept };
+        var file = new BirFileDeclaration { FileClass = "Appended", Types = continuing };
+        var transitions = new AliasDeclarationTransitions();
+        transitions.Record(file, original, continuing, new[] { new AliasDeclarationTransitions.Replacement(alias, host, helper) });
+        static void Refused(Action action)
+        {
+            try { action(); } catch (InvalidOperationException) { return; }
+            throw new InvalidOperationException("Alias materialization accepted an unreported occurrence transition");
+        }
+        file.Types = new IBirTypeDeclaration[] { host, helper, kept, first };
+        Refused(() => transitions.ValidateProjection(new JsonNode[] { file.ToDom() }));
+        file.Types = new IBirTypeDeclaration[] { host, kept, helper, first };
+        Refused(() => transitions.AdmitMaterializedTypes(file, new[] { first }));
+        file.Types = new IBirTypeDeclaration[] { host, helper, first };
+        Refused(() => transitions.AdmitMaterializedTypes(file, new[] { first }));
+        file.Types = new IBirTypeDeclaration[] { host, helper, (BirClassDefinition)kept.DeepClone(), first };
+        Refused(() => transitions.AdmitMaterializedTypes(file, new[] { first }));
+        Refused(() => transitions.AdmitMaterializedTypes(new BirFileDeclaration(), Array.Empty<BirClassDefinition>()));
+        file.Types = new IBirTypeDeclaration[] { host, helper, kept, first };
+        transitions.AdmitMaterializedTypes(file, new[] { first });
+        file.Types = new IBirTypeDeclaration[] { host, helper, kept, first, second };
+        Refused(() => transitions.AdmitMaterializedTypes(file, new[] { first }));
+        transitions.AdmitMaterializedTypes(file, new[] { second });
+        var projection = file.ToDom();
+        transitions.ValidateProjection(new JsonNode[] { projection });
+        var owners = transitions.LogicalOwners(0, projection).ToArray();
+        if (owners.Length != 2 || owners[0]["name"]?.GetValue<string>() != "Alias"
+            || !ReferenceEquals(owners[1], projection["types"][2])
+            || !transitions.TryOwner(file, 1, kept, out var position, out var retired) || position != 2 || retired
+            || !transitions.TryOwner(file, 0, alias, out _, out retired) || !retired
+            || !ReferenceEquals(original[0], alias) || !ReferenceEquals(continuing[2], kept))
+            throw new InvalidOperationException("Alias append changed original logical owners or exact continuing positions");
+        // No representation ledger is the normal reference-build capability.
+        new AliasDeclarationTransitions().AdmitMaterializedTypes(file, new[] { second });
+        transitions.Release();
     }
 
     static void OwnedVisibilitySelfTest()
