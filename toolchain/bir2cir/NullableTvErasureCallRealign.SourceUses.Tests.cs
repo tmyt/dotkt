@@ -91,8 +91,49 @@ static partial class NullableTvErasureCallRealign
         SourceUseDelegateConstructionSelfTest();
         SourceUseSuspendBodySelfTest();
         SourceUseVisibilitySelfTest();
+        SourceUseReferencedOwnerSelfTest();
         SourceUseMaterializedSelfTest();
         Console.WriteLine("[typed nullable source uses] self-test OK (two-phase arguments, current frames, constructors, result projections, slots, loop flow and visibility clock)");
+    }
+
+    static void SourceUseReferencedOwnerSelfTest()
+    {
+        var integer = new TypeNode.Fqn("kotlin.Int");
+        var erased = new TypeNode.Fqn("object");
+        var variable = new TypeNode.Tv("method", 0);
+        var source = new TypeNode.Fqn("Holder", new TypeNode[] { new TypeNode.Nullable(variable) });
+        var expected = new TypeNode.Fqn("Holder", new TypeNode[] { new TypeNode.Nullable(integer) });
+        var physical = new TypeNode.Fqn("Holder", new TypeNode[] { erased });
+        var metadata = new ReferenceDotKtMetadata();
+        metadata.MemberBindings.Add(new("Producer", "read", 0, null, false, true, MethodArity: 1,
+            ParamTypeNodes: Array.Empty<TypeNode>(), ReturnTypeNode: physical, NullableGenericRet: source,
+            DeclarationId: "referenced-read"));
+        var references = ReferenceMetadataIndex.DefaultDemandTestIndex(metadata);
+        var call = new BirCallStatic { Method = "read", DeclarationId = "referenced-read",
+            TypeArgs = new TypeNode[] { integer }, Args = Array.Empty<IBirExpression>(), Ret = expected, Sty = expected };
+        var statement = new BirExpressionStatement { Expr = call };
+        var method = new BirFunctionDeclaration { Name = "use", Params = Array.Empty<BirParameter>(),
+            Ret = new TypeNode.Fqn("void"), Body = new IBirStatement[] { statement } };
+        var file = new BirFileDeclaration { FileClass = "Consumer", Methods = new[] { method } };
+        var index = CollectDeclaredMemberRets(new[] { file }, references);
+        var view = index.BindSourceVisibility();
+        ApplySourceUses(file, view, type => type.Name == "kotlin.Int", references);
+        if (call.Ret.Value != expected)
+            throw new InvalidOperationException("An unattributed referenced call acquired a declaration before its owner existed");
+        // The capability transition is MCS's explicit owner attribution, not a
+        // fresh declaration snapshot or a search by the method's physical name.
+        call.Owner = new TypeNode.Fqn("Producer");
+        var order = view.SourceApplicationOrder;
+        var result = ApplyAfterReferencedOwnerBinding(file, view, type => type.Name == "kotlin.Int", references);
+        if (!ReferenceEquals(result, file) || !ReferenceEquals(file.Methods.Value[0], method)
+            || !ReferenceEquals(method.Body.Value[0], statement) || !ReferenceEquals(statement.Expr.Value, call)
+            || call.Ret.Value != physical || call.Sty.Value != physical || call.TypeArgs.Value[0] != integer
+            || !ReferenceEquals(order, view.SourceApplicationOrder) || !ReferenceEquals(view.ByOwner, index.ByOwner))
+            throw new InvalidOperationException("Referenced-owner flow lost its declaration view, selected frame or owning occurrences");
+        var once = file.DeepClone();
+        ApplyAfterReferencedOwnerBinding(file, view, type => type.Name == "kotlin.Int", references);
+        if (!file.StructurallyEquals(once))
+            throw new InvalidOperationException("Referenced-owner flow repeated a completed boundary conversion");
     }
 
     static void SourceUseFixedConsumersSelfTest()
@@ -258,7 +299,10 @@ static partial class NullableTvErasureCallRealign
             var lateConstruction = (BirNew)((BirVariable)lateBody[3]).Init.Value;
             var lateNameRead = (BirCallInstance)((BirVariable)lateBody[4]).Init.Value;
             ApplyAfterDelegateSlotAlignment(late, binding, type => type.Name == "kotlin.Int", null);
-            ApplySourceUses(source, binding, type => type.Name == "kotlin.Int", null);
+            var result = ApplyAfterReferencedOwnerBinding(source, binding, type => type.Name == "kotlin.Int", null);
+            if (!ReferenceEquals(result, source) || !ReferenceEquals(source.Methods.Value[0], method)
+                || !ReferenceEquals(source.Types.Value[0], derived))
+                throw new InvalidOperationException("Referenced-owner capability replaced its continuing declarations");
             var visible = !ReferenceEquals(binding, before);
             if ((read.Ret.Value == erased) != visible || (property.Ret.Value == erased) != visible
                 || (field.Type.Value == erased) != visible || (construction.Args.Value[0] is BirCast) != visible
