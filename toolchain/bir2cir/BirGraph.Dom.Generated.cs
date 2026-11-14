@@ -1668,6 +1668,7 @@ internal static class BirGraphDom
                 case "suspendTaskResult": break;
                 case "dotktValueReturn": break;
                 case "_ownerConstraintOverrideBounds": break;
+                case "_ownerConstraintDispatchBounds": break;
                 case "_physicalDeclarationSignature": break;
                 case "retKotlinType": break;
                 case "_preparedDelegateReturnArgument": break;
@@ -1749,6 +1750,7 @@ internal static class BirGraphDom
             SuspendTaskResult = Field<TypeNode>(fields, "suspendTaskResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             DotktValueReturn = Field<bool>(fields, "dotktValueReturn", value => value!.GetValue<bool>()),
             _ownerConstraintOverrideBounds = Field<OwnerConstraintOverrideBounds>(fields, "_ownerConstraintOverrideBounds", value => OwnerConstraintOverrideBounds.ReadFrozenText(value!.GetValue<string>())),
+            _ownerConstraintDispatchBounds = Field<OwnerConstraintDispatchBounds>(fields, "_ownerConstraintDispatchBounds", value => OwnerConstraintDispatchBounds.ReadFrozenText(value!.GetValue<string>())),
             _physicalDeclarationSignature = Field<bool>(fields, "_physicalDeclarationSignature", value => value!.GetValue<bool>()),
             RetKotlinType = Field<TypeNode>(fields, "retKotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
             _preparedDelegateReturnArgument = Field<bool>(fields, "_preparedDelegateReturnArgument", value => value!.GetValue<bool>()),
@@ -2023,6 +2025,7 @@ internal static class BirGraphDom
                 case "attrs": break;
                 case "kotlinType": break;
                 case "kotlinSupertypesPre": break;
+                case "_ownerConstraintDispatchBounds": break;
                 case "staticCarrier": break;
                 case "companionCarrier": break;
                 case "roundtripSupertypesPre": break;
@@ -2062,6 +2065,7 @@ internal static class BirGraphDom
             Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             KotlinType = Field<TypeNode>(fields, "kotlinType", value => TypeNode.Parse(value!.GetValue<string>())),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
+            _ownerConstraintDispatchBounds = Field<OwnerConstraintDispatchBounds>(fields, "_ownerConstraintDispatchBounds", value => OwnerConstraintDispatchBounds.ReadFrozenText(value!.GetValue<string>())),
             StaticCarrier = Field<BirStaticCarrier>(fields, "staticCarrier", value => ReadBirStaticCarrier(value!)),
             CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),
             RoundtripSupertypesPre = Field<SourceTypeFacts>(fields, "roundtripSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
@@ -2262,6 +2266,7 @@ internal static class BirGraphDom
                 case "enumRich": break;
                 case "richEnum": break;
                 case "kotlinSupertypesPre": break;
+                case "_ownerConstraintDispatchBounds": break;
                 case "_syntheticFrameBound": break;
                 case "staticCarrier": break;
                 case "companionCarrier": break;
@@ -2311,6 +2316,7 @@ internal static class BirGraphDom
             EnumRich = Field<bool>(fields, "enumRich", value => value!.GetValue<bool>()),
             RichEnum = Field<BirRichEnumDeclaration>(fields, "richEnum", value => ReadBirRichEnumDeclaration(value!)),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
+            _ownerConstraintDispatchBounds = Field<OwnerConstraintDispatchBounds>(fields, "_ownerConstraintDispatchBounds", value => OwnerConstraintDispatchBounds.ReadFrozenText(value!.GetValue<string>())),
             _syntheticFrameBound = Field<bool>(fields, "_syntheticFrameBound", value => value!.GetValue<bool>()),
             StaticCarrier = Field<BirStaticCarrier>(fields, "staticCarrier", value => ReadBirStaticCarrier(value!)),
             CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),

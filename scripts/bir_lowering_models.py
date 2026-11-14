@@ -350,7 +350,7 @@ def outputs(root, definitions):
         kind = cs(field)
         if kind == "byte[]": return f"{left}.AsSpan().SequenceEqual({right})"
         if kind == "TypeNode": return f"TypeNodeDataEquality.Equal({left}, {right})"
-        if kind in {"SourceTypeFacts", "SourceBoundsSnapshot", "SourceTypeVector", "OwnerConstraintOverrideBounds"}:
+        if kind in {"SourceTypeFacts", "SourceBoundsSnapshot", "SourceTypeVector", "OwnerConstraintOverrideBounds", "OwnerConstraintDispatchBounds"}:
             return f"{left}.FrozenText == {right}.FrozenText"
         if kind == "NullableRepresentationFrame": return f"EqualFrame({left}, {right})"
         if kind == "PhysicalMemberTable": return f"{left}.StructurallyEquals({right})"

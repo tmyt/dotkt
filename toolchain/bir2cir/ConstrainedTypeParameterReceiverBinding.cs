@@ -63,7 +63,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
         JsonArray methodParameters, ReferenceMetadataIndex refs)
     {
         BindMethod(method, CloneTypeParametersWithErasedSourceBounds(owner), arity: null,
-            close: true, isValue: null, resolvedPropertiesOnly: false, refs: refs,
+            close: true, isValue: null, refs: refs,
             methodParametersOverride: methodParameters);
     }
 
@@ -73,7 +73,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
                 BindMethod(method, parameters, arity: null, close: true, isValue: null,
-                    resolvedPropertiesOnly: false, refs: null);
+                    refs: null);
     }
 
     // PHASE 2 — author the constrained dispatch over the now-declaring, now-constructed owner.
@@ -84,23 +84,6 @@ static partial class ConstrainedTypeParameterReceiverBinding
         var arity = CollectTypeArity(rootList);
         foreach (var root in rootList) BindFile(root, arity, close: false, isValue, refs: refs,
             localExistentialOwners: localExistentialOwners);
-    }
-
-    // A CLR property cannot be classified as an accessor rather than a public field until ClrMemberResolution has
-    // inspected the referenced declaration. Run this narrow second half after that resolution: only a node already
-    // stamped `member:accessor` is a method call and therefore eligible for constrained dispatch. A field stays a
-    // clrPropGet/Set and retains its ldfld/stfld representation.
-    public static void ApplyResolvedProperties(IEnumerable<JsonNode> roots)
-    {
-        var rootList = roots.ToList();
-        var arity = CollectTypeArity(rootList);
-        foreach (var root in rootList)
-            BindFile(root, arity, close: false, isValue: null, resolvedPropertiesOnly: true);
-        foreach (var root in rootList)
-        {
-            DropConstraintDispatchFacts(root);
-            DropErasedConstraintFacts(root);
-        }
     }
 
     // name -> declared type-parameter count, for every type declared in this compilation. Only the ARITY is
@@ -125,59 +108,59 @@ static partial class ConstrainedTypeParameterReceiverBinding
     }
 
     static void BindFile(JsonNode root, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue = null, bool resolvedPropertiesOnly = false, ReferenceMetadataIndex refs = null,
+        ValueTypeOracle isValue = null, ReferenceMetadataIndex refs = null,
         IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
         if (root is not JsonObject file) return;
         var noTypeParams = new JsonArray();
         if (file["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, noTypeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+                BindMethod(method, noTypeParams, arity, close, isValue, refs,
                     localExistentialOwners: localExistentialOwners);
-        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close, isValue, refs,
             localExistentialOwners);
         if (file["types"] is JsonArray declared)
             foreach (var type in declared.OfType<JsonObject>())
-                BindType(type, arity, close, isValue, resolvedPropertiesOnly, refs, localExistentialOwners);
+                BindType(type, arity, close, isValue, refs, localExistentialOwners);
     }
 
     static void BindType(JsonObject type, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs,
+        ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
         var typeParams = CloneTypeParametersWithErasedSourceBounds(type);
         if (type["ctors"] is JsonArray ctors)
             foreach (var ctor in ctors.OfType<JsonObject>())
-                BindMethod(ctor, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+                BindMethod(ctor, typeParams, arity, close, isValue, refs,
                     localExistentialOwners: localExistentialOwners);
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+                BindMethod(method, typeParams, arity, close, isValue, refs,
                     localExistentialOwners: localExistentialOwners);
         // A property ACCESSOR body is executable code like any other, and `class H<T : Tagged>(val item: T) { val v
         // get() = item.tag() }` reaches this pass only through here — BIR keeps accessors under `properties`, not
         // `methods`.
-        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close, isValue, refs,
             localExistentialOwners);
         if (type["types"] is JsonArray nested)
             foreach (var child in nested.OfType<JsonObject>())
-                BindType(child, arity, close, isValue, resolvedPropertiesOnly, refs, localExistentialOwners);
+                BindType(child, arity, close, isValue, refs, localExistentialOwners);
     }
 
     static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs,
+        ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
         if (properties == null) return;
         foreach (var property in properties.OfType<JsonObject>())
             foreach (var slot in new[] { "getter", "setter" })
                 if (property[slot] is JsonObject accessor)
-                    BindMethod(accessor, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs,
+                    BindMethod(accessor, typeParams, arity, close, isValue, refs,
                         localExistentialOwners: localExistentialOwners);
     }
 
     static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs,
+        ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         JsonArray methodParametersOverride = null, IReadOnlyDictionary<string, string> localExistentialOwners = null)
     {
         TypeNode.Fqn AllocatedDispatchOwner(TypeNode.Fqn selected) =>
@@ -200,17 +183,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
         var ambiguous = new HashSet<string>(StringComparer.Ordinal);
 
         void Record(JsonObject declaration)
-        {
-            if (Str(declaration["name"]) is not string name || TypeJson.Read(declaration["type"]) is not TypeNode type)
-                return;
-            if (locals.TryGetValue(name, out var prior) && prior != type)
-            {
-                ambiguous.Add(name);
-                locals.Remove(name);
-            }
-            else if (!ambiguous.Contains(name))
-                locals[name] = type;
-        }
+            => RecordLocal(locals, ambiguous, Str(declaration["name"]), TypeJson.Read(declaration["type"]));
 
         if (method["params"] is JsonArray parameters)
             foreach (var p in parameters.OfType<JsonObject>()) Record(p);
@@ -248,7 +221,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                     // A field has no constrained-call instruction. Its selected reference-type owner requires a
                     // reference value even when Kotlin proved that an otherwise erased generic receiver inherits it.
                     // Materialize that physical conversion here; keep value-type field receivers addressable.
-                    if (!close && !resolvedPropertiesOnly
+                    if (!close
                         && kind is "field" or "setField" or "setFieldExpr" or "lateinitGet"
                         && !Bool(call["static"])
                         && TypeJson.Read(call["ownerType"]) is TypeNode.Fqn fieldOwner
@@ -259,7 +232,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                     // Event binding selected the exact accessor while the Kotlin constraint graph was intact.
                     // Once a reference-owner proof is erased, constrained dispatch cannot establish that receiver
                     // relation for the verifier. Convert to the selected accessor owner explicitly, as for methods.
-                    if (!close && !resolvedPropertiesOnly && kind is "clrEventAdd" or "clrEventRemove"
+                    if (!close && kind is "clrEventAdd" or "clrEventRemove"
                         && Str(call["dispatch"]) == "constrained"
                         && TypeJson.Read(call["accessorOwner"]) is TypeNode.Fqn eventOwner
                         && isValue != null && !isValue(eventOwner)
@@ -278,7 +251,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                     // direct interface as an explicit conversion and ordinary virtual call. This is keyed on the
                     // selected constraint, so a retained sibling/self-bound still gets boxing-free constrained
                     // dispatch even when another constraint on the same parameter was removed.
-                    if (!close && !resolvedPropertiesOnly && kind == "constrainedCall"
+                    if (!close && kind == "constrainedCall"
                         && refs != null
                         && TypeJson.Read(call["iface"]) is TypeNode.Fqn constrainedIface
                         && call["recv"] is JsonObject constrainedRecv
@@ -316,7 +289,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                     // semantic/physical owner is still available. Preserve whether that selected route was one of
                     // the constraints removed from the physical inner TypeDef. ClrMemberResolution may later replace
                     // the owner with an inherited declaring interface, where comparing heads cannot recover the route.
-                    if (!close && !resolvedPropertiesOnly && refs != null
+                    if (!close && refs != null
                         && kind is "clrPropGet" or "clrPropSet"
                         && TypeJson.Read(call["type"]) is TypeNode.Fqn unresolvedPropertyOwner
                         && call["recv"] is JsonObject unresolvedPropertyRecv
@@ -330,30 +303,10 @@ static partial class ConstrainedTypeParameterReceiverBinding
                         if (propertyConstraintErased && ProjectedForeignConstraint(propertyConstraint, refs) is { } projectedProperty)
                             call["type"] = TypeJson.Write(projectedProperty);
                     }
-                    if (resolvedPropertiesOnly
-                        && (kind == "clrPropGet" || kind == "clrPropSet")
-                        && Str(call["member"]) == "accessor"
-                        && !(call["static"]?.GetValue<bool>() ?? false)
-                        && TypeJson.Read(call["type"]) is TypeNode.Fqn propertyOwner
-                        && call["recv"] is JsonObject propertyRecv
-                        && ReceiverTypeVariable(propertyRecv, scope, locals) is TypeNode.Tv propertyTv
-                        && ClosedOwner(propertyOwner, arity) is TypeNode.Fqn closedPropertyOwner)
-                    {
-                        var propertyRouteWasErased = NullableBool(call[ErasedConstraintDispatchKey])
-                            ?? ConstraintDispatchWasErased(
-                                propertyTv, closedPropertyOwner.Name, typeParams, methodParams);
-                        call.Remove(ErasedConstraintDispatchKey);
-                        if (propertyRouteWasErased)
-                            CastResolvedPropertyReceiver(call, closedPropertyOwner);
-                        else if (Str(call["dispatch"]) == "callvirt")
-                            ConstrainResolvedProperty(call, kind == "clrPropSet", propertyTv, closedPropertyOwner);
-                        else
-                            CastResolvedPropertyReceiver(call, closedPropertyOwner);
-                    }
                     var clrCall = kind is "clrInstance" or "clrGenericInstance";
                     var clrAccess = close && kind is "clrPropGet" or "clrPropSet";
                     var ownerKey = clrCall || clrAccess ? "type" : "ownerType";
-                    if (!resolvedPropertiesOnly && (kind == "callInstance" || clrCall || clrAccess)
+                    if ((kind == "callInstance" || clrCall || clrAccess)
                         && TypeJson.Read(call[ownerKey]) is TypeNode.Fqn owner
                         && call["recv"] is JsonObject recv
                         && ((close ? ErasedElementValues.RetainedVariable(recv) : null)
@@ -475,12 +428,11 @@ static partial class ConstrainedTypeParameterReceiverBinding
         var result = method["typeParams"] is JsonArray parameters
             ? new JsonArray(parameters.Select(parameter => parameter?.DeepClone()).ToArray())
             : new JsonArray();
-        if (Str(method[OwnerConstrainedMethodLowering.DispatchBoundsKey]) is string dispatchBounds
-            && JsonNode.Parse(dispatchBounds) is JsonObject plannedBounds)
-            foreach (var pair in plannedBounds)
-                if (int.TryParse(pair.Key, out var index) && index >= 0 && index < result.Count
+        if (Str(method[OwnerConstrainedMethodLowering.DispatchBoundsKey]) is string dispatchBounds)
+            foreach (var (index, dispatchValues) in OwnerConstraintDispatchBounds.ReadFrozenText(dispatchBounds).Bounds)
+                if (index >= 0 && index < result.Count
                     && result[index] is JsonObject parameter)
-                    parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] = pair.Value.DeepClone();
+                    parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] = new JsonArray(dispatchValues.Select(TypeJson.Write).ToArray());
         if (Str(method[NullableGenericErasure.MethodTypeParameterBoundsPre]) is not string encoded
             || JsonNode.Parse(encoded) is not JsonObject payload || payload["bounds"] is not JsonObject bounds)
             return result;
@@ -491,12 +443,11 @@ static partial class ConstrainedTypeParameterReceiverBinding
     internal static JsonArray CloneTypeParametersWithErasedSourceBounds(JsonObject type)
     {
         var result = TypeParameterFrame.CloneDeclarations(type);
-        if (Str(type[OwnerConstrainedMethodLowering.DispatchBoundsKey]) is string dispatchBounds
-            && JsonNode.Parse(dispatchBounds) is JsonObject plannedBounds)
-            foreach (var pair in plannedBounds)
-                if (int.TryParse(pair.Key, out var index) && index >= 0 && index < result.Count
+        if (Str(type[OwnerConstrainedMethodLowering.DispatchBoundsKey]) is string dispatchBounds)
+            foreach (var (index, dispatchValues) in OwnerConstraintDispatchBounds.ReadFrozenText(dispatchBounds).Bounds)
+                if (index >= 0 && index < result.Count
                     && result[index] is JsonObject parameter)
-                    parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] = pair.Value.DeepClone();
+                    parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] = new JsonArray(dispatchValues.Select(TypeJson.Write).ToArray());
         if (Str(type[KotlinSupertypesRecord.PreKey]) is not string encoded
             || JsonNode.Parse(encoded) is not JsonObject payload || payload["bounds"] is not JsonObject bounds)
             return result;
@@ -510,31 +461,12 @@ static partial class ConstrainedTypeParameterReceiverBinding
     static void RestoreProjectedSourceBounds(JsonArray parameters, JsonObject bounds, int offset,
         NullableRepresentationFrame frame = null)
     {
-        foreach (var pair in bounds)
-            if (int.TryParse(pair.Key, out var sourceIndex) && sourceIndex >= 0
-                && (frame == null || sourceIndex < frame.SourceArity)
-                && offset + (frame?.SourcePosition(sourceIndex) ?? sourceIndex) < parameters.Count
-                && parameters[offset + (frame?.SourcePosition(sourceIndex) ?? sourceIndex)] is JsonObject parameter
-                && pair.Value is JsonArray sourceBounds
-                && sourceBounds.Select(TypeJson.Read).Any(bound => bound != null && ContainsProjection(bound)))
+        var source = bounds.Where(pair => int.TryParse(pair.Key, out _) && pair.Value is JsonArray)
+            .ToDictionary(pair => int.Parse(pair.Key), pair => pair.Value.AsArray().Select(TypeJson.Read).ToArray());
+        foreach (var (index, sourceBounds) in ProjectedSourceBounds(source, parameters.Count, offset, frame))
+            if (parameters[index] is JsonObject parameter)
                 parameter[FBoundStarProjectionErasure.ErasedInnerConstraintKey] =
-                    RebindSourceBoundVariables(sourceBounds, frame);
-    }
-
-    static JsonNode RebindSourceBoundVariables(JsonNode node, NullableRepresentationFrame frame)
-    {
-        if (frame == null || node == null) return node?.DeepClone();
-        if (node is JsonObject obj)
-        {
-            if (Str(obj["t"]) == "tv" && Str(obj["scope"]) == "type")
-                return TypeJson.Write(new TypeNode.Tv("type", frame.SourcePosition(obj["i"].GetValue<int>())));
-            var result = new JsonObject();
-            foreach (var pair in obj) result[pair.Key] = RebindSourceBoundVariables(pair.Value, frame);
-            return result;
-        }
-        if (node is JsonArray array)
-            return new JsonArray(array.Select(value => RebindSourceBoundVariables(value, frame)).ToArray());
-        return node.DeepClone();
+                    new JsonArray(sourceBounds.Select(TypeJson.Write).ToArray());
     }
 
     static TypeNode.Fqn ProjectedForeignConstraint(TypeNode.Fqn source, ReferenceMetadataIndex refs)
@@ -559,27 +491,6 @@ static partial class ConstrainedTypeParameterReceiverBinding
             || fn.Ctx?.Any(ContainsProjection) == true,
         _ => false,
     };
-
-    static void ConstrainResolvedProperty(JsonObject node, bool write, TypeNode.Tv recvType, TypeNode.Fqn owner)
-    {
-        var args = new JsonArray();
-        var sig = new JsonArray();
-        if (write)
-        {
-            if (node["value"] is JsonNode value) args.Add(value.DeepClone());
-            if (node["memberRef"] is JsonObject memberRef
-                && memberRef["parameterTypes"] is JsonArray parameters && parameters.Count > 0)
-                sig.Add(parameters[^1]?.DeepClone());
-        }
-        node["k"] = "constrainedCall";
-        node["recvType"] = TypeJson.Write(recvType);
-        node["iface"] = TypeJson.Write(owner);
-        node["method"] = node["accessor"]?.DeepClone();
-        node["sig"] = sig;
-        node["args"] = args;
-        foreach (var key in new[] { "type", "name", "static", "member", "accessor", "dispatch", "super", "value", "sty" })
-            node.Remove(key);
-    }
 
     // A non-virtual class accessor has no polymorphic slot for constrained. to select. The receiver's declaration is
     // still !!T, which is not verifier-compatible with the exact class MemberRef, so materialize the ordinary
@@ -693,11 +604,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
 
     static bool ConstraintDispatchWasErased(
         TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams)
-    {
-        var matches = ConstraintDeclarations(tv, typeParams, methodParams)
-            .Where(candidate => candidate.Constraint.Name == ownerName).ToList();
-        return matches.Count == 1 && matches[0].Erased;
-    }
+        => ConstraintDispatchWasErased(tv, ownerName, ConstraintFrame(typeParams), ConstraintFrame(methodParams));
 
     // Constraint graphs may pass through another type variable (`E : T`, `T : Marker`). A physical bound removed
     // from an existential inner frame can therefore be the first edge rather than the final FQN. Preserve that route
@@ -706,87 +613,10 @@ static partial class ConstrainedTypeParameterReceiverBinding
     // unique selection at the callers, never a guessed dispatch.
     static IEnumerable<(TypeNode.Fqn Constraint, bool Erased)> ConstraintDeclarations(
         TypeNode.Tv start, JsonArray typeParams, JsonArray methodParams)
-    {
-        var result = new List<(TypeNode.Fqn Constraint, bool Erased)>();
-        var path = new HashSet<(string Scope, int Index)>();
-
-        void Walk(TypeNode.Tv tv, bool routeErased)
-        {
-            var key = (tv.Scope, tv.I);
-            if (!path.Add(key)) return;
-            try
-            {
-                var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
-                if (source == null || tv.I < 0 || tv.I >= source.Count || source[tv.I] is not JsonObject descriptor)
-                    return;
-
-                void Follow(JsonArray constraints, bool edgeErased)
-                {
-                    if (constraints == null) return;
-                    foreach (var constraintNode in constraints.Select(TypeJson.Read))
-                        switch (Peel(constraintNode))
-                        {
-                            case TypeNode.Fqn fqn:
-                                result.Add((fqn, routeErased || edgeErased));
-                                break;
-                            case TypeNode.Tv next:
-                                Walk(next, routeErased || edgeErased);
-                                break;
-                        }
-                }
-
-                Follow(descriptor["constraints"] as JsonArray, edgeErased: false);
-                Follow(descriptor[FBoundStarProjectionErasure.ErasedInnerConstraintKey] as JsonArray,
-                    edgeErased: true);
-            }
-            finally
-            {
-                path.Remove(key);
-            }
-        }
-
-        Walk(start, routeErased: false);
-        return result.Distinct();
-    }
+        => ConstraintDeclarations(start, ConstraintFrame(typeParams), ConstraintFrame(methodParams));
 
     static bool Bool(JsonNode node) =>
         node is JsonValue value && value.TryGetValue<bool>(out var result) && result;
-
-    static bool? NullableBool(JsonNode node) =>
-        node is JsonValue value && value.TryGetValue<bool>(out var result) ? result : null;
-
-    static void DropConstraintDispatchFacts(JsonNode node)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                obj.Remove(ErasedConstraintDispatchKey);
-                foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
-                    DropConstraintDispatchFacts(child);
-                break;
-            case JsonArray array:
-                foreach (var child in array.Where(value => value != null).ToList())
-                    DropConstraintDispatchFacts(child);
-                break;
-        }
-    }
-
-    static void DropErasedConstraintFacts(JsonNode node)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                obj.Remove(FBoundStarProjectionErasure.ErasedInnerConstraintKey);
-                obj.Remove(OwnerConstrainedMethodLowering.DispatchBoundsKey);
-                foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
-                    DropErasedConstraintFacts(child);
-                break;
-            case JsonArray array:
-                foreach (var child in array.Where(value => value != null).ToList())
-                    DropErasedConstraintFacts(child);
-                break;
-        }
-    }
 
     static string Str(JsonNode node) =>
         node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
