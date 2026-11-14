@@ -556,9 +556,6 @@ static class ErasedElementValues
         ApplyAll(new[] { nativeLocal }, null);
         var nativeArguments = nativeBody[^1]["expr"]["args"].AsArray();
         var nativeElement = new TypeNode.Tv("method", 0);
-        if (NullableTvErasureCallRealign.CoerceForFixedSlot(nativeArguments[0], ObjectType,
-                new TypeNode.ByRef(nativeElement), _ => false) != null)
-            throw new InvalidOperationException("Value coercion wrapped an exact native local location");
         PhysicalValueCoercion.AllocateNativeLocals(nativeBody, Array.Empty<JsonObject>(), nativeBody);
         if (TypeJson.Read(nativeBody[0]["type"]) != nativeElement
             || nativeArguments.Any(argument => Text(argument["k"]) != "local" || Text(argument["name"]) != "value"))

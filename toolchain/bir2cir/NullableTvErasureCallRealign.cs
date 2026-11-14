@@ -949,11 +949,14 @@ static partial class NullableTvErasureCallRealign
     }
 
     static bool CanNarrowReferenceArrayProjection(TypeNode physical, TypeNode semantic)
+        => CanNarrowReferenceArrayProjection(physical, semantic, _isValue);
+
+    static bool CanNarrowReferenceArrayProjection(TypeNode physical, TypeNode semantic, ValueTypeOracle isValue)
         => ReferenceArrayShape(physical) is TypeNode.Array { Elem: TypeNode.Fqn { Name: "object", Args: null } } pa
            && ReferenceArrayShape(semantic) is TypeNode.Array sa
            && pa.Rank == sa.Rank && pa.SzArray == sa.SzArray
            && !IsSemanticObjectElement(sa.Elem)
-           && !NeedsObjectSeam(sa.Elem);
+           && !NeedsObjectSeam(sa.Elem, isValue);
 
     // Nullable/oblivious wrappers on a reference array are NRT annotations, not CLR containers. Preserve the full
     // authored type on the cast node (BirTypeLowering records its nullable flags), but compare the physical array
@@ -1428,13 +1431,16 @@ static partial class NullableTvErasureCallRealign
     // when the reference index can project that semantic spelling to one unique exact TypeDef. An ambiguous flattened
     // nested identity deliberately has no answer here and therefore never participates in an erasure rewrite.
     static bool SameClassifier(TypeNode.Fqn left, TypeNode.Fqn right)
+        => SameClassifier(left, right, _refs);
+
+    static bool SameClassifier(TypeNode.Fqn left, TypeNode.Fqn right, ReferenceMetadataIndex refs)
     {
         if (left.Name == right.Name) return true;
-        if (_refs == null) return false;
-        if (_refs.TryExactPhysicalTypeName(left.Name, left.Args?.Length ?? 0, out var leftExact)
+        if (refs == null) return false;
+        if (refs.TryExactPhysicalTypeName(left.Name, left.Args?.Length ?? 0, out var leftExact)
             && leftExact != null && leftExact == right.Name)
             return true;
-        return _refs.TryExactPhysicalTypeName(right.Name, right.Args?.Length ?? 0, out var rightExact)
+        return refs.TryExactPhysicalTypeName(right.Name, right.Args?.Length ?? 0, out var rightExact)
             && rightExact != null && rightExact == left.Name;
     }
 
