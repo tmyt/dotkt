@@ -476,6 +476,9 @@ sealed class Pipeline
             RoundtripMetadata.FreezeSuspendResults(new[] { source });
             NullableGenericErasure.Apply(source, isValueFqn);
             captured[sourceIndexInModule] = (BirFileDeclaration)FunctionValueRepresentation.Apply(source, refs.IsByRefLikeFqn);
+            if (!referenceBuild)
+                ErasedElementValues.ApplyScalarCalls(captured[sourceIndexInModule], refs, isValueFqn,
+                    genericRepresentations, call => scalarSlots.Result(call, refs));
         }
         var files = new List<BirFile>();
         for (var index = 0; index < inputsWithSources.Count; index++)
@@ -597,11 +600,6 @@ sealed class Pipeline
             // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
             NullableTvErasureCallRealign.ApplyNewSyntheticTypes(bir.SyntheticTypes, nullableTvDeclRets);
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
-            // Typed preparation already erased declaration/function carriers.
-            // Realign scalar call values before the remaining nullable use axis.
-            if (!_options.RefBuild)
-                ErasedElementValues.ApplyAll(new[] { bir.Root }, refs, isValueFqn, genericRepresentations,
-                    call => scalarSlots.Result(call, refs), scalarCallsOnly: true);
             // GENERIC-BOUNDARY nullable-Tv USE realignment — THE USE AXIS of #86's erasure invariant (#4;
             // #113/#117/#120/#142). The DEF-side erasure above turns a member's `T?`/`…Ref<T?>…` into
             // `object`/`…Ref<object>…`, but a CALL site kotc emitted with T already substituted carries the concrete

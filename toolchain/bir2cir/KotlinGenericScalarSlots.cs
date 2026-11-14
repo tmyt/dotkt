@@ -66,10 +66,6 @@ static partial class KotlinGenericScalarSlots
                 method["retKotlinType"]?.GetValue<string>() is string saved ? TypeNode.Parse(saved) : null);
         }
 
-        internal TypeNode.Tv Result(JsonObject call, ReferenceMetadataIndex refs) =>
-            SelectResult(call["k"]?.GetValue<string>(), TypeJson.Read(call["sty"] ?? call["dynRet"]),
-                call[DeclarationIdentityBinding.Key]?.GetValue<string>(), refs);
-
         internal TypeNode.Tv Result(BirGraphValue call, ReferenceMetadataIndex refs) => call switch {
             BirCallStatic value => SelectResult(value.Tag, value.Sty.OrDefault() ?? value.DynRet.OrDefault(),
                 value.DeclarationId.OrDefault(), refs),

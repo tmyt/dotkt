@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -55,23 +54,38 @@ static partial class ErasedElementValues
             new BirInterfaceDefinition { Name = "Contract", Kind = "interface" },
             new BirClassDefinition { Name = "Bound", Kind = "class" },
         } };
-        var expected = root.ToDom();
-        ApplyAll(new[] { expected }, refs, _ => false, scalarResults: call => projection.Result(call, refs), scalarCallsOnly: true);
         var parameters = method.Params.Value;
+        var sourceCapture = closure.Captures.Value[0];
+        var signature = constrained.Sig.Value;
+        var arguments = constrained.Args.Value;
         ApplyScalarCalls(root, refs, _ => false, null, call => projection.Result(call, refs));
         if (!ReferenceEquals(root.Methods.Value[0], method) || !ReferenceEquals(method.Params.Value, parameters)
-            || method.Body.Value[0] is not BirVariable { Type.Value: TypeNode.Tv, Name.Value: "$nativeArgument$0" }
+            || method.Body.Value.Length != 11
+            || method.Body.Value[0] is not BirVariable { Type.Value: TypeNode.Tv, Name.Value: "$nativeArgument$0",
+                Init.Value: BirLocal { Name.Value: "incoming", Sty.Value: TypeNode.Fqn { Name: "object" } } }
+            || native.Args.Value[0] is not BirByRefOf { Inner.Value: BirLocal {
+                Name.Value: "$nativeArgument$0", Sty.Value: TypeNode.Tv } }
+            || native.Args.Value[1] is not BirByRefOf { Inner.Value: BirLocal { Name.Value: "addressed", Sty.Value: TypeNode.Tv } }
             || value.Type.Value != ObjectType || alias.Type.Value != ObjectType || addressed.Type.Value != variable
             || read.Ret.Value != ObjectType || read.DynRet.Value != ObjectType || read.Sty.Value != ObjectType
             || conditional.Type.Value != ObjectType || block.Type.Value != ObjectType
             || cast.Type.Value != new TypeNode.Nullable(new TypeNode.Fqn("Bound"))
-            || value.Init.Value is not BirCallStatic { ErasedValueVariableFact.HasValue: true }
+            || read.ErasedValueVariableFact.OrDefault() != variable
+            || ((BirLocal)alias.Init.Value).ErasedValueVariableFact.OrDefault() != variable
+            || ((BirLocal)block.Result.Value).Sty.Value != ObjectType
+            || ((BirLocal)block.Result.Value).ErasedValueVariableFact.OrDefault() != variable
             || closure.Captures.Value[0] is not BirCast { Type.Value: TypeNode.Fqn { Name: "object" } }
+            || ReferenceEquals(((BirCast)closure.Captures.Value[0]).E.Value, sourceCapture)
+            || ((BirLocal)((BirCast)closure.Captures.Value[0]).E.Value).ErasedValueVariableFact.OrDefault() != variable
             || ((BirReturn)closure.SynthClass.Value.Body.Value[0]).Value.Value is not BirLocal { Sty.Value: TypeNode.Tv }
             || ((BirExpressionStatement)method.Body.Value[^1]).Expr.Value is not BirCallInstance {
                 Virtual.Value: true, DeclarationId.Value: "selected", DotktDeclarationIdentityBound.Value: true,
                 Recv.Value: BirCast { Type.Value: TypeNode.Fqn { Name: "Contract" } } }
-            || !JsonNode.DeepEquals(expected, root.ToDom()))
+            || !ReferenceEquals(((BirCallInstance)((BirExpressionStatement)method.Body.Value[^1]).Expr.Value).Sig.Value, signature)
+            || !ReferenceEquals(((BirCallInstance)((BirExpressionStatement)method.Body.Value[^1]).Expr.Value).Args.Value, arguments)
+            || !((BirCallInstance)((BirExpressionStatement)method.Body.Value[^1]).Expr.Value).SuspendCall.HasValue
+            || ((BirCallInstance)((BirExpressionStatement)method.Body.Value[^1]).Expr.Value).SuspendCall.Value
+            || ((BirCallInstance)((BirExpressionStatement)method.Body.Value[^1]).Expr.Value).NullableWitnessCount.Value != 0)
             throw new InvalidOperationException("Owning scalar values lost origins, storage, lexical bindings, capture bounds or constrained facts");
 
         var ownerVariable = new TypeNode.Tv("type", 0);
@@ -83,12 +97,11 @@ static partial class ErasedElementValues
         var owner = new BirClassDefinition { Name = "Storage", Kind = "class", Fields = new[] { field },
             TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Ctors = new[] { constructor } };
         root = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { owner } };
-        expected = root.ToDom();
-        ApplyAll(new[] { expected }, refs, _ => false, scalarResults: call => projection.Result(call, refs), scalarCallsOnly: true);
         ApplyScalarCalls(root, refs, _ => false, null, call => projection.Result(call, refs));
         if (!ReferenceEquals(owner.Fields.Value[0], field) || field.Type.Value != ObjectType
             || fieldRead.Sty.Value != ObjectType || constructor.PreStmts.IsPresent
-            || !JsonNode.DeepEquals(expected, root.ToDom()))
+            || field.KotlinType.Value != ownerVariable || fieldRead.ErasedValueVariableFact.OrDefault() != ownerVariable
+            || ((BirVariable)constructor.Body.Value[0]).Type.Value != ObjectType)
             throw new InvalidOperationException("Owning scalar values changed this-field sources or constructor prologue presence");
         Console.WriteLine("[owning scalar values] self-test OK (native generic storage, origins, fixed-point aliases, regions, captures, bounds, constrained facts, fields and constructors)");
     }
