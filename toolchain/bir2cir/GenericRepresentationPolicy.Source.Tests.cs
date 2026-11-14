@@ -130,7 +130,12 @@ sealed partial class GenericRepresentationPolicy
         source.Fields = Array.Empty<BirFieldDeclaration>();
         root.Types = new IBirTypeDeclaration[] { source, carrier, payload };
         policy.PrepareDomLocations(new[] { root });
-        var continuation = root.ToDom();
+        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { root }, policy);
+        var preparation = FBoundStarProjectionErasure.PrepareDeclarationContinuation(declarations);
+        var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
+        var continuation = root.ToDom(declarations.ObserveProjection);
+        declarations.BindProjected();
         policy.BindDomDeclarations(new JsonNode[] { continuation });
         if (!policy.IsNativeField(continuation["types"][1]["fields"][0].AsObject())
             || !policy.IsNativeFieldUse("staticField", new TypeNode.Fqn("PhysicalStorage"), "physicalValue", null)
@@ -140,9 +145,8 @@ sealed partial class GenericRepresentationPolicy
             || policy.ProjectArgumentHead(new TypeNode.Fqn("PhysicalStorage", new[] { text }), true, null)
                 is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.String" }] })
             throw new InvalidOperationException("Native physical placement lost selected identity or recomputed source eligibility");
-        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
         policy.RecordNativeFields(new JsonNode[] { continuation });
-        FBoundStarProjectionErasure.ApplyAll(new JsonNode[] { continuation }, refs, valueSlots: policy);
+        FBoundStarProjectionErasure.ApplyAll(new JsonNode[] { continuation }, refs, preparation, proofs, policy);
         if (TypeJson.Read(continuation["methods"][0]["body"][0]["value"]["sty"]) is not TypeNode.Fqn { Name: "Payload", Args: [TypeNode.Fqn { Name: "kotlin.String" }] }
             || !TypeNodeDataEquality.Equal(TypeJson.Read(continuation["types"][1]["fields"][0]["type"]), valueType))
             throw new InvalidOperationException("Native source-owner use lost its closed field witness before late physical binding");

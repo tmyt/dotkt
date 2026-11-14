@@ -50,30 +50,34 @@ static partial class FBoundStarProjectionErasure
     }
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
+        CurrentDeclarationPreparation preparation, NativeProofPlan nativeProofs, GenericRepresentationPolicy valueSlots,
         IReadOnlyList<SharedSyntheticSynthesis.CellStorage> sharedCells = null,
         IDictionary<string, int[]> physicalParameterIndices = null,
-        IDictionary<string, string> physicalDeclarationSources = null,
-        GenericRepresentationPolicy valueSlots = null)
+        IDictionary<string, string> physicalDeclarationSources = null)
     {
-        var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        var defs = preparation.BindDefinitions();
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         OwnerConstrainedMethodLowering.Reset(refs, bound => PhysicalBoundClassifier(bound, owners, refs),
             (method, index) => _nativeProofs.Bounds(method, index));
         var rootList = roots.OfType<JsonObject>().ToList();
-        _valueSlots = valueSlots ?? new GenericRepresentationPolicy(refs.Aliases, refs, rootList);
-        foreach (var root in rootList) Collect(root, root, owners, defs);
-        var localClrAliases = CollectLocalClrAliases(defs);
-        _valueSlots.RegisterLocalDefinitions(defs, localClrAliases);
+        _valueSlots = valueSlots;
+        foreach (var owner in preparation.GenericOwners)
+            owners.Add(owner.Name, new Owner {
+                Name = owner.Name, Def = owner.Definition.Physical, Root = owner.Root.Physical,
+                Arity = owner.Arity, Needed = owner.Needed,
+            });
+        var localClrAliases = preparation.LocalClrAliases;
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
         foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
-        var supertypeDefs = SupertypeGraph.Collect(rootList);
+        var supertypeDefs = preparation.BindSourceSupertypes();
         _sourceSupertypes = supertypeDefs;
         // Snapshot declaration-owned edges before synthesis attaches carrier interfaces to the live definitions.
         var baseContracts = owners.Values.ToDictionary(owner => owner.Name, owner => SupertypeGraph.Reachable(
             new SupertypeGraph.Def { Base = TypeJson.Read(owner.Def["base"]) as TypeNode.Fqn },
             supertypeDefs, refs).ToArray(), StringComparer.Ordinal);
-        _localMethods = IndexLocalMethods(rootList);
-        _nativeProofs = new NativeProofPlan(rootList, defs, refs);
+        _localMethods = preparation.BindLocalMethods();
+        _localDeclarations = preparation.BindLocalDeclarations();
+        _nativeProofs = nativeProofs;
         AllocateCarrierNames(owners, defs.Keys);
         foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
         MarkNeededClosure(owners, baseContracts);

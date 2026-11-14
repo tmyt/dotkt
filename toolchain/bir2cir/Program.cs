@@ -42,6 +42,7 @@ static class Bir2Cir
                 MemberStrip.SelfTestSource();
                 InheritedDefaultFakeOverrideElision.SelfTestSource();
                 DeclarationIdentityBinding.SelfTest();
+                CurrentDeclarationBindingsTests.SelfTest();
                 SourceDeclarationSignatures.SelfTest();
                 DeclarationSignatureIdentity.SelfTest();
                 ForeignStarProjectionBinding.SelfTest();
@@ -68,6 +69,7 @@ static class Bir2Cir
                 ClrMemberResolution.SelfTestTypedBaseConstructors();
                 ClrMemberResolution.TypedExactCallSelfTest();
                 ClrMemberResolution.DeclarationBindingsSelfTest();
+                ClrMemberResolution.TypedGenericParameterFactsSelfTest();
                 BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
                 StringCharSequenceBridge.SelfTestSource();
@@ -181,6 +183,7 @@ static class Bir2Cir
                 RoundtripMetadata.SourceTypeAliasSelfTest();
                 SuspendColdLowering.DeclarationRegistrySelfTest();
                 ReferenceMetadataIndex.SelfTest();
+                ReferenceMetadataIndex.PhysicalParameterFactsSelfTest();
                 MetadataDeclaredMembersTests.SelfTest();
                 ExternalGenericConstraintValidation.SelfTestResolved();
                 NullableTvErasureCallRealign.SelfTest();
@@ -666,6 +669,9 @@ sealed class Pipeline
         genericRepresentations.RefreshPhysicalNativeLocations(captured);
         ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(captured);
         FBoundStarProjectionErasure.NormalizeRedundantProjections(captured, refs);
+        var currentDeclarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(captured, genericRepresentations);
+        var currentDeclarationPreparation = FBoundStarProjectionErasure.PrepareDeclarationContinuation(currentDeclarations);
+        var nativeProofs = FBoundStarProjectionErasure.PrepareNativeProofs(currentDeclarations, refs, genericRepresentations);
 
         for (var index = 0; index < captured.Length; index++)
         {
@@ -673,7 +679,7 @@ sealed class Pipeline
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
             // continuing projection, after module-wide type/slot preparation.
-            var root = source.ToDom();
+            var root = source.ToDom(currentDeclarations.ObserveProjection);
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
                 root,
@@ -681,6 +687,7 @@ sealed class Pipeline
         }
 
         var continuingRoots = files.Select(file => file.Root).ToArray();
+        currentDeclarations.BindProjected();
         // Retired generated targets still supply source declaration facts. Put
         // those explicitly reported declarations through the same frontier once;
         // both continuing indexes receive the exact same detached DOM record.
@@ -697,7 +704,7 @@ sealed class Pipeline
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums, sharedCells,
-                moduleBindings, overrideSourceParameters));
+                moduleBindings, overrideSourceParameters, currentDeclarationPreparation, nativeProofs));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -757,8 +764,9 @@ sealed class Pipeline
         var overrideSourceParameters = module.Preparation.OverrideSourceParameters;
         var physicalDeclarationSources = new Dictionary<string, string>(StringComparer.Ordinal);
         var localExistentialOwners =
-            FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs, sharedCells,
-                physicalParameterIndices, physicalDeclarationSources, genericRepresentations);
+            FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
+                module.Preparation.CurrentDeclarations, module.Preparation.NativeProofs, genericRepresentations, sharedCells,
+                physicalParameterIndices, physicalDeclarationSources);
         // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
         // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
         // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
@@ -1685,7 +1693,9 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
     IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings,
-    IReadOnlyDictionary<JsonObject, TypeNode[]> OverrideSourceParameters);
+    IReadOnlyDictionary<JsonObject, TypeNode[]> OverrideSourceParameters,
+    FBoundStarProjectionErasure.CurrentDeclarationPreparation CurrentDeclarations,
+    FBoundStarProjectionErasure.NativeProofPlan NativeProofs);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
