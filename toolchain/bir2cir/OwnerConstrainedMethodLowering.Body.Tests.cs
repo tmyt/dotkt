@@ -29,7 +29,7 @@ static partial class OwnerConstrainedMethodLowering
                     ? OptionalField<TypeNode>.Of(name == "m" ? methodVariable : ownerVariable) : default },
                 Args = Array.Empty<IBirExpression>(), Ret = unit, TypeArgs = OptionalField<TypeNode[]>.Null,
             };
-            BirExpressionStatement Statement(IBirExpression expression) => new() { Expr = expression };
+            BirExpressionStatement Statement(IBirExpression expression) => new() { Expr = OptionalField<IBirExpression>.Of(expression) };
             BirLambdaParameter Parameter(string name, TypeNode type, bool scalar) => new() {
                 Name = name, Type = scalar ? new TypeNode.Fqn("object") : type,
                 KotlinType = scalar ? OptionalField<TypeNode>.Of(type) : default,
