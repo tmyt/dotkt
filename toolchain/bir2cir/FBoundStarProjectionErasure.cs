@@ -52,53 +52,29 @@ static partial class FBoundStarProjectionErasure
     }
 
     public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
-        CurrentDeclarationPreparation preparation, NativeProofPlan nativeProofs, GenericRepresentationPolicy valueSlots,
+        CarrierSurfacePreparation surface,
         IReadOnlyList<SharedSyntheticSynthesis.CellStorage> sharedCells = null,
         IDictionary<string, int[]> physicalParameterIndices = null,
         IDictionary<string, string> physicalDeclarationSources = null)
     {
+        var preparation = surface.Demand.Preparation;
         var defs = preparation.BindDefinitions();
-        var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
-        OwnerConstrainedMethodLowering.Reset(refs, bound => PhysicalBoundClassifier(bound, owners, refs),
-            (method, index) => _nativeProofs.Bounds(method, index));
+        var owners = surface.Demand.BindOwners();
+        _nativeProofs = surface.Demand.NativeProofs;
+        OwnerConstrainedMethodLowering.ConfigurePreparedMethods(preparation.Bindings, refs,
+            bound => PhysicalBoundClassifier(bound, owners, refs), (method, index) => _nativeProofs.Bounds(method, index));
         var rootList = roots.OfType<JsonObject>().ToList();
-        _valueSlots = valueSlots;
-        foreach (var owner in preparation.GenericOwners)
-            owners.Add(owner.Name, new Owner {
-                Name = owner.Name, Def = owner.Definition.Physical, Root = owner.Root.Physical,
-                Arity = owner.Arity, Needed = owner.Needed,
-            });
+        _valueSlots = surface.Demand.Values;
         var localClrAliases = preparation.LocalClrAliases;
         _valueSlots.RegisterLocalDefinitions(defs, localClrAliases);
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal);
         foreach (var alias in localClrAliases) aliases[alias.Key] = alias.Value;
         var supertypeDefs = preparation.BindSourceSupertypes();
         _sourceSupertypes = supertypeDefs;
-        // Snapshot declaration-owned edges before synthesis attaches carrier interfaces to the live definitions.
-        var baseContracts = owners.Values.ToDictionary(owner => owner.Name, owner => SupertypeGraph.Reachable(
-            new SupertypeGraph.Def { Base = TypeJson.Read(owner.Def["base"]) as TypeNode.Fqn },
-            supertypeDefs, refs).ToArray(), StringComparer.Ordinal);
+        var baseContracts = surface.Demand.BaseContracts;
         _localMethods = preparation.BindLocalMethods();
         _localDeclarations = preparation.BindLocalDeclarations();
-        _nativeProofs = nativeProofs;
-        AllocateCarrierNames(owners, defs.Keys);
-        foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
-        MarkNeededClosure(owners, baseContracts);
-
-        foreach (var definition in defs.Values.Concat(rootList))
-            if (definition["methods"] is JsonArray declaredMethods)
-                foreach (var method in declaredMethods.OfType<JsonObject>())
-                    if (HasOwnerDependentMethodConstraint(method)
-                        || OwnerConstrainedMethodLowering.HasMethodDependentBounds(method)
-                        || method[OwnerConstrainedMethodLowering.OverrideBoundsKey] != null)
-                        OwnerConstrainedMethodLowering.Record(method, definition);
-        foreach (var owner in owners.Values.Where(owner => owner.Needed))
-            AddFieldAccessors(owner);
-        var sourceSignatures = defs.Values
-            .SelectMany(definition => (definition["methods"] as JsonArray)?.OfType<JsonObject>()
-                ?? Enumerable.Empty<JsonObject>())
-            .ToDictionary(method => method, method => (method["params"] as JsonArray)?.OfType<JsonObject>()
-                .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>());
+        var sourceSignatures = surface.Signatures.BindPhysical();
         foreach (var root in rootList) AlignCapturedInnerBaseValues(root, BirScope.Empty, null, owners, defs, refs);
         foreach (var root in rootList)
             ProjectParameterDeclarations(root, owners, defs, refs, localClrAliases, physicalParameterIndices);
@@ -705,9 +681,6 @@ static partial class FBoundStarProjectionErasure
     // The physical name is intentionally not an ABI oracle: trusted [KotlinType] metadata carries the relation.
     // Allocate against every TypeDef in the emission unit so a user declaration (including a backtick identifier)
     // can never collide with the compiler carrier. The sorted walk makes the chosen suffix deterministic.
-    static void AllocateCarrierNames(IReadOnlyDictionary<string, Owner> owners, IEnumerable<string> declaredNames)
-        => _usedCarrierNames = AllocateCarrierNameState(owners, declaredNames);
-
     static HashSet<string> AllocateCarrierNameState(IReadOnlyDictionary<string, Owner> owners, IEnumerable<string> declaredNames)
     {
         var used = declaredNames.ToHashSet(StringComparer.Ordinal);
@@ -1452,55 +1425,6 @@ static partial class FBoundStarProjectionErasure
         _ => false,
     };
 
-    static void MarkNeeded(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                if (IsOrdinaryKotlinParameter(obj, defs, refs)
-                    && StripSourceNullability(TypeJson.Read(obj["type"])) is TypeNode.Fqn { Args: { Length: > 0 } } parameterType
-                    && owners.TryGetValue(parameterType.Name, out var parameterOwner)
-                    && Str(parameterOwner.Def["kind"]) is "class" or "interface" && !refs.IsValueType(parameterType))
-                    parameterOwner.Needed = true;
-                if (TryVarianceProjectedArrayOwner(obj, defs, refs, out var arrayOwner)
-                    && owners.TryGetValue(arrayOwner.Name, out var projectedOwner))
-                    projectedOwner.Needed = true;
-                if (TryVarianceProjectedArraySpreadOwner(obj, defs, refs, out var spreadOwner)
-                    && owners.TryGetValue(spreadOwner.Name, out var projectedSpreadOwner))
-                    projectedSpreadOwner.Needed = true;
-                if (TryVarianceProjectedArrayInitializerOwner(obj, defs, refs, out var initializerOwner)
-                    && owners.TryGetValue(initializerOwner.Name, out var projectedInitializerOwner))
-                    projectedInitializerOwner.Needed = true;
-                var runtimeClassifier = Str(obj["k"]) is "isInst" or "isInstRef" or "cast"
-                    || Bool(obj[KotlinRuntimeTypeWitness.ClassifierKey]);
-                foreach (var kv in obj)
-                {
-                    if (kv.Value == null || kv.Key == "name") continue;
-                    if (TypeJson.Read(kv.Value) is TypeNode type)
-                    {
-                        MarkNeededType(type, owners, runtimeClassifier && kv.Key == "type");
-                    }
-                    else if (kv.Key is "constraints" or ErasedInnerConstraintKey && kv.Value is JsonArray bounds)
-                    {
-                        // A generic bound supplies the erased classifier of a
-                        // type-variable array cast, including private classifiers.
-                        foreach (var bound in bounds) MarkNeededType(TypeJson.Read(bound), owners, true);
-                    }
-                    else MarkNeeded(kv.Value, owners, defs, refs);
-                }
-                break;
-            case JsonArray arr:
-                foreach (var value in arr)
-                    if (value != null)
-                    {
-                        if (TypeJson.Read(value) is TypeNode type) MarkNeededType(type, owners, false);
-                        else MarkNeeded(value, owners, defs, refs);
-                    }
-                break;
-        }
-    }
-
     // Kotlin can infer `Array<G<Join>>` from values `G<A>`, `G<B>`, ... when G's source variance makes each
     // conversion legal. CLR arrays are covariant only in their immediate reference element; that does not turn the
     // invariant physical constructions G<A>/G<B> into G<Join>. The already type-checked BIR is the authority for the
@@ -2090,62 +2014,6 @@ static partial class FBoundStarProjectionErasure
         if (ownerIfaces == null) owner.Def["interfaces"] = ownerIfaces = new JsonArray();
         if (!ownerIfaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == owner.ErasedName))
             ownerIfaces.Add(TypeJson.Write(new TypeNode.Fqn(owner.ErasedName)));
-    }
-
-    // Field storage remains on the concrete class. Its existential value view exposes ordinary forwarding
-    // slots, including fields for which kotc deliberately emits no Kotlin property accessor.
-    static void AddFieldAccessors(Owner owner)
-    {
-        if (owner.Def["fields"] is not JsonArray fields) return;
-        if (owner.Def["methods"] is not JsonArray methods) owner.Def["methods"] = methods = new JsonArray();
-        var names = methods.OfType<JsonObject>().Select(method => Str(method["name"]))
-            .ToHashSet(StringComparer.Ordinal);
-        foreach (var field in fields.OfType<JsonObject>())
-        {
-            if (Bool(field["static"]) || Bool(field[ExactOuterKey])) continue;
-            var name = Str(field["name"]);
-            var type = TypeJson.Read(field["type"]);
-            if (name == null || type == null) continue;
-            if (methods.OfType<JsonObject>().Any(method => KotlinPropertyAccessors.TryIdentity(method,
-                    out var property, out var role) && property == name && role == "get")) continue;
-            foreach (var kind in new[] { "get", "set" })
-            {
-                // readOnly restricts the projected Kotlin surface, not storage (a var may have an internal setter).
-                if (kind == "set" && Bool(field["initOnly"])) continue;
-                // An authored getter/setter already owns this property role; do not add a competing declaration.
-                if (methods.OfType<JsonObject>().Any(method => KotlinPropertyAccessors.TryIdentity(method,
-                        out var property, out var role) && property == name && role == kind)) continue;
-                var stem = name + "$field$" + kind;
-                var physicalName = stem;
-                for (var ordinal = 1; !names.Add(physicalName); ordinal++) physicalName = stem + "$" + ordinal;
-                var access = new JsonObject
-                {
-                    ["k"] = kind == "get" ? Bool(field["lateinit"]) ? "lateinitGet" : "field" : "setFieldExpr",
-                    ["ownerType"] = TypeJson.Write(new TypeNode.Fqn(owner.Name,
-                        Enumerable.Range(0, owner.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray())),
-                    ["recv"] = new JsonObject { ["k"] = "this" },
-                    ["name"] = name,
-                    ["ret"] = TypeJson.Write(type),
-                };
-                if (kind == "set") access["value"] = new JsonObject { ["k"] = "local", ["name"] = "value" };
-                methods.Add(new JsonObject
-                {
-                    ["name"] = physicalName, ["static"] = false, ["vis"] = "private", ["generated"] = true,
-                    ["override"] = false, ["virtual"] = false, ["abstract"] = false, ["objectOverride"] = false,
-                    [KotlinPropertyAccessors.SourceNameKey] = name,
-                    [KotlinPropertyAccessors.KindKey] = kind,
-                    [KotlinPropertyAccessors.AssociationKey] = owner.Name + ":field:" + name,
-                    [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
-                    ["params"] = kind == "get" ? new JsonArray() : new JsonArray(new JsonObject
-                        { ["name"] = "value", ["type"] = TypeJson.Write(type) }),
-                    ["ret"] = TypeJson.Write(kind == "get" ? type : new TypeNode.Fqn("kotlin.Unit")),
-                    ["body"] = new JsonArray(new JsonObject
-                        { ["k"] = kind == "get" ? "return" : "exprStmt",
-                            [kind == "get" ? "value" : "expr"] = access }),
-                    ["attrs"] = new JsonArray(),
-                });
-            }
-        }
     }
 
     static void AddErasedAncestor(JsonNode slot, JsonArray target, IReadOnlyDictionary<string, Owner> owners,

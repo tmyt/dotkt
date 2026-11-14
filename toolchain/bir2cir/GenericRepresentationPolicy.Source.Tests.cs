@@ -136,6 +136,7 @@ sealed partial class GenericRepresentationPolicy
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
         var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { root }, policy, out var preparation);
         var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
+        var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, policy);
         var continuation = root.ToDom(declarations.ObserveProjection);
         declarations.BindProjected();
         policy.BindDomDeclarations(new JsonNode[] { continuation }, transitions);
@@ -149,7 +150,7 @@ sealed partial class GenericRepresentationPolicy
             || policy.LocalDeclaration("PhysicalStorage") != null)
             throw new InvalidOperationException("Native physical placement lost selected identity or recomputed source eligibility");
         policy.RecordNativeFields(new JsonNode[] { continuation });
-        FBoundStarProjectionErasure.ApplyAll(new JsonNode[] { continuation }, refs, preparation, proofs, policy);
+        FBoundStarProjectionErasure.ApplyAll(new JsonNode[] { continuation }, refs, surface);
         if (TypeJson.Read(continuation["methods"][0]["body"][0]["value"]["sty"]) is not TypeNode.Fqn { Name: "Payload", Args: [TypeNode.Fqn { Name: "kotlin.String" }] }
             || !TypeNodeDataEquality.Equal(TypeJson.Read(continuation["types"][2]["fields"][0]["type"]), valueType))
             throw new InvalidOperationException("Native source-owner use lost its closed field witness before late physical binding");

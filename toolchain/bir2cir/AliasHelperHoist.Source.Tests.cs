@@ -184,6 +184,7 @@ static partial class AliasHelperHoist
             throw new InvalidOperationException("Alias whole-type retirement changed kept source records or companion storage");
         var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { file }, policy, out var preparation);
         var nativeProofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
+        var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, nativeProofs, refs, policy);
         var projection = file.ToDom(declarations.ObserveProjection);
         declarations.BindProjected();
         var retiredMap = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance);
@@ -197,7 +198,7 @@ static partial class AliasHelperHoist
             || !ReferenceEquals(index.ByIdentity["retired-alias"].Method, retiredMap[firstMethod])
             || !ReferenceEquals(index.ByIdentity["kept-member"].Method, projection["types"][1]["methods"][0]))
             throw new InvalidOperationException("Alias logical facts, retired method or shifted exact owner handoff changed");
-        FBoundStarProjectionErasure.ApplyAll(new JsonNode[] { projection }, refs, preparation, nativeProofs, policy);
+        FBoundStarProjectionErasure.ApplyAll(new JsonNode[] { projection }, refs, surface);
         if (!ReferenceEquals(policy.LocalDeclaration(first.Name.Value), projection["types"][0])
             || KotlinSupertypesRecord.ReadNullableFrame(policy.LocalDeclaration(first.Name.Value)) != null)
             throw new InvalidOperationException("FBound kept a retired logical alias header instead of its actual physical host");
