@@ -677,7 +677,8 @@ sealed class Pipeline
             out var currentDeclarationPreparation);
         var nativeProofs = FBoundStarProjectionErasure.PrepareNativeProofs(currentDeclarations, refs, genericRepresentations);
         var carrierSurface = FBoundStarProjectionErasure.PrepareCarrierSurface(
-            currentDeclarationPreparation, nativeProofs, refs, genericRepresentations);
+            currentDeclarationPreparation, nativeProofs, refs, genericRepresentations,
+            (owner, appended) => pendingOverrideParameters.AdmitMaterializedMethods(owner, appended, currentDeclarations));
 
         for (var index = 0; index < captured.Length; index++)
         {
