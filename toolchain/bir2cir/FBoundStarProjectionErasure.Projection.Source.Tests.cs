@@ -92,7 +92,7 @@ static partial class FBoundStarProjectionErasure
                 && projectedInner.TypeParams.Value[1].Constraints.Value.Length == 0,
                 "physical inner source facts changed or value projection resurrected a bottom-fixed constraint");
         }
-        finally { OwnerConstrainedMethodLowering.Reset(refs, _ => null); }
+        finally { OwnerConstrainedMethodLowering.Reset(refs); }
     }
 
     static void LocalAliasDeclarationSelfTest()
@@ -161,7 +161,7 @@ static partial class FBoundStarProjectionErasure
         {
             _valueSlots = savedPolicy; _nativeProofs = savedProofs; _sourceSupertypes = savedGraph;
             _localMethods = savedMethods; _localDeclarations = savedDeclarations; _usedCarrierNames = savedNames;
-            OwnerConstrainedMethodLowering.Reset(refs, _ => null);
+            OwnerConstrainedMethodLowering.Reset(refs);
         }
 
         static void Require(bool value, string message)

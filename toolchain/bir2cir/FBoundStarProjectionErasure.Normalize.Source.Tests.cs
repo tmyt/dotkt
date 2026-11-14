@@ -121,7 +121,7 @@ static partial class FBoundStarProjectionErasure
         Require(ReferenceEquals(exact.Type.Value, logical) && exactMethod.Ret.Value == logical,
             "normalization erased an explicitly protected exact cast");
         NormalizationSourceWorklistSelfTest(refs);
-        OwnerConstrainedMethodLowering.Reset(refs, _ => null);
+        OwnerConstrainedMethodLowering.Reset(refs);
         Console.WriteLine("[owning carrier normalization] self-test OK (live post-order/fixed points, ctor/suspend bodies, ID/fallback calls, presence and identities)");
     }
 

@@ -96,7 +96,7 @@ static partial class FBoundStarProjectionErasure
                 "inner construction replaced a registered nested declaration instead of moving its operand");
             context.Declarations.ReleaseSourceRows();
         }
-        finally { OwnerConstrainedMethodLowering.Reset(references, _ => null); }
+        finally { OwnerConstrainedMethodLowering.Reset(references); }
 
         try
         {
@@ -143,7 +143,7 @@ static partial class FBoundStarProjectionErasure
                 "reflection construction cloned a registered nested declaration");
             context.Declarations.ReleaseSourceRows();
         }
-        finally { OwnerConstrainedMethodLowering.Reset(references, _ => null); }
+        finally { OwnerConstrainedMethodLowering.Reset(references); }
         Console.WriteLine("[owning carrier constructions] self-test OK (selected factory frames, signature presence and registered operand moves across one frontier)");
     }
 }

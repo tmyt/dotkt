@@ -1,125 +1,172 @@
 using System;
-using System.Text.Json.Nodes;
+using System.Collections.Generic;
+using System.Linq;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class OwnerConstrainedMethodLowering
 {
     static void BodyOwnerViewSelfTest()
     {
         var previousReferences = References;
+        var previousMethods = Methods.ToArray();
+        var previousBindings = MethodBindings;
+        var previousPrepared = PreparedMethods;
         try
         {
-            References = ReferenceMetadataIndex.Build(Array.Empty<string>());
-            JsonObject Frame() => JsonNode.Parse("""
-              {"typeParams":[{"name":"M","constraints":[
-                {"t":"fqn","name":"MethodOwner","args":[{"t":"tv","scope":"type","i":0}]}]}]}
-              """).AsObject();
-            JsonObject Owner(string argument) => JsonNode.Parse($$"""
-              {"typeParams":[{"name":"T","constraints":[
-                {"t":"fqn","name":"TypeOwner","args":[{"t":"fqn","name":"{{argument}}"}]}]}]}
-              """).AsObject();
-            JsonObject Call(string owner, string name) => new() {
-                ["k"] = "callInstance", ["ownerType"] = TypeJson.Fqn(owner), ["method"] = "read",
-                [DeclarationIdentityBinding.Key] = "selected-" + owner,
-                ["recv"] = new JsonObject { ["k"] = "local", ["name"] = name },
+            var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+            var unit = new TypeNode.Fqn("kotlin.Unit");
+            var methodVariable = new TypeNode.Tv("method", 0);
+            var ownerVariable = new TypeNode.Tv("type", 0);
+            BirTypeParameter[] Frame() => new[] { new BirTypeParameter { Name = "M",
+                Constraints = new TypeNode[] { new TypeNode.Fqn("MethodOwner", new TypeNode[] { ownerVariable }) } } };
+            BirTypeParameter[] Owner(string argument) => new[] { new BirTypeParameter { Name = "T",
+                Constraints = new TypeNode[] { new TypeNode.Fqn("TypeOwner", new TypeNode[] { new TypeNode.Fqn(argument) }) } } };
+            BirCallInstance Call(string owner, string name, bool scalar = false) => new() {
+                OwnerType = new TypeNode.Fqn(owner), Method = "read", DeclarationId = "selected-" + owner,
+                Recv = new BirLocal { Name = name, ErasedValueVariableFact = scalar
+                    ? OptionalField<TypeNode>.Of(name == "m" ? methodVariable : ownerVariable) : default },
+                Args = Array.Empty<IBirExpression>(), Ret = unit, TypeArgs = OptionalField<TypeNode[]>.Null,
             };
-            JsonObject Body() => new() {
-                ["k"] = "newSuspendLambda",
-                ["params"] = JsonNode.Parse("""
-                  [{"name":"m","type":{"t":"tv","scope":"method","i":0}},
-                   {"name":"t","type":{"t":"tv","scope":"type","i":0}}]
-                  """),
-                ["body"] = new JsonArray(Call("MethodOwner", "m"), Call("TypeOwner", "t"),
-                    new JsonObject { ["k"] = "newSuspendLambda", ["params"] = new JsonArray(),
-                        ["capValues"] = new JsonArray(Call("MethodOwner", "m")),
-                        ["body"] = new JsonArray(Call("MethodOwner", "m")) }),
+            BirExpressionStatement Statement(IBirExpression expression) => new() { Expr = OptionalField<IBirExpression>.Of(expression) };
+            BirLambdaParameter Parameter(string name, TypeNode type, bool scalar) => new() {
+                Name = name, Type = scalar ? new TypeNode.Fqn("object") : type,
+                KotlinType = scalar ? OptionalField<TypeNode>.Of(type) : default,
+            };
+            BirNewSuspendLambda Body(bool scalar = false) => new() {
+                Arity = 2,
+                Params = new[] { Parameter("m", methodVariable, scalar), Parameter("t", ownerVariable, scalar) },
+                SuspendRet = unit,
+                Body = new IBirStatement[] {
+                    Statement(Call("MethodOwner", "m", scalar)), Statement(Call("TypeOwner", "t", scalar)),
+                    Statement(new BirNewSuspendLambda { Arity = 0, Params = Array.Empty<BirLambdaParameter>(), SuspendRet = unit,
+                        CapValues = new IBirExpression[] { Call("MethodOwner", "m", scalar) },
+                        Body = new IBirStatement[] { Statement(Call("MethodOwner", "m", scalar)) } }) },
             };
             void Expect(bool condition, string message)
             {
                 if (!condition) throw new InvalidOperationException("Body owner closing: " + message);
             }
+            BirCallInstance At(BirNewSuspendLambda body, int index)
+                => (BirCallInstance)((BirExpressionStatement)body.Body.Value[index]).Expr.Value;
+            BirNewSuspendLambda Nested(BirNewSuspendLambda body)
+                => (BirNewSuspendLambda)((BirExpressionStatement)body.Body.Value[2]).Expr.Value;
 
-            var parent = new JsonArray();
+            var cases = new List<(string Argument, BirNewSuspendLambda Body, BirNewSuspendLambda TypeOnly,
+                BirTypeParameter[] Frame, BirTypeParameter[] Owner)>();
             foreach (var (argument, scalar) in new[] {
                 ("First", false), ("Second", false), ("First", true), ("Second", true) })
             {
-                var bodyOwner = Body();
-                if (scalar)
-                {
-                    foreach (var parameter in bodyOwner["params"].AsArray())
-                    {
-                        parameter["kotlinType"] = TypeNode.ToJson(TypeJson.Read(parameter["type"]));
-                        parameter["type"] = TypeJson.Fqn("object");
-                    }
-                    foreach (var call in new[] { bodyOwner["body"][0], bodyOwner["body"][1],
-                        bodyOwner["body"][2]["capValues"][0], bodyOwner["body"][2]["body"][0] })
-                        call["recv"]["_erasedValueVariable"] = TypeJson.Write(new TypeNode.Tv(
-                            call["recv"]["name"].GetValue<string>() == "m" ? "method" : "type", 0));
-                }
-                parent.Add(bodyOwner);
-                var originalBody = bodyOwner["body"];
-                var originalParameters = bodyOwner["params"];
-                var frame = Frame();
-                var owner = Owner(argument);
-                var originalFrame = frame.ToJsonString();
-                var originalOwner = owner.ToJsonString();
-                CloseBodyOwnerViews(bodyOwner, frame, owner,
-                    FBoundStarProjectionErasure.ContainsOwnerTv, type => type);
-                Expect(ReferenceEquals(originalBody, bodyOwner["body"])
-                    && ReferenceEquals(originalParameters, bodyOwner["params"])
-                    && ReferenceEquals(originalBody.Parent, bodyOwner) && ReferenceEquals(bodyOwner.Parent, parent),
-                    "body or parameters were copied, detached or reparented");
-                Expect(frame.ToJsonString() == originalFrame && owner.ToJsonString() == originalOwner,
-                    "projected constraints mutated the donor declarations");
-                Expect(TypeJson.Read(originalBody[0]["ownerType"]) == new TypeNode.Fqn("MethodOwner",
-                        new TypeNode[] { new TypeNode.Tv("type", 0) })
-                    && TypeJson.Read(originalBody[1]["ownerType"]) == new TypeNode.Fqn("TypeOwner",
-                        new TypeNode[] { new TypeNode.Fqn(argument) })
-                    && originalBody[0][DeclarationIdentityBinding.Key].GetValue<string>() == "selected-MethodOwner",
-                    "method/type frames or selected declaration identity were lost");
-                Expect(TypeJson.Read(originalBody[2]["capValues"][0]["ownerType"])
-                        == TypeJson.Read(originalBody[0]["ownerType"])
-                    && TypeJson.Read(originalBody[2]["body"][0]["ownerType"]) == new TypeNode.Fqn("MethodOwner"),
-                    "nested body used the enclosing frame, or capture operands were skipped");
-
-                // With no method frame, type-owner binding is still required. A sibling's bound must not leak.
-                var typeOnly = new JsonObject { ["params"] = originalParameters.DeepClone(),
-                    ["body"] = new JsonArray(Call("TypeOwner", "t")) };
-                if (scalar) typeOnly["body"][0]["recv"]["_erasedValueVariable"] =
-                    TypeJson.Write(new TypeNode.Tv("type", 0));
-                CloseBodyOwnerViews(typeOnly, new JsonObject(), owner, _ => false, type => type);
-                Expect(TypeJson.Read(typeOnly["body"][0]["ownerType"])
-                    == TypeJson.Read(originalBody[1]["ownerType"]), "empty method frame suppressed type binding");
+                var body = Body(scalar);
+                cases.Add((argument, body, new BirNewSuspendLambda {
+                    Arity = 2,
+                    Params = body.Params.Value.Select(parameter => (BirLambdaParameter)parameter.DeepClone()).ToArray(),
+                    SuspendRet = unit, Body = new IBirStatement[] { Statement(Call("TypeOwner", "t", scalar)) },
+                }, Frame(), Owner(argument)));
             }
-            Expect(TypeJson.Read(parent[0]["body"][1]["ownerType"]) != TypeJson.Read(parent[1]["body"][1]["ownerType"]),
+            var selectedBody = Body();
+            // The construction can own a distinct frame, but the actual donor
+            // declaration supplies the override-bound plan used for this view.
+            selectedBody.TypeParams = new[] { new BirTypeParameter { Name = "Unrelated",
+                Constraints = new TypeNode[] { new TypeNode.Fqn("MethodOwner", new TypeNode[] { new TypeNode.Fqn("BodyArgument") }) } } };
+            var unchanged = new BirNewSuspendLambda { Arity = 0, Params = Array.Empty<BirLambdaParameter>(), SuspendRet = unit,
+                Body = new IBirStatement[] { Statement(new BirConstant { Type = new TypeNode.Fqn("kotlin.Int"),
+                    Value = new BirLiteral.IntegerLiteral(42) }) } };
+            var expressions = cases.SelectMany(row => new[] { row.Body, row.TypeOnly })
+                .Concat(new[] { selectedBody, unchanged }).ToArray();
+            var statements = expressions.Select(body => (IBirStatement)Statement(body)).ToArray();
+            var holder = new BirFunctionDeclaration { Name = "bodyOwners", DeclarationId = "bodyOwners", Ret = unit,
+                Params = Array.Empty<BirParameter>(), TypeParams = Array.Empty<BirTypeParameter>(), Body = statements };
+            var root = new BirFileDeclaration { FileClass = "BodyOwners", Types = Array.Empty<IBirTypeDeclaration>(),
+                Methods = new[] { holder } };
+            var roots = new[] { root };
+            var values = GenericRepresentationPolicy.CreateSource(roots, refs.Aliases, refs);
+            var bindings = FBoundStarProjectionErasure.PrepareCurrentDeclarations(roots, values, out var preparation);
+            var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(bindings, refs, values);
+            var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, values);
+            var context = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
+                FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs, surface.Demand.ReservedNames);
+
+            foreach (var row in cases)
+            {
+                var body = row.Body;
+                var originalBody = body.Body.Value;
+                var originalParameters = body.Params.Value;
+                var originalParameter = originalParameters[0];
+                var originalCall = At(body, 0);
+                var originalReceiver = originalCall.Recv.Value;
+                var nested = Nested(body);
+                var originalCaptureVector = nested.CapValues.Value;
+                var originalNestedBody = nested.Body.Value;
+                var frameBefore = row.Frame[0].DeepClone();
+                var ownerBefore = row.Owner[0].DeepClone();
+                CloseBodyOwnerViewsSource(body, row.Frame, row.Owner, context,
+                    FBoundStarProjectionErasure.ContainsOwnerTv, type => type, _ => null);
+                Expect(ReferenceEquals(originalBody, body.Body.Value)
+                    && ReferenceEquals(originalParameters, body.Params.Value)
+                    && ReferenceEquals(originalParameter, body.Params.Value[0])
+                    && ReferenceEquals(originalCall, At(body, 0)) && ReferenceEquals(originalReceiver, At(body, 0).Recv.Value)
+                    && ReferenceEquals(holder.Body.Value, statements)
+                    && statements.OfType<BirExpressionStatement>().Any(statement => ReferenceEquals(statement.Expr.Value, body)),
+                    "body, parameter, receiver or owning occurrence identity changed");
+                Expect(row.Frame[0].StructurallyEquals(frameBefore) && row.Owner[0].StructurallyEquals(ownerBefore),
+                    "projected constraints mutated the donor declarations");
+                Expect(At(body, 0).OwnerType.Value == new TypeNode.Fqn("MethodOwner", new TypeNode[] { ownerVariable })
+                    && At(body, 1).OwnerType.Value == new TypeNode.Fqn("TypeOwner", new TypeNode[] { new TypeNode.Fqn(row.Argument) })
+                    && At(body, 0).DeclarationId.Value == "selected-MethodOwner" && At(body, 0).TypeArgs.IsNull,
+                    "method/type frames, selected declaration identity or explicit type-argument null were lost");
+                Expect(((BirCallInstance)nested.CapValues.Value[0]).OwnerType.Value == At(body, 0).OwnerType.Value
+                    && At(nested, 0).OwnerType.Value == new TypeNode.Fqn("MethodOwner")
+                    && ReferenceEquals(originalCaptureVector, nested.CapValues.Value)
+                    && ReferenceEquals(originalNestedBody, nested.Body.Value),
+                    "nested body used the enclosing frame, or capture operands were skipped/copied");
+
+                CloseBodyOwnerViewsSource(row.TypeOnly, Array.Empty<BirTypeParameter>(), row.Owner, context,
+                    _ => false, type => type, _ => null);
+                Expect(At(row.TypeOnly, 0).OwnerType.Value == At(body, 1).OwnerType.Value,
+                    "empty method frame suppressed type binding");
+            }
+            Expect(At(cases[0].Body, 1).OwnerType.Value != At(cases[1].Body, 1).OwnerType.Value
+                && At(cases[2].Body, 1).OwnerType.Value != At(cases[3].Body, 1).OwnerType.Value,
                 "sibling frames were shared");
 
-            // The body can carry unrelated method metadata. Only the selected declaration frame owns the
-            // override-bound substitution; reading the lambda's metadata would select the wrong owner argument.
-            var metadataBody = Body();
-            var metadataFrame = Frame();
-            string Override(string argument) => new JsonArray(new JsonObject {
-                ["index"] = 0,
-                ["bound"] = metadataFrame["typeParams"][0]["constraints"][0].DeepClone(),
-                ["template"] = metadataFrame["typeParams"][0]["constraints"][0].DeepClone(),
-                ["ownerArgs"] = new JsonArray(TypeJson.Fqn(argument)), ["consequences"] = new JsonArray(),
-            }).ToJsonString();
-            metadataFrame[OverrideBoundsKey] = Override("DeclarationArgument");
-            metadataBody[OverrideBoundsKey] = Override("BodyArgument");
-            CloseBodyOwnerViews(metadataBody, metadataFrame, Owner("Outer"),
-                FBoundStarProjectionErasure.ContainsOwnerTv, type => type);
-            Expect(TypeJson.Read(metadataBody["body"][0]["ownerType"]) == new TypeNode.Fqn("MethodOwner",
-                new TypeNode[] { new TypeNode.Fqn("DeclarationArgument") }), "lambda metadata replaced declaration-frame metadata");
+            var donorFrame = Frame();
+            var donorBefore = donorFrame[0].DeepClone();
+            var selectedBound = donorFrame[0].Constraints.Value[0];
+            var overrideBounds = new OwnerConstraintOverrideBounds(new[] { new OwnerConstraintOverrideBounds.Row(
+                0, selectedBound, selectedBound, Array.Empty<TypeNode>(), new TypeNode[] { new TypeNode.Fqn("DeclarationArgument") }) });
+            var plan = PlanConstraintRewrite(new[] { donorFrame[0].Constraints.Value }, Array.Empty<TypeNode[]>(),
+                null, overrideBounds, refs, FBoundStarProjectionErasure.ContainsOwnerTv, type => type,
+                _ => null, _ => Array.Empty<TypeNode>());
+            var selectedFrame = new[] { new BirTypeParameter { Name = "M", Constraints = plan[0].Retained,
+                ErasedInnerConstraints = plan[0].Removed } };
+            var constructionFrame = selectedBody.TypeParams.Value;
+            var constructionBefore = constructionFrame[0].DeepClone();
+            CloseBodyOwnerViewsSource(selectedBody, selectedFrame, Owner("Outer"), context,
+                FBoundStarProjectionErasure.ContainsOwnerTv, type => type, _ => null);
+            Expect(At(selectedBody, 0).OwnerType.Value == new TypeNode.Fqn("MethodOwner",
+                    new TypeNode[] { new TypeNode.Fqn("DeclarationArgument") })
+                && donorFrame[0].StructurallyEquals(donorBefore)
+                && ReferenceEquals(selectedBody.TypeParams.Value, constructionFrame)
+                && constructionFrame[0].StructurallyEquals(constructionBefore),
+                "construction metadata replaced the selected declaration-frame plan, or a donor was mutated");
 
-            var unchanged = new JsonObject { ["params"] = new JsonArray(), ["body"] = new JsonArray(
-                new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = 42 }) };
-            var unchangedBody = unchanged["body"];
-            var before = unchanged.ToJsonString();
-            CloseBodyOwnerViews(unchanged, new JsonObject(), new JsonObject(), _ => false, type => type);
-            Expect(ReferenceEquals(unchangedBody, unchanged["body"]) && unchanged.ToJsonString() == before,
+            var unchangedBody = unchanged.Body.Value;
+            var before = unchanged.DeepClone();
+            CloseBodyOwnerViewsSource(unchanged, Array.Empty<BirTypeParameter>(), Array.Empty<BirTypeParameter>(),
+                context, _ => false, type => type, _ => null);
+            Expect(ReferenceEquals(unchangedBody, unchanged.Body.Value) && unchanged.StructurallyEquals(before),
                 "no-rewrite body changed");
         }
-        finally { References = previousReferences; }
-        Console.WriteLine("[body owner closing] self-test OK (in-place, frames, nested/capture, sibling, no-rewrite)");
+        finally
+        {
+            Methods.Clear();
+            Methods.AddRange(previousMethods);
+            MethodBindings = previousBindings;
+            PreparedMethods = previousPrepared;
+            References = previousReferences;
+        }
+        Console.WriteLine("[body owner closing] self-test OK (owning continuation, frames, nested/capture, sibling, selected plan, no-rewrite)");
     }
 }

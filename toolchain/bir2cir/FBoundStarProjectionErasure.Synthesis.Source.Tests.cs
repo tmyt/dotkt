@@ -88,7 +88,7 @@ static partial class FBoundStarProjectionErasure
             Require(context.Bindings.GetPhysical(row.Original.Physical) == row.Original, "one frontier lost the original binding");
             context.Declarations.ReleaseSourceRows();
         }
-        finally { OwnerConstrainedMethodLowering.Reset(references, _ => null); }
+        finally { OwnerConstrainedMethodLowering.Reset(references); }
 
         try
         {
@@ -118,7 +118,7 @@ static partial class FBoundStarProjectionErasure
                 && construction.Args.Value[0] is BirThis && row.Bridge.ClrInterfaceImpls.Value.Single().Arity.Value == 0,
                 "inner factory lost its original constructor binding, bottom map or open declaration signature");
         }
-        finally { OwnerConstrainedMethodLowering.Reset(references, _ => null); }
+        finally { OwnerConstrainedMethodLowering.Reset(references); }
         Console.WriteLine("[owning carrier synthesis] self-test OK (source occurrences, proposals/emission, bridge identity, copies and inner factory frame)");
     }
 }

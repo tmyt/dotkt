@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -23,8 +22,6 @@ static partial class OwnerConstrainedMethodLowering
         var oldBindings = MethodBindings;
         var oldPrepared = PreparedMethods;
         var oldReferences = References;
-        var oldClassifier = PhysicalClassifier;
-        var oldProofs = NativeProofs;
         try
         {
             var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
@@ -53,7 +50,10 @@ static partial class OwnerConstrainedMethodLowering
                 TypeParams = new[] { Parameter("O") }, Methods = new[] { ownerBound, dependent, framed, overridden, pure },
                 Fields = new[] { new BirFieldDeclaration { Name = "field", Type = inputType } } };
             var root = new BirFileDeclaration { FileClass = "File", Methods = new[] { top }, Types = new IBirTypeDeclaration[] { definition } };
-            var bindings = new CurrentDeclarationBindings(new[] { root });
+            var roots = new[] { root };
+            var values = GenericRepresentationPolicy.CreateSource(roots, refs.Aliases, refs);
+            var bindings = FBoundStarProjectionErasure.PrepareCurrentDeclarations(roots, values, out var preparation);
+            var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(bindings, refs, values);
             FBoundStarProjectionErasure.PrepareMethodBounds(bindings, refs);
             Require(Methods.Count == 5
                 && new[] { ownerBound, dependent, framed, overridden, top }.Select((method, index) =>
@@ -72,7 +72,7 @@ static partial class OwnerConstrainedMethodLowering
             Record(ownerBound, definition, bindings);
             Require(Methods.Count == 6 && ReferenceEquals(Methods[5].MethodBinding, Methods[0].MethodBinding),
                 "registration removed duplicate/order semantics");
-            Reject(() => ConfigurePreparedMethods(bindings, refs, _ => null));
+            Reject(() => ConfigurePreparedMethods(bindings, refs));
 
             // This mutation is actual accessor authoring, not another method
             // inventory. Source signatures must include these new ID-less rows.
@@ -89,6 +89,17 @@ static partial class OwnerConstrainedMethodLowering
             // The facade method is captured for other authorities but was not
             // part of this type-method signature snapshot. Never infer a row.
             Reject(() => signatures.GetSourceSignature(bindings.GetCapturedSource(top)));
+            var demand = FBoundStarProjectionErasure.PrepareCarrierDemand(preparation, proofs, refs, values);
+            var surface = new FBoundStarProjectionErasure.CarrierSurfacePreparation(demand, signatures);
+            var context = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
+                FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(demand, refs), refs, demand.ReservedNames);
+            ConfigurePreparedMethodsSource(bindings, refs);
+            ownerBound.TypeParams.Value[0].Constraints = new TypeNode[] { ownerVariable };
+            ApplySource(context, FBoundStarProjectionErasure.ContainsOwnerTv, type => type, _ => null);
+            Require(ownerBound.TypeParams.Value[0].Constraints.Value.Length == 0
+                && ownerBound.TypeParams.Value[0].ErasedInnerConstraints.Value.Single() == ownerVariable
+                && Methods.Count == 6 && !accessors.Any(accessor => Methods.Any(row => ReferenceEquals(row.MethodBinding.Source, accessor))),
+                "source continuation did not use live registered constraints or admitted appended accessors");
             ownerBound.Params.Value[0].Type = new TypeNode.Fqn("AfterCapture");
             inputType.Args[0] = new TypeNode.Fqn("MutatedArgument");
             var projected = root.ToDom(bindings.ObserveProjection);
@@ -105,38 +116,20 @@ static partial class OwnerConstrainedMethodLowering
                 "signature capture was late, aliased mutable type vectors, included facade methods or lost appended records");
             Reject(() => signatures.BindPhysical());
             Reject(() => signatures.GetSourceSignature(signatureBinding));
-            var queried = new List<JsonObject>();
-            ConfigurePreparedMethods(bindings, refs, _ => null, (method, _) => { queried.Add(method); return Array.Empty<TypeNode>(); });
+            ConfigurePreparedMethods(bindings, refs);
             Require(Methods.Count == 6 && ReferenceEquals(Methods[0].Method, actualMethod)
                 && ReferenceEquals(Methods[0].Owner, actualOwner), "physical configure rebuilt or cleared the registrations");
-            actualMethod["typeParams"][0]["constraints"] = new JsonArray(TypeJson.Write(ownerVariable));
-            Apply(FBoundStarProjectionErasure.ContainsOwnerTv, type => type);
             Require(actualMethod["typeParams"][0]["constraints"].AsArray().Count == 0
-                && TypeJson.Read(actualMethod["typeParams"][0][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0]) == ownerVariable
-                && queried.Any(method => ReferenceEquals(method, actualMethod))
-                && !queried.Any(method => ReferenceEquals(method, actualOwner["methods"][5])),
-                "late consumers did not use the same live method/owner registrations");
-
-            var late = new BirFunctionDeclaration { Name = "late", Generated = true,
-                TypeParams = new[] { Parameter("T", ownerVariable) }, Params = Array.Empty<BirParameter>(),
-                Ret = new TypeNode.Fqn("kotlin.Unit"), Body = Array.Empty<IBirStatement>() }.ToDom();
-            actualOwner["methods"].AsArray().Add(late);
-            Record(late, actualOwner);
-            Require(ReferenceEquals(Methods[^1].MethodBinding, bindings.GetPhysical(late)) && Methods.Count == 7,
-                "late physical Record was not an explicit admission into the same authority");
-            var latePrior = late[NullableGenericErasure.MethodTypeParameterBoundsPre].DeepClone();
-            late["typeParams"][0]["constraints"] = new JsonArray(TypeJson.Fqn("System.IDisposable"));
-            Record(late, actualOwner);
-            Require(Methods.Count == 8 && JsonNode.DeepEquals(latePrior, late[NullableGenericErasure.MethodTypeParameterBoundsPre]),
-                "late first-writer or duplicate registration semantics changed");
-            Reset(refs, _ => null);
+                && TypeJson.Read(actualMethod["typeParams"][0][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0]) == ownerVariable,
+                "the one frontier lost the source continuation's physical constraint result");
+            Reset(refs);
             Require(Methods.Count == 0 && MethodBindings == null && !PreparedMethods, "ordinary Reset retained a prior module registration");
         }
         finally
         {
             Methods.Clear(); Methods.AddRange(oldMethods); MethodBindings = oldBindings; PreparedMethods = oldPrepared;
-            References = oldReferences; PhysicalClassifier = oldClassifier; NativeProofs = oldProofs;
+            References = oldReferences;
         }
-        Console.WriteLine("[owning method preparation] self-test OK (membership, source bounds, signatures, exact continuation and live late registration)");
+        Console.WriteLine("[owning method preparation] self-test OK (membership, source bounds, signatures, live source constraints and exact continuation)");
     }
 }
