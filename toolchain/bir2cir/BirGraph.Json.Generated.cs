@@ -12037,6 +12037,7 @@ internal static partial class BirGraphJson
         OptionalField<BirMemberReference> field6 = default;
         OptionalField<SourceBoundsSnapshot> field7 = default;
         OptionalField<bool> field8 = default;
+        OptionalField<string> field9 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -12080,6 +12081,10 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
+                case "referenceMember":
+                    Seen(ref seen, 1UL << 9);
+                    field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
+                    break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
         }
@@ -12095,6 +12100,7 @@ internal static partial class BirGraphJson
             MemberRef = field6,
             MethodTypeParameterBoundsPre = field7,
             DotktValueReturn = field8,
+            ReferenceMember = field9,
         };
     }
 

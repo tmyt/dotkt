@@ -69,3 +69,13 @@ public struct GenericCounter<S>
     public GenericCounter(S value) { Value = value; Count = 0; }
     public int Read<T>(Key<T> key) where T : class => ++Count;
 }
+
+public class GenericReceiverBase
+{
+    public int BaseReads;
+    public virtual int Read<T>(Key<T> key) where T : class
+    {
+        ++BaseReads;
+        return 101;
+    }
+}

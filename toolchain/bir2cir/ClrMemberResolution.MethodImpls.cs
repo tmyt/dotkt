@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // A clrBaseImpls entry is an ECMA-335 MethodImpl declaration operand. Local declarations can be linked directly to
 // their MethodBuilder, but an external declaration must cross CIR as the same complete member identity as a call.
@@ -11,40 +12,33 @@ using DotKt.Bir;
 // resolves that descriptor against the compile-reference universe and replaces selection with one scalar reference.
 static partial class ClrMemberResolution
 {
-    static void ResolveExternalBaseMethodImpls(JsonNode node)
+    static void ResolveExternalBaseMethodImpls(BirGraphValue node, IReadOnlySet<string> localTypes)
     {
-        if (node is JsonObject obj)
-        {
-            if (obj["clrBaseImpls"] is JsonArray implementations)
-                foreach (var item in implementations.OfType<JsonObject>()) ResolveExternalBaseMethodImpl(item);
-            foreach (var value in obj.Select(pair => pair.Value).ToList())
-                if (value != null) ResolveExternalBaseMethodImpls(value);
-        }
-        else if (node is JsonArray array)
-            foreach (var item in array.ToList()) if (item != null) ResolveExternalBaseMethodImpls(item);
+        if (node == null || node is IBirExecutablePayload) return;
+        if (node is BirFunctionDeclaration method)
+            foreach (var descriptor in method.ClrBaseImpls.OrEmpty())
+                ResolveExternalBaseMethodImpl(descriptor, localTypes);
+        node.VisitChildren(child => ResolveExternalBaseMethodImpls(child, localTypes));
     }
 
-    static void ResolveExternalBaseMethodImpl(JsonObject descriptor)
+    static void ResolveExternalBaseMethodImpl(BirMethodImpl descriptor, IReadOnlySet<string> localTypes)
     {
-        if (descriptor["memberRef"] is JsonObject) return;
-        if (TypeJson.Read(descriptor["owner"]) is not TypeNode.Fqn ownerSpec
-            || _localTypes.Contains(ownerSpec.Name)) return;
-        var name = (descriptor["member"] as JsonValue)?.TryGetValue<string>(out var member) == true
-            ? member : null;
+        if (descriptor.MemberRef.HasValue) return;
+        if (descriptor.Owner.OrDefault() is not TypeNode.Fqn ownerSpec
+            || localTypes.Contains(ownerSpec.Name)) return;
+        var name = descriptor.Member.OrDefault();
         // A metadata-only Kotlin declaration can retain its source MethodDef
         // name while the runtime declaration adopts its selected CLR override
         // allocation. The slot pass carries both identities explicitly.
-        var referenceName = (descriptor["referenceMember"] as JsonValue)?.TryGetValue<string>(out var sourceMember) == true
-            ? sourceMember : name;
-        var arity = (descriptor["arity"] as JsonValue)?.TryGetValue<int>(out var genericArity) == true
-            ? genericArity : -1;
-        var rawReturn = TypeJson.Read(descriptor["ret"]);
+        var referenceName = descriptor.ReferenceMember.OrDefault() ?? name;
+        var arity = descriptor.Arity.HasValue ? descriptor.Arity.Value : -1;
+        var rawReturn = descriptor.Ret.OrDefault();
         var ret = rawReturn == null ? null : BirTypeLowering.CanonicalPhysicalSlotType(rawReturn);
-        if (name == null || arity < 0 || ret == null || descriptor["params"] is not JsonArray parameterNodes)
+        if (name == null || arity < 0 || ret == null || !descriptor.Params.HasValue)
             throw new InvalidOperationException(
                 $"bir2cir: external base MethodImpl for '{ownerSpec.Name}' is missing its exact slot descriptor");
-        var parameters = parameterNodes.Select((node, index) =>
-                BirTypeLowering.CanonicalPhysicalSlotType(TypeJson.Read(node)
+        var parameters = descriptor.Params.Value.Select((type, index) =>
+                BirTypeLowering.CanonicalPhysicalSlotType(type
                     ?? throw new InvalidOperationException(
                         $"bir2cir: external base MethodImpl '{ownerSpec.Name}.{name}' parameter #{index} is malformed")))
             .ToList();
@@ -72,10 +66,10 @@ static partial class ClrMemberResolution
         if (matches.Count == 0) throw NoMatch(description, candidates);
         if (matches.Count > 1) throw Malformed(description, matches);
         var winner = matches[0];
-        descriptor["memberRef"] = MemberRefJson(
-            winner, MemberRefNode.Kinds.Method, open, ownerSpec.Args ?? Array.Empty<TypeNode>());
-        descriptor["memberRef"]["name"] = name;
-        descriptor.Remove("referenceMember");
+        var reference = MemberRefOf(winner, MemberRefNode.Kinds.Method, open,
+            ownerSpec.Args ?? Array.Empty<TypeNode>());
+        descriptor.MemberRef = BirMemberReference.FromPhysical(reference with { Name = name });
+        descriptor.ReferenceMember = default;
     }
 
     static bool ExternalMethodImplSlotMatches(MethodInfo candidate, Type open, TypeNode[] ownerArgs,
@@ -100,7 +94,7 @@ static partial class ClrMemberResolution
 
     // A memberRef keeps the target's exact metadata spelling (`List`1`, nested `+`) but the MethodImpl descriptor is
     // ordinary CIR type vocabulary (arity-free, dotted).  Selection compares those two vocabularies structurally;
-    // only the comparison drops metadata punctuation.  MemberRefJson below still serializes the exact reflected name.
+    // only the comparison drops metadata punctuation. MemberRefOf retains the exact reflected name.
     internal static TypeNode MethodImplComparisonType(TypeNode type)
     {
         type = BirTypeLowering.CanonicalPhysicalSlotType(type);

@@ -467,7 +467,7 @@ sealed partial class TypedCirProjection
 
     internal CirMethodImpl ProjectCirMethodImpl(BirMethodImpl value)
     {
-        if (value.DotktValueReturn.IsPresent || value.MethodTypeParameterBoundsPre.IsPresent)
+        if (value.DotktValueReturn.IsPresent || value.MethodTypeParameterBoundsPre.IsPresent || value.ReferenceMember.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirMethodImpl");
         return new CirMethodImpl
         {
