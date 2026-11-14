@@ -12,19 +12,34 @@ static partial class DeclarationRename
 
     internal static string ResolveSlot(BirFunctionDeclaration declaration, ReferenceMetadataIndex refs,
         NullableRepresentationFrame ownerFrame = null)
+        => ResolveSlot(Overrides(declaration.Overrides.OrEmpty()), refs, Callable(declaration, ownerFrame));
+
+    internal static string ResolveSlot(BirCallInstance call, ReferenceMetadataIndex refs)
+        => ResolveSlot(Overrides(call.Overrides.OrEmpty()), refs, Callable(call));
+
+    static SlotOverride[] Overrides(BirOverride[] markers) => markers
+        .Where(marker => marker.Owner.OrDefault() is TypeNode.Fqn && marker.Member.HasValue)
+        .Select(marker => new SlotOverride((TypeNode.Fqn)marker.Owner.Value, marker.Member.Value,
+            marker.Kind.OrDefault(), marker.Arity.OrDefault())).ToArray();
+
+    static CallableSlot Callable(BirFunctionDeclaration declaration, NullableRepresentationFrame ownerFrame)
     {
-        var overrides = declaration.Overrides.OrEmpty()
-            .Where(marker => marker.Owner.OrDefault() is TypeNode.Fqn && marker.Member.HasValue)
-            .Select(marker => new SlotOverride((TypeNode.Fqn)marker.Owner.Value, marker.Member.Value,
-                marker.Kind.OrDefault(), marker.Arity.OrDefault())).ToArray();
         var parameters = declaration.Params.OrDefault();
         var signature = parameters?.Select(parameter => parameter.Type.OrDefault()).ToArray();
         if (signature?.Any(type => type == null) == true) signature = null;
         var binding = signature?.Select((type, index) => NullableRepresentationTypes.BindingScalarFromSource(
             type, parameters[index].NullableGeneric.OrDefault(), ownerFrame,
             declaration.NullableRepresentationFrame.OrDefault())).ToArray();
-        return ResolveSlot(overrides, refs, new CallableSlot(signature, binding,
-            declaration.TypeParams.OrEmpty().Length, parameters != null, false, declaration.DeclarationId.OrDefault()));
+        return new CallableSlot(signature, binding, declaration.TypeParams.OrEmpty().Length,
+            parameters != null, false, declaration.DeclarationId.OrDefault());
+    }
+
+    static CallableSlot Callable(BirCallInstance call)
+    {
+        var signature = call.Sig.OrDefault();
+        if (signature?.Any(type => type == null) == true) signature = null;
+        return new CallableSlot(signature, null, call.TypeArgs.OrEmpty().Length,
+            false, true, call.DeclarationId.OrDefault());
     }
 
     // Both graph adapters supply named facts only. The selected-slot policy is

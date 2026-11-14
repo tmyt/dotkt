@@ -144,11 +144,8 @@ static partial class RoundtripMetadata
     // that MethodDef. Keeping it in attrs lets every later structural pass copy it like other declaration metadata;
     // runtime builds remove it through the ordinary DotKt.Runtime.CompilerServices.* stripping rule.
     internal static void AddSourceMethodIdentity(JsonObject method, string sourceName, string sourceDeclaration = null)
-    {
-        var identity = new JsonObject { ["name"] = sourceName };
-        if (sourceDeclaration != null) identity["sourceDeclaration"] = sourceDeclaration;
-        Append(method, JsonCarrierAttr(AKSourceMethod, identity));
-    }
+        => Append(method, Marker(AKSourceMethod, StringArg(BirCarrier.JsonV1),
+            BytesArg(Convert.ToBase64String(SourceMethodIdentityContent(sourceName, sourceDeclaration)))));
 
     internal static void CopySourceMethodIdentity(JsonObject source, JsonObject target)
     {
