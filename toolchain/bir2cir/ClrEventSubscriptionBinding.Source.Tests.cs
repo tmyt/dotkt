@@ -43,10 +43,11 @@ static partial class ClrEventSubscriptionBinding
             Name = "read", Params = Array.Empty<BirParameter>(), Body = new IBirStatement[] { new BirReturn { Value = read } },
         } } };
         var references = ReferenceMetadataIndex.Build(Array.Empty<string>());
-        Apply(consumer.ToDom(), references, snapshot, out var materialized);
+        Apply(consumer, references, snapshot, out var materialized);
         if (materialized.Count != 1) throw new InvalidOperationException("Event inventory fixture did not reach the live handle binder");
-        foreach (var callback in materialized[0]["result"]["args"].AsArray())
-            if (!TypeNodeDataEquality.Equal(TypeJson.Read(callback["synthClass"]["body"][0]["expr"]["type"]),
+        foreach (var callback in Callbacks((BirValueBlock)materialized[0].Slot.Value))
+            if (!TypeNodeDataEquality.Equal(((BirExpressionStatement)callback.SynthClass.Value.Body.Value[0]).Expr.Value switch {
+                    BirEventAdd add => add.Type.Value, BirEventRemove remove => remove.Type.Value, _ => null },
                 new TypeNode.Fqn("Native.Source", new TypeNode[] { number })))
                 throw new InvalidOperationException("Live event binding disagrees with the inherited forwarding inventory");
         references.DisposeNet();

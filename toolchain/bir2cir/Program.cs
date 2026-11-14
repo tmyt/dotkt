@@ -96,6 +96,7 @@ static class Bir2Cir
                 ClrEventSubscriptionBinding.SelfTest();
                 ClrEventImplBinding.SelfTestSourceFacts();
                 ClrEventImplBinding.SelfTestLocalEventRecipes();
+                ClrEventImplBinding.SelfTestTypedImplementations();
                 ExistentialReceiverBinding.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 InlineBirStashTests.SelfTest();
@@ -552,6 +553,24 @@ sealed class Pipeline
                 KotlinCollectionClassifierLowering.Apply(source, refs);
             }
             if (appBuild) StarProjectionLowering.Apply(source, refs);
+            // Event reads become ordinary handle constructions and callbacks.
+            // Normalize only their newly authored, non-overlapping executable
+            // roots; the owning file's original source-use flow stays untouched.
+            ClrEventSubscriptionBinding.Apply(source, refs, forwardedEvents, out var materializedEventHandles);
+            foreach (var materialized in materializedEventHandles)
+                materialized.Slot.Replace(FunctionValueRepresentation.Apply(materialized.Slot.Value, refs.IsByRefLikeFqn));
+            var sourceUses = sourceUseViews[index];
+            NullableTvErasureCallRealign.ApplyMaterialized(materializedEventHandles, sourceUses, isValueFqn, refs);
+            var eventClosures = ClosureSynthesis.ApplyMaterialized(source, materializedEventHandles, refs, scalarSlots.ProjectMethod);
+            if (DelegateTargetSlotAlignment.ApplyMaterialized(materializedEventHandles, eventClosures.AppendedTypes, isValueFqn))
+                foreach (var owner in eventClosures.AppendedTypes)
+                    NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(owner, sourceUses, isValueFqn, refs);
+            // SharedSyntheticSynthesis already consumed the original classes.
+            // These late callback classes must release the same transient facts.
+            foreach (var owner in eventClosures.AppendedTypes) SharedSyntheticSynthesis.DropSyntheticTypeArgs(owner);
+            // Resolve physical event delegates from the pre-strip source recipe.
+            // Raise/subscription sites still bind at their later physical-owner clock.
+            if (!referenceBuild) ClrEventImplBinding.BindImplementations(source, refs, localEventDeclarations);
             captured[index] = null;
             // The remaining owners still use DOM. Project once after the owning
             // representation and name allocation, never through an old adapter.
@@ -562,7 +581,7 @@ sealed class Pipeline
                 inputsWithSources[index].Suspend, sourceUseViews[index]));
         }
 
-        localEventDeclarations.BindDomRecipes();
+        localEventDeclarations.ReleaseSourceRecipes();
         var continuingRoots = files.Select(file => file.Root).ToArray();
         // Retired generated targets still supply source declaration facts. Put
         // those explicitly reported declarations through the same frontier once;
@@ -578,8 +597,8 @@ sealed class Pipeline
         retiredDom.Clear();
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames, placement,
-            new ModulePreparation(inventory, forwardedEvents, nullableDeclarations, uncheckedReturns, enums, sharedCells,
-                moduleBindings, localEventDeclarations));
+            new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums, sharedCells,
+                moduleBindings));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -603,11 +622,6 @@ sealed class Pipeline
         var representationMethodFrames = module.RepresentationMethodFrames;
         var localFactories = module.Placement.Factories;
         var localPropertyDeclarations = module.Placement.Properties;
-        // A delegated CLR-event declaration and a subscription through that Kotlin wrapper may be in sibling source
-        // files. Snapshot the module-wide relation before any declaration-normalizing pass can consume or rebuild the
-        // kotc directive; ClrEventSubscriptionBinding later consumes this immutable physical-owner index per file.
-        var clrEventForwardedOwners = module.Preparation.ForwardedEvents;
-
         // The top-level funs DEFINED in this compilation (every file-class's own static methods, across all input
         // files). A `callStatic owner=null` to one of these must stay owner-less (ilemit's FindStatic finds the
         // sibling); only a name absent here is eligible for referenced-stdlib file-class attribution (Gap B).
@@ -653,7 +667,6 @@ sealed class Pipeline
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
         var staged = new List<(JsonNode Root, string OutputName)>();
-        var localEventDeclarations = module.Preparation.LocalEvents;
         var sharedCells = module.Preparation.SharedCells;
         foreach (var bir in birFiles)
         {
@@ -666,44 +679,6 @@ sealed class Pipeline
             // Initial nullable-use flow already ran on owning source BIR.
             // Subsequent calls below follow only their actual late capability transitions.
             var working = bir.Root;
-            // EVENT HANDLES: materialize each clrEventGet as an ordinary stdlib ClrEvent<H> construction with
-            // add/remove callback closures. Subscribe is a normal Kotlin member call, independent of whether its
-            // receiver was read directly, stored, returned or passed across a DLL. Run before member substitution
-            // so the new construction and callbacks receive the same ordinary physical binding as source code.
-            working = ClrEventSubscriptionBinding.Apply(
-                working, refs, clrEventForwardedOwners, out var materializedEventHandles);
-            foreach (var materialized in materializedEventHandles)
-                FunctionValueRepresentation.Apply(materialized, refs.IsByRefLikeFqn);
-            // Event binding has just synthesized receiver locals plus add/remove member accesses. Feed those
-            // NEW fixed slots through the same nullable-value use-axis rule as the original tree. In particular, a
-            // proven-present Nullable<V> event receiver must enter the synthesized bare-V spill as V; the first pass
-            // could not see a node that did not exist yet. Submit the exact materialized work items rather than
-            // repairing the whole file after construction.
-            NullableTvErasureCallRealign.ApplyMaterialized(
-                materializedEventHandles, sourceUses, isValueFqn, refs);
-            // Event reads synthesize add/remove callbacks as normal `newClosure` ingredient bags. The main
-            // ClosureSynthesis pass ran earlier, before event binding. Give the exact materialized roots to its late
-            // entry contract so only these newly-created callback classes are assembled.
-            var materializedEventClosureTypes = ClosureSynthesis.ApplyMaterialized(
-                working, materializedEventHandles, refs, scalarSlots.ProjectMethod);
-            if (DelegateTargetSlotAlignment.ApplyMaterialized(
-                    materializedEventHandles, materializedEventClosureTypes, isValueFqn))
-                foreach (var materializedType in materializedEventClosureTypes)
-                    NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(
-                        materializedType, sourceUses, isValueFqn, refs);
-            // ClosureSynthesis stamps the transient lifted-frame correspondence on a GENERIC closure class, and the pass
-            // that consumes it (SharedSyntheticSynthesis) already ran. Drop it here so the invariant "it never reaches
-            // CIR" holds for a class assembled by this late pass too, rather than only for the main one.
-            foreach (var materializedType in materializedEventClosureTypes)
-                SharedSyntheticSynthesis.DropSyntheticTypeArgs(materializedType);
-            // .NET EVENT IMPLEMENT/RAISE (§4.2/§4.3): a Kotlin class implementing/declaring a CLR event via `by clrEvent()`.
-            // kotc synthesized add_/remove_/raise_<E> + a `clrEvents` backing directive (pure-Kotlin identities); this pass —
-            // the ref.dll-reading layer — resolves the concrete delegate `D` (the interface event's EventHandlerType) and
-            // rewrites field-like accessor bodies to CIR `clrEventAccessorImpl` directives + inserts `<E>$delegate : D`,
-            // or routes custom accessors through ordinary calls on the retained Kotlin policy field, plus
-            // a type-level `clrEventDecl`. Raise sites bind module-wide after inner owner projection. App/rt only (no .NET events
-            // in the ref/rt stdlib self-build).
-            if (!_options.RefBuild) working = ClrEventImplBinding.BindImplementations(working, refs, localEventDeclarations);
             // Consume CharSequence property semantics while calls still carry the explicit Kotlin property name and
             // accessor role. MemberCallSubstitution is the physical binding boundary for those calls; no later pass may
             // recover `length` from the allocated MethodRef spelling.
@@ -1744,11 +1719,9 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
     IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames,
     DeclarationPlacement Placement, ModulePreparation Preparation);
 sealed record ModulePreparation(TypedModuleInventory Inventory,
-    IReadOnlyDictionary<(string Owner, string Event), TypeNode> ForwardedEvents,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
-    IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings,
-    ClrEventImplBinding.LocalEvents LocalEvents);
+    IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record DeclarationPlacement(IReadOnlyDictionary<string, MemberCallSubstitution.LocalFactory> Factories,

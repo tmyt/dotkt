@@ -33,10 +33,11 @@ static partial class ClosureSynthesis
     // pass. Slots explicitly publish cross-kind replacements before ingredients
     // are snapshotted; the saved provenance therefore has the normalized shape.
     internal static MaterializedClosures ApplyMaterialized(BirFileDeclaration file,
-        IEnumerable<MaterializedOccurrence> inputs, ReferenceMetadataIndex refs)
+        IEnumerable<MaterializedOccurrence> inputs, ReferenceMetadataIndex refs,
+        Action<BirFunctionDeclaration, NullableRepresentationFrame> projectSamMethod = null)
     {
         var provenance = new List<ClosureProvenance>();
-        var appended = SynthesizeTyped(file, inputs, refs, null, provenance, skipAttributes: true);
+        var appended = SynthesizeTyped(file, inputs, refs, projectSamMethod, provenance, skipAttributes: true);
         return new MaterializedClosures(appended, provenance);
     }
 

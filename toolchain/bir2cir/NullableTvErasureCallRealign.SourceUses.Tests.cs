@@ -91,6 +91,7 @@ static partial class NullableTvErasureCallRealign
         SourceUseDelegateConstructionSelfTest();
         SourceUseSuspendBodySelfTest();
         SourceUseVisibilitySelfTest();
+        SourceUseMaterializedSelfTest();
         Console.WriteLine("[typed nullable source uses] self-test OK (two-phase arguments, current frames, constructors, result projections, slots, loop flow and visibility clock)");
     }
 

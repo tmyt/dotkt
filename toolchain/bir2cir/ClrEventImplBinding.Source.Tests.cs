@@ -14,6 +14,7 @@ static partial class ClrEventImplBinding
     {
         var refs = ReferenceMetadataIndex.Build(new[] {
             typeof(object).Assembly.Location, typeof(System.ComponentModel.INotifyPropertyChanged).Assembly.Location,
+            Path.Combine(Path.GetDirectoryName(typeof(object).Assembly.Location), "System.Runtime.dll"),
             typeof(ClrEventImplementationNativeBase<>).Assembly.Location,
         });
         try
