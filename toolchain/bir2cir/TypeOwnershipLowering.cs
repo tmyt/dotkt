@@ -14,56 +14,11 @@ static partial class TypeOwnershipLowering
     // the reader must not guess whether a dot separated a package or an enclosing class.
     public static void RecordNestedSourceTypes(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
     {
-        var definitions = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        foreach (var type in roots.OfType<JsonObject>()
+        var sourceName = NestedSourceNames(roots.OfType<JsonObject>()
             .SelectMany(root => (root["types"] as JsonArray)?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
-            .Where(type => Str(type["name"]) != null))
-        {
-            var name = Str(type["name"]);
-            // Shared synthetic declarations can occur in several roots before module de-duplication.
-            // This index owns only their lexical path; repeated declarations must agree on that owner.
-            if (!definitions.TryAdd(name, type)
-                && Str(definitions[name]["semanticOwner"]) != Str(type["semanticOwner"]))
-                throw new InvalidOperationException($"conflicting Kotlin semantic owners for '{name}'");
-        }
-        var names = new Dictionary<string, string>(StringComparer.Ordinal);
-        string SourceName(string name)
-        {
-            if (names.TryGetValue(name, out var known)) return known;
-            if (!definitions.TryGetValue(name, out var type)
-                || Str(type["semanticOwner"]) is not string owner || !definitions.ContainsKey(owner))
-                return names[name] = name;
-            if (!name.StartsWith(owner + ".", StringComparison.Ordinal))
-                return names[name] = name;
-            return names[name] = SourceName(owner) + "+" + name[(owner.Length + 1)..];
-        }
-
-        string Encode(TypeNode type)
-        {
-            var payload = TypeJson.Write(type);
-            var hasNestedClassifier = false;
-            void Rewrite(JsonNode node)
-            {
-                if (node is JsonObject obj)
-                {
-                    if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name)
-                    {
-                        var sourceName = SourceName(name);
-                        if (obj["classifier"] == null && sourceName != name) obj["name"] = sourceName;
-                        // A CLR-exact nested reference does not need a KotlinType carrier unless its
-                        // source arguments or the signature's physical representation require one.
-                        hasNestedClassifier |= (obj["classifier"] != null && !name.Contains('+')) || sourceName != name
-                            || (refs?.TryInnerCapturedCount(name, out var captured) == true && captured > 0);
-                    }
-                    foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
-                        Rewrite(child);
-                }
-                else if (node is JsonArray array)
-                    foreach (var child in array.Where(value => value != null)) Rewrite(child);
-            }
-            Rewrite(payload);
-            return hasNestedClassifier ? payload.ToJsonString() : null;
-        }
+            .Select(type => (Str(type["name"]), Str(type["semanticOwner"]))));
+        string Encode(TypeNode type) => CaptureNestedSourceType(type, sourceName, refs) is { } captured
+            ? TypeNode.ToJson(captured) : null;
 
         void Record(JsonObject declaration, string slot, string fact)
         {
@@ -99,29 +54,7 @@ static partial class TypeOwnershipLowering
     {
         var applicationOrder = new InnerApplicationOrder(roots, refs);
 
-        TypeNode Project(TypeNode type) => type switch
-        {
-            TypeNode.Fqn f => ProjectFqn(f),
-            TypeNode.Nullable n => new TypeNode.Nullable(Project(n.Of)),
-            TypeNode.Oblivious o => new TypeNode.Oblivious(Project(o.Of)),
-            TypeNode.Projection p => new TypeNode.Projection(p.Variance, Project(p.Of)),
-            TypeNode.Array a => new TypeNode.Array(Project(a.Elem)),
-            TypeNode.ByRef b => new TypeNode.ByRef(Project(b.Of)),
-            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, Project(fn.Ret),
-                fn.Params.Select(Project).ToArray(), fn.Recv == null ? null : Project(fn.Recv), fn.Clr,
-                fn.Ctx?.Select(Project).ToArray()),
-            _ => type,
-        };
-
-        TypeNode.Fqn ProjectFqn(TypeNode.Fqn f)
-        {
-            if (f.Args == null) return f;
-            var args = f.Args.Select(Project).ToArray();
-            var ordered = applicationOrder.DeclarationArguments(f with { Args = args });
-            // Reordered inner arguments now describe the CLR frame; the source application was
-            // recorded before this pass. Other classifiers still describe the same source head.
-            return ReferenceEquals(args, ordered) ? f with { Args = args } : new TypeNode.Fqn(f.Name, ordered);
-        }
+        TypeNode Project(TypeNode type) => ProjectInnerApplication(type, applicationOrder);
 
         void Rewrite(JsonNode node)
         {
