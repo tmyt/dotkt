@@ -136,6 +136,7 @@ static class Bir2Cir
                 ClrMemberResolution.NullableSlotComparisonSelfTest();
                 OwnerConstrainedMethodLowering.SelfTest();
                 ConstrainedTypeParameterReceiverBinding.AritySnapshotSelfTest();
+                ConstrainedTypeParameterReceiverBinding.ResolvedPropertiesSelfTest();
                 SourceOwnerClosureTests.Run();
                 StdlibSubstituteTypeParams.SelfTest();
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
@@ -1430,10 +1431,6 @@ sealed class Pipeline
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
             CapturedGenericInvocation.Apply(lowered, refs, emittedLocalTypes);
-            // Property nodes reveal whether they denote an accessor or a public field only after CLR member
-            // resolution. Convert the accessor subset on type-variable receivers to constrained calls now, retaining
-            // the exact memberRef just resolved; fields keep their distinct load/store representation.
-            ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(new[] { lowered });
             ClrMemberResolution.ResolveWellKnown(lowered, refs);
         }
 
@@ -1446,6 +1443,11 @@ sealed class Pipeline
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         loweredRoots.Clear();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Final resolution distinguished actual accessors from public fields.
+        // Consume their receiver-dispatch facts on the same owning typed graph;
+        // retain each exact MemberRef and the original one-file arity clock.
+        foreach (var root in physicalDocuments)
+            ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(root);
         // Exact member resolution selected each MethodDef's CLR-only generic
         // constraints. Consume those facts on the same owning typed occurrences
         // before interface/delegate materialization; retain the prepared local

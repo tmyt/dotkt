@@ -8577,6 +8577,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<TypeNode> SuspendTaskResult { get; set; }
     public OptionalField<bool> DotktValueReturn { get; set; }
     public OptionalField<OwnerConstraintOverrideBounds> _ownerConstraintOverrideBounds { get; set; }
+    public OptionalField<OwnerConstraintDispatchBounds> _ownerConstraintDispatchBounds { get; set; }
     public OptionalField<bool> _physicalDeclarationSignature { get; set; }
     public OptionalField<TypeNode> RetKotlinType { get; set; }
     public OptionalField<bool> _preparedDelegateReturnArgument { get; set; }
@@ -8992,6 +8993,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
             && EqualField(SuspendTaskResult, value.SuspendTaskResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(DotktValueReturn, value.DotktValueReturn, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(_ownerConstraintOverrideBounds, value._ownerConstraintOverrideBounds, (left, right) => left.FrozenText == right.FrozenText)
+            && EqualField(_ownerConstraintDispatchBounds, value._ownerConstraintDispatchBounds, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(_physicalDeclarationSignature, value._physicalDeclarationSignature, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(RetKotlinType, value.RetKotlinType, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(_preparedDelegateReturnArgument, value._preparedDelegateReturnArgument, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
@@ -9066,6 +9068,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "suspendTaskResult", SuspendTaskResult, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "dotktValueReturn", DotktValueReturn, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "_ownerConstraintOverrideBounds", _ownerConstraintOverrideBounds, (writer, value) => { OwnerConstraintOverrideBounds.Write(writer, value); });
+        WriteOptional(writer, "_ownerConstraintDispatchBounds", _ownerConstraintDispatchBounds, (writer, value) => { OwnerConstraintDispatchBounds.Write(writer, value); });
         WriteOptional(writer, "_physicalDeclarationSignature", _physicalDeclarationSignature, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "retKotlinType", RetKotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "_preparedDelegateReturnArgument", _preparedDelegateReturnArgument, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -9142,6 +9145,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (SuspendTaskResult.IsPresent) result["suspendTaskResult"] = SuspendTaskResult.IsNull ? null : TypeNode.Write(SuspendTaskResult.Value);
         if (DotktValueReturn.IsPresent) result["dotktValueReturn"] = DotktValueReturn.IsNull ? null : JsonValue.Create(DotktValueReturn.Value);
         if (_ownerConstraintOverrideBounds.IsPresent) result["_ownerConstraintOverrideBounds"] = _ownerConstraintOverrideBounds.IsNull ? null : OwnerConstraintOverrideBounds.ToDom(_ownerConstraintOverrideBounds.Value);
+        if (_ownerConstraintDispatchBounds.IsPresent) result["_ownerConstraintDispatchBounds"] = _ownerConstraintDispatchBounds.IsNull ? null : OwnerConstraintDispatchBounds.ToDom(_ownerConstraintDispatchBounds.Value);
         if (_physicalDeclarationSignature.IsPresent) result["_physicalDeclarationSignature"] = _physicalDeclarationSignature.IsNull ? null : JsonValue.Create(_physicalDeclarationSignature.Value);
         if (RetKotlinType.IsPresent) result["retKotlinType"] = RetKotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetKotlinType.Value));
         if (_preparedDelegateReturnArgument.IsPresent) result["_preparedDelegateReturnArgument"] = _preparedDelegateReturnArgument.IsNull ? null : JsonValue.Create(_preparedDelegateReturnArgument.Value);
@@ -10198,6 +10202,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
     public OptionalField<BirAttribute[]> Attrs { get; set; }
     public OptionalField<TypeNode> KotlinType { get; set; }
     public OptionalField<SourceTypeFacts> KotlinSupertypesPre { get; set; }
+    public OptionalField<OwnerConstraintDispatchBounds> _ownerConstraintDispatchBounds { get; set; }
     public OptionalField<BirStaticCarrier> StaticCarrier { get; set; }
     public OptionalField<BirCompanionCarrier> CompanionCarrier { get; set; }
     public OptionalField<SourceTypeFacts> RoundtripSupertypesPre { get; set; }
@@ -10529,6 +10534,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
             && EqualField(Attrs, value.Attrs, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(KotlinType, value.KotlinType, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(KotlinSupertypesPre, value.KotlinSupertypesPre, (left, right) => left.FrozenText == right.FrozenText)
+            && EqualField(_ownerConstraintDispatchBounds, value._ownerConstraintDispatchBounds, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(StaticCarrier, value.StaticCarrier, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(CompanionCarrier, value.CompanionCarrier, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(RoundtripSupertypesPre, value.RoundtripSupertypesPre, (left, right) => left.FrozenText == right.FrozenText)
@@ -10567,6 +10573,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         WriteOptional(writer, "attrs", Attrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "kotlinType", KotlinType, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "kotlinSupertypesPre", KotlinSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
+        WriteOptional(writer, "_ownerConstraintDispatchBounds", _ownerConstraintDispatchBounds, (writer, value) => { OwnerConstraintDispatchBounds.Write(writer, value); });
         WriteOptional(writer, "staticCarrier", StaticCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "companionCarrier", CompanionCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "roundtripSupertypesPre", RoundtripSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
@@ -10607,6 +10614,7 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (Attrs.IsPresent) result["attrs"] = Attrs.IsNull ? null : new JsonArray(Attrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom())).ToArray());
         if (KotlinType.IsPresent) result["kotlinType"] = KotlinType.IsNull ? null : JsonValue.Create(TypeNode.ToJson(KotlinType.Value));
         if (KotlinSupertypesPre.IsPresent) result["kotlinSupertypesPre"] = KotlinSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(KotlinSupertypesPre.Value);
+        if (_ownerConstraintDispatchBounds.IsPresent) result["_ownerConstraintDispatchBounds"] = _ownerConstraintDispatchBounds.IsNull ? null : OwnerConstraintDispatchBounds.ToDom(_ownerConstraintDispatchBounds.Value);
         if (StaticCarrier.IsPresent) result["staticCarrier"] = StaticCarrier.IsNull ? null : ((BirGraphValue)StaticCarrier.Value).ToDom();
         if (CompanionCarrier.IsPresent) result["companionCarrier"] = CompanionCarrier.IsNull ? null : ((BirGraphValue)CompanionCarrier.Value).ToDom();
         if (RoundtripSupertypesPre.IsPresent) result["roundtripSupertypesPre"] = RoundtripSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(RoundtripSupertypesPre.Value);
@@ -11420,6 +11428,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
     public OptionalField<bool> EnumRich { get; set; }
     public OptionalField<BirRichEnumDeclaration> RichEnum { get; set; }
     public OptionalField<SourceTypeFacts> KotlinSupertypesPre { get; set; }
+    public OptionalField<OwnerConstraintDispatchBounds> _ownerConstraintDispatchBounds { get; set; }
     public OptionalField<bool> _syntheticFrameBound { get; set; }
     public OptionalField<BirStaticCarrier> StaticCarrier { get; set; }
     public OptionalField<BirCompanionCarrier> CompanionCarrier { get; set; }
@@ -11808,6 +11817,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
             && EqualField(EnumRich, value.EnumRich, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(RichEnum, value.RichEnum, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(KotlinSupertypesPre, value.KotlinSupertypesPre, (left, right) => left.FrozenText == right.FrozenText)
+            && EqualField(_ownerConstraintDispatchBounds, value._ownerConstraintDispatchBounds, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(_syntheticFrameBound, value._syntheticFrameBound, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(StaticCarrier, value.StaticCarrier, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(CompanionCarrier, value.CompanionCarrier, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -11856,6 +11866,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         WriteOptional(writer, "enumRich", EnumRich, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "richEnum", RichEnum, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "kotlinSupertypesPre", KotlinSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
+        WriteOptional(writer, "_ownerConstraintDispatchBounds", _ownerConstraintDispatchBounds, (writer, value) => { OwnerConstraintDispatchBounds.Write(writer, value); });
         WriteOptional(writer, "_syntheticFrameBound", _syntheticFrameBound, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "staticCarrier", StaticCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "companionCarrier", CompanionCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -11906,6 +11917,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         if (EnumRich.IsPresent) result["enumRich"] = EnumRich.IsNull ? null : JsonValue.Create(EnumRich.Value);
         if (RichEnum.IsPresent) result["richEnum"] = RichEnum.IsNull ? null : ((BirGraphValue)RichEnum.Value).ToDom();
         if (KotlinSupertypesPre.IsPresent) result["kotlinSupertypesPre"] = KotlinSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(KotlinSupertypesPre.Value);
+        if (_ownerConstraintDispatchBounds.IsPresent) result["_ownerConstraintDispatchBounds"] = _ownerConstraintDispatchBounds.IsNull ? null : OwnerConstraintDispatchBounds.ToDom(_ownerConstraintDispatchBounds.Value);
         if (_syntheticFrameBound.IsPresent) result["_syntheticFrameBound"] = _syntheticFrameBound.IsNull ? null : JsonValue.Create(_syntheticFrameBound.Value);
         if (StaticCarrier.IsPresent) result["staticCarrier"] = StaticCarrier.IsNull ? null : ((BirGraphValue)StaticCarrier.Value).ToDom();
         if (CompanionCarrier.IsPresent) result["companionCarrier"] = CompanionCarrier.IsNull ? null : ((BirGraphValue)CompanionCarrier.Value).ToDom();
