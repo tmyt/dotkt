@@ -570,6 +570,10 @@ static partial class ConstrainedTypeParameterReceiverBinding
     // construction. Ambiguity (two constraints with that name) yields null rather than a guess.
     static TypeNode.Fqn ConstraintAt(
         TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams, out bool erased)
+        => ConstraintAt(tv, ownerName, ConstraintFrame(typeParams), ConstraintFrame(methodParams), out erased);
+
+    static TypeNode.Fqn ConstraintAt(TypeNode.Tv tv, string ownerName,
+        IReadOnlyList<ConstraintSlot> typeParams, IReadOnlyList<ConstraintSlot> methodParams, out bool erased)
     {
         erased = false;
         var matches = ConstraintDeclarations(tv, typeParams, methodParams)

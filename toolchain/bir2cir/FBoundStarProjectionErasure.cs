@@ -429,7 +429,7 @@ static partial class FBoundStarProjectionErasure
             if (arguments[index] is JsonObject argument
                 && TypeJson.Read(argument) is TypeNode.Projection projection
                 && parameters[index] is JsonObject parameter
-                && Str(parameter["variance"]) == projection.Variance)
+                && !ReferenceEquals(NormalizeProjectionArgument(projection, Str(parameter["variance"])), projection))
                 arguments[index] = argument["of"]!.DeepClone();
     }
 
