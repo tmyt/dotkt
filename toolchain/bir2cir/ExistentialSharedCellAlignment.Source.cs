@@ -41,7 +41,7 @@ static partial class ExistentialSharedCellAlignment
         {
             var (owner, fieldName, value) = node switch {
                 BirSetField write => (write.OwnerType.OrDefault() as TypeNode.Fqn, write.Name.OrDefault(), write.Value.OrDefault()),
-                BirNew construction => (construction.Type.OrDefault() as TypeNode.Fqn, null, (IBirExpression)null),
+                BirNew allocation => (allocation.Type.OrDefault() as TypeNode.Fqn, null, (IBirExpression)null),
                 _ => (null, null, (IBirExpression)null),
             };
             if (owner == null || !slots.TryGetValue(owner.Name, out var slot)
@@ -68,9 +68,9 @@ static partial class ExistentialSharedCellAlignment
         void AlignUse(BirGraphValue node)
         {
             var owner = node switch {
-                BirNew construction => construction.Type.OrDefault() as TypeNode.Fqn,
-                BirFieldGet read => read.OwnerType.OrDefault() as TypeNode.Fqn,
-                BirSetField write => write.OwnerType.OrDefault() as TypeNode.Fqn,
+                BirNew allocation => allocation.Type.OrDefault() as TypeNode.Fqn,
+                BirFieldGet readUse => readUse.OwnerType.OrDefault() as TypeNode.Fqn,
+                BirSetField writeUse => writeUse.OwnerType.OrDefault() as TypeNode.Fqn,
                 _ => null,
             };
             if (owner == null || !projected.TryGetValue(owner.Name, out var physical)) return;

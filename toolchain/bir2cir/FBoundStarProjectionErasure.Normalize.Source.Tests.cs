@@ -64,7 +64,7 @@ static partial class FBoundStarProjectionErasure
         var array = Variable("array", logicalArray, arrayFactory);
         var read = new BirArrayGet { Array = OptionalField<IBirExpression>.Of(Local("array", logicalArray)),
             Index = OptionalField<IBirExpression>.Of(new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(0) }),
-            Elem = logical, Sty = logical };
+            Elem = logical };
         var element = Variable("element", logical, read);
         var arrays = Method("arrays", logicalArray, array, element,
             new BirReturn { Value = OptionalField<IBirExpression>.Of(Local("array", logicalArray)) });
@@ -186,7 +186,7 @@ static partial class FBoundStarProjectionErasure
         var index = new BirCallStatic { Owner = new TypeNode.Fqn("Worklist"), Method = "index", Ret = integer,
             Args = new IBirExpression[] { indexArgument } };
         var read = new BirArrayGet { Array = OptionalField<IBirExpression>.Of(Local("array", logicalArray)),
-            Index = OptionalField<IBirExpression>.Of(index), Elem = logical, Sty = logical };
+            Index = OptionalField<IBirExpression>.Of(index), Elem = logical };
         var use = new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of(read) };
         var reverse = Method(integer, Variable("array", logicalArray, arrayProducer), use,
             Variable("b", logical, Local("a", logical)), Variable("a", logical, Local("physical", physical)));
