@@ -6480,22 +6480,27 @@ sealed partial class ReferenceMetadataIndex
         if (declaringAssembly == null) return null;
         foreach (var cad in attrs)
         {
+            string codec;
+            byte[] content;
             try
             {
                 if (cad.AttributeType.FullName != attrFullName
                     || cad.AttributeType.Assembly != declaringAssembly
                     || !HasAttribute(cad.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr)
                     || cad.ConstructorArguments.Count != 2
-                    || cad.ConstructorArguments[0].Value is not string version)
+                    || cad.ConstructorArguments[0].Value is not string declaredCodec)
                     continue;
-                var content = ReadByteArrayArg(cad.ConstructorArguments[1]);
-                return TypeNodeCarrier.Decode(version, content);
+                codec = declaredCodec;
+                content = ReadByteArrayArg(cad.ConstructorArguments[1]);
             }
             catch
             {
-                // A malformed carrier is not authority to alter the CLR call shape.  Ignore it and retain the ordinary
-                // reflected Object return; the downstream verifier will surface any actually required conversion.
+                // Reflection/provenance probing cannot authenticate this candidate.
+                continue;
             }
+            // An authenticated compiler carrier owns its explicitly declared
+            // codec. Decoder failures must not select a reflected fallback.
+            return TypeNodeCarrier.Decode(codec, content);
         }
         return null;
     }
