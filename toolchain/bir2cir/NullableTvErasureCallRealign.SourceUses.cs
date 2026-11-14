@@ -4,6 +4,12 @@ using DotKt.Cir;
 
 static partial class NullableTvErasureCallRealign
 {
+    // The declaration changed after initial flow; retain the same captured
+    // facts and per-file visibility view for this explicit capability entry.
+    internal static void ApplyAfterDelegateSlotAlignment(BirFileDeclaration file, DeclIndex index,
+        ValueTypeOracle isValue, ReferenceMetadataIndex references)
+        => ApplySourceUses(file, index, isValue, references);
+
     internal static BirFileDeclaration ApplySourceUses(BirFileDeclaration file, DeclIndex index,
         ValueTypeOracle isValue, ReferenceMetadataIndex references)
     {
