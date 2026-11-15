@@ -32,6 +32,8 @@ static partial class SuspendColdLowering
         var file = new BirFileDeclaration { FileClass = "CallerKt", Types = new IBirTypeDeclaration[] { owner } };
         var module = Context(file);
         module.PrepareStage0();
+        var retainedBody = caller.Body.Value;
+        var retainedStatement = retainedBody.Single();
         var output = new SourceFunGen(module, new SourceFunctionInput.Named(file, owner, caller, "", [])).Build();
         var calls = new List<BirCallInstance>();
         ((BirGraphValue)output.Types.Single()).Visit(node => { if (node is BirCallInstance call) calls.Add(call); });
@@ -45,8 +47,17 @@ static partial class SuspendColdLowering
             && !ReferenceEquals(cold.MemberMethodTypeParams.Value[0], methodParameter),
             "selected physical signature/frame snapshot lost completion or independent metadata");
         var machine = (BirClassDefinition)output.Types.Single();
-        Require(machine.Fields.Value.Single(field => field.Name.Value == "__aw$1").Type.Value == text
-            && caller.Body.Value.Length == 0, "awaited instantiated result or actual source-body move changed");
+        Require(machine.Fields.Value.Single(field => field.Name.Value == "__aw$1").Type.Value == text,
+            "awaited instantiated result type changed");
+        // This fixture emits ContinuationImpl locally, so the runtime original
+        // remains live and AcquireBody must report an independent executable birth.
+        Require(ReferenceEquals(caller.Body.Value, retainedBody)
+            && ReferenceEquals(caller.Body.Value.Single(), retainedStatement)
+            && ReferenceEquals(((BirReturn)retainedStatement).Value.Value, selected),
+            "retained runtime source body was moved or mutated");
+        Require(((DeclarationTestTransitions)module.Transitions).Cloned.Any(node => ReferenceEquals(node, retainedStatement))
+            && !ReferenceEquals(cold, selected),
+            "retained runtime body did not use a reported independent executable copy");
 
         // Real core-library awaitable metadata supplies the pattern. The Kotlin
         // Result helper is an actual local declaration captured by the same source
@@ -120,6 +131,6 @@ static partial class SuspendColdLowering
         Require(((DeclarationTestTransitions)module.Transitions).Cloned.Contains(originalReturn)
             && ((DeclarationTestTransitions)module.Transitions).Cloned.Contains(captured),
             "intrinsic executable copies bypassed the shared independent-birth observer");
-        Console.WriteLine("[typed suspend calls] self-test OK (selected signature/dispatch, result stamp, source MOVE, configured await metadata/order, shared helper identity)");
+        Console.WriteLine("[typed suspend calls] self-test OK (selected signature/dispatch, result stamp, retained source independent birth, configured await metadata/order, shared helper identity)");
     }
 }
