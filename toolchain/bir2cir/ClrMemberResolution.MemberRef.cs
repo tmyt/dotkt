@@ -60,10 +60,6 @@ static partial class ClrMemberResolution
         return MemberRefOf(member, kind, openOwner, ownerArgs, ownerArgumentsAreMethodSlots);
     }
 
-    internal static JsonNode MemberRefJson(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs,
-        bool? ownerArgumentsAreMethodSlots = null)
-        => MemberRefOf(member, kind, openOwner, ownerArgs, ownerArgumentsAreMethodSlots).Write();
-
     // Use the same complete projection for a native type test and its selected MemberRef.
     internal static TypeNode.Fqn PhysicalInstanceView(ReferenceMetadataIndex refs, TypeNode.Fqn view)
     {
@@ -77,49 +73,10 @@ static partial class ClrMemberResolution
         return RefReturnOf(method);
     }
 
-    // The caller already selected this MethodDef. Do not run another overload search for the fast branch.
-    internal static JsonObject ExactInstanceCall(ReferenceMetadataIndex refs, MethodInfo method,
-        TypeNode.Fqn declaringOwner, JsonNode receiver, JsonArray arguments)
-        => ExactCall(refs, method, declaringOwner, receiver, arguments, isStatic: false);
-
-    internal static JsonObject ExactStaticCall(ReferenceMetadataIndex refs, MethodInfo method,
-        TypeNode.Fqn declaringOwner, JsonArray arguments)
-        => ExactCall(refs, method, declaringOwner, null, arguments, isStatic: true);
-
-    static JsonObject ExactCall(ReferenceMetadataIndex refs, MethodInfo method,
-        TypeNode.Fqn declaringOwner, JsonNode receiver, JsonArray arguments, bool isStatic)
-    {
-        var plan = PlanExactDispatch(refs, method, declaringOwner, isStatic);
-        var reference = plan.Reference;
-        var adapted = new JsonArray(arguments.Select((argument, index) => (JsonNode)new JsonObject {
-            ["k"] = "cast", ["type"] = TypeJson.Write(plan.Arguments[index]), ["e"] = argument.DeepClone(),
-        }).ToArray());
-        var call = new JsonObject {
-            ["k"] = isStatic ? "callStatic" : "callInstance",
-            [isStatic ? "owner" : "ownerType"] = TypeJson.Write(reference.DeclaringType),
-            ["method"] = plan.Name, ["virtual"] = !isStatic,
-            ["recv"] = isStatic ? null : new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(reference.DeclaringType), ["e"] = receiver },
-            ["sig"] = new JsonArray(reference.ParameterTypes.Select(TypeJson.Write).ToArray()),
-            ["ret"] = TypeJson.Write(plan.Result), ["sty"] = TypeJson.Write(plan.Result),
-            ["args"] = adapted, ["memberRef"] = reference.Write(), [DeclarationIdentityBoundKey] = true,
-        };
-        if (isStatic) call.Remove("recv");
-        if (plan.Visibility != null)
-        {
-            call["memberVisibility"] = plan.Visibility;
-            call["memberOwnerTypeParams"] = plan.OwnerParameters == null ? null
-                : new JsonArray(plan.OwnerParameters.Select(parameter => (JsonNode)parameter.ToDom()).ToArray());
-            call["memberReturnType"] = TypeJson.Write(reference.ReturnType);
-            if (plan.Visibility == "protected" && receiver?["k"]?.GetValue<string>() == "this")
-                call["recv"] = receiver.DeepClone();
-        }
-        return call;
-    }
-
     sealed record ExactDispatchPlan(string Name, MemberRefNode Reference, TypeNode[] Arguments,
         TypeNode Result, string Visibility, IReadOnlyList<BirTypeParameter> OwnerParameters);
 
-    // Both actual graph renderers consume one selected MethodDef and the same
+    // Exact call renderers consume one selected MethodDef and the same
     // physical signature, argument adaptation and lexical-access metadata.
     static ExactDispatchPlan PlanExactDispatch(ReferenceMetadataIndex refs, MethodInfo method,
         TypeNode.Fqn declaringOwner, bool isStatic)

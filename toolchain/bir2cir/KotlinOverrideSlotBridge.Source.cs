@@ -158,7 +158,7 @@ static partial class KotlinOverrideSlotBridge
                     OwnerConstrainedMethodLowering.RecordOverride(slot.Implementation.Source, slot.TypeParameters, slot.SemanticSpec.Args ?? Array.Empty<TypeNode>(),
                         definitions.TryGetValue(slot.SemanticSpec.Name, out var declarationOwner)
                             ? views.Owner(declarationOwner).DeclaredParameters
-                            : ReferenceMetadataIndex.ReadReferencedTypeParameters(references.OwnerTypeParamDeclarations(slot.SemanticSpec.Name)),
+                            : references.OwnerTypeParamDeclarations(slot.SemanticSpec.Name),
                         owner.DeclaredParameters, representations == null ? null : representations.StorageConstraint, slot.Referenced);
                     var reimplements = slot.IsInterface && definition.Kind == "class"
                         && (ReachesFromDeclaredInterface(definition, slot.SemanticSpec, definitions, references)

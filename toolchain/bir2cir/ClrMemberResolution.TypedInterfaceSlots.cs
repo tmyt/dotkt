@@ -95,11 +95,11 @@ static partial class ClrMemberResolution
                     && SameInterfaceSlotType(candidate.Return, result)).ToList();
                 if (descriptor.TypeParams.HasValue)
                 {
-                    var shape = KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(descriptor.TypeParams.Value, Array.Empty<TypeNode>());
+                    var shape = KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(descriptor.TypeParams.Value, Array.Empty<TypeNode>());
                     candidates = candidates.Where(candidate => {
                         var declared = candidate.Method.GetGenericArguments()
                             .Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray();
-                        return KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(declared, candidate.DeclaringArguments) == shape;
+                        return KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declared, candidate.DeclaringArguments) == shape;
                     }).ToList();
                 }
                 var mostDerived = MostDerived(candidates.Select(candidate => candidate.Method)

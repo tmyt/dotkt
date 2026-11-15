@@ -14,7 +14,7 @@ sealed partial class ReferenceMetadataIndex
         declaration = null;
         if (!TryUnsafeAccessorMethod(id, owner, arity, isStatic, out var selected)) return false;
         declaration = new(selected.PhysicalMember, selected.Parameters, selected.Return,
-            ReadReferencedTypeParameters(selected.TypeParams), selected.NullableGenericReturn, selected.IsPublic);
+            selected.TypeParams, selected.NullableGenericReturn, selected.IsPublic);
         return true;
     }
 
@@ -24,10 +24,10 @@ sealed partial class ReferenceMetadataIndex
     {
         declaration = null;
         var selected = SelectUnsafeAccessorVirtualMethod(owner, name, arity, isStatic, signature, result,
-            ownerArguments, KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(selectedParameters, ownerArguments));
+            ownerArguments, KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(selectedParameters, ownerArguments));
         if (selected == null) return false;
         declaration = new(selected.Name, selected.SignatureParameters, selected.SignatureReturn,
-            ReadReferencedTypeParameters(selected.MethodTypeParams), selected.NullableGenericRet, selected.IsPublic);
+            CloneReferencedTypeParameters(selected.MethodTypeParams), selected.NullableGenericRet, selected.IsPublic);
         return true;
     }
 }

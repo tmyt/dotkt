@@ -10,7 +10,7 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // Declaration-owned source types, before physical representation changes them.
-// Text is emitted only for the frozen metadata leaf at the remaining DOM frontier.
+// Text is emitted only at the frozen metadata leaf's codec boundary.
 sealed class SourceTypeFacts
 {
     enum Part { Base, Interfaces, Bounds, NullableFrame, Variances }

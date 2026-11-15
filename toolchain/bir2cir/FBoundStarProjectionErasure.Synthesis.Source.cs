@@ -153,7 +153,7 @@ static partial class FBoundStarProjectionErasure
     static string SourceMethodKey(BirFunctionDeclaration method) => method.Name.OrDefault() is not string name ? null
         : name + "|" + method.TypeParams.OrEmpty().Length + "|"
           + string.Join(";", method.Params.OrEmpty().Select(parameter => TypeNode.ToJson(FunctionSignatureIdentity.SignatureType(parameter))))
-          + "|" + KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(method.TypeParams.OrDefault(), Array.Empty<TypeNode>());
+          + "|" + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(method.TypeParams.OrDefault(), Array.Empty<TypeNode>());
 
     static string StarMethodNameSource(IBirTypeDeclaration owner, BirFunctionDeclaration method) =>
         "$star$" + method.Name.OrDefault() + "$" + owner.Methods.OrEmpty().TakeWhile(candidate => !ReferenceEquals(candidate, method)).Count();

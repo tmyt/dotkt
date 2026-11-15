@@ -156,6 +156,8 @@ static partial class ClrMemberResolution
         // Source access has already been checked; protected reference slots
         // are legal, private/assembly-only candidates are not.
         var candidates = Candidates(open, name, signature, owner.Args, flags).Where(IsPublicOrProtected).ToList();
+        // Explicit type arguments own generic selection; an absent vector must
+        // not let a same-shaped generic definition enter nongeneric matching.
         if (!hasTypeArguments) candidates = candidates.Where(method => !method.IsGenericMethodDefinition).ToList();
         var context = $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(owner)} .{name}({DescArgs(signature)})";
         var selected = selectedSignature != null

@@ -71,7 +71,8 @@ sealed partial class ReferenceMetadataIndex
     {
         var index = Build(new[] { typeof(object).Assembly.Location });
         index._ownerAlias["kotlin.collections.MutableList"] = "System.Collections.Generic.IList";
-        index._ownerTypeParamDeclarations["kotlin.collections.MutableList"] = "[{\"name\":\"T\"}]";
+        index._ownerTypeParamDeclarations["kotlin.collections.MutableList"] = Array.AsReadOnly(
+            new[] { new BirTypeParameter { Name = "T" } });
         index._kotlinMapStorageDefinitions = new[] { "Storage.First", "Storage.Second" };
         return index;
     }

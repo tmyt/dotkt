@@ -47,7 +47,7 @@ static partial class ClrMemberResolution
                 $"bir2cir: external base MethodImpl owner '{ownerSpec.Name}' does not resolve in the compile-reference universe");
         // The bridge descriptor names the constructed supertype through which Kotlin reached the slot.  The actual
         // CLR declaration may live on any of that type's base classes.  Reflection's inherited method set preserves
-        // that distinction, and MemberRefJson projects the winner's actual declaring type through `open`; restricting
+        // that distinction, and MemberRefOf projects the winner's actual declaring type through `open`; restricting
         // this search to DeclaredOnly would reject a perfectly exact descriptor solely because it arrived through an
         // intermediate base.
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;

@@ -31,9 +31,9 @@ using DotKt.Bir;
 static partial class ClrMemberResolution
 {
     // The list literal and spread roles are authored by the typed template owner.
-    static readonly (string Kind, string Owner, int Arity, string Accumulator, string RefKey)[] CollectionTemplates =
+    static readonly (string Kind, string Owner, int Arity, string Accumulator)[] CollectionTemplates =
     {
-        ("newList", "System.Collections.Generic.List", 1, "Add", "addRef"),
+        ("newList", "System.Collections.Generic.List", 1, "Add"),
     };
     const string SpreadOwner = "System.Collections.Generic.List";
     const string NullableFqn = "System.Nullable";

@@ -22,34 +22,13 @@ static partial class ErasedElementValues
         _ => null,
     };
 
-    // Shared by erased reads and generic query entry slots. A non-reified parameter promises its declared
-    // upper bound, not the caller's closed CLR instantiation. Representation-frame metadata owns that bound.
-    internal static TypeNode ErasedBound(TypeNode.Tv variable, JsonObject method, JsonObject owner,
-        Func<TypeNode, bool> isInterface, IReadOnlyDictionary<string, NullableRepresentationFrame> frames = null,
-        ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null, HashSet<TypeNode.Tv> visited = null)
-        => ErasedBound(variable, MethodBounds(method), OwnerBounds(owner), isInterface, frames, isValue, policy, visited);
-
     // Source and physical readers supply the same declaration-owned bounds. The
     // choice of representative bound and its frame mapping lives only here.
     internal sealed record BoundDeclaration(NullableRepresentationFrame Frame, IReadOnlyList<TypeNode[]> Constraints,
         IReadOnlyDictionary<int, TypeNode[]> SavedBounds);
 
-    internal static BoundDeclaration MethodBounds(JsonObject method) => new(
-        method == null ? null : NullableRepresentationTypes.DeclarationMethodFrame(method),
-        DeclarationConstraints((method?["typeParams"] as JsonArray ?? new JsonArray())),
-        Text(method?[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string saved
-            ? SourceBoundsSnapshot.ReadFrozenText(saved).Bounds : null);
-
-    internal static BoundDeclaration OwnerBounds(JsonObject owner) => new(
-        owner == null ? null : KotlinSupertypesRecord.ReadNullableFrame(owner),
-        DeclarationConstraints(TypeParameterFrame.Declarations(owner)),
-        owner == null ? null : KotlinSupertypesRecord.ReadBounds(owner));
-
-    static TypeNode[][] DeclarationConstraints(IEnumerable<JsonNode> parameters) => parameters.Select(parameter =>
-        parameter is JsonObject declaration && declaration["constraints"] is JsonArray constraints
-            ? constraints.Select(TypeJson.Read).Where(type => type != null).ToArray()
-            : Array.Empty<TypeNode>()).ToArray();
-
+    // A non-reified parameter promises its declaration-owned upper bound,
+    // not the caller's closed CLR instantiation.
     internal static TypeNode ErasedBound(TypeNode.Tv variable, BoundDeclaration method, BoundDeclaration owner,
         Func<TypeNode, bool> isInterface, IReadOnlyDictionary<string, NullableRepresentationFrame> frames = null,
         ValueTypeOracle isValue = null, GenericRepresentationPolicy policy = null, HashSet<TypeNode.Tv> visited = null)
@@ -83,6 +62,4 @@ static partial class ErasedElementValues
         SourceScalarSelfTest();
         SourceElementSelfTest();
     }
-
-    static string Text(JsonNode node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 }

@@ -5,7 +5,7 @@ using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
 // Immutable declaration-frame type facts, not executable children. Frozen text
-// carries them across the remaining DOM frontier without value-type rewrites.
+// preserves their metadata encoding without value-type rewrites.
 sealed class SourceTypeVector
 {
     internal IReadOnlyList<TypeNode> Types { get; }

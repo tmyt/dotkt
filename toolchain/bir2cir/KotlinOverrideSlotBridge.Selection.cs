@@ -132,7 +132,7 @@ static partial class KotlinOverrideSlotBridge
                         localTypeNames, nullableFrames: refs.NullableTypeFrames)).ToArray();
                     if (!ClrMemberResolution.TryResolveAliasedInterfaceSlotByShape(
                             refs, loweredDescriptorOwner, aliasedPhysicalMember, methodArity, comparableParams,
-                            SourceMethodTypeParameterShapeKey(slot.TypeParameters, supArgs),
+                            MethodTypeParameterShapeKey(slot.TypeParameters, supArgs),
                             out var declarationOwner, out var declarationMember,
                             out var physicalParams, out var physicalRet))
                         throw new InvalidOperationException(
@@ -328,7 +328,7 @@ static partial class KotlinOverrideSlotBridge
                             ? impl.Frame?.SourceArity ?? methodArity
                             : methodArity,
                         implementationSignature, supArgs,
-                        SourceMethodTypeParameterShapeKey(semanticSelection ? AuthoredParameters(impl) : impl.TypeParameters, ownArgs,
+                        MethodTypeParameterShapeKey(semanticSelection ? AuthoredParameters(impl) : impl.TypeParameters, ownArgs,
                             semanticSelection ? null : refs.PhysicalConstraintType),
                         selectedSuspend: suspendValues || semanticSelection && impl.Suspend, out selectedClassDeclaration,
                         semanticConstraints: semanticSelection,
@@ -338,7 +338,7 @@ static partial class KotlinOverrideSlotBridge
                 {
                     if (accessorKind != null || !refs.TrySelectedOverrideDeclarationByShape(
                         spec.Name, member, null, methodArity, implementationSignature, supArgs,
-                        SourceMethodTypeParameterShapeKey(impl.TypeParameters, ownArgs, refs.PhysicalConstraintType), selectedSuspend: true, out var suspendDeclaration, semanticConstraints: false, selectedDeclarationId: null))
+                        MethodTypeParameterShapeKey(impl.TypeParameters, ownArgs, refs.PhysicalConstraintType), selectedSuspend: true, out var suspendDeclaration, semanticConstraints: false, selectedDeclarationId: null))
                         continue;
                     // The selected suspend declaration supplies its logical open return independently from its
                     // already-emitted Task signature. Decide value-ness before closing the owner's type arguments.
@@ -347,7 +347,7 @@ static partial class KotlinOverrideSlotBridge
                     signatureParameters = suspendDeclaration.SignatureParameters;
                     refused = null;
                     selectedPhysicalMember = suspendDeclaration.PhysicalMember;
-                    selectedSlotTypeParams = ReferenceMetadataIndex.ReadReferencedTypeParameters(suspendDeclaration.TypeParams);
+                    selectedSlotTypeParams = suspendDeclaration.TypeParams;
                     slotReturnsValue = !IsVoid(slotRet0);
                 }
                 else if (accessorKind != null && phase == Phase.PhysicalBridges)
@@ -357,7 +357,7 @@ static partial class KotlinOverrideSlotBridge
                     // application whose CLR value is an existential carrier).
                     if (!refs.TrySelectedOverrideDeclarationByShape(selectedSpec.Name, member, accessorKind,
                             methodArity, implementationSignature, selectedArgs,
-                            SourceMethodTypeParameterShapeKey(impl.TypeParameters, ownArgs, refs.PhysicalConstraintType), selectedSuspend: false,
+                            MethodTypeParameterShapeKey(impl.TypeParameters, ownArgs, refs.PhysicalConstraintType), selectedSuspend: false,
                             out var propertyDeclaration,
                             semanticConstraints: false, selectedDeclarationId: o.PhysicalDeclarationId
                                 ?? o.DeclarationId)) continue;
@@ -365,8 +365,8 @@ static partial class KotlinOverrideSlotBridge
                     slotParams0 = propertyDeclaration.PhysicalParameters;
                     selectedPhysicalMember = propertyDeclaration.PhysicalMember;
                     signatureParameters = propertyDeclaration.SignatureParameters;
-                    selectedSlotTypeParams = propertyDeclaration.TypeParams is { Count: > 0 }
-                        ? ReferenceMetadataIndex.ReadReferencedTypeParameters(propertyDeclaration.TypeParams) : null;
+                    selectedSlotTypeParams = propertyDeclaration.TypeParams is { Length: > 0 }
+                        ? propertyDeclaration.TypeParams : null;
                     refused = null;
                 }
                 else
@@ -378,7 +378,7 @@ static partial class KotlinOverrideSlotBridge
                         : refs.TrySelectedNullableGenericSlotByShape(selectedSlotSpec.Name, member, isStatic: false, ps.Length, methodArity,
                             implementationSignature, bindingReturn,
                             selectedSlotArgs,
-                            SourceMethodTypeParameterShapeKey(phase == Phase.DeclarationMoves ? AuthoredParameters(impl) : impl.TypeParameters, ownArgs,
+                            MethodTypeParameterShapeKey(phase == Phase.DeclarationMoves ? AuthoredParameters(impl) : impl.TypeParameters, ownArgs,
                                 phase == Phase.DeclarationMoves ? null : refs.PhysicalConstraintType),
                             out slotRet0, out slotParams0, out refused,
                             out selectedPhysicalMember, out selectedSlotTypeParams, out slotReturnsValue,
@@ -499,7 +499,7 @@ static partial class KotlinOverrideSlotBridge
                             typeArg: false, localTypeNames: null, nullableFrames: refs.NullableTypeFrames)).ToArray();
                         if (!ClrMemberResolution.TryResolveAliasedInterfaceSlotByShape(
                                 refs, loweredOwner, descriptorMember, methodArity, comparableParams,
-                                SourceMethodTypeParameterShapeKey(selectedSlotTypeParams, selectedSlotArgs),
+                                MethodTypeParameterShapeKey(selectedSlotTypeParams, selectedSlotArgs),
                                 out var declarationOwner, out var declarationMember,
                                 out var physicalParams, out var physicalRet,
                                 // Bindings such as Comparable deliberately collapse their owner arguments.
@@ -540,7 +540,7 @@ static partial class KotlinOverrideSlotBridge
                 var slotKey = SupertypeGraph.TypeKey(descriptorOwner) + "::" + descriptorMember
                     + "`" + methodArity + "(" + string.Join(",", (slotSignature ?? slotParams).Select(SupertypeGraph.TypeKey))
                     + ")->" + SupertypeGraph.TypeKey(slotRet)
-                    + SourceMethodTypeParameterShapeKey(selectedSlotTypeParams, supArgs);
+                    + MethodTypeParameterShapeKey(selectedSlotTypeParams, supArgs);
                 if (inheritedSignatures?.ContainsKey(impl) == true)
                 {
                     if (ownedSlots.Contains(slotKey)) continue;

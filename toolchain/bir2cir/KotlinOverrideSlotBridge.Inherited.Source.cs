@@ -236,7 +236,7 @@ static partial class KotlinOverrideSlotBridge
                     if (suspendValues && fact.Header.Mods.OrDefault()?.Suspend.OrDefault() == true)
                     {
                         if (!refs.TrySelectedOverrideDeclarationByShape(spec.Name, member, accessor, arity, factParams, args,
-                            SourceMethodTypeParameterShapeKey(fact.ImplementationParameters, args, refs.PhysicalConstraintType),
+                            MethodTypeParameterShapeKey(fact.ImplementationParameters, args, refs.PhysicalConstraintType),
                             true, out source, false, null)) continue;
                         logical = SupertypeGraph.SubstOwnerTvs(source.Return, args);
                     }
@@ -256,7 +256,7 @@ static partial class KotlinOverrideSlotBridge
                     Publish(null, source.PhysicalParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
                         SupertypeGraph.SubstOwnerTvs(logical != null ? source.Return : source.PhysicalReturn, args),
                         logical != null ? !IsVoid(source.Return) : source.ReturnsValue, source.PhysicalMember,
-                        ReferenceMetadataIndex.ReadReferencedTypeParameters(source.TypeParams), source.NullableFrame,
+                        source.TypeParams, source.NullableFrame,
                         source.ParameterNullableFlags, source.SignatureParameters, source.DeclarationId,
                         !collectionQueries ? null : Enumerable.Range(0, source.PhysicalParameters.Length).Select(index =>
                             KotlinCollectionSlotSynthesis.IsErasedQueryParameter(fact.Header.Overrides.OrEmpty(), index)

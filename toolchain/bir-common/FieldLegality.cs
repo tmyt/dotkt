@@ -14,7 +14,6 @@
 #nullable enable
 using System;
 using System.Text.RegularExpressions;
-using System.Text.Json.Nodes;
 
 namespace DotKt.Bir;
 
@@ -153,17 +152,6 @@ public static class FieldLegality
              + $"by a lambda, and it is {KindPhrase(why, offendingFqn)}. A captured value is stored in an instance "
              + $"field of the generated class `{closureName}`, and the CLR forbids that for this type. Pass the "
              + "value as a parameter instead of capturing it (mirrors C# CS8352).";
-    }
-
-    /// <summary>
-    /// The `File.kt:line: ` decl-source prefix of a BIR/CIR declaration, or "" when it carries no `pos`.
-    /// Same format as <c>IrSanity.PosPrefix</c> (that one reads the JsonElement view of the same node).
-    /// </summary>
-    public static string PosPrefix(JsonNode? decl)
-    {
-        if (decl is not JsonObject o || o["pos"] is not JsonObject pos) return "";
-        if ((pos["f"] as JsonValue)?.TryGetValue<string>(out var path) != true) return "";
-        return PosPrefix(path, pos["l"] is JsonValue lv && lv.TryGetValue<int>(out var line) ? line : null);
     }
 
     /// <summary>Format an already decoded declaration position without a graph adapter.</summary>
