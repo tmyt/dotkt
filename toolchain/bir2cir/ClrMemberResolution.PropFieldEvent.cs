@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -18,6 +17,87 @@ using DotKt.Cir;
 // dispatch. ilemit consumes those facts one-to-one — zero member-kind derivation, zero first-pick.
 static partial class ClrMemberResolution
 {
+    // Selection is separate from owning rendering. No renderer searches again
+    // or substitutes the caller's return for the foreign declaration's slot.
+    sealed record NativeStorageSelection(TypeNode Owner, string Member, string Accessor,
+        MemberRefNode Reference, string Dispatch, TypeNode DeclaredReturn, TypeNode WrittenSlot);
+
+    static TypeNode NativeDeclaredReturn(Type type) => type == null || type == typeof(void)
+        ? new TypeNode.Fqn("void") : MemberSigOf(type);
+
+    static NativeStorageSelection SelectNativePropertyStorage(TypeNode owner, string name,
+        bool write, bool isStatic, bool superCall)
+    {
+        if (owner is not TypeNode.Fqn ownerFqn)
+            throw new InvalidOperationException($"bir2cir: clrProp{(write ? "Set" : "Get")} owner is not a .NET FQN slot ({TypeNode.ToJson(owner)})");
+        var open = ResolveOwnerType(ownerFqn) ?? throw new InvalidOperationException(
+            $"bir2cir: clrProp{(write ? "Set" : "Get")} owner '{ownerFqn.Name}' does not resolve to a .NET type");
+        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy
+            | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+        if (FindPropAccessor(open, name, write, flags) is { } accessor)
+        {
+            var target = RetargetedInterfaceOwner(open, accessor, ownerFqn);
+            return new(target, "accessor", accessor.Name,
+                MemberRefOf(accessor, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args),
+                isStatic ? null : Dispatch(accessor, open, superCall), NativeDeclaredReturn(accessor.ReturnType),
+                write ? SubstOwnerParams(accessor.GetParameters()[^1].ParameterType,
+                    (target as TypeNode.Fqn ?? ownerFqn).Args ?? Array.Empty<TypeNode>()) : null);
+        }
+        if (FindFieldMember(open, name, flags) is { } field)
+            return new(ownerFqn, "field", null, FieldRefOf(field, open, ownerFqn.Args), null,
+                NativeDeclaredReturn(field.FieldType),
+                write ? SubstOwnerParams(field.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()) : null);
+        throw new InvalidOperationException($"bir2cir: no readable/writable property, accessor method, or field '{name}' on .NET type '{open}' (clrProp{(write ? "Set" : "Get")})");
+    }
+
+    static NativeStorageSelection SelectNativeFieldStorage(TypeNode owner, string name, bool write)
+    {
+        // Same-emission storage wins over a stale reference twin, even when the
+        // earlier reference assembly exposes an inaccessible backing field.
+        if (owner is not TypeNode.Fqn ownerFqn || _localTypes.Contains(ownerFqn.Name)) return null;
+        var open = ResolveOwnerType(ownerFqn);
+        if (open == null || name == null) return null;
+        var accessor = FindPropAccessor(open, name, write, BindingFlags.Public | BindingFlags.Instance);
+        if (accessor == null)
+        {
+            var widest = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+                | BindingFlags.Static | BindingFlags.FlattenHierarchy;
+            var direct = FindFieldMember(open, name, widest);
+            if (direct == null && FindPropAccessor(open, name, write, widest) == null)
+                throw new InvalidOperationException(
+                    $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a property accessor on the referenced owner — "
+                    + "a cross-assembly property's storage is reachable only through its accessors");
+            return direct == null ? null : new(ownerFqn, null, null, FieldRefOf(direct, open, ownerFqn.Args), null,
+                NativeDeclaredReturn(direct.FieldType),
+                write ? SubstOwnerParams(direct.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()) : null);
+        }
+        var target = RetargetedInterfaceOwner(open, accessor, ownerFqn);
+        return new(target, "accessor", accessor.Name,
+            MemberRefOf(accessor, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args),
+            Dispatch(accessor, open, false), NativeDeclaredReturn(accessor.ReturnType),
+            write ? SubstOwnerParams(accessor.GetParameters()[^1].ParameterType,
+                (target as TypeNode.Fqn ?? ownerFqn).Args ?? Array.Empty<TypeNode>()) : null);
+    }
+
+    static NativeStorageSelection SelectNativeEventStorage(TypeNode owner, string name, bool isStatic, bool add)
+    {
+        if (owner is not TypeNode.Fqn ownerFqn)
+            throw new InvalidOperationException($"bir2cir: clrEvent owner is not a .NET FQN slot ({TypeNode.ToJson(owner)})");
+        if (_localTypes.Contains(ownerFqn.Name))
+            throw new InvalidOperationException($"bir2cir: local clrEvent '{ownerFqn.Name}' reached final member resolution without an exact accessor binding");
+        var open = ResolveOwnerType(ownerFqn) ?? throw new InvalidOperationException(
+            $"bir2cir: clrEvent owner '{ownerFqn.Name}' does not resolve to a .NET type");
+        var flags = BindingFlags.Public | BindingFlags.FlattenHierarchy | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+        var accessor = FindEventAccessor(open, name, add, flags) ?? throw new InvalidOperationException(
+            $"bir2cir: no event '{name}' on .NET type '{open}' (clrEvent{(add ? "Add" : "Remove")})");
+        var reference = MemberRefOf(accessor, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
+        var handler = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(reference.ParameterTypes[0],
+            ((TypeNode.Fqn)reference.DeclaringType).Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
+        return new(RetargetedInterfaceOwner(open, accessor, ownerFqn), null, accessor.Name, reference,
+            isStatic ? null : Dispatch(accessor, open, false), NativeDeclaredReturn(accessor.ReturnType),
+            SignatureValueTypes.Of(handler));
+    }
+
     // UnsafeAccessor binds a field on its declaring TypeDef, unlike ordinary inherited
     // field lookup. Reuse the exact MemberRef projection, including constructed bases.
     internal static MemberRefNode ResolveFieldForUnsafeAccessor(ReferenceMetadataIndex refs,
@@ -49,68 +129,6 @@ static partial class ClrMemberResolution
 
     // ---- property get / set --------------------------------------------------------------------
 
-    // A clrPropGet/clrPropSet on a .NET (or referenced-DotKt) owner. Resolve the owner's OPEN def off the ref.dll and
-    // classify: a real .NET property -> an ACCESSOR (carry its scalar memberRef + dispatch); a public FIELD surfaced as a Kotlin
-    // property -> `member:"field"` (ilemit does the ldsfld/ldfld + const-literal inline, a mechanical value fetch, not a
-    // KIND decision). 0 members = a hard ABI error.
-    static void ResolveProp(JsonObject node, bool write)
-    {
-        if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn)
-            throw new InvalidOperationException($"bir2cir: clrProp{(write ? "Set" : "Get")} owner is not a .NET FQN slot ({TypeNode.ToJson(ReadOwnerNode(node["type"]))})");
-        var open = ResolveOwnerType(ownerFqn);
-        if (open == null)
-            throw new InvalidOperationException($"bir2cir: clrProp{(write ? "Set" : "Get")} owner '{ownerFqn.Name}' does not resolve to a .NET type");
-        var name = (node["name"] as JsonValue)?.GetValue<string>();
-        var isStatic = (node["static"] as JsonValue)?.GetValue<bool>() ?? false;
-        var superCall = (node["super"] as JsonValue)?.GetValue<bool>() ?? false;
-        // FlattenHierarchy surfaces a base-class STATIC accessor/field accessed through the derived owner (a static
-        // property has no inherited-instance auto-flatten). Harmless for the instance flavor (instance already flattens).
-        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy |
-            (isStatic ? BindingFlags.Static : BindingFlags.Instance);
-
-        var acc = FindPropAccessor(open, name, write, flags);
-        if (acc != null)
-        {
-            RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
-            node["member"] = "accessor";
-            node["accessor"] = acc.Name;
-            node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
-            // Property substitution retains the selected Kotlin declaration for existential receiver binding.
-            // A remaining CLR property has now acquired its final accessor MemberRef; the source identity is consumed.
-            node.Remove(DeclarationIdentityBinding.Key);
-            StampResolvedMemberReturn(node, acc.ReturnType);
-            if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall);
-            // A WRITE's value fills the setter's parameter, which is an ordinary delegate slot when the property is
-            // delegate-typed. The declaring owner may have been projected onto a base interface just above, so read
-            // the slot in that final frame.
-            if (write) MarkWrittenDelegateSlot(node, SubstOwnerParams(acc.GetParameters()[^1].ParameterType,
-                (ReadOwnerNode(node["type"]) as TypeNode.Fqn ?? ownerFqn).Args ?? Array.Empty<TypeNode>()));
-            return;
-        }
-        // A genuine public CLR FIELD is a foreign declaration too — `public List<int?> Items` is the same crossing a
-        // parameter of that type is — so its declared type is stamped like any other. It reads through `ldfld`
-        // rather than an accessor, which is why it has no `resolvedMemberParams` and why nothing else here states its type.
-        if (FindFieldMember(open, name, flags) is FieldInfo fld)
-        {
-            node["member"] = "field";
-            node["memberRef"] = FieldRefJson(fld, open, ownerFqn.Args);
-            node.Remove(DeclarationIdentityBinding.Key);
-            StampResolvedMemberReturn(node, fld.FieldType);
-            if (write) MarkWrittenDelegateSlot(node,
-                SubstOwnerParams(fld.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()));
-            return;
-        }
-        throw new InvalidOperationException($"bir2cir: no readable/writable property, accessor method, or field '{name}' on .NET type '{open}' (clrProp{(write ? "Set" : "Get")})");
-    }
-
-    // A WRITE's value node fills the storage it is written into, exactly as an argument fills a parameter. A
-    // delegate-typed setter parameter or field is therefore an ordinary delegate slot, and a literal lambda written
-    // into it must construct THAT delegate. The nodes spell their value under two keys.
-    static void MarkWrittenDelegateSlot(JsonObject node, TypeNode slotType)
-    {
-        if (node["value"] is JsonObject value) MarkDelegateSlot(value, slotType);
-        else if (node["e"] is JsonObject expression) MarkDelegateSlot(expression, slotType);
-    }
 
     // Early nullable-slot coercion must inspect the same declaration that final physical binding will select.
     // In particular, interface slots cannot take precedence over a visible field in the class hierarchy.
@@ -217,11 +235,6 @@ static partial class ClrMemberResolution
     // `IReadOnlyCollection<X>` owner — sidestepping LinkClrMethod's base-interface fallback, which returns the OPEN base
     // method (an unbound `!0` token -> BadImageFormat in a generic method body). Only fires for an INTERFACE owner whose accessor is declared
     // on a DIFFERENT (base) interface; a base-CLASS accessor already re-anchors correctly through reflection.
-    static void RetargetToBaseInterface(JsonObject node, string ownerSlot, Type open, MethodInfo acc, TypeNode.Fqn ownerFqn)
-    {
-        var target = RetargetedInterfaceOwner(open, acc, ownerFqn);
-        if (!ReferenceEquals(target, ownerFqn)) node[ownerSlot] = TypeJson.Write(target);
-    }
 
     static TypeNode RetargetedInterfaceOwner(Type open, MethodInfo acc, TypeNode.Fqn ownerFqn)
     {
@@ -264,58 +277,6 @@ static partial class ClrMemberResolution
 
     // ---- events --------------------------------------------------------------------------------
 
-    // A clrEventAdd/clrEventRemove. A local owner was already bound to its synthesized declaration by
-    // ClrEventImplBinding. For a .NET owner, resolve the owner off the ref.dll, find the EventInfo, and stamp the
-    // add/remove accessor's complete memberRef plus `dispatch`. Replaces ilemit's unchecked
-    // `GetEvent(...).GetAddMethod()` (a NullReferenceException on a missing/value-type/constructed-generic event — #113):
-    // a missing event is now a hard ABI error here, and the handler delegate type flows from the resolved accessor param.
-    static void ResolveEvent(JsonObject node)
-    {
-        // The module-wide local binder has already named the exact emitted accessor. Its receiver may itself be a
-        // type parameter, in which case `type` deliberately remains a `tv` so ilemit can emit constrained. dispatch;
-        // the exact handler was already materialized by the semantic producer.
-        if (node["localAccessor"] is JsonValue local
-            && local.TryGetValue<bool>(out var isLocal) && isLocal)
-        {
-            _ = TypeJson.Read(node["delegateType"])
-                ?? throw new InvalidOperationException(
-                    "bir2cir: local clrEvent is missing its bound delegate declaration");
-            if (node["accessor"] == null || node["accessorOwner"] == null || node["dispatch"] == null)
-                throw new InvalidOperationException(
-                    "bir2cir: local clrEvent is missing its bound accessor identity");
-            return;
-        }
-        if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn)
-            throw new InvalidOperationException($"bir2cir: clrEvent owner is not a .NET FQN slot ({TypeNode.ToJson(ReadOwnerNode(node["type"]))})");
-        if (_localTypes.Contains(ownerFqn.Name))
-            throw new InvalidOperationException(
-                $"bir2cir: local clrEvent '{ownerFqn.Name}' reached final member resolution without an exact accessor binding");
-        var open = ResolveOwnerType(ownerFqn);
-        if (open == null)
-            throw new InvalidOperationException($"bir2cir: clrEvent owner '{ownerFqn.Name}' does not resolve to a .NET type");
-        var name = (node["event"] as JsonValue)?.GetValue<string>();
-        var isStatic = (node["static"] as JsonValue)?.GetValue<bool>() ?? false;
-        var add = (node["k"] as JsonValue)?.GetValue<string>() == "clrEventAdd";
-        var flags = BindingFlags.Public | BindingFlags.FlattenHierarchy | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
-        var acc = FindEventAccessor(open, name, add, flags);
-        if (acc == null)
-            throw new InvalidOperationException($"bir2cir: no event '{name}' on .NET type '{open}' (clrEvent{(add ? "Add" : "Remove")})");
-        RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
-        // Logical H can be narrower than the native slot (including Nothing). A checked view preserves the stored
-        // handler's identity while supplying the selected accessor's exact stack type; never rebuild a delegate.
-        node["accessor"] = acc.Name;
-        var reference = MemberRefOf(acc, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
-        node["memberRef"] = reference.Write();
-        var handlerType = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(reference.ParameterTypes[0],
-            ((TypeNode.Fqn)reference.DeclaringType).Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
-        node["handler"] = new JsonObject
-        {
-            ["k"] = "cast", ["type"] = TypeJson.Write(SignatureValueTypes.Of(handlerType)),
-            ["e"] = node["handler"]?.DeepClone(),
-        };
-        StampResolvedMemberReturn(node, acc.ReturnType);
-        if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall: false);
-    }
 
     // The authoritative add/remove accessor for `name`: own (including inherited class events), else the implemented
     // or base interfaces. A class's private explicit MethodImpl body is intentionally not surfaced as an EventInfo,
@@ -392,71 +353,4 @@ static partial class ClrMemberResolution
             Virtual = plan.Virtual, Ret = new TypeNode.Fqn("void"), Sty = new TypeNode.Fqn("void"), MemberVisibility = plan.Visibility };
     }
 
-    // ---- external field access (`field` / `setFieldExpr`) --------------------------------------
-
-    // A Kotlin field read/write (`this.x`, a destructuring `component1()` that kotc lowers to a backing-field access) on
-    // an EXTERNAL owner. A cross-assembly backing field is PRIVATE (a direct ldfld -> FieldAccessException), so the read
-    // must go through the public Property/MethodSemantics accessor when one exists. That KIND choice (accessor vs direct field)
-    // was ilemit's ExternalPropAccessor; move it here: resolve the owner off the ref.dll (null = a LOCAL owner whose
-    // field IS directly accessible -> leave the plain `field` node), and when the external owner exposes the accessor,
-    // stamp `member:"accessor"` + its memberRef + dispatch. A genuine public field
-    // (@ClrField) has no accessor -> left as a plain `field` for ilemit's direct ldfld/stfld.
-    static void ResolveFieldAccess(JsonObject node, bool write)
-    {
-        // Direct family access already carries the exact referenced FieldDef. Its identity is authoritative;
-        // unresolved property/backing-field nodes below still require the ordinary nearest-declaration lookup.
-        if (node["memberRef"] is JsonObject selected && (string)selected["kind"] == MemberRefNode.Kinds.Field)
-        {
-            if (write) MarkWrittenDelegateSlot(node, SupertypeGraph.SubstOwnerTvs(
-                SignatureValueTypes.Of(TypeJson.Read(selected["returnType"])),
-                (TypeJson.Read(selected["declaringType"]) as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>()));
-            return;
-        }
-        if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn ownerFqn) return;
-        // A generated support type may have a reference twin from an earlier ProjectReference while also being
-        // re-emitted in this compilation unit. Same-emission ownership wins: its internal/private storage is legal
-        // local IL and must not be rejected by inspecting the stale external twin.
-        if (_localTypes.Contains(ownerFqn.Name)) return;
-        var open = ResolveOwnerType(ownerFqn);
-        if (open == null) return;   // LOCAL emitted owner (ref.dll returns null) -> direct backing-field access in ilemit
-        var name = (node["name"] as JsonValue)?.GetValue<string>();
-        if (name == null) return;
-        var acc = FindPropAccessor(open, name, write, BindingFlags.Public | BindingFlags.Instance);
-        if (acc == null)
-        {
-            // No accessor. A genuine public @ClrField (the field really is declared there) -> direct ldfld/stfld in
-            // ilemit, unchanged. But if the owner declares NEITHER an accessor NOR a field of that name, the node names
-            // storage that does not exist in the referenced assembly — an accessor-routed property's storage is emitted
-            // under its compiler-generated name (BackingFieldRename), reachable only through its accessors. Reaching here
-            // means a carrier (a cross-module [KotlinInline] payload) named the Kotlin identity for storage that is not
-            // cross-assembly-addressable. Fail with a breadcrumb rather than let ilemit's ResolveField return null and
-            // NRE at Emit(Ldfld, null).
-            // Deliberately the WIDEST probe (any visibility, flattened, field OR accessor): the throw must fire only
-            // when the member is absent outright, never merely because the narrow public probe above missed it.
-            const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
-                                     | BindingFlags.Static | BindingFlags.FlattenHierarchy;
-            var direct = FindFieldMember(open, name, Any);
-            if (direct == null && FindPropAccessor(open, name, write, Any) == null)
-                throw new InvalidOperationException(
-                    $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a property accessor on the referenced owner — "
-                    + "a cross-assembly property's storage is reachable only through its accessors");
-            // A direct external FIELD read/write: its declared type is the foreign declaration this node stands for.
-            if (direct != null)
-            {
-                node["memberRef"] = FieldRefJson(direct, open, ownerFqn.Args);
-                StampResolvedMemberReturn(node, direct.FieldType);
-                if (write) MarkWrittenDelegateSlot(node,
-                    SubstOwnerParams(direct.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()));
-            }
-            return;
-        }
-        RetargetToBaseInterface(node, "ownerType", open, acc, ownerFqn);
-        node["member"] = "accessor";
-        node["accessor"] = acc.Name;
-        node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
-        StampResolvedMemberReturn(node, acc.ReturnType);
-        node["dispatch"] = Dispatch(acc, open, superCall: false);
-        if (write) MarkWrittenDelegateSlot(node, SubstOwnerParams(acc.GetParameters()[^1].ParameterType,
-            (ReadOwnerNode(node["ownerType"]) as TypeNode.Fqn ?? ownerFqn).Args ?? Array.Empty<TypeNode>()));
-    }
 }

@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // W1-S4 (#46/#183) — RESOLVED-CLR-IR carry for the DECLARATION-SIDE override base slot. A Kotlin class member that
@@ -16,60 +15,23 @@ using DotKt.Bir;
 // match with a NAME-ONLY first-pick fallback (exactly the fallback class #46 removes at call sites). This pass moves the
 // resolution HERE: it resolves the base virtual off the ref.dll MLC and stamps the complete scalar `clrOverrideRef`,
 // so ilemit LINKS the unique base slot (0 = hard ABI error, >1 = malformed) and never first-picks. Runs inside ClrMemberResolution's
-// Walk (last pass, fully-lowered tree) on every method DECLARATION node carrying `pendingOverrideOwner`.
+// owning physical walk on every method declaration carrying PendingOverrideOwner.
 //
 // SCOPE: `pendingOverrideOwner` identifies property-accessor and projected-indexer overrides of a .NET base class.
 // Indexers also need an explicit base slot when their implementation narrows the return type. An erasure bridge
 // that takes ownership of the same slot removes the typed implementation's pending binding to avoid two MethodImpls.
 static partial class ClrMemberResolution
 {
-    static void ResolveOverrideBase(JsonObject node)
+    static MemberRefNode SelectNativeOverrideBase(TypeNode.Fqn owner, Type open, string name,
+        List<TypeNode> arguments, TypeNode result)
     {
-        var ownerSpec = TypeJson.Read(node["pendingOverrideOwner"]) as TypeNode.Fqn;
-        var owner = ownerSpec?.Name;
-        var implementationName = (node["name"] as JsonValue)?.GetValue<string>();
-        var slotName = (node["pendingOverrideMember"] as JsonValue)?.GetValue<string>() ?? implementationName;
-        var rawReturnNode = TypeJson.Read(node["pendingOverrideReturn"]);
-        var returnNode = rawReturnNode == null ? null : BirTypeLowering.CanonicalPhysicalSlotType(rawReturnNode);
-        if (owner == null || implementationName == null || slotName == null || node["params"] is not JsonArray) return;
-        // Freeze the exact external slot before final MethodDef allocation can rename the implementing declaration.
-        // ilemit consumes this descriptor one-to-one and must never fall back to the implementation's own name.
-        node["pendingOverrideMember"] = slotName;
-        if (returnNode == null)
-            throw new InvalidOperationException($"bir2cir: override '{owner}.{slotName}' is missing the exact base return descriptor");
-        var open = ResolveOwnerType(ownerSpec);
-        if (open == null)
-            throw new InvalidOperationException($"bir2cir: override base owner '{owner}' does not resolve to a .NET type");
-        // Read EVERY param type — a null-drop would shrink the arity and could bind a wrong-arity base overload
-        // (BaseContinuationImpl's create(completion)/create(value,completion)/create(args[],completion) family), so an
-        // unreadable node is a hard error, not silently skipped.
-        var argNodes = (node["params"] as JsonArray).Select((p, i) => TypeJson.Read((p as JsonObject)?["type"])
-            ?? throw new InvalidOperationException($"bir2cir: override '{owner}.{slotName}' param #{i} has an unreadable type node")).ToList();
-        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-        var cands = new List<MethodInfo>();
-        try { cands.AddRange(open.GetMethods(flags).Where(m => m.Name == slotName && m.IsVirtual && m.GetParameters().Length == argNodes.Count)); } catch { }
-        var win = PickOverrideBase(cands, argNodes, returnNode, open, ownerSpec.Args,
-            $"override base={owner}.{slotName}({DescArgs(argNodes)}):{returnNode}");
-        // The incoming return describes the implementation's resolved Kotlin/constructed-owner view and is used
-        // above to select the slot.  ilemit links against the declaration in the reference assembly, so carry the
-        // winner's declared CLR return in the memberRef vocabulary (including positional type vars).
-        // The same slot as one scalar identity. The three descriptors above state the base member in pieces —
-        // name here, parameters there, owner and return elsewhere — and a MethodImpl target is exactly the
-        // place where assembling those pieces back into a member is selection.
-        // Keep the semantic instruction independently of the identity it requires. The instruction is the
-        // durable trigger ilemit consumes; the reference is its already-selected MethodImpl operand. Keeping
-        // those roles distinct lets the CIR gate detect either half being dropped without restoring a second
-        // owner/name/signature spelling of the member.
-        node["requiresClrOverride"] = true;
-        node["clrOverrideRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerSpec.Args);
-        // …and the pieces go. They were this resolution's INPUT — they named the slot to look for — and leaving
-        // them makes the reference travel beside the thing it replaced, which is how a consumer keeps triggering
-        // on the old key and never notices the new one exists.
-        node.Remove("pendingOverrideOwner");
-        node.Remove("pendingOverrideMember");
-        node.Remove("pendingOverrideReturn");
+        var candidates = new List<MethodInfo>();
+        try { candidates.AddRange(open.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(method => method.Name == name && method.IsVirtual && method.GetParameters().Length == arguments.Count)); } catch { }
+        var selected = PickOverrideBase(candidates, arguments, result, open, owner.Args,
+            $"override base={owner.Name}.{name}({DescArgs(arguments)}):{result}");
+        return MemberRefOf(selected, MemberRefNode.Kinds.Method, open, owner.Args);
     }
-
     // Pick the UNIQUE base virtual to override. An override's DECLARED params ARE the base slot's params (that is what
     // "override" means), so this is a STRUCTURAL identity match — NOT the call side's arg-applicability (which would let
     // a scalar `Any` arg "match" an `Any[]` param via the object-downcast rule and make BaseContinuationImpl's
