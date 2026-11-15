@@ -8,6 +8,7 @@ static partial class KotlinOverrideSlotBridge
         ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeNames, bool refBuild, GenericRepresentationPolicy representations,
         IReadOnlySet<CovariantInterfaceReturnBridge.SourceBridgedSlot> covariantBridgedSlots,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters,
+        Func<TypeNode, bool> hasClassifier,
         Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration, BirGraphValue> onMaterialized = null)
     {
         var index = CreateSourceSelection(roots);
@@ -81,7 +82,8 @@ static partial class KotlinOverrideSlotBridge
                     () => implementation.Source != null && covariantBridgedSlots?.Contains(
                         new CovariantInterfaceReturnBridge.SourceBridgedSlot(implementation.Source,
                             CovariantInterfaceReturnBridge.DescriptorKey(slot.DescriptorSpec, slot.DescriptorMember,
-                                implementation.Arity, slot.Parameters, slot.Return, refs, isValue))) == true);
+                            implementation.Arity, slot.Parameters, slot.Return, refs, isValue))) == true,
+                    hasClassifier);
                 if (fit == null) return;
                 ApplyDeclarationEdits(implementation, ownArguments, slot.Parameters, slot.Return, fit,
                     Phase.SuspendValueBridges, isValue, AnnotationArguments);

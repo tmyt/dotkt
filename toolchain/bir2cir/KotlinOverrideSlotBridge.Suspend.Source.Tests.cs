@@ -36,6 +36,7 @@ static partial class KotlinOverrideSlotBridge
         PrepareSuspendValueBridges(new[] { file }, _ => false, refs,
             new HashSet<string>(new[] { "SuspendSlotA", "SuspendSlotB", "SuspendImplementation" }), true, policy, null,
             new Dictionary<BirFunctionDeclaration, TypeNode[]>(ReferenceEqualityComparer.Instance) { [implementation] = [] },
+            _ => false,
             (actualFile, actualOwner, method, descriptor) => {
                 if (!ReferenceEquals(actualFile, file) || !ReferenceEquals(actualOwner, owner))
                     throw new InvalidOperationException("Suspend bridge callback lost the exact owner");
@@ -72,7 +73,7 @@ static partial class KotlinOverrideSlotBridge
                 descriptor.Arity.Value, descriptor.Params.Value, descriptor.Ret.Value, refs, _ => false))).ToHashSet();
         var before = owner.Methods.Value;
         PrepareSuspendValueBridges(new[] { file }, _ => false, refs, null, true, policy, covariance,
-            new Dictionary<BirFunctionDeclaration, TypeNode[]>(ReferenceEqualityComparer.Instance) { [implementation] = [] });
+            new Dictionary<BirFunctionDeclaration, TypeNode[]>(ReferenceEqualityComparer.Instance) { [implementation] = [] }, _ => false);
         if (!ReferenceEquals(before, owner.Methods.Value))
             throw new InvalidOperationException("Suspend source preparation duplicated an exact covariant obligation");
         InheritedSelectionSourceSelfTest(refs);
