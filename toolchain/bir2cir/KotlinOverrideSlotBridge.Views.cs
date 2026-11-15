@@ -111,10 +111,12 @@ static partial class KotlinOverrideSlotBridge
         internal bool ParamsPresent => Header != null ? Header.Params.HasValue : Source == null ? Dom["params"] is JsonArray : Source.Params.HasValue;
         internal bool PhysicalBridge => Header != null ? Header.PhysicalSlotBridge.OrDefault() : Source == null ? KotlinPropertyAccessors.IsPhysicalSlotBridge(Dom) : Source.PhysicalSlotBridge.OrDefault();
         internal bool PropertyCarrierPresent => Header == null && (Source == null ? Dom[KotlinPropertyAccessors.MetadataCarrierKey] != null : Source.KotlinPropertyAccessorCarrier.HasValue);
-        internal bool SuspendSourceParametersPresent => Header != null ? Header.SuspendSourceParameters.HasValue : Source == null && Dom[KotlinPropertyAccessors.SuspendSourceParamsKey] is JsonArray;
+        internal bool SuspendSourceParametersPresent => Header != null ? Header.SuspendSourceParameters.HasValue : Source == null
+            ? Dom[KotlinPropertyAccessors.SuspendSourceParamsKey] is JsonArray : Source.SuspendSourceParams.HasValue;
         internal TypeNode[] SuspendSourceParameters => Header != null ? Header.SuspendSourceParameters.OrDefault() : Source == null
-            ? (Dom[KotlinPropertyAccessors.SuspendSourceParamsKey] as JsonArray)?.Select(TypeJson.Read).ToArray() : null;
-        internal TypeNode SuspendSourceReturn => Header != null ? Header.SuspendSourceReturn.OrDefault() : Source == null ? TypeJson.Read(Dom[KotlinPropertyAccessors.SuspendSourceRetKey]) : null;
+            ? (Dom[KotlinPropertyAccessors.SuspendSourceParamsKey] as JsonArray)?.Select(TypeJson.Read).ToArray() : Source.SuspendSourceParams.OrDefault();
+        internal TypeNode SuspendSourceReturn => Header != null ? Header.SuspendSourceReturn.OrDefault() : Source == null
+            ? TypeJson.Read(Dom[KotlinPropertyAccessors.SuspendSourceRetKey]) : Source.SuspendSourceRet.OrDefault();
         internal TypeNode Return => Header != null ? Header.Ret.OrDefault() : Source == null ? TypeJson.Read(Dom["ret"]) : Source.Ret.OrDefault();
         internal TypeNode NullableReturn => Header != null ? Header.NullableGenericRet.OrDefault() : Source == null ? FrozenType(Dom["nullableGenericRet"]) : Source.NullableGenericRet.OrDefault();
         internal BirTypeParameter[] TypeParameters => Header != null ? Header.TypeParams.OrDefault() : Source == null ? ReadParameters(Dom["typeParams"] as JsonArray) : Source.TypeParams.OrDefault();
@@ -127,11 +129,11 @@ static partial class KotlinOverrideSlotBridge
             ? (Dom["params"] as JsonArray)?.OfType<JsonObject>().Select(parameter => new OverrideParameter(parameter)).ToArray() ?? []
             : Source.Params.OrEmpty().Select(parameter => new OverrideParameter(parameter)).ToArray();
         internal OverrideEdge[] Overrides => Header != null ? Header.Overrides.OrEmpty().Select(edge => new OverrideEdge(edge.Owner.OrDefault(), edge.Member.OrDefault(), edge.Kind.OrDefault(),
-                edge.Arity.HasValue ? edge.Arity.Value : null, edge.DeclarationId.OrDefault(), null)).ToArray() : Source == null
+                edge.Arity.HasValue ? edge.Arity.Value : null, edge.DeclarationId.OrDefault(), edge.PhysicalDeclarationId.OrDefault())).ToArray() : Source == null
             ? (Dom["overrides"] as JsonArray)?.OfType<JsonObject>().Select(edge => new OverrideEdge(TypeJson.Read(edge["owner"]), Str(edge["member"]), Str(edge["kind"]),
                 edge["arity"] is JsonValue value ? value.GetValue<int>() : null, Str(edge[DeclarationIdentityBinding.Key]), Str(edge["physicalDeclarationId"]))).ToArray() ?? []
             : Source.Overrides.OrEmpty().Select(edge => new OverrideEdge(edge.Owner.OrDefault(), edge.Member.OrDefault(), edge.Kind.OrDefault(),
-                edge.Arity.HasValue ? edge.Arity.Value : null, edge.DeclarationId.OrDefault(), null)).ToArray();
+                edge.Arity.HasValue ? edge.Arity.Value : null, edge.DeclarationId.OrDefault(), edge.PhysicalDeclarationId.OrDefault())).ToArray();
         internal bool Property(out string name, out string kind) => Header != null ? Header.Property(out name, out kind) : Source == null
             ? KotlinPropertyAccessors.TryIdentity(Dom, out name, out kind) : KotlinPropertyAccessors.TryIdentity(Source, out name, out kind);
         internal void MoveReturn(TypeNode slot, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)

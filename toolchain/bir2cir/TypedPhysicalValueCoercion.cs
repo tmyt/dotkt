@@ -292,11 +292,18 @@ static class TypedPhysicalValueCoercion
     internal static void AllocateNativeLocals(IEnumerable<BirGraphValue> body, BirParameter[] parameters,
         List<IBirStatement> prologue, TypedGenericArrayStorageLowering.FreshNames arrayNames = null,
         bool genericParametersOnly = false)
+        => AllocateNativeLocals(body, parameters.Cast<BirGraphValue>().ToArray(), prologue, arrayNames, genericParametersOnly);
+
+    // Named functions and suspend lambdas supply their actual declarations to
+    // the same storage decision; a lambda parameter is not a fabricated method parameter.
+    internal static void AllocateNativeLocals(IEnumerable<BirGraphValue> body, IReadOnlyList<BirGraphValue> parameters,
+        List<IBirStatement> prologue, TypedGenericArrayStorageLowering.FreshNames arrayNames = null,
+        bool genericParametersOnly = false)
     {
         var required = new Dictionary<BirGraphValue, TypeNode>(ReferenceEqualityComparer.Instance);
         var uses = new Dictionary<BirGraphValue, List<BirGraphValue>>(ReferenceEqualityComparer.Instance);
         var parameterSet = new HashSet<BirGraphValue>(parameters, ReferenceEqualityComparer.Instance);
-        var names = parameters.Select(parameter => parameter.Name.OrDefault()).ToHashSet(StringComparer.Ordinal);
+        var names = parameters.Select(NativeParameterName).ToHashSet(StringComparer.Ordinal);
         void Visit(BirGraphValue node, Dictionary<string, BirGraphValue> declarations)
         {
             if (node == null || node is BirFunctionDeclaration or BirConstructor or BirClosureDefinition) return;
@@ -341,7 +348,7 @@ static class TypedPhysicalValueCoercion
         }
         var declarations = new Dictionary<string, BirGraphValue>(StringComparer.Ordinal);
         foreach (var parameter in parameters)
-            if (parameter.Name.HasValue) declarations[parameter.Name.Value] = parameter;
+            if (NativeParameterName(parameter) is { } name) declarations[name] = parameter;
         foreach (var statement in body.ToArray()) Visit(statement, declarations);
         var prefix = new List<IBirStatement>();
         foreach (var (declaration, type) in required)
@@ -358,14 +365,21 @@ static class TypedPhysicalValueCoercion
                     case BirSetLocal set: set.Name = name; break;
                 }
             prefix.Add(new BirVariable { Name = name, Type = type,
-                Init = new BirLocal { Name = ((BirParameter)declaration).Name } });
+                Init = new BirLocal { Name = NativeParameterName(declaration) } });
         }
         foreach (var statement in prefix) arrayNames?.Reserve((BirGraphValue)statement);
         prologue.InsertRange(0, prefix);
     }
 
+    static string NativeParameterName(BirGraphValue declaration) => declaration switch {
+        BirParameter parameter => parameter.Name.OrDefault(),
+        BirLambdaParameter parameter => parameter.Name.OrDefault(),
+        _ => throw new InvalidOperationException("Native parameter storage requires an actual parameter declaration"),
+    };
+
     static TypeNode StorageType(BirGraphValue declaration) => declaration switch {
-        BirVariable variable => variable.Type.OrDefault(), BirParameter parameter => parameter.Type.OrDefault(), _ => null,
+        BirVariable variable => variable.Type.OrDefault(), BirParameter parameter => parameter.Type.OrDefault(),
+        BirLambdaParameter parameter => parameter.Type.OrDefault(), _ => null,
     };
 
     static BirGraphValue Rewrite(BirGraphValue node, Scope scope, Index index, bool resultUsed = true)

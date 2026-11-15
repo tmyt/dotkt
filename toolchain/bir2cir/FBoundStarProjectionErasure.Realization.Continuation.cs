@@ -27,14 +27,9 @@ static partial class FBoundStarProjectionErasure
             RewriteType(type, owners, references, localClrAliases: aliases, preserveArrayShape: shape));
         _ = context.Surface.Signatures.BindPhysical();
         OwnerConstrainedMethodLowering.ConfigurePreparedMethods(preparation.Bindings, context.References);
-        var sources = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var owner in context.Owners.Values.Where(owner => owner.Needed))
-        foreach (var row in context.Declarations.Slots(owner).Values)
-            if (Str(row.Original.Physical[DeclarationIdentityBinding.Key]) is string original
-                && row.Slot.DeclarationId.OrDefault() is string physical)
-                sources[physical] = original;
         var result = new CarrierRealizationContinuation(context.Owners.Values.Where(owner => owner.Needed)
-            .ToDictionary(owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), sources);
+            .ToDictionary(owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal),
+            context.Declarations.PhysicalDeclarationSources);
         context.Declarations.ReleaseSourceRows();
         return result;
     }

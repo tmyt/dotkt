@@ -1124,13 +1124,16 @@ and is the ONLY consumer of the vocabulary:
 
 It decides NOTHING about storage. A `var` here is a request for a scoped local; whether a coroutine state machine may
 keep it in the frame or must promote it to an instance field — and whether the CLR admits the type at all — is
-`SuspendColdLowering`'s single decision, from liveness, ~300 passes later (`docs/dotkt-semantics.md` §4d/§7).
+`SuspendColdLowering`'s single decision, from liveness at state-machine construction
+(`docs/dotkt-semantics.md` §4d/§7).
 
 **A SECOND producer, for a second reason: suspension order.** kotc emits a plan where a value can acquire a second
 READER. bir2cir's suspend lowering emits one where a value must be evaluated on a particular SIDE of a suspension, which
-is a different question with the same answer. Its stage 0 (`SuspendOperandPlan.cs`, inside `SuspendColdLowering.ApplyAll`
-and therefore ~300 passes after `CallEvalLowering`) wraps a node whose operands contain a suspension in a plan binding
-every operand in array order, and lowers it on the spot through the same `Materialise`, supplying the ordering itself:
+is a different question with the same answer. Its owning stage 0 (`SuspendOperandPlan.Source.cs`, invoked once across
+all roots by `SuspendColdLowering.ApplyNamedSource` through `SuspendModuleContext.PrepareStage0`) runs after slot
+materialization and before any named or lambda state machine is built, still before the single DOM frontier. It
+wraps a node whose operands contain a suspension in a plan binding every operand in array order, and lowers it on
+the spot through `TypedCallEvalLowering.MaterialiseOwned`, sharing the call-evaluation policy and supplying the ordering itself:
 every operand LEFT of the last suspension-bearing one is forced to a `var`, and so is that operand when the node is
 itself a suspend call — which is what lifts a nested suspension out of a suspending call's own argument list, where the
 state machine would otherwise write the outer resume label and let the inner suspension overwrite it. The last-position

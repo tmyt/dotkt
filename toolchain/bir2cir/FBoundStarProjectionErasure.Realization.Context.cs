@@ -41,6 +41,7 @@ static partial class FBoundStarProjectionErasure
     {
         readonly Dictionary<Owner, Dictionary<DeclarationBinding, SourceSlot>> slots = new();
         readonly Dictionary<Owner, Dictionary<DeclarationBinding, SourceInnerFactory>> factories = new();
+        internal Dictionary<string, string> PhysicalDeclarationSources { get; } = new(StringComparer.Ordinal);
 
         internal IReadOnlyDictionary<DeclarationBinding, SourceSlot> Slots(Owner owner) =>
             MutableSlots(owner);
@@ -57,7 +58,13 @@ static partial class FBoundStarProjectionErasure
             if (!factories.TryGetValue(owner, out var rows)) factories.Add(owner, rows = new());
             return rows;
         }
-        internal void Add(Owner owner, SourceSlot row) => MutableSlots(owner).Add(row.Original, row);
+        internal void Add(Owner owner, SourceSlot row)
+        {
+            MutableSlots(owner).Add(row.Original, row);
+            if (owner.Needed && row.Declaration.DeclarationId.OrDefault() is string original
+                && row.Slot.DeclarationId.OrDefault() is string physical)
+                PhysicalDeclarationSources[physical] = original;
+        }
         internal void Add(Owner owner, SourceInnerFactory row) => MutableFactories(owner).Add(row.Constructor, row);
         internal void ReleaseSourceRows() { slots.Clear(); factories.Clear(); }
     }

@@ -298,16 +298,16 @@ def outputs(root, definitions):
             return f"{value}.Select({item} => {expr}).ToArray()"
         return f"({cs(field)}){callback}({prefix}(BirGraphValue){value})"
 
-    def copy_graph(field, value, depth=0):
+    def copy_graph(field, value, depth=0, observer=None):
         field = base(field)
         if cs(field) == "byte[]": return f"{value}.ToArray()"
         if field.get("type") == "array":
             item = f"item{depth}"
-            expr = copy_graph(field["items"], item, depth + 1)
+            expr = copy_graph(field["items"], item, depth + 1, observer)
             if is_nullable(field["items"]): expr = f"{item} is null ? null : {expr}"
             return f"{value}.Select({item} => {expr}).ToArray()"
         if cs(field) == "TypeNode": return f"CopyType({value})"
-        if is_child(field): return f"({cs(field)})((BirGraphValue){value}).DeepClone()"
+        if is_child(field): return f"({cs(field)})((BirGraphValue){value}).DeepClone({observer or ''})"
         return value
 
     def is_type_slot(field):
@@ -597,7 +597,15 @@ def outputs(root, definitions):
             if is_child(value) or base(value).get("type") == "array" or cs(value) in {"byte[]", "TypeNode"}:
                 prop = member(field)
                 model += [f"        {prop} = {prop}.HasValue ? OptionalField<{cs(value)}>.Of({copy_graph(value, prop + '.Value')}) : {prop},"]
-        model += ["    };", "    public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with", "    {"]
+        model += ["    };",
+                  "    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)",
+                  "    {", "        var result = this with", "        {"]
+        for field, value in fields:
+            if is_child(value) or base(value).get("type") == "array" or cs(value) in {"byte[]", "TypeNode"}:
+                prop = member(field)
+                model += [f"            {prop} = {prop}.HasValue ? OptionalField<{cs(value)}>.Of({copy_graph(value, prop + '.Value', observer='born')}) : {prop},"]
+        model += ["        };", "        born(this, result);", "        return result;", "    }",
+                  "    public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with", "    {"]
         for field, value in fields:
             if is_type_slot(value):
                 prop = member(field)

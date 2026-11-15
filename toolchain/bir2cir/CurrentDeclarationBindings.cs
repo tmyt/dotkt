@@ -26,6 +26,8 @@ sealed class CurrentDeclarationBindings
     readonly Dictionary<BirGraphValue, JsonObject> projected = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<BirFunctionDeclaration, IBirTypeDeclaration> retiredMethods = new(ReferenceEqualityComparer.Instance);
     readonly List<(IBirTypeDeclaration Owner, BirPropertyDeclaration Property)> retiredProperties = new();
+    readonly HashSet<BirGraphValue> retiredForests = new(ReferenceEqualityComparer.Instance);
+    readonly BirFileDeclaration[] sourceFiles;
     bool bound;
     internal bool IsBound => bound;
 
@@ -37,6 +39,7 @@ sealed class CurrentDeclarationBindings
 
     internal CurrentDeclarationBindings(IReadOnlyList<BirFileDeclaration> roots)
     {
+        sourceFiles = roots.ToArray();
         SourceRoots = roots.Select(root => GetSource(root)).ToArray();
         var definitions = new Dictionary<string, DeclarationBinding>(StringComparer.Ordinal);
         foreach (var root in roots)
@@ -116,6 +119,20 @@ sealed class CurrentDeclarationBindings
         return source.TryGetValue(actual, out binding);
     }
 
+    // A producer reports the actual discarded forest before deleting its
+    // owning edge. Descendants keep their captured binding and proof rows.
+    internal void RetireSourceForest(BirGraphValue actual)
+    {
+        if (bound || actual == null || !retiredForests.Add(actual))
+            throw new InvalidOperationException("Source forest retirement is duplicated or outside its owning phase");
+    }
+
+    internal bool TryGetProjection(BirGraphValue actual, out JsonObject result)
+    {
+        if (bound) throw new InvalidOperationException("Source projection read after binding");
+        return projected.TryGetValue(actual, out result);
+    }
+
     // Called by the generated projector at the actual construction, not by
     // walking an unrelated graph and matching IDs, names or physical layout.
     internal void ObserveProjection(BirGraphValue actual, JsonObject result)
@@ -130,8 +147,20 @@ sealed class CurrentDeclarationBindings
     internal void BindProjected(IReadOnlyDictionary<BirGraphValue, JsonObject> actual)
     {
         if (bound) throw new InvalidOperationException("Declaration projection was already bound");
-        if (retiredMethods.Any(row => row.Value.Methods.OrEmpty().Any(method => ReferenceEquals(method, row.Key)))
-            || retiredProperties.Any(row => row.Owner.Properties.OrEmpty().Any(property => ReferenceEquals(property, row.Property))))
+        var retired = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
+        void Collect(BirGraphValue value, HashSet<BirGraphValue> into)
+        {
+            if (value is IBirExecutablePayload || !into.Add(value)) return;
+            value.VisitChildren(child => Collect(child, into));
+        }
+        foreach (var forest in retiredForests) Collect(forest, retired);
+        var live = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
+        foreach (var file in sourceFiles) Collect(file, live);
+        if (retired.Any(live.Contains)
+            || retiredMethods.Any(row => !retired.Contains((BirGraphValue)row.Value)
+                && row.Value.Methods.OrEmpty().Any(method => ReferenceEquals(method, row.Key)))
+            || retiredProperties.Any(row => !retired.Contains((BirGraphValue)row.Owner)
+                && row.Owner.Properties.OrEmpty().Any(property => ReferenceEquals(property, row.Property))))
             throw new InvalidOperationException("A retired declaration is still owned by its producer");
         var targets = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
         foreach (var declaration in source.Keys)
@@ -148,6 +177,8 @@ sealed class CurrentDeclarationBindings
         projected.Clear();
         retiredMethods.Clear();
         retiredProperties.Clear();
+        retiredForests.Clear();
+        Array.Clear(sourceFiles);
         bound = true;
     }
 

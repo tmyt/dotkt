@@ -6,11 +6,22 @@ using static TypedProtectedRegions;
 
 // A finally that escapes its handler becomes one shared cleanup site plus an
 // explicit pending completion. All operands and generic frames remain typed.
-static class TypedEscapingFinally
+static partial class TypedEscapingFinally
 {
     static int _temporary;
     internal static void Apply(IReadOnlyList<BirGraphSlot> parts, TypeNode returnType,
         ReferenceMetadataIndex references, bool physicalMembers = true)
+        => ApplyCore(parts, returnType, references, physicalMembers, owned: false);
+
+    // The owning caller has already moved (or independently admitted) its body.
+    // Cleanup routing relocates those occurrences; it does not create another
+    // executable occurrence of a captured declaration.
+    internal static void ApplyOwned(IReadOnlyList<BirGraphSlot> parts, TypeNode returnType,
+        ReferenceMetadataIndex references, bool physicalMembers = true)
+        => ApplyCore(parts, returnType, references, physicalMembers, owned: true);
+
+    static void ApplyCore(IReadOnlyList<BirGraphSlot> parts, TypeNode returnType,
+        ReferenceMetadataIndex references, bool physicalMembers, bool owned)
     {
         var tries = new List<BirGraphSlot>();
         void Collect(BirGraphSlot slot)
@@ -27,7 +38,7 @@ static class TypedEscapingFinally
             var body = statement.Finally.Value;
             var edges = Edges(parts);
             if (!edges.Any(edge => edge.Source.Contains(body) && !edge.Target.Contains(body))) continue;
-            Rewrite(slot, statement, body, edges, returnType, references, nextLabel++, physicalMembers);
+            Rewrite(slot, statement, body, edges, returnType, references, nextLabel++, physicalMembers, owned);
         }
     }
 
@@ -44,7 +55,7 @@ static class TypedEscapingFinally
     }
 
     static void Rewrite(BirGraphSlot slot, BirTry statement, IBirStatement[] finallyBody, List<Edge> edges,
-        TypeNode returnType, ReferenceMetadataIndex references, int cleanupLabel, bool physicalMembers)
+        TypeNode returnType, ReferenceMetadataIndex references, int cleanupLabel, bool physicalMembers, bool owned)
     {
         var id = Interlocked.Increment(ref _temporary);
         var state = "cir$completion" + id;
@@ -54,11 +65,11 @@ static class TypedEscapingFinally
         var exceptionType = new TypeNode.Fqn("System.Runtime.ExceptionServices.ExceptionDispatchInfo");
         var continuations = new List<IBirStatement>();
         var hasResult = false;
-        var owned = new HashSet<IBirStatement[]> { statement.Body.Value };
-        foreach (var handler in statement.Catches.OrEmpty()) owned.Add(handler.Body.Value);
-        foreach (var edge in edges.Where(edge => edge.Source.Any(owned.Contains) && !edge.Target.Any(owned.Contains)).Reverse())
+        var ownedBodies = new HashSet<IBirStatement[]> { statement.Body.Value };
+        foreach (var handler in statement.Catches.OrEmpty()) ownedBodies.Add(handler.Body.Value);
+        foreach (var edge in edges.Where(edge => edge.Source.Any(ownedBodies.Contains) && !edge.Target.Any(ownedBodies.Contains)).Reverse())
         {
-            var original = Clone(edge.Slot.Value);
+            var original = owned ? edge.Slot.Value : Clone(edge.Slot.Value);
             var expressionReturn = original is BirReturnExpression;
             if (original is BirReturnExpression returning) original = new BirReturn { Value = returning.Value };
             var pre = new List<IBirStatement>();
@@ -91,8 +102,9 @@ static class TypedEscapingFinally
             continuations.Add(If(new BirBinaryOperation { Op = "==", Lhs = Local(state), Rhs = Number(continuation) },
                 new[] { (IBirStatement)original }));
         }
-        var originalBody = Clone(statement.Body.Value);
-        var originalCatches = statement.Catches.OrEmpty().Select(value => (BirCatch)Clone(value)).ToArray();
+        var originalBody = owned ? statement.Body.Value : Clone(statement.Body.Value);
+        var originalCatches = owned ? statement.Catches.OrEmpty()
+            : statement.Catches.OrEmpty().Select(value => (BirCatch)Clone(value)).ToArray();
         if (originalCatches.Length != 0)
             originalBody = new IBirStatement[] { new BirTry { Body = originalBody, Catches = originalCatches } };
         var body = new List<IBirStatement> {
@@ -105,10 +117,10 @@ static class TypedEscapingFinally
             Body = new IBirStatement[] { Set(exception, Capture(caught, references, physicalMembers)) },
         } } });
         body.Add(new BirLabel { Id = cleanupLabel });
-        body.AddRange(Clone(finallyBody));
+        body.AddRange(owned ? finallyBody : Clone(finallyBody));
         body.Add(If(new BirBinaryOperation { Op = "!=", Lhs = Local(exception), Rhs = Null(exceptionType) },
             new IBirStatement[] { Rethrow(exception, references, physicalMembers) }));
-        body.AddRange(continuations.Select(value => (IBirStatement)Clone((BirGraphValue)value)));
+        body.AddRange(owned ? continuations : continuations.Select(value => (IBirStatement)Clone((BirGraphValue)value)));
         slot.Replace(new BirBlock { Body = body.ToArray() });
     }
 

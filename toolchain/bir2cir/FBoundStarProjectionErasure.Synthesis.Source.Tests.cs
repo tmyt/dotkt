@@ -61,6 +61,7 @@ static partial class FBoundStarProjectionErasure
                 && slot.Vis.Value == "public" && !slot.Static.Value && !slot.Override.Value && !slot.ObjectOverride.Value
                 && slot.Body.Value.Length == 0 && slot.Attrs.Value.Length == 1 && !slot.Generated.IsPresent
                 && slot.DeclarationId.Value == ExistentialSlotIdentity("apply", "Box")
+                && context.Declarations.PhysicalDeclarationSources[slot.DeclarationId.Value] == "apply"
                 && slot.SuspendRet.Value is TypeNode.Fqn { Name: "kotlin.Any" } && slot.Mods.Value.Suspend.Value,
                 "slot identity, presence, result facts or separate naming domain changed");
             var sourceIdentity = slot.Attrs.Value.Single();

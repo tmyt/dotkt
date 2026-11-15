@@ -168,6 +168,29 @@ static partial class OwnerConstrainedMethodLowering
         declaration[DispatchBoundsKey] = bounds.ToJsonString();
     }
 
+    internal static void PreserveDispatchBounds(BirFunctionDeclaration declaration, BirTypeParameter[] parameters)
+        => declaration._ownerConstraintDispatchBounds = DispatchBoundsFromParameters(parameters);
+
+    internal static void PreserveDispatchBounds(IBirTypeDeclaration declaration, BirTypeParameter[] parameters)
+    {
+        var bounds = DispatchBoundsFromParameters(parameters);
+        switch (declaration)
+        {
+            case BirClassDefinition owner: owner._ownerConstraintDispatchBounds = bounds; break;
+            case BirInterfaceDefinition owner: owner._ownerConstraintDispatchBounds = bounds; break;
+            default: throw new InvalidOperationException("Unexpected dispatch-bound declaration owner");
+        }
+    }
+
+    static OwnerConstraintDispatchBounds DispatchBoundsFromParameters(BirTypeParameter[] parameters)
+    {
+        var bounds = new Dictionary<int, TypeNode[]>();
+        for (var index = 0; index < parameters.Length; index++)
+            if (parameters[index].ErasedInnerConstraints.HasValue)
+                bounds.Add(index, parameters[index].ErasedInnerConstraints.Value);
+        return new OwnerConstraintDispatchBounds(bounds);
+    }
+
     internal static IEnumerable<TypeNode> IndependentBounds(TypeNode bound, JsonArray ownerParameters) =>
         IndependentBounds(bound, ownerParameters?.Count ?? 0, index =>
             ownerParameters[index] is JsonObject parameter && parameter["constraints"] is JsonArray constraints
