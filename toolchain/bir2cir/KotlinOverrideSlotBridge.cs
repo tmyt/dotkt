@@ -1060,14 +1060,15 @@ static partial class KotlinOverrideSlotBridge
         || Bool(method["objectOverride"]) || method["pendingOverrideOwner"] != null;
 
     static bool SamePhysicalSignature(TypeNode[] candidateParams, TypeNode candidateRet,
-        TypeNode[] slotParams, TypeNode slotRet, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
+        TypeNode[] slotParams, TypeNode slotRet, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
+        Func<TypeNode, bool> hasClassifier = null)
     {
         if (candidateParams == null || candidateRet == null || candidateParams.Length != slotParams.Length)
             return false;
         for (var i = 0; i < candidateParams.Length; i++)
-            if (Classify(slotParams[i], candidateParams[i], refs, isValue, returnPosition: false) != Fit.Same)
+            if (Classify(slotParams[i], candidateParams[i], refs, isValue, returnPosition: false, hasClassifier: hasClassifier) != Fit.Same)
                 return false;
-        return Classify(slotRet, candidateRet, refs, isValue, returnPosition: true) == Fit.Same;
+        return Classify(slotRet, candidateRet, refs, isValue, returnPosition: true, hasClassifier: hasClassifier) == Fit.Same;
     }
 
     // THE REFERENCED ARM, walked implementer -> slot. A referenced supertype hands over no slot list, so the class's

@@ -20,7 +20,7 @@ static partial class DeclarationSignatureIdentity
     internal const string AllocationMetadataKey = "signatureAllocation";
     static readonly Dictionary<string, BirClassDefinition> Markers = new(StringComparer.Ordinal);
     static readonly HashSet<(bool Required, string Owner, int Arity)> ReferencedModifiers = new();
-    static readonly Dictionary<string, List<(JsonObject Descriptor, bool IsInterface)>> PhysicalSlots = new(StringComparer.Ordinal);
+    static readonly Dictionary<string, List<(BirMethodImpl Descriptor, bool IsInterface)>> PhysicalSlots = new(StringComparer.Ordinal);
     static string MarkerOwner;
 
     // The producer has already selected this implementation relation. Keep its declaration IDs through late
@@ -39,9 +39,18 @@ static partial class DeclarationSignatureIdentity
     internal static void RecordSelectedPhysicalSlot(JsonObject implementation, JsonObject descriptor, bool isInterface)
     {
         if (Text(implementation[DeclarationIdentityBinding.Key]) is not string id) return;
+        RecordSelectedPhysicalSlot(id, BirGraphDom.ReadBirMethodImpl(descriptor), isInterface);
+    }
+
+    internal static void RecordSelectedPhysicalSlot(BirFunctionDeclaration implementation, BirMethodImpl descriptor, bool isInterface)
+        => RecordSelectedPhysicalSlot(implementation.DeclarationId.OrDefault(), descriptor, isInterface);
+
+    static void RecordSelectedPhysicalSlot(string id, BirMethodImpl descriptor, bool isInterface)
+    {
+        if (id == null) return;
         if (!PhysicalSlots.TryGetValue(id, out var slots)) PhysicalSlots[id] = slots = new();
-        if (!slots.Any(slot => slot.IsInterface == isInterface && JsonNode.DeepEquals(slot.Descriptor, descriptor)))
-            slots.Add((descriptor.DeepClone().AsObject(), isInterface));
+        if (!slots.Any(slot => slot.IsInterface == isInterface && slot.Descriptor.StructurallyEquals(descriptor)))
+            slots.Add(((BirMethodImpl)descriptor.DeepClone(), isInterface));
     }
 
     public static BirFileDeclaration[] Capture(IEnumerable<BirFileDeclaration> roots)
@@ -303,7 +312,11 @@ static partial class DeclarationSignatureIdentity
                 if (Text(method[DeclarationIdentityBinding.Key]) is string sourceId && plan.ContainsKey(sourceId)
                     && PhysicalSlots.TryGetValue(sourceId, out var selectedPhysicalSlots))
                     foreach (var slot in selectedPhysicalSlots)
-                        BindSlot(owner, method, slot.Descriptor, slot.IsInterface, slot.Descriptor.ToJsonString());
+                    {
+                        // This genuine late DOM consumer materializes only its already-selected metadata leaf.
+                        var descriptor = slot.Descriptor.ToDom();
+                        BindSlot(owner, method, descriptor, slot.IsInterface, descriptor.ToJsonString());
+                    }
                 method.Remove(OverrideEdgesKey);
             }
     }

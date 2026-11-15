@@ -54,6 +54,7 @@ static partial class KotlinOverrideSlotBridge
         internal OptionalField<bool> PhysicalSlotBridge { get; set; }
         internal OptionalField<TypeNode[]> SuspendSourceParameters { get; set; }
         internal OptionalField<TypeNode> SuspendSourceReturn { get; set; }
+        internal SelectedMethodHeader Copy() => (SelectedMethodHeader)MemberwiseClone();
         internal bool Property(out string name, out string kind)
         {
             name = PropertyName.OrDefault(); kind = PropertyAccessor.OrDefault();
