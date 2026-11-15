@@ -150,11 +150,17 @@ static partial class UncheckedGenericCastReturnErasure
                 || Str(root["fileClass"]) != sourceRoot.FileClass) throw ProjectionMismatch();
             BirFunctionDeclaration[] sourceMethods;
             JsonObject container;
+            SourceDeclarationProjection.MethodPlacement placement = null;
             var retiredOwner = false;
             if (occurrence.Type < 0)
             {
                 sourceMethods = sourceRoot.Declaration.Methods.OrEmpty();
                 container = root;
+                if (declarations?.TryMethodPlacement(sourceRoot.Declaration, out var reported) == true)
+                {
+                    placement = reported;
+                    sourceMethods = reported.Before;
+                }
             }
             else
             {
@@ -208,9 +214,29 @@ static partial class UncheckedGenericCastReturnErasure
                                 throw ProjectionMismatch();
                             position--;
                         }
-                if (position >= sourceMethods.Length || !ReferenceEquals(sourceMethods[position], occurrence.Declaration)
-                    || container["methods"] is not JsonArray methods || position >= methods.Count
-                    || methods[position] is not JsonObject continuing) throw ProjectionMismatch();
+                if (position >= sourceMethods.Length || !ReferenceEquals(sourceMethods[position], occurrence.Declaration))
+                    throw ProjectionMismatch();
+                if (placement?.TryMove(occurrence.Declaration, out var move) == true)
+                {
+                    if (move.SourceOrdinal != position
+                        || move.DestinationOrdinal >= move.Destination.Methods.OrEmpty().Length
+                        || !ReferenceEquals(move.Destination.Methods.Value[move.DestinationOrdinal], occurrence.Declaration))
+                        throw ProjectionMismatch();
+                    container = declarations.Get((BirGraphValue)move.Destination);
+                    position = move.DestinationOrdinal;
+                }
+                else if (placement != null)
+                {
+                    // The reported vector explains only these actual removals;
+                    // an unrelated reorder or replacement remains a mismatch.
+                    position -= placement.Moves.Count(value => value.SourceOrdinal < position);
+                    if (position >= placement.After.Length || !ReferenceEquals(placement.After[position], occurrence.Declaration))
+                        throw ProjectionMismatch();
+                }
+                if (container["methods"] is not JsonArray methods || position >= methods.Count
+                    || methods[position] is not JsonObject continuing
+                    || placement != null && !ReferenceEquals(declarations.Get(occurrence.Declaration), continuing))
+                    throw ProjectionMismatch();
                 method = continuing;
             }
             if (Str(method[DeclarationIdentityBinding.Key]) != occurrence.Identity

@@ -163,6 +163,11 @@ sealed partial class ValueRepresentationLowering
                 method.Method.BindRetired(retiredDeclarations, declarations);
                 continue;
             }
+            if (declarations != null)
+            {
+                method.Method.BindProjected(declarations, actual[method.Fact.Id]);
+                continue;
+            }
             var position = positions.GetValueOrDefault(method.Fact.Id);
             method.Method.Bind(actual[method.Fact.Id][position]);
             positions[method.Fact.Id] = position + 1;
@@ -193,6 +198,15 @@ sealed partial class ValueRepresentationLowering
             Bind(declaration);
         }
         internal void Bind(JsonObject declaration) { dom = declaration; source = null; }
+        internal void BindProjected(SourceDeclarationProjection projection, IReadOnlyList<JsonObject> live)
+        {
+            if (Retired || source == null) throw new InvalidOperationException("Value declaration has no live source occurrence");
+            var declaration = projection.Get(source);
+            if (Text(declaration[DeclarationIdentityBinding.Key]) != Id
+                || !live.Any(actual => ReferenceEquals(actual, declaration)))
+                throw new InvalidOperationException("Value declaration is not its exact continuing occurrence");
+            Bind(declaration);
+        }
         internal string Name => source != null ? source.Name.OrDefault() : reference != null
             ? reference.SourcePropertyName ?? reference.DeclarationSourceName ?? reference.Name : Text(dom["name"]);
         internal string Id => source != null ? source.DeclarationId.OrDefault() : reference?.DeclarationId ?? Text(dom[DeclarationIdentityBinding.Key]);
