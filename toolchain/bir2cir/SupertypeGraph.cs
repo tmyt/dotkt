@@ -50,8 +50,8 @@ static class SupertypeGraph
         return result;
     }
 
-    // Before the DOM frontier, reachability needs only the declaration-owned
-    // type shape. Node/Methods are late mutable consumers, not source facts.
+    // Reachability needs only the declaration-owned type shape, not mutable
+    // declaration addresses. This reader leaves Node/Methods unset.
     internal static Dictionary<string, Def> CollectSource(IEnumerable<BirFileDeclaration> roots)
     {
         var result = new Dictionary<string, Def>(StringComparer.Ordinal);

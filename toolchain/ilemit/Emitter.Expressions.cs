@@ -752,7 +752,7 @@ sealed partial class Emitter
             case CirBoundClrDelegate e:
             {
                 // `netObj::method` -> a delegate bound to a .NET instance method. W1-S5 (#46/#183): CONSUME the FIR-
-                // resolved `memberRef` bir2cir carried (ClrMemberResolution.ResolveBoundClrDelegate) — LINK
+                // resolved `memberRef` bir2cir carried — LINK
                 // the UNIQUE instance target (0 = hard ABI error, >1 = malformed), never a name-only first-pick.
                 var ft = MapType(e.FuncType);
                 var type = ClrRef(e.ClrType);

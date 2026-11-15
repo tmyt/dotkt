@@ -5,8 +5,8 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Bind source-native member identities to their CLR representation before the
-// DOM frontier. The owning adapter and scalar selection policy live in partials;
+// Bind source-native member identities to their CLR representation on owning
+// records. The owning adapter and scalar selection policy live in partials;
 // these reflection helpers also serve actual late member/override consumers.
 // Every call/read reshape retains its source result stamps. Dynamic-dispatch
 // instructions do not travel onto a bound CLR slot; final member resolution

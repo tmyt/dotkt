@@ -22,6 +22,8 @@ static partial class ClrMemberResolution
             $"bir2cir: override base owner '{owner.Name}' does not resolve to a .NET type");
         var arguments = method.Params.Value.Select((parameter, index) => parameter?.Type.OrDefault()
             ?? throw new InvalidOperationException($"bir2cir: override '{owner.Name}.{name}' param #{index} has an unreadable type node")).ToList();
+        // The requirement bit and exact base slot are one binding result:
+        // ilemit consumes this reference rather than reselecting an override.
         method.ClrOverrideRef = BirMemberReference.FromPhysical(SelectNativeOverrideBase(owner, open, name, arguments, result));
         method.RequiresClrOverride = true;
         method.PendingOverrideOwner = default;

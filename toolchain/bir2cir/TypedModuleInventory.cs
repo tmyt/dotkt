@@ -4,7 +4,7 @@ using DotKt.Cir;
 
 // Current declaration inventory after representation placement and ownership
 // preparation. Unlike SourceModuleIndex this includes newly materialized owners
-// and methods. Only detached scalar/type facts cross the remaining DOM frontier.
+// and methods. Later consumers retain only its selected scalar/type facts.
 sealed partial class TypedModuleInventory
 {
     internal HashSet<string> LocalTopLevelFunctions { get; } = new(StringComparer.Ordinal);
