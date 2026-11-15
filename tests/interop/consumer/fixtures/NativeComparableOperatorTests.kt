@@ -13,6 +13,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+private class KotlinNativeOrder(value: Int) : NativeOrder(value) {
+    override fun CompareTo(other: NativeOrder?): Int = super.CompareTo(other) - 20
+}
+
 class NativeComparableOperatorTests {
     @Test
     fun dateTimeUsesItsComparableContractWithoutRenamingNativeMembers() {
@@ -35,6 +39,8 @@ class NativeComparableOperatorTests {
         assertEquals(-7, first.CompareTo(second))
         assertEquals(1004, first.CompareTo(4))
         assertEquals(4004, first.compareTo(4))
+        // The inherited view must dispatch to the original CLR virtual slot.
+        assertTrue(KotlinNativeOrder(10) < NativeOrder(2))
     }
 
     @Test
