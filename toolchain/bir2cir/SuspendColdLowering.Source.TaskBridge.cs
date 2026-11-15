@@ -81,6 +81,7 @@ static partial class SuspendColdLowering
             }
             if (_explicitClrName != null) method.ExplicitClrName = _explicitClrName;
             if (IsNothingTn(_resultType)) method.RetNothing = true;
+            _methodProjections.Add(new(_m, method));
         }
 
         int[] TaskReturnNullableFlags(TypeNode.Fqn taskReturn)

@@ -130,7 +130,8 @@ sealed partial class ValueRepresentationLowering
     }
 
     internal void BindDomDeclarations(IReadOnlyList<JsonNode> roots,
-        IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations = null)
+        IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations = null,
+        SourceDeclarationProjection declarations = null)
     {
         if (domBound) throw new InvalidOperationException("Value representation declarations already handed to DOM");
         var identities = sourceMethods.Select(method => method.Fact.Id).ToHashSet(StringComparer.Ordinal);
@@ -138,7 +139,8 @@ sealed partial class ValueRepresentationLowering
         void Index(JsonObject declaration)
         {
             foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(method[DeclarationIdentityBinding.Key]) is string id && identities.Contains(id))
+                if (Text(method[DeclarationIdentityBinding.Key]) is string id && identities.Contains(id)
+                    && declarations?.MaterializedMethods.Contains(method) != true)
                 {
                     if (!actual.TryGetValue(id, out var occurrences)) actual.Add(id, occurrences = new List<JsonObject>());
                     occurrences.Add(method);
@@ -158,7 +160,7 @@ sealed partial class ValueRepresentationLowering
             if (method.Method.Retired)
             {
                 // This is the same one-way declaration frontier, including explicitly detached declarations.
-                method.Method.BindRetired(retiredDeclarations);
+                method.Method.BindRetired(retiredDeclarations, declarations);
                 continue;
             }
             var position = positions.GetValueOrDefault(method.Fact.Id);
@@ -181,10 +183,12 @@ sealed partial class ValueRepresentationLowering
         internal bool Retired { get; private set; }
         internal bool IsSource(BirFunctionDeclaration declaration) => ReferenceEquals(source, declaration);
         internal void Retire() => Retired = true;
-        internal void BindRetired(IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> declarations)
+        internal void BindRetired(IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> declarations,
+            SourceDeclarationProjection projection)
         {
             if (!Retired || source == null || declarations == null
-                || !declarations.TryGetValue(source, out var declaration) || declaration == null)
+                || !declarations.TryGetValue(source, out var declaration) || declaration == null
+                || declaration.Parent != null && projection?.IsRetired(source, declaration) != true)
                 throw new InvalidOperationException("Value declaration lacks its explicit source retirement");
             Bind(declaration);
         }

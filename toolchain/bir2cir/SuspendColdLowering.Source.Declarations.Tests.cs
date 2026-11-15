@@ -101,6 +101,7 @@ static partial class SuspendColdLowering
         internal readonly List<BirFunctionDeclaration> Retired = new(), Published = new();
         internal override BirGraphValue CloneIndependent(BirGraphValue source) { Cloned.Add(source); return source.DeepClone(); }
         internal override void RetireDiscardedSubtree(BirGraphValue source) { }
+        internal override void ProjectMethod(BirFunctionDeclaration origin, BirFunctionDeclaration projection) { }
         internal override void RetireMethod(BirFileDeclaration file, IBirTypeDeclaration owner, BirFunctionDeclaration method)
         {
             if (!(owner?.Methods.OrEmpty() ?? file.Methods.OrEmpty()).Any(current => ReferenceEquals(current, method)))

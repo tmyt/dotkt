@@ -83,6 +83,7 @@ static partial class SuspendColdLowering
                 method.DeclarationSourceName = _declarationSourceName
                     ?? throw new InvalidOperationException("suspend declaration identity has no frontend source name");
             }
+            _methodProjections.Add(new(_m, method));
         }
 
         void CarryOverrideMarkers(BirFunctionDeclaration method, bool coldEntry = false)

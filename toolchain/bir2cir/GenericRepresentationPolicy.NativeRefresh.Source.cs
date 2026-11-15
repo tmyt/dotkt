@@ -164,6 +164,21 @@ sealed partial class GenericRepresentationPolicy
         _nativeRefreshTypeVectors[index] = prior with { Continuing = continuing };
     }
 
+    internal void RetireMaterializedNativeTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> removed)
+    {
+        if (!_sourceAwaitingDom || _nativeRefreshRoots == null || _nativeRefreshTypeVectors == null)
+            throw new InvalidOperationException("Native type retirement has no pending physical refresh");
+        var index = Array.FindIndex(_nativeRefreshRoots, root => ReferenceEquals(root, file));
+        if (index < 0) throw new InvalidOperationException("Native type retirement changed its owning file");
+        var prior = _nativeRefreshTypeVectors[index];
+        if (!file.Types.OrEmpty().SequenceEqual(prior.Continuing, ReferenceEqualityComparer.Instance)
+            || removed.Distinct(ReferenceEqualityComparer.Instance).Count() != removed.Count
+            || removed.Any(type => prior.Continuing.Count(actual => ReferenceEquals(actual, type)) != 1))
+            throw new InvalidOperationException("Native type retirement changed its exact owning vector");
+        _nativeRefreshTypeVectors[index] = prior with { Continuing = prior.Continuing.Where(type =>
+            !removed.Any(actual => ReferenceEquals(actual, type))).ToArray() };
+    }
+
     static (TypeNode[] Parameters, IBirExpression[] Arguments) NativeRefreshArguments(BirGraphValue node) => node switch {
         BirCallStatic value => (NativeRefreshParameters(value.ShapeTypes.OrDefault(), value.Sig.OrDefault(), value.MemberSignature.OrDefault(), value.ArgTypes.OrDefault()), value.Args.OrDefault()),
         BirCallInstance value => (NativeRefreshParameters(value.ShapeTypes.OrDefault(), value.Sig.OrDefault(), value.MemberSignature.OrDefault(), value.ArgTypes.OrDefault()), value.Args.OrDefault()),
@@ -178,7 +193,7 @@ sealed partial class GenericRepresentationPolicy
         _ => (null, null),
     };
 
-    void BindRefreshedNativeLocations(IReadOnlyList<JsonNode> roots)
+    void BindRefreshedNativeLocations(IReadOnlyList<JsonNode> roots, SourceDeclarationProjection declarations = null)
     {
         if (_refreshedNativeLocations == null) return;
         if (roots.Count != _nativeRefreshRoots.Length)
@@ -201,9 +216,23 @@ sealed partial class GenericRepresentationPolicy
                 || Text(file["fileClass"]) != occurrence.FileClass
                 || ((file["types"] as JsonArray)?.Count ?? 0) != typeVector.Continuing.Length)
                 throw new InvalidOperationException("Native physical admission changed its owning file");
-            var sourceOwner = occurrence.TypeIndex < 0 ? (BirGraphValue)occurrence.File
-                : (BirGraphValue)occurrence.File.Types.Value[occurrence.TypeIndex];
-            var owner = occurrence.TypeIndex < 0 ? file : (file["types"] as JsonArray)?[occurrence.TypeIndex] as JsonObject;
+            var sourceOwner = occurrence.Owner;
+            JsonObject owner;
+            if (occurrence.TypeIndex < 0) owner = file;
+            else
+            {
+                var position = Array.FindIndex(typeVector.Continuing, actual => ReferenceEquals(actual, occurrence.Owner));
+                if (position >= 0)
+                {
+                    if (position >= occurrence.File.Types.OrEmpty().Length
+                        || !ReferenceEquals(occurrence.File.Types.Value[position], occurrence.Owner))
+                        throw new InvalidOperationException("Native physical admission lost its continuing owner");
+                    owner = (file["types"] as JsonArray)?[position] as JsonObject;
+                }
+                else if (declarations != null && declarations.TryGet(occurrence.Owner, out var retired)
+                    && declarations.IsRetired(occurrence.Owner, retired)) owner = retired;
+                else throw new InvalidOperationException("Native physical admission has no reported owner retirement");
+            }
             if (!ReferenceEquals(sourceOwner, occurrence.Owner) || owner == null
                 || occurrence.TypeIndex >= 0 && !ReferenceEquals(typeVector.Original[occurrence.TypeIndex], occurrence.Owner)
                 || occurrence.TypeIndex >= 0 && (Text(owner["name"]) != occurrence.OwnerName

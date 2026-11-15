@@ -8,7 +8,7 @@ static partial class SuspendColdLowering
     // not a second signature catalogue or projected MethodDef stand-ins.
     internal sealed class SuspendModuleContext
     {
-        internal IReadOnlyList<BirFileDeclaration> Roots { get; }
+        internal IReadOnlyList<BirFileDeclaration> Roots { get; private set; }
         internal ReferenceMetadataIndex References { get; }
         internal IReadOnlySet<string> EmittedTypeNames { get; }
         internal bool AppBuild { get; }
@@ -18,9 +18,9 @@ static partial class SuspendColdLowering
         internal IDictionary<string, int[]> PhysicalParameterIndices { get; }
         internal IDictionary<string, string> PhysicalDeclarationSources { get; }
         internal SourceDeclarationTransitions Transitions { get; }
-        internal IReadOnlyList<SourceNamedEntry> NamedEntries { get; }
-        internal IReadOnlyDictionary<string, IBirTypeDeclaration> Closures { get; }
-        internal IReadOnlyList<SourceHelperDeclaration> HelperDeclarations { get; }
+        internal IReadOnlyList<SourceNamedEntry> NamedEntries { get; private set; }
+        internal IReadOnlyDictionary<string, IBirTypeDeclaration> Closures { get; private set; }
+        internal IReadOnlyList<SourceHelperDeclaration> HelperDeclarations { get; private set; }
         internal IReadOnlyDictionary<string, TypeNode> CalleeReturns { get; }
         internal IReadOnlyDictionary<string, TypeNode> MethodReturns { get; }
         internal IReadOnlyDictionary<string, TypeNode> FieldTypes { get; }
@@ -29,6 +29,7 @@ static partial class SuspendColdLowering
         internal HashSet<IBirTypeDeclaration> ConsumedIntrinsicClosures { get; } = new(ReferenceEqualityComparer.Instance);
         internal IReadOnlyDictionary<string, BirTypeParameter[]> LambdaOwnerParameters { get; private set; }
         internal bool Stage0Complete { get; private set; }
+        bool sourceReleased;
 
         internal SuspendModuleContext(IReadOnlyList<BirFileDeclaration> roots,
             ReferenceMetadataIndex references, IReadOnlySet<string> emittedTypeNames, bool appBuild,
@@ -147,6 +148,16 @@ static partial class SuspendColdLowering
                 if (method.Name.HasValue) result[method.Name.Value] = method;
             return result;
         }
+
+        internal void ReleaseSourceDeclarations()
+        {
+            if (!Stage0Complete || sourceReleased) throw new InvalidOperationException("Invalid suspend source release clock");
+            sourceReleased = true;
+            Roots = Array.Empty<BirFileDeclaration>(); NamedEntries = Array.Empty<SourceNamedEntry>();
+            Closures = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
+            HelperDeclarations = Array.Empty<SourceHelperDeclaration>();
+            ConsumedIntrinsicClosures.Clear(); LambdaOwnerParameters = null;
+        }
     }
 
     internal sealed record SourceNamedEntry(BirFileDeclaration File, IBirTypeDeclaration Owner,
@@ -165,8 +176,10 @@ static partial class SuspendColdLowering
             : SourceFunctionInput(File, Owner);
     }
 
+    internal sealed record SourceMethodProjection(BirFunctionDeclaration Origin, BirFunctionDeclaration Projection);
     internal sealed record SourceBuildResult(IReadOnlyList<BirFunctionDeclaration> Methods,
-        IReadOnlyList<IBirTypeDeclaration> Types, bool NeedsRootContinuation);
+        IReadOnlyList<IBirTypeDeclaration> Types, bool NeedsRootContinuation,
+        IReadOnlyList<SourceMethodProjection> MethodProjections);
 
     static TypeNode SourceMethodDeclRet(BirFunctionDeclaration method, string owner, string name) =>
         method.SuspendRet.OrDefault() ?? method.Ret.OrDefault() ?? throw new InvalidOperationException(

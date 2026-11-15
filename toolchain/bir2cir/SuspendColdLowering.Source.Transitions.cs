@@ -11,6 +11,7 @@ static partial class SuspendColdLowering
         internal abstract void RetireDiscardedSubtree(BirGraphValue source);
         internal abstract void RetireMethod(BirFileDeclaration file, IBirTypeDeclaration owner,
             BirFunctionDeclaration method);
+        internal abstract void ProjectMethod(BirFunctionDeclaration origin, BirFunctionDeclaration projection);
         internal abstract void PublishMethods(BirFileDeclaration file, IBirTypeDeclaration owner,
             IReadOnlyList<BirFunctionDeclaration> appended);
         internal abstract void PublishTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> appended);

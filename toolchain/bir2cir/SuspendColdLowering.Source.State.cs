@@ -72,6 +72,7 @@ static partial class SuspendColdLowering
         readonly List<(string name, TypeNode type)> _fieldDecls = new();
         readonly Dictionary<string, TypeNode> _localTypes = new(StringComparer.Ordinal);
         readonly List<BirFunctionDeclaration> _awaitResumeMethods = new();
+        readonly List<SourceMethodProjection> _methodProjections = new();
         // Authored SM-self occurrences are distinct from source `this`. Provenance
         // stays private to this generator and is consumed before physical output.
         readonly HashSet<BirThis> _stateMachineSelf = new(ReferenceEqualityComparer.Instance);

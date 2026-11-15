@@ -176,7 +176,8 @@ sealed partial class GenericRepresentationPolicy
 
     // Re-associate only the exact declarations carried across the one-way
     // frontier. Selection, source eligibility, and native flags already exist.
-    internal void BindDomDeclarations(IReadOnlyList<JsonNode> roots, AliasDeclarationTransitions aliases = null)
+    internal void BindDomDeclarations(IReadOnlyList<JsonNode> roots, AliasDeclarationTransitions aliases = null,
+        SourceDeclarationProjection declarations = null)
     {
         if (!_sourceAwaitingDom) throw new InvalidOperationException("Source generic policy is already bound to its DOM continuation");
         var expected = _pendingNativePhysicalBindings
@@ -213,6 +214,11 @@ sealed partial class GenericRepresentationPolicy
         void BindNative((string Owner, string Name, bool Static, string Receiver) key, JsonObject declaration)
         {
             if (!expected.Contains(key)) return;
+            if (declarations != null && (_pendingNativeOrigins == null || !_pendingNativeOrigins.Any(origin => {
+                if (origin.Value != key) return false;
+                var actual = _nativeStorageMaterializations.TryGetValue(origin.Key, out var materialized) ? materialized : origin.Key;
+                return declarations.TryGet(actual, out var projected) && ReferenceEquals(projected, declaration);
+            }))) throw new InvalidOperationException("Native source storage changed its exact projected origin");
             if (declaration[NativeLocationKey]?.GetValue<bool>() != true)
                 throw new InvalidOperationException("Native storage selection was not carried across the owning frontier");
             _nativeFields.Add(declaration);
@@ -225,13 +231,27 @@ sealed partial class GenericRepresentationPolicy
             {
                 // The alias host/helper are physical output, not replacement
                 // source declarations. Preserve the original per-file order.
-                foreach (var owner in aliases.LogicalOwners(file, root)) BindOwners(owner);
+                foreach (var owner in aliases.LogicalOwners(file, root, declarations)) BindOwners(owner);
+                foreach (var cell in (root["refTypes"] as JsonArray ?? new()).OfType<JsonObject>())
+                    if (Text(cell["name"]) is string cellOwner) _localDeclarations[cellOwner] = cell;
+            }
+            else if (declarations != null)
+            {
+                foreach (var owner in declarations.LogicalOwners(file, root)) BindOwners(owner);
                 foreach (var cell in (root["refTypes"] as JsonArray ?? new()).OfType<JsonObject>())
                     if (Text(cell["name"]) is string cellOwner) _localDeclarations[cellOwner] = cell;
             }
             else BindOwners(root);
             BindFields(root, Text(root["fileClass"]));
         }
+        if (declarations != null)
+            foreach (var owner in declarations.RetiredTypes)
+            {
+                var retired = declarations.Get((BirGraphValue)owner);
+                if (!declarations.IsRetired((BirGraphValue)owner, retired))
+                    throw new InvalidOperationException("Native owner is not inside its reported retired forest");
+                BindFields(retired, owner.Name.OrDefault());
+            }
         if (aliases != null)
             foreach (var (_, field) in aliases.RetiredFields)
             {
@@ -243,11 +263,18 @@ sealed partial class GenericRepresentationPolicy
                     throw new InvalidOperationException("Retired native storage does not match its selected source occurrence");
                 // Explicit owner retirement is not a missing-field fallback.
                 // This exact selected field has one detached physical projection.
-                BindNative(key, field.ToDom());
+                if (declarations != null)
+                {
+                    var retired = declarations.Get(field);
+                    if (!declarations.IsRetired(field, retired))
+                        throw new InvalidOperationException("Native field is not inside its reported retired forest");
+                    BindNative(key, retired);
+                }
+                else BindNative(key, field.ToDom());
             }
         if (!matched.SetEquals(expected))
             throw new InvalidOperationException("A selected native source declaration is absent from its DOM continuation");
-        BindRefreshedNativeLocations(roots);
+        BindRefreshedNativeLocations(roots, declarations);
         _nativeStorageMaterializations.Clear();
         _sourceNativeStorage.Clear();
         _pendingNativePhysicalBindings = null;

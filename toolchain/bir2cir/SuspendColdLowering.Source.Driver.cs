@@ -66,6 +66,13 @@ static partial class SuspendColdLowering
             var methods = current.Concat(output.Methods).ToArray();
             if (entry.Owner != null) entry.Owner.Methods = methods;
             else entry.File.Methods = methods;
+            foreach (var projection in output.MethodProjections)
+            {
+                if (!ReferenceEquals(projection.Origin, method)
+                    || output.Methods.Count(actual => ReferenceEquals(actual, projection.Projection)) != 1)
+                    throw new InvalidOperationException("Suspend method projection does not name an actual emitted declaration");
+                module.Transitions.ProjectMethod(projection.Origin, projection.Projection);
+            }
             if (output.Methods.Count != 0) module.Transitions.PublishMethods(entry.File, entry.Owner, output.Methods);
             if (output.Types.Count != 0)
             {

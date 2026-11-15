@@ -94,7 +94,7 @@ static partial class SuspendColdLowering
                 if (_name == "main" && _ownerClass == null) methods.Add(DrainMain());
                 if (WantsBridge) methods.Add(BuildBridge());
             }
-            SourceBuildResult Finish() => new(methods, types, NeedsRootContinuation);
+            SourceBuildResult Finish() => new(methods, types, NeedsRootContinuation, _methodProjections);
         }
 
         string DiagOwner => _isLambda ? _smType : (_ownerClass ?? _fileClass) + "." + _name;
