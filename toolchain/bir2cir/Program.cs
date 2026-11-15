@@ -157,6 +157,11 @@ static class Bir2Cir
                 OpaqueCarrierTypeBinding.SelfTest();
                 OpaqueCarrierTypeBinding.SourceSelfTest();
                 GenericRepresentationPolicy.SelfTest();
+                GenericSelfInstantiation.SourceSelfTest();
+                GenericDelegateInstantiation.SourceSelfTest();
+                GenericStaticOwnerBinding.SourceSelfTest();
+                VolatileFieldLowering.SourceSelfTest();
+                ConstFieldLowering.SourceSelfTest();
                 KotlinGenericScalarSlots.SourceScalarSelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
                 BirTypeLowering.SelfTestFunctionPointers();
@@ -839,13 +844,24 @@ sealed class Pipeline
         // Consume its existing synthesis verdict, never classify its fields again.
         ClosureSynthesis.AssertSurvivingCapturesLegal(captured);
 
+        // These use-site owners consume the complete, finally placed generic
+        // frame. They do not materialize or reselect declarations.
+        if (!referenceBuild)
+        {
+            GenericSelfInstantiation.ApplyAll(captured);
+            GenericDelegateInstantiation.ApplyAll(captured);
+        }
+        GenericStaticOwnerBinding.ApplyAll(captured, refs);
+        VolatileFieldLowering.ApplyAll(captured, refs);
+        ConstFieldLowering.ApplyAll(captured, refs, referenceBuild);
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
-            // continuing projection, after final slots, nesting and opaque
-            // carrier binding. Retired source facts use the same observer.
+            // continuing projection, after final slots, nesting, generic uses
+            // and physical field facts. Retired source facts use the same observer.
             var root = source.ToDom(suspendTransitions.Projection.ObserveProjection);
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
@@ -934,36 +950,8 @@ sealed class Pipeline
         // Comparable slots, effective visibility, nesting and opaque carriers
         // were resolved in that order before the owning projection.
 
-        // PHASE 1.7 — GENERIC SELF INSTANTIATION (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object emits
-        // its self instance accesses with the BARE type name (`dotkt_obj144`, no type args) -> ".NET method/type
-        // not fully instantiated" at runtime. Derive the constructed self `dotkt_obj144[gp:T]` for those
-        // executable instance accesses (kotc emits the FQN identity; bir2cir derives the CLR instantiation).
-        if (!_options.RefBuild)
-            GenericSelfInstantiation.ApplyAll(staged.Select(s => s.Root).ToList());
-
-        // PHASE 1.9 — GENERIC DELEGATE INSTANTIATION (#191): a `var x by D<T>(…)` delegated property whose user
-        // delegate is GENERIC gets its getValue/setValue dispatch emitted with the BARE delegate owner (`"D"`, no
-        // type args) while the `$delegate` field/local carries the constructed `D<String>` — the open owner
-        // mismatches the constructed receiver (BadImageFormatException / ilverify `found 'string' expected '!0'`).
-        // Recover the receiver's instantiation (StaticType.Surface) and stamp the constructed owner. The
-        // delegated-property analog of GenericSelfInstantiation; kotc names the type, bir2cir derives the CLR
-        // instantiation. BEFORE BirTypeLowering (so `D<kotlin.String>` lowers consistently with the receiver).
-        if (!_options.RefBuild)
-            GenericDelegateInstantiation.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
-
-        // GENERIC STATIC OWNER BINDING: bind the semantic G owner to the explicit non-generic carrier selected above
-        // (or validated from a referenced DotKt assembly). No representative type argument is chosen.
-        GenericStaticOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
-
-        // Carry the exact IsVolatile representation of local and referenced fields into each CIR access. In
-        // particular, an access through a constructed local generic owner cannot rely on FieldInfo identity at emit
-        // time: anchoring the declaration builder produces a different object. CIR therefore states the prefix itself.
-        VolatileFieldLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
-
-        // Kotlin const fields become CLR literal fields. In the reference build the physical scalar/string slot also
-        // carries its exact Kotlin declaration type, because a locally-declared kotlin.String/Int TypeDef is not a
-        // legal Constant-table type. ilemit still receives only final physical facts in either mode.
-        ConstFieldLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, _options.RefBuild);
+        // Placed generic self/delegate/static owners, volatile ordering and CLR
+        // literal fields were resolved before the owning projection.
 
         // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 1 of 2: kotc names a type-parameter receiver's classifier with
         // a BARE token (`fun <N : Node<N>> N.close()` -> `Node`). Close it from N's own lexical bound, which source
