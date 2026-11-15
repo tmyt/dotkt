@@ -237,7 +237,7 @@ static partial class ForeignStarProjectionBinding
             value.Type.OrDefault(), value.Recv.OrDefault(), receiver => value.Recv = Expr(receiver),
             value._foreignDeclarationSignature.OrDefault()?.Types.ToArray() ?? value.ResolvedMemberParams.OrDefault(),
             value.TypeArgs.OrEmpty(), value.Args.OrEmpty(), null, value.Ret.OrDefault() ?? BirNodeType.Of(value)),
-        BirConstrainedCall value => new(value.Tag, value.Method.OrDefault(), null, false,
+        BirConstrainedCall value => new(value.Tag, value.Method.OrDefault(), value.Prop.OrDefault(), false,
             value.Iface.OrDefault(), value.Recv.OrDefault(), receiver => value.Recv = Expr(receiver),
             value._foreignDeclarationSignature.OrDefault()?.Types.ToArray() ?? value.Sig.OrDefault()
                 ?? value.ArgTypes.OrDefault() ?? value.ResolvedMemberParams.OrDefault(),

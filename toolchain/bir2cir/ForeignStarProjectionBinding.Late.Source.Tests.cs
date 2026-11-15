@@ -14,6 +14,20 @@ static partial class ForeignStarProjectionBinding
         });
         BeginBinding(null, new(), resetUsage: true);
         _projectValueType = (type, _) => type;
+        var projectedList = new TypeNode.Fqn("System.Collections.Generic.IList`1", new TypeNode[] { new TypeNode.Star() });
+        foreach (var access in new[] { "get", "set" })
+        {
+            var signature = access == "get" ? new[] { Int } : new[] { Int, AnyN };
+            var propertyReceiver = new BirLocal { Name = "list", Sty = projectedList };
+            var property = new BirConstrainedCall { Iface = projectedList, Method = "Item", Prop = access,
+                Recv = propertyReceiver, Sig = signature, Args = Array.Empty<IBirExpression>() };
+            var input = ReadSourceCall(property);
+            Need(input.Property == access && ReferenceEquals(input.Receiver, propertyReceiver)
+                && ReferenceEquals(input.Signature, signature), "constrained property lost its accessor role or original operands");
+            var selected = SelectForeignMember(projectedList, input.Name, input.Property, input.Kind, 0, signature, refs);
+            Need(selected.Method.IsSpecialName && selected.Method.Name == access + "_Item",
+                "constrained property did not select the actual CLR accessor");
+        }
         RequireRuntimeFallback();
         var ingredients = new HashSet<BirClosureDefinition>(ReferenceEqualityComparer.Instance);
         var delegateValue = new BirLocal { Name = "foreignDelegate" };
