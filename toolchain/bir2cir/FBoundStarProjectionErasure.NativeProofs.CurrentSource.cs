@@ -12,8 +12,8 @@ static partial class FBoundStarProjectionErasure
             foreach (var (name, actual) in current.Bindings)
             {
                 if (definitions.ContainsKey(name)) continue;
-                // Same physical-only interpretation as RegisterPhysicalLocalDefinitions;
-                // do not rerun source demand or extend original declaration catalogs.
+                // Read the reported current physical declarations only; do not
+                // rerun source demand or extend original declaration catalogs.
                 var physical = ReadRows(Constraints(actual), false, Frame(actual), physicalDeclaration: true);
                 lateSourceTypes[actual] = physical;
                 lateLocalTypes[name] = physical;

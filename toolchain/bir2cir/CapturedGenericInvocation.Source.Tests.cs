@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -46,29 +45,22 @@ static partial class CapturedGenericInvocation
         var projection = new SourceDeclarationProjection(roots, bindings);
         foreach (var root in roots) RoundtripMetadata.PrepareMetadata(root, runtimeMode: false, projection.ReportMetadataIdentityTransfer);
         Require(!selectedSource.DeclarationId.IsPresent && ReferenceEquals(savedBucket[0].Source, selectedSource)
-            && selectedSource.RoundtripDeclarationIdentity.HasValue && savedBucket[0].Dom == null,
+            && selectedSource.RoundtripDeclarationIdentity.HasValue && savedBucket[0].Method == null,
             "test must cross the real ID-consuming metadata phase");
-        var dom = roots.Select(root => (JsonNode)root.ToDom(projection.ObserveProjection)).ToArray();
-        projection.ProjectRetiredForests();
-        BindProjectedDeclarations(pending, projection);
-        Require(ReferenceEquals(savedBucket, pending.Declarations["selected-id"])
-            && ReferenceEquals(savedBucket[0].Dom, dom[0]["types"][1]["methods"][0]) && savedBucket[0].Source == null
-            && originalRoots.All(root => root.Source == null && root.SourceOccurrences == null
-                && root.File.Source == null && root.File.SourceOccurrences == null
-                && root.Types.All(type => type.Source == null && type.SourceOccurrences == null)),
-            "projection must transition the same captured rows once and release typed staging");
-        Reject(() => BindProjectedDeclarations(pending, projection));
-        bindings.BindProjected();
+        projection.SealSourceContinuations();
+        bindings.CompleteSourceCustody(projection);
         projection.Release();
-        var physical = dom.Select(BirGraphDom.ReadBirFileDeclaration).ToArray();
-        var prepared = BindPhysicalDeclarations(pending, dom, physical);
+        var physical = roots;
+        var prepared = BindPhysicalDeclarations(pending, physical);
         var target = physical[0].Types.Value[1].Methods.Value[0];
         Require(ReferenceEquals(savedBucket, pending.Declarations["selected-id"])
-            && ReferenceEquals(savedBucket[0].Method, target) && pending.Roots == null && savedBucket[0].Dom == null
-            && originalRoots.All(root => root.DomTypes == null && root.File.Dom == null
-                && root.Types.All(type => type.Dom == null && type.DomMethods == null && type.Methods == null)),
-            "frontier must transition the captured dictionaries once and release their DOM anchors");
-        Reject(() => BindPhysicalDeclarations(pending, dom, physical));
+            && ReferenceEquals(savedBucket[0].Method, selectedSource) && ReferenceEquals(target, selectedSource)
+            && pending.Roots == null && savedBucket[0].Source == null
+            && originalRoots.All(root => root.Source == null && root.SourceOccurrences == null
+                && root.File.Source == null && root.File.SourceOccurrences == null
+                && root.Types.All(type => type.Source == null && type.SourceOccurrences == null && type.SourceHeaders == null)),
+            "same-record completion must retain the captured dictionaries once and release only staging anchors");
+        Reject(() => BindPhysicalDeclarations(pending, physical));
 
         // Membership is fixed, while the selected declaration value is live.
         target.Ret = String;
@@ -103,55 +95,44 @@ static partial class CapturedGenericInvocation
 
         static void FrontierGuards()
         {
-            static (BirFileDeclaration Source, PendingDeclarations Pending, SourceDeclarationProjection Projection) Start()
+            static (BirFileDeclaration Source, PendingDeclarations Pending) Start()
             {
                 var source = new BirFileDeclaration { FileClass = "Guard", Types = Array.Empty<IBirTypeDeclaration>(),
                     Methods = new[] {
                         new BirFunctionDeclaration { Name = "same", Static = true, DeclarationId = "guard-id" },
                         new BirFunctionDeclaration { Name = "idless", Static = false },
                     } };
-                var roots = new[] { source };
-                return (source, PrepareLocalDeclarations(roots, false), new SourceDeclarationProjection(roots, new CurrentDeclarationBindings(roots)));
+                return (source, PrepareLocalDeclarations(new[] { source }, false));
             }
             void RejectSourceChange(Action<BirFileDeclaration> change)
             {
                 var state = Start(); change(state.Source);
-                state.Source.ToDom(state.Projection.ObserveProjection);
-                state.Projection.ProjectRetiredForests();
-                Reject(() => BindProjectedDeclarations(state.Pending, state.Projection));
+                Reject(() => BindPhysicalDeclarations(state.Pending, new[] { state.Source }));
                 Require(state.Pending.Roots[0].Source != null && state.Pending.Declarations["guard-id"][0].Source != null
-                    && state.Pending.Declarations["guard-id"][0].Dom == null && !state.Pending.Projected,
-                    "failed source handoff must not partially release or re-admit membership");
+                    && state.Pending.Declarations["guard-id"][0].Method == null,
+                    "failed completion must not partially release or re-admit membership");
             }
             RejectSourceChange(file => file.Methods.Value[0] = (BirFunctionDeclaration)file.Methods.Value[0].DeepClone());
             RejectSourceChange(file => file.Methods.Value[1] = (BirFunctionDeclaration)file.Methods.Value[1].DeepClone());
             RejectSourceChange(file => (file.Methods.Value[0], file.Methods.Value[1]) = (file.Methods.Value[1], file.Methods.Value[0]));
             RejectSourceChange(file => file.Methods = file.Methods.Value.Append(new BirFunctionDeclaration { Name = "unreported" }).ToArray());
+            RejectSourceChange(file => file.Methods = file.Methods.Value.ToArray());
+            RejectSourceChange(file => file.Methods.Value[1].Name = "changed-idless");
+            RejectSourceChange(file => file.Methods.Value[1].Static = true);
+            RejectSourceChange(file => file.FileClass = "other");
+            RejectSourceChange(file => file.Types = OptionalField<IBirTypeDeclaration[]>.Null);
 
-            var replaced = Start();
-            var replacedDom = replaced.Source.ToDom(replaced.Projection.ObserveProjection);
-            replaced.Projection.ProjectRetiredForests();
-            replacedDom["methods"][1] = replacedDom["methods"][1].DeepClone();
-            Reject(() => BindProjectedDeclarations(replaced.Pending, replaced.Projection));
-            Require(replaced.Pending.Roots[0].Source != null && replaced.Pending.Declarations["guard-id"][0].Dom == null,
-                "ID-less DOM replacement must not be accepted or partly transition selected rows");
-
-            var reordered = Start();
-            var reorderedDom = reordered.Source.ToDom(reordered.Projection.ObserveProjection);
-            reordered.Projection.ProjectRetiredForests();
-            var vector = (JsonArray)reorderedDom["methods"];
-            var first = vector[0]; var second = vector[1]; vector.Clear(); vector.Add(second); vector.Add(first);
-            Reject(() => BindProjectedDeclarations(reordered.Pending, reordered.Projection));
-
-            // The real later handoff still rejects equal DOM replacements.
-            var physicalGuard = Start();
-            var sourceDom = physicalGuard.Source.ToDom(physicalGuard.Projection.ObserveProjection);
-            physicalGuard.Projection.ProjectRetiredForests();
-            BindProjectedDeclarations(physicalGuard.Pending, physicalGuard.Projection);
-            sourceDom["methods"][0] = sourceDom["methods"][0].DeepClone();
-            Reject(() => BindPhysicalDeclarations(physicalGuard.Pending, new JsonNode[] { sourceDom }, new[] { BirGraphDom.ReadBirFileDeclaration(sourceDom) }));
-            Require(physicalGuard.Pending.Roots != null && physicalGuard.Pending.Declarations["guard-id"][0].Dom != null,
-                "failed physical handoff must preserve the original captured DOM authority");
+            // Absence and explicit null stay distinct even for empty vectors.
+            foreach (var nullVector in new[] { false, true })
+            {
+                var source = new BirFileDeclaration { FileClass = "Presence",
+                    Methods = nullVector ? OptionalField<BirFunctionDeclaration[]>.Null : default };
+                var pending = PrepareLocalDeclarations(new[] { source }, false);
+                source.Methods = nullVector ? default : OptionalField<BirFunctionDeclaration[]>.Null;
+                Reject(() => BindPhysicalDeclarations(pending, new[] { source }));
+            }
+            var wrongRoot = Start();
+            Reject(() => BindPhysicalDeclarations(wrongRoot.Pending, new[] { (BirFileDeclaration)wrongRoot.Source.DeepClone() }));
 
             var one = new BirFunctionDeclaration { Name = "one", DeclarationId = "shared-id" };
             var two = new BirFunctionDeclaration { Name = "two", DeclarationId = "shared-id" };
@@ -165,6 +146,27 @@ static partial class CapturedGenericInvocation
             Require(bucket.Count == 2 && ReferenceEquals(bucket[0].Source, one) && ReferenceEquals(bucket[1].Source, two)
                 && ReferenceEquals(captured.Types["Earlier"], captured.Roots[1].Types[0]) && captured.FlattenMissingOwners,
                 "same-ID buckets, module order, last type membership or flatten mode changed");
+            Reject(() => BindPhysicalDeclarations(captured, files.Reverse().ToArray()));
+            _ = BindPhysicalDeclarations(captured, files);
+            Require(ReferenceEquals(bucket[0].Method, one) && ReferenceEquals(bucket[1].Method, two)
+                && ReferenceEquals(captured.Types["Earlier"].Type, last), "typed completion reselected bucket or last type membership");
+
+            foreach (var change in new Action<BirClassDefinition>[] {
+                type => type.Name = "different",
+                type => type.Kind = "interface",
+                type => type.Methods = type.Methods.Value.ToArray(),
+            })
+            {
+                var type = new BirClassDefinition { Name = "Owner", Kind = "class", Methods = new[] { new BirFunctionDeclaration { Name = "method" } } };
+                var file = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { type } };
+                var pending = PrepareLocalDeclarations(new[] { file }, false);
+                change(type);
+                Reject(() => BindPhysicalDeclarations(pending, new[] { file }));
+            }
+            // The same actual declaration cannot own two physical slots.
+            var shared = new BirFunctionDeclaration { Name = "shared" };
+            var duplicate = new BirFileDeclaration { Methods = new[] { shared, shared } };
+            Reject(() => BindPhysicalDeclarations(PrepareLocalDeclarations(new[] { duplicate }, false), new[] { duplicate }));
         }
     }
 

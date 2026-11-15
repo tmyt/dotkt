@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -108,35 +107,34 @@ static partial class FBoundStarProjectionErasure
             && !localDeclarations.ContainsKey(("Owner", "projection")) && !localMethods.ContainsKey("Owner\0projection"),
             "physical projection admission rebuilt or extended the original selection catalog");
 
-        // The observer sees the actual emitted methods and their attached
-        // descriptors, not same-name reconstructions at a missing-node check.
-        var physicalRoot = root.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
+        // Later physical authors use the SAME actual binding and proof rows;
+        // serialization is no longer a declaration continuation authority.
+        Require(ReferenceEquals(projected.Source, projection)
+            && ReferenceEquals(plan.LocalSourceMethod("projection"), projection)
+            && ReferenceEquals(descriptorBinding.Source, projection.ClrInterfaceImpls.Value[0])
+            && plan.IsPhysicalConstraint(projected, 1, independent)
+            && !plan.IsPhysicalConstraint(projected, 1, dependent)
+            && !plan.IsPhysicalConstraint(projected, 2, disposable)
+            && plan.IsPhysicalConstraint(descriptorBinding, 1, independent)
+            && !plan.IsPhysicalConstraint(descriptorBinding, 1, dependent)
+            && plan.IsPhysicalConstraint(descriptorBinding, 2, disposable),
+            "actual physical method/MethodImpl lost its identity, independent rows or exact companion positions");
+        var late = Method("late");
+        owner.Methods = owner.Methods.Value.Append(late).ToArray();
+        plan.TransferIndependentMethodProofs(projection, late);
+        var lateBinding = bindings.GetCapturedSource(late);
+        Require(plan.IsPhysicalConstraint(lateBinding, 1, independent)
+            && !plan.IsPhysicalConstraint(lateBinding, 1, dependent)
+            && ReferenceEquals(plan.LocalSourceMethod("late"), late),
+            "actual late physical transfer did not consume the same proof rows and generated identity");
+        var ledger = new SourceDeclarationProjection(roots, bindings);
+        ledger.SealSourceContinuations();
+        bindings.CompleteSourceCustody(ledger);
         Reject(() => plan.LocalSourceMethod("source"));
-        var physicalOwner = physicalRoot["types"][0].AsObject();
-        var physicalProjection = physicalOwner["methods"][2].AsObject();
-        Require(ReferenceEquals(projected.Physical, physicalProjection)
-            && ReferenceEquals(plan.LocalMethod("projection"), physicalProjection)
-            && plan.IsPhysicalConstraint(physicalProjection["typeParams"][1]["constraints"].AsArray(), independent)
-            && !plan.IsPhysicalConstraint(physicalProjection["typeParams"][1]["constraints"].AsArray(), dependent)
-            && !plan.IsPhysicalConstraint(physicalProjection["typeParams"][2]["constraints"].AsArray(), disposable),
-            "the single frontier lost generated identity, proof rows or exact companion positions");
-        var physicalDescriptor = physicalProjection["clrInterfaceImpls"][0].AsObject();
-        Require(ReferenceEquals(descriptorBinding.Physical, physicalDescriptor)
-            && plan.IsPhysicalConstraint(physicalDescriptor["typeParams"][1]["constraints"].AsArray(), independent)
-            && !plan.IsPhysicalConstraint(physicalDescriptor["typeParams"][1]["constraints"].AsArray(), dependent)
-            && plan.IsPhysicalConstraint(physicalDescriptor["typeParams"][2]["constraints"].AsArray(), disposable)
-            && ReferenceEquals(plan.LocalMethod("projection"), physicalProjection),
-            "attached MethodImpl lost the same proof rows at the frontier or replaced the method identity catalog");
+        Reject(() => { _ = projected.Source; });
+        Reject(() => { _ = descriptorBinding.Source; });
         Reject(() => plan.TransferIndependentMethodProofs(source, Method("afterFrontier")));
-
-        var late = Method("late").ToDom();
-        physicalOwner["methods"].AsArray().Add(late);
-        plan.TransferIndependentMethodProofs(physicalProjection, late);
-        Require(plan.IsPhysicalConstraint(late["typeParams"][1]["constraints"].AsArray(), independent)
-            && !plan.IsPhysicalConstraint(late["typeParams"][1]["constraints"].AsArray(), dependent)
-            && ReferenceEquals(plan.LocalMethod("late"), late),
-            "actual late DOM transfer did not consume the same bound proof rows and generated identity");
-        Console.WriteLine("[owning native proof transfer] self-test OK (captured source, emitted methods/attached MethodImpls, arity/frame restrictions, copies and one frontier)");
+        ledger.Release();
+        Console.WriteLine("[owning native proof transfer] self-test OK (captured source, emitted methods/attached MethodImpls, arity/frame restrictions, copies and terminal custody)");
     }
 }

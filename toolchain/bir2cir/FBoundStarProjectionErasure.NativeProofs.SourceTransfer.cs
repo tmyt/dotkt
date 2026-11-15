@@ -28,8 +28,8 @@ static partial class FBoundStarProjectionErasure
             TransferIndependentMethodProofRows(Rows(original), target, null);
         }
 
-        // Both owning source and actual late physical renderers delegate to
-        // this one transfer rule. Add owns arity, nullable companion positions,
+        // Both actual method and attached MethodImpl producers use this one
+        // transfer rule. Add owns arity, nullable companion positions,
         // duplicate admission and independent copies of the proof TypeNodes.
         void TransferIndependentMethodProofRows(IReadOnlyDictionary<int, List<TypeNode>> sourceRows,
             DeclarationBinding target, string identity)
