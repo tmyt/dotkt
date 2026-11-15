@@ -8,7 +8,10 @@ static partial class ForeignStarProjectionBinding
     {
         static void Need(bool condition, string message)
         { if (!condition) throw new InvalidOperationException("Owning foreign late binding: " + message); }
-        var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location, typeof(Enumerable).Assembly.Location });
+        var refs = ReferenceMetadataIndex.Build(new[] {
+            typeof(object).Assembly.Location, typeof(Enumerable).Assembly.Location,
+            Path.Combine(Path.GetDirectoryName(typeof(object).Assembly.Location), "System.Runtime.dll"),
+        });
         BeginBinding(null, new(), resetUsage: true);
         _projectValueType = (type, _) => type;
         RequireRuntimeFallback();
