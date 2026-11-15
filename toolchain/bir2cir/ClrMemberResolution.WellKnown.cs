@@ -222,33 +222,35 @@ static partial class ClrMemberResolution
         _refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var all = roots.Where(root => root != null).ToList();
         var defs = SupertypeGraph.Collect(all);
-        foreach (var root in all) WalkInheritedExternalCalls(root, defs, refs);
+        var methods = defs.ToDictionary(pair => pair.Key, pair => ReadInheritedLocalMethods(pair.Value.Methods), StringComparer.Ordinal);
+        foreach (var root in all) WalkInheritedExternalCalls(root, defs, methods, refs);
     }
 
     static void WalkInheritedExternalCalls(JsonNode node,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
+        IReadOnlyDictionary<string, InheritedLocalMethod[]> methods, ReferenceMetadataIndex refs)
     {
         switch (node)
         {
             case JsonObject obj:
                 foreach (var kv in obj.ToList())
-                    if (kv.Value != null) WalkInheritedExternalCalls(kv.Value, defs, refs);
-                ResolveInheritedExternalCall(obj, defs, refs);
+                    if (kv.Value != null) WalkInheritedExternalCalls(kv.Value, defs, methods, refs);
+                ResolveInheritedExternalCall(obj, defs, methods, refs);
                 break;
             case JsonArray arr:
                 foreach (var item in arr.ToList())
-                    if (item != null) WalkInheritedExternalCalls(item, defs, refs);
+                    if (item != null) WalkInheritedExternalCalls(item, defs, methods, refs);
                 break;
         }
     }
 
     static void ResolveInheritedExternalCall(JsonObject call,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
+        IReadOnlyDictionary<string, InheritedLocalMethod[]> methods, ReferenceMetadataIndex refs)
     {
         if ((call["k"] as JsonValue)?.GetValue<string>() != "callInstance"
             || call.ContainsKey("memberRef")
             || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner
-            || !defs.TryGetValue(owner.Name, out var ownerDef)
             || (call["method"] as JsonValue)?.GetValue<string>() is not { } name
             || call["sig"] is not JsonArray sig)
             return;
@@ -256,6 +258,33 @@ static partial class ClrMemberResolution
         var callSig = sig.Select(TypeJson.Read).ToArray();
         if (callSig.Any(type => type == null)) return;
         var methodArity = (call["typeArgs"] as JsonArray)?.Count ?? 0;
+        var chosen = PlanInheritedExternalCall(owner, name, methodArity, callSig, defs, methods, refs);
+        if (chosen == null) return;
+        call["memberRef"] = chosen.Reference.Write();
+        StampResolvedMethodTypeParameters(call, chosen.Declaration);
+        StampDelegateArgumentTargets(call, chosen.Declaration, chosen.OwnerArgs);
+        AdaptInheritedGenericResult(call);
+    }
+
+    // These are current header views, not source-eligibility registrations.
+    // Both actual owning graphs and the genuine late DOM buyer use this plan.
+    sealed record InheritedLocalMethod(string Name, bool Static, int Arity, TypeNode[] Parameters);
+    sealed record InheritedExternalCallPlan(MethodInfo Declaration, MemberRefNode Reference, TypeNode[] OwnerArgs);
+
+    static InheritedLocalMethod[] ReadInheritedLocalMethods(JsonArray methods) => methods.OfType<JsonObject>().Select(method => {
+        var parameters = method["params"] as JsonArray;
+        var types = parameters?.OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+        if (types?.Length != parameters?.Count) types = null;
+        return new InheritedLocalMethod((method["name"] as JsonValue)?.GetValue<string>(),
+            (method["static"] as JsonValue)?.TryGetValue<bool>(out var isStatic) == true && isStatic,
+            (method["typeParams"] as JsonArray)?.Count ?? 0, types);
+    }).ToArray();
+
+    static InheritedExternalCallPlan PlanInheritedExternalCall(TypeNode.Fqn owner, string name, int methodArity,
+        TypeNode[] callSig, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
+        IReadOnlyDictionary<string, InheritedLocalMethod[]> methods, ReferenceMetadataIndex refs)
+    {
+        if (!defs.TryGetValue(owner.Name, out var ownerDef)) return null;
         var ownerArgs = owner.Args ?? (ownerDef.Arity == 0
             ? Array.Empty<TypeNode>()
             : Enumerable.Range(0, ownerDef.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
@@ -270,19 +299,17 @@ static partial class ClrMemberResolution
                 : SupertypeGraph.SubstOwnerTvs(ownerDef.Base, ownerArgs) as TypeNode.Fqn,
             Interfaces = ownerDef.Interfaces.Select(iface =>
                 (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(iface, ownerArgs)).ToArray(),
-            Node = ownerDef.Node,
-            Methods = ownerDef.Methods,
         };
         var reachable = SupertypeGraph.Reachable(projectedOwner, defs, refs).ToList();
 
         // A declaration in this compilation owns the identity.  Never let a reflected base with the same shape
         // displace it merely because the call's local owner does not declare the method itself.
-        if (LocalDeclares(ownerDef, ownerArgs, name, methodArity, callSig)
+        if (LocalDeclares(ownerDef, methods[owner.Name], ownerArgs, name, methodArity, callSig)
             || reachable.Any(entry => defs.TryGetValue(entry.spec.Name, out var local)
-                && LocalDeclares(local, entry.spec.Args, name, methodArity, callSig)))
-            return;
+                && LocalDeclares(local, methods[entry.spec.Name], entry.spec.Args, name, methodArity, callSig)))
+            return null;
 
-        var answers = new List<(MethodInfo Declaration, JsonNode Reference, TypeNode[] OwnerArgs)>();
+        var answers = new List<InheritedExternalCallPlan>();
         foreach (var (spec, _) in reachable)
         {
             if (defs.ContainsKey(spec.Name)) continue;
@@ -300,9 +327,9 @@ static partial class ClrMemberResolution
                 .ToList();
             var declaration = TryPickUnique(candidates, callSig.ToList(), spec.Args ?? Array.Empty<TypeNode>());
             if (declaration == null) continue;
-            var reference = MemberRefJson(declaration, MemberRefNode.Kinds.Method, open,
+            var reference = MemberRefOf(declaration, MemberRefNode.Kinds.Method, open,
                 spec.Args ?? Array.Empty<TypeNode>());
-            answers.Add((declaration, reference, spec.Args ?? Array.Empty<TypeNode>()));
+            answers.Add(new(declaration, reference, spec.Args ?? Array.Empty<TypeNode>()));
         }
         // A derived interface can redeclare a base slot with the same source signature.  That is not ambiguity:
         // ordinary member lookup selects the most-derived declaration.  Apply the same existing metadata rule here,
@@ -315,18 +342,11 @@ static partial class ClrMemberResolution
             answers = answers.Where(answer => answer.Declaration.Module == selected.Module
                 && answer.Declaration.MetadataToken == selected.MetadataToken).ToList();
         }
-        var distinctAnswers = answers.Select(answer => answer.Reference)
-            .GroupBy(reference => reference.ToJsonString(), StringComparer.Ordinal)
-            .Select(group => group.First()).ToList();
+        var distinctAnswers = answers.Select(answer => answer.Reference).Distinct().ToList();
         // Multiple distinct external declarations are a semantic dispatch question, not an emitter choice.  The
         // upstream declaration identity must distinguish that case; leave it unstamped so the fail-closed audit
         // reports the unresolved site instead of picking by graph order.
-        if (distinctAnswers.Count != 1) return;
-        call["memberRef"] = distinctAnswers[0];
-        var chosen = answers[0];
-        StampResolvedMethodTypeParameters(call, chosen.Declaration);
-        StampDelegateArgumentTargets(call, chosen.Declaration, chosen.OwnerArgs);
-        AdaptInheritedGenericResult(call);
+        return distinctAnswers.Count == 1 ? answers[0] : null;
     }
 
     // dynRet is an already-instantiated caller fact; the MemberRef return belongs to the
@@ -335,14 +355,12 @@ static partial class ClrMemberResolution
     // the same stack type. Constructed-type differences are not licensed by this scalar rule.
     internal static void AdaptInheritedGenericResult(JsonObject call)
     {
-        if (TypeJson.Read(call["dynRet"]) is not TypeNode.Tv logical
-            || call["memberRef"] is not JsonObject reference
-            || TypeJson.Read(reference["declaringType"]) is not TypeNode.Fqn declaringOwner
-            || TypeJson.Read(reference["returnType"]) is not TypeNode declaredReturn) return;
-        var physical = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(declaredReturn,
-            declaringOwner.Args ?? Array.Empty<TypeNode>(),
+        var logical = TypeJson.Read(call["dynRet"]);
+        var reference = call["memberRef"] as JsonObject;
+        var physical = PlanInheritedGenericResult(logical, TypeJson.Read(reference?["declaringType"]),
+            TypeJson.Read(reference?["returnType"]),
             (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>());
-        if (physical is not TypeNode.Tv || physical == logical) return;
+        if (physical == null) return;
         var inner = call.DeepClone().AsObject();
         inner["ret"] = TypeJson.Write(physical);
         inner["dynRet"] = TypeJson.Write(physical);
@@ -359,43 +377,39 @@ static partial class ClrMemberResolution
     {
         var ordinary = new TypeNode.Tv("method", 0);
         var storage = new TypeNode.Tv("method", 2);
-        var call = new JsonObject {
-            ["k"] = "callInstance", ["dynRet"] = TypeJson.Write(ordinary),
-            ["recv"] = new JsonObject { ["k"] = "callStatic", ["method"] = "EvaluateOnce" },
-            ["memberRef"] = new JsonObject {
-                ["declaringType"] = TypeJson.Write(new TypeNode.Fqn("Face", new TypeNode[] { storage })),
-                ["returnType"] = TypeJson.Write(new TypeNode.Tv("type", 0)),
-            },
-        };
-        AdaptInheritedGenericResult(call);
-        if (TypeJson.Read(call["type"]) != ordinary || TypeJson.Read(call["e"]["ret"]) != storage
-            || TypeJson.Read(call["e"]["dynRet"]) != storage
-            || call["e"]["recv"]["method"].GetValue<string>() != "EvaluateOnce")
+        var owner = new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { storage });
+        var declared = new TypeNode.Tv("type", 0);
+        if (PlanInheritedGenericResult(ordinary, owner, declared, Array.Empty<TypeNode>()) != storage)
             throw new InvalidOperationException("Inherited generic result did not preserve its caller/CLR frames");
-        var unchanged = call["e"].DeepClone().AsObject();
-        AdaptInheritedGenericResult(unchanged);
-        if (unchanged["k"].GetValue<string>() != "callInstance")
+        if (PlanInheritedGenericResult(storage, owner, declared, Array.Empty<TypeNode>()) != null)
             throw new InvalidOperationException("Inherited generic result duplicated an unchanged conversion");
-        Console.WriteLine("[inherited generic result] self-test OK (closed CLR return, caller type, single evaluation)");
+        // Actual-call/receiver identity and its registered continuation are
+        // checked with the real selected List<T> declaration by the source hook.
+        Console.WriteLine("[inherited generic result] self-test OK (shared scalar plan, closed CLR return, caller frame)");
     }
 
-    static bool LocalDeclares(SupertypeGraph.Def def, TypeNode[] ownerArgs, string name, int methodArity,
+    static TypeNode PlanInheritedGenericResult(TypeNode logical, TypeNode declaringType, TypeNode declaredReturn,
+        TypeNode[] methodArguments)
+    {
+        if (logical is not TypeNode.Tv || declaringType is not TypeNode.Fqn declaringOwner || declaredReturn == null) return null;
+        var physical = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(declaredReturn,
+            declaringOwner.Args ?? Array.Empty<TypeNode>(), methodArguments);
+        return physical is TypeNode.Tv && physical != logical ? physical : null;
+    }
+
+    static bool LocalDeclares(SupertypeGraph.Def def, IReadOnlyList<InheritedLocalMethod> methods,
+        TypeNode[] ownerArgs, string name, int methodArity,
         IReadOnlyList<TypeNode> callSig)
     {
         var args = ownerArgs ?? (def.Arity == 0
             ? Array.Empty<TypeNode>()
             : Enumerable.Range(0, def.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
-        foreach (var method in def.Methods.OfType<JsonObject>())
+        foreach (var method in methods)
         {
-            if ((method["static"] as JsonValue)?.TryGetValue<bool>(out var isStatic) == true && isStatic) continue;
-            if ((method["name"] as JsonValue)?.GetValue<string>() != name
-                || ((method["typeParams"] as JsonArray)?.Count ?? 0) != methodArity
-                || method["params"] is not JsonArray parameters
-                || parameters.Count != callSig.Count)
-                continue;
-            var declared = parameters.OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"]))
-                .ToArray();
-            if (declared.Length != callSig.Count || declared.Any(type => type == null)) continue;
+            if (method.Static || method.Name != name || method.Arity != methodArity
+                || method.Parameters == null || method.Parameters.Length != callSig.Count) continue;
+            var declared = method.Parameters;
+            if (declared.Any(type => type == null)) continue;
             var wanted = callSig.Select(SupertypeGraph.TypeKey);
             if (declared.Select(SupertypeGraph.TypeKey).SequenceEqual(wanted)
                 || declared.Select(type => SupertypeGraph.SubstOwnerTvs(type, args))
