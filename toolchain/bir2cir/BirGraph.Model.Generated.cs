@@ -13563,6 +13563,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
     public OptionalField<BirCompanionCarrier> CompanionCarrier { get; set; }
     public OptionalField<SourceTypeFacts> RoundtripSupertypesPre { get; set; }
     public OptionalField<bool> RoundtripTypeHeaderPending { get; set; }
+    public OptionalField<SourceTypeVector> DotktKotlinMutableCollectionContract { get; set; }
     public OptionalField<bool> Final { get; set; }
     public OptionalField<bool> SpecialName { get; set; }
     public OptionalField<bool> BeforeFieldInit { get; set; }
@@ -14017,6 +14018,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
             && EqualField(CompanionCarrier, value.CompanionCarrier, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(RoundtripSupertypesPre, value.RoundtripSupertypesPre, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(RoundtripTypeHeaderPending, value.RoundtripTypeHeaderPending, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
+            && EqualField(DotktKotlinMutableCollectionContract, value.DotktKotlinMutableCollectionContract, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(Final, value.Final, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(SpecialName, value.SpecialName, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(BeforeFieldInit, value.BeforeFieldInit, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
@@ -14066,6 +14068,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         WriteOptional(writer, "companionCarrier", CompanionCarrier, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "roundtripSupertypesPre", RoundtripSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
         WriteOptional(writer, "roundtripTypeHeaderPending", RoundtripTypeHeaderPending, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "dotktKotlinMutableCollectionContract", DotktKotlinMutableCollectionContract, (writer, value) => { SourceTypeVector.Write(writer, value); });
         WriteOptional(writer, "final", Final, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "specialName", SpecialName, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "beforeFieldInit", BeforeFieldInit, (writer, value) => { writer.WriteBooleanValue(value); });
@@ -14117,6 +14120,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         if (CompanionCarrier.IsPresent) result["companionCarrier"] = CompanionCarrier.IsNull ? null : ((BirGraphValue)CompanionCarrier.Value).ToDom(projected);
         if (RoundtripSupertypesPre.IsPresent) result["roundtripSupertypesPre"] = RoundtripSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(RoundtripSupertypesPre.Value);
         if (RoundtripTypeHeaderPending.IsPresent) result["roundtripTypeHeaderPending"] = RoundtripTypeHeaderPending.IsNull ? null : JsonValue.Create(RoundtripTypeHeaderPending.Value);
+        if (DotktKotlinMutableCollectionContract.IsPresent) result["dotktKotlinMutableCollectionContract"] = DotktKotlinMutableCollectionContract.IsNull ? null : SourceTypeVector.ToDom(DotktKotlinMutableCollectionContract.Value);
         if (Final.IsPresent) result["final"] = Final.IsNull ? null : JsonValue.Create(Final.Value);
         if (SpecialName.IsPresent) result["specialName"] = SpecialName.IsNull ? null : JsonValue.Create(SpecialName.Value);
         if (BeforeFieldInit.IsPresent) result["beforeFieldInit"] = BeforeFieldInit.IsNull ? null : JsonValue.Create(BeforeFieldInit.Value);

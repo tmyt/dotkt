@@ -4,9 +4,8 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
-// An immutable declaration-frame signature, not executable children. Frozen text
-// is bookkeeping for the remaining ForeignStarProjectionBinding DOM frontier;
-// that frontier retires with its owner, not a new IR text hand-off between passes.
+// Immutable declaration-frame type facts, not executable children. Frozen text
+// carries them across the remaining DOM frontier without value-type rewrites.
 sealed class SourceTypeVector
 {
     internal IReadOnlyList<TypeNode> Types { get; }

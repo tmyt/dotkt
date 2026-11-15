@@ -2320,6 +2320,7 @@ internal static class BirGraphDom
                 case "companionCarrier": break;
                 case "roundtripSupertypesPre": break;
                 case "roundtripTypeHeaderPending": break;
+                case "dotktKotlinMutableCollectionContract": break;
                 case "final": break;
                 case "specialName": break;
                 case "beforeFieldInit": break;
@@ -2370,6 +2371,7 @@ internal static class BirGraphDom
             CompanionCarrier = Field<BirCompanionCarrier>(fields, "companionCarrier", value => ReadBirCompanionCarrier(value!)),
             RoundtripSupertypesPre = Field<SourceTypeFacts>(fields, "roundtripSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
             RoundtripTypeHeaderPending = Field<bool>(fields, "roundtripTypeHeaderPending", value => value!.GetValue<bool>()),
+            DotktKotlinMutableCollectionContract = Field<SourceTypeVector>(fields, "dotktKotlinMutableCollectionContract", value => SourceTypeVector.ReadFrozenText(value!.GetValue<string>())),
             Final = Field<bool>(fields, "final", value => value!.GetValue<bool>()),
             SpecialName = Field<bool>(fields, "specialName", value => value!.GetValue<bool>()),
             BeforeFieldInit = Field<bool>(fields, "beforeFieldInit", value => value!.GetValue<bool>()),

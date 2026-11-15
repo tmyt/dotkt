@@ -31,7 +31,7 @@ using DotKt.Bir;
 // null for a gp-dependent constraint. Only a CONCRETE bound (`Element`, which does not reference `E`) is substituted, so
 // `Key<*>` -> `Key<Element>`. (Enum is separately collapsed to the non-generic `System.Enum` by BirTypeLowering, so its
 // residual `Enum<object>` never reaches a real reified instantiation.)
-static class StarProjectionBoundLowering
+static partial class StarProjectionBoundLowering
 {
     internal static void FunctionSelfTest()
     {
@@ -39,37 +39,6 @@ static class StarProjectionBoundLowering
             new Dictionary<string, TypeNode[]>(), ReferenceMetadataIndex.Build(Array.Empty<string>())));
         FunctionRewriteTests.Check("star bound substitution", type => CloseEarlierOwnerTypeVars(type,
             Array.Empty<TypeNode>(), 0));
-    }
-
-    // Collect in-assembly generic type-param BOUNDS: owner FQN (dotted) -> per-param bound TypeNode (null for an
-    // unconstrained / objectish-bounded param). Across ALL input roots (a star-projected owner's declaration may live in
-    // a sibling .bir.json — e.g. AbstractCoroutineContextElement uses Key<*> whose interface is in another file).
-    public static Dictionary<string, TypeNode[]> CollectTypeParamBounds(IEnumerable<JsonNode> roots)
-    {
-        var map = new Dictionary<string, TypeNode[]>(StringComparer.Ordinal);
-        foreach (var root in roots)
-            if (root is JsonObject o && o["types"] is JsonArray types)
-                foreach (var t in types)
-                    if (t is JsonObject to) CollectType(to, map);
-        return map;
-    }
-
-    static void CollectType(JsonObject t, Dictionary<string, TypeNode[]> map)
-    {
-        var tps = TypeParameterFrame.CloneDeclarations(t);
-        if (Str(t["name"]) is string name && tps.Count > 0)
-        {
-            var bounds = new TypeNode[tps.Count];
-            var any = false;
-            for (var i = 0; i < tps.Count; i++)
-                if (tps[i] is JsonObject to && to["constraints"] is JsonArray cs)
-                    foreach (var c in cs)
-                        if (TypeJson.Read(c) is TypeNode ct && !IsObjectish(ct)) { bounds[i] = ct; any = true; break; }
-            if (any) map.TryAdd(name, bounds);
-        }
-        // A nested type declaration (`CoroutineContext.Key` inside CoroutineContext) carries its own typeParams.
-        if (t["types"] is JsonArray nested)
-            foreach (var n in nested) if (n is JsonObject no) CollectType(no, map);
     }
 
     public static void Apply(JsonNode root, IReadOnlyDictionary<string, TypeNode[]> localBounds, ReferenceMetadataIndex refs)

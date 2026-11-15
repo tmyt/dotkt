@@ -49,41 +49,6 @@ static partial class ExternalGenericConstraintValidation
                 _localEnums, _localTypes, _declarationCache);
     }
 
-    public static Prepared Prepare(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs,
-        ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums) =>
-        new(refs, isValueFqn, localEnums, CollectLocalTypes(roots));
-
-    static Dictionary<string, LocalTypeFacts> CollectLocalTypes(IEnumerable<JsonNode> roots)
-    {
-        var result = new Dictionary<string, LocalTypeFacts>(StringComparer.Ordinal);
-        foreach (var root in roots) Collect(root);
-        return result;
-
-        void Collect(JsonNode node)
-        {
-            if (node is JsonObject o)
-            {
-                if (Str(o["name"]) is string name && Str(o["kind"]) is string kind && IsTypeKind(kind))
-                    Add(name, kind, o);
-                foreach (var value in o.Select(pair => pair.Value))
-                    if (value is not null) Collect(value);
-            }
-            else if (node is JsonArray array)
-                foreach (var value in array)
-                    if (value is not null) Collect(value);
-        }
-
-        void Add(string name, string kind, JsonObject declaration)
-        {
-            var isValue = kind is "struct" or "enum" or "value";
-            var isAbstract = Bool(declaration["abstract"]);
-            var hasPublicDefault = isValue || !isAbstract && declaration["ctors"] is JsonArray ctors &&
-                ctors.OfType<JsonObject>().Any(ctor => Str(ctor["vis"]) is null or "public" &&
-                    (ctor["params"] as JsonArray)?.Count == 0);
-            result[name] = new LocalTypeFacts(kind, isAbstract, hasPublicDefault);
-        }
-    }
-
     static void Walk(JsonNode node, string incomingKey, ParameterFacts[] typeParameters,
         ParameterFacts[] methodParameters,
         ReferenceMetadataIndex refs, ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums,
