@@ -149,6 +149,17 @@ static partial class SuspendColdLowering
             foreach (var type in removed) NotifyMethods((BirGraphValue)type);
         }
 
+        internal void ReportPhysicalIdentityConsumption(BirFileDeclaration file, IBirTypeDeclaration owner,
+            BirFunctionDeclaration method, string identity)
+        {
+            var key = (BirGraphValue)owner ?? file;
+            if (!methodVectors.TryGetValue(key, out var row) || !ReferenceEquals(row.File, file)
+                || !ReferenceEquals(row.Owner, owner)
+                || !CurrentMethods(file, owner).SequenceEqual(row.Continuing, ReferenceEqualityComparer.Instance))
+                throw Mismatch();
+            Projection.ReportPhysicalIdentityConsumption(file, owner, method, identity);
+        }
+
         void NotifyMethods(BirGraphValue value)
         {
             if (value is IBirExecutablePayload) return;

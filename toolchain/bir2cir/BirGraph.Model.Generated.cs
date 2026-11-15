@@ -5277,6 +5277,13 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? OwnTypeOrReturnStamp => Ret.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+        if (hasIdentity(PropertyName.OrDefault(), PropertyAccessor.OrDefault()))
+        {
+            PropertyName = default; PropertyAccessor = default;
+        }
+    }
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
     public override OptionalField<TypeNode> ErasedValueVariableFact { get => _erasedValueVariable; set => _erasedValueVariable = value; }
@@ -6038,6 +6045,13 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? OwnTypeOrReturnStamp => Ret.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+        if (hasIdentity(PropertyName.OrDefault(), PropertyAccessor.OrDefault()))
+        {
+            PropertyName = default; PropertyAccessor = default;
+        }
+    }
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
     public override OptionalField<TypeNode> ErasedValueVariableFact { get => _erasedValueVariable; set => _erasedValueVariable = value; }
@@ -10817,6 +10831,16 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<int[]> RetNullableFlags { get; set; }
     public OptionalField<TypeNode> RetSuspendFnType { get; set; }
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+        if (hasIdentity(PropertyName.OrDefault(), PropertyAccessor.OrDefault()))
+        {
+            PropertyName = default; PropertyAccessor = default;
+            PropertyAssociation = default;
+        }
+        ExplicitClrName = default;
+        PhysicalSlotBridge = default;
+    }
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -12512,6 +12536,9 @@ internal sealed record BirPropertyDeclaration : BirGraphValue
     public OptionalField<string> Vis { get; set; }
     public OptionalField<TypeNode> Recv { get; set; }
     public OptionalField<BirDeclarationPosition> Pos { get; set; }
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+    }
     public override OptionalField<TypeNode> SuspendFunctionTypeFact { get => SuspendFnTypePre; set => SuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -15356,6 +15383,13 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<TypeNode> NullableGenericRet { get; set; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; set; }
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+        if (hasIdentity(PropertyName.OrDefault(), PropertyAccessor.OrDefault()))
+        {
+            PropertyName = default; PropertyAccessor = default;
+        }
+    }
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -15777,6 +15811,14 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
     public OptionalField<TypeNode> RetKotlinType { get; set; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; set; }
     public OptionalField<string[]> SignatureOverrideDeclarations { get; set; }
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+        if (hasIdentity(PropertyName.OrDefault(), PropertyAccessor.OrDefault()))
+        {
+            PropertyName = default; PropertyAccessor = default;
+            PropertyAssociation = default;
+        }
+    }
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -16043,6 +16085,9 @@ internal sealed record BirClrEventBacking : BirGraphValue
     public OptionalField<string> PolicyField { get; set; }
     public OptionalField<string> EventRaiseDeclarationId { get; set; }
     public OptionalField<TypeNode> DelegateType { get; set; }
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+    }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (HandlerType.HasValue) { visit("handlerType", (TypeNode)HandlerType.Value); }
@@ -16225,6 +16270,9 @@ internal sealed record BirClrEventForwarder : BirGraphValue
     public OptionalField<string> PropertyAssociation { get; set; }
     public OptionalField<TypeNode> OwnerType { get; set; }
     public OptionalField<IBirExpression> Recv { get; set; }
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+    }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (OwnerType.HasValue) { visit("ownerType", (TypeNode)OwnerType.Value); }
@@ -28918,6 +28966,13 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? OwnTypeOrReturnStamp => Ret.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+        if (hasIdentity(PropertyName.OrDefault(), PropertyAccessor.OrDefault()))
+        {
+            PropertyName = default; PropertyAccessor = default;
+        }
+    }
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -32045,6 +32100,13 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+        if (hasIdentity(PropertyName.OrDefault(), PropertyAccessor.OrDefault()))
+        {
+            PropertyName = default; PropertyAccessor = default;
+        }
+    }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (Type.HasValue) { visit("type", (TypeNode)Type.Value); }
@@ -32440,6 +32502,13 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
+    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)
+    {
+        if (hasIdentity(PropertyName.OrDefault(), PropertyAccessor.OrDefault()))
+        {
+            PropertyName = default; PropertyAccessor = default;
+        }
+    }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (Type.HasValue) { visit("type", (TypeNode)Type.Value); }
