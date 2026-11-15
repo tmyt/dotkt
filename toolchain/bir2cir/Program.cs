@@ -60,6 +60,7 @@ static class Bir2Cir
                 FBoundStarProjectionErasure.ConstraintSurfacesSourceSelfTest();
                 FBoundStarProjectionErasure.NormalizationSourceSelfTest();
                 FBoundStarProjectionErasure.RewriteSourceSelfTest();
+                FBoundStarProjectionErasure.LateTypesSourceSelfTest();
                 GenericArrayStorageLowering.SourceTypeOperationSelfTest();
                 ExistentialSharedCellAlignment.SelfTestSource();
                 SourceDeclarationSignatures.SelfTest();
@@ -170,6 +171,7 @@ static class Bir2Cir
                 CollectionBclSlotSynthesis.SelfTest();
                 KotlinOverrideSlotBridge.SelfTest();
                 KotlinOverrideSlotBridge.SuspendSourceSelfTest();
+                KotlinOverrideSlotBridge.FinalSourceSelfTest();
                 KotlinOverrideSlotBridge.SourceParameterSnapshotSelfTest();
                 CollectionIdentityRecord.SourceSelfTest();
                 KotlinCollectionIdentitySynthesis.SourceSelfTest();
@@ -215,6 +217,7 @@ static class Bir2Cir
                 SuspendColdLowering.EngineSourceSelfTest();
                 SuspendColdLowering.CallsSourceSelfTest();
                 SuspendLambdaLowering.SourceSelfTest();
+                SuspendResidueLowering.SourceSelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 ReferenceMetadataIndex.PhysicalParameterFactsSelfTest();
                 MetadataDeclaredMembersTests.SelfTest();
@@ -765,9 +768,6 @@ sealed class Pipeline
                 aliasTransitions.AdmitMaterializedTypes(file, appended);
                 genericRepresentations.AdmitMaterializedNativeTypes(file, appended);
             });
-        var continuingCovariantSlots = sourceCovariantSlots.Select(slot => (
-            Implementation: currentDeclarations.GetSource(slot.Implementation), slot.Descriptor)).ToArray();
-
         // Keep the original slot-owner clock on the owning graph. Covariant
         // slots suppress duplicate suspend bridges using the same actual handles.
         KotlinOverrideSlotBridge.PrepareSuspendValueBridges(captured, isValueFqn, refs,
@@ -800,12 +800,32 @@ sealed class Pipeline
         SuspendColdLowering.ApplyNamedSource(suspendModule);
         if (!referenceBuild) SuspendLambdaLowering.ApplyAll(suspendModule);
 
+        // Retained stdlib suspend declarations have an explicit physical throw
+        // body; app declarations must already have their cold/Task shapes.
+        // Retire discarded executable forests while their actual owners are live.
+        if (!referenceBuild)
+            SuspendResidueLowering.ApplyAll(captured, appBuild, suspendTransitions.RetireDiscardedSubtree);
+        RoundtripMetadata.RequireSuspendResults(captured);
+
+        // Compare completed suspend signatures against the existing carrier ABI.
+        // This current physical view never re-captures source eligibility/demand.
+        FBoundStarProjectionErasure.RewriteLateTypesSource(captured, carrierRealization, aliasTransitions);
+        KotlinOverrideSlotBridge.ApplyAll(captured, isValueFqn, refs, inventory.EmittedTypeFqns,
+            referenceBuild, genericRepresentations, sourceCovariantSlots, localExistentialOwners,
+            valuePolicy.HasClassifier, (file, owner, method, descriptor) => {
+                if (method != null) suspendTransitions.PublishMethods(file, owner, new[] { method });
+                if (descriptor != null) currentDeclarations.GetSource(descriptor);
+            });
+        // Project star-bearing slots copied by final bridges through the same ABI.
+        var finalCarrierTypes = FBoundStarProjectionErasure.RewriteLateTypesSource(
+            captured, carrierRealization, aliasTransitions);
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
-            // continuing projection, after slot and suspend state-machine
+            // continuing projection, after final slot and suspend state-machine
             // materialization. Retired source facts use the same observer.
             var root = source.ToDom(suspendTransitions.Projection.ObserveProjection);
             files.Add(new BirFile(
@@ -822,9 +842,8 @@ sealed class Pipeline
         valueRepresentations.BindDomDeclarations(continuingRoots, retiredDom, suspendTransitions.Projection);
         var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
             continuingRoots.Cast<JsonObject>().ToArray(), retiredDom, aliasTransitions, suspendTransitions.Projection);
-        var covariantBridgedSlots = continuingCovariantSlots.Select(slot =>
-            new CovariantInterfaceReturnBridge.BridgedSlot(slot.Implementation.Physical, slot.Descriptor)).ToHashSet();
-        var carrierContinuation = FBoundStarProjectionErasure.BindRealizationContinuation(carrierRealization);
+        var carrierContinuation = FBoundStarProjectionErasure.BindRealizationContinuation(
+            carrierRealization, finalCarrierTypes);
         aliasTransitions.Release();
         retiredDeclarations.Clear();
         suspendTransitions.Release();
@@ -832,7 +851,7 @@ sealed class Pipeline
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums,
-                moduleBindings, carrierContinuation, covariantBridgedSlots));
+                moduleBindings, carrierContinuation));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -887,54 +906,10 @@ sealed class Pipeline
 
         // Continue the owning prefix's selected carrier and
         // covariant-slot facts; do not reselect them after the frontier.
-        var physicalDeclarationSources = module.Preparation.Carriers.PhysicalDeclarationSources;
         var localExistentialOwners = module.Preparation.Carriers.LocalOwners;
-        var covariantBridgedSlots = module.Preparation.CovariantBridgedSlots;
 
-        // Named Cold and, in non-reference builds, suspend-lambda materialization
-        // have completed module-wide in the owning prefix before the DOM frontier.
-
-        // PHASE 1.7a — RESIDUAL SUSPEND DECLARATIONS. The owning suspend phases leave the `suspend` modifier on exactly the
-        // declarations the stdlib self-build retains without a state machine (the Kotlin surface kept beside its cold
-        // entry, and the inline coroutine primitives whose call sites are reconstructed inline). Those have no
-        // state-machine body, so bir2cir states their physical one — an explicit call-time throw — instead of letting a
-        // later layer invent a body for a modifier it cannot interpret. In an app build every suspend declaration is
-        // lowered, so a survivor is refused here. Runs after BOTH suspend phases and before type lowering. The
-        // REFERENCE build is exempt for the same reason it needs no `newSuspendLambda` phase: RefBodySquash replaces
-        // EVERY body there with the metadata-only throw, which is already the physical body of a declaration that
-        // cannot be executed — and its kotlin.* type tokens are kept verbatim, so an authored `NotSupportedException
-        // (kotlin.String)` would have no CLR ctor to bind.
-        if (!_options.RefBuild)
-            SuspendResidueLowering.ApplyAll(
-                staged.Select(s => s.Root).ToList(), _options.StdlibMode == BuildStdlibMode.App);
-
-        // Every source declaration was frozen before representation erasure, and every synthesized suspend declaration
-        // must have copied that fact from its semantic source. Refuse an incomplete current BIR here; do not reconstruct
-        // Kotlin meaning from the now-physical `suspendRet`.
-        RoundtripMetadata.RequireSuspendResults(staged.Select(s => s.Root));
-
-        // Suspend lowering has just introduced completion parameters and state-machine declarations. Compare
-        // their final carrier types with referenced physical slots, not a fresh Kotlin construction against an
-        // already-erased reference signature. The post-bridge rewrite below still covers newly authored bridges.
-        FBoundStarProjectionErasure.RewriteLateTypes(
-            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
-
-        // KOTLIN ERASURE-NARROWED OVERRIDE -> FINAL CLR METHODIMPL (#344 / #86 D3). The declaration-move half ran
-        // early, but the bridge half must see the FINAL declarations: one logical suspend override becomes a public
-        // Task member AND a continuation cold entry, and each is a distinct CLR slot. SuspendColdLowering carries the
-        // source `overrides` proof onto both generated declarations (renaming it for the cold member), so this single
-        // rule emits one exact bridge/MethodImpl per physical obligation without teaching ilemit suspend semantics.
-        // All builds normalize their final selected Task/cold declarations here; reference bodies are squashed later.
-        // Star views already exist, and all types are still in the Kotlin vocabulary.
-        KotlinOverrideSlotBridge.ApplyAll(
-            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild, genericRepresentations,
-            covariantBridgedSlots, localExistentialOwners);
-
-        // The final override bridge deliberately runs after the main F-bound/star rewrite because suspend lowering
-        // can create additional physical slots. Project any Kotlin star types copied into those late declarations
-        // through the already-allocated existential ABI; no new carrier or semantic/member lookup occurs here.
-        FBoundStarProjectionErasure.RewriteLateTypes(
-            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
+        // Suspend residue, logical results and final override slots have already
+        // been resolved module-wide on the owning graph before the DOM frontier.
 
         // Non-generic `System.IComparable` bridge. Synthesize it at this final Kotlin-vocabulary boundary so its
         // forwarding call carries the target declaration's semantic return stamp. In particular, a legal
@@ -1747,8 +1722,7 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
     ModuleBindingSnapshots Bindings,
-    FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers,
-    IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> CovariantBridgedSlots);
+    FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
