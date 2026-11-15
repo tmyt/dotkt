@@ -106,7 +106,7 @@ def outputs(root, definitions, model_type, non_null_field, allows_null):
                 if name not in source["properties"]:
                     raise ValueError(f"Missing typed physical field {source_key}.{name}")
                 if target == "CirConstant" and name == "value":
-                    expression = "ProjectExecutableLiteral(Require(value.Value), Require(value.Type))"
+                    expression = "ProjectExecutableLiteral(value.Value.IsNull ? new BirLiteral.NullLiteral() : Require(value.Value), Require(value.Type))"
                 elif target == "CirField" and name == "constant":
                     expression = "value.Constant.IsPresent ? OptionalField<AttributeArgument>.Of(AttributeProjection.Literal(value.Constant.IsNull ? new BirLiteral.NullLiteral() : value.Constant.Value, Require(value.Type))) : default"
                 elif name in shape.get("required", []):
