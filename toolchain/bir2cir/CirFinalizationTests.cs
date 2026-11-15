@@ -39,7 +39,7 @@ static class CirFinalizationTests
                   "init":{"k":"const","type":{"t":"fqn","name":"{{{sourceType}}}"},"value":{{{literal}}}}}]}
                 """)!;
             var projected = CirDeclarationProjection.ReadCirFileDeclaration(source);
-            var reference = RefBodySquash.LowerLiteralPlaceholders(projected);
+            var reference = RefBodySquash.LowerLiteralPlaceholders(projected, new BirTypeLowering.PhysicalTypeContext(refBuild: true));
             if (reference.Fields[0].Init.Value is not CirConstant {
                 Type: TypeNode.Fqn { Name: "System.Object" }, Value: AttributeArgument.NullValue })
                 throw new InvalidOperationException("A reference numeric token did not reach placeholder lowering");
@@ -70,7 +70,7 @@ static class CirFinalizationTests
                 Fields = new[] { field }, Ctors = new[] { constructor,
                     constructor with { BaseArgs = OptionalField<ICirExpression[]>.Null, ThisArgs = new ICirExpression[] { Literal() } } },
                 Methods = new[] { method }, Attrs = new[] { attribute } }] };
-        var lowered = RefBodySquash.LowerLiteralPlaceholders(file);
+        var lowered = RefBodySquash.LowerLiteralPlaceholders(file, new BirTypeLowering.PhysicalTypeContext(refBuild: true));
         if (lowered.Fields[0].Init.Value is not CirConstant { Type: TypeNode.Fqn { Name: "System.Object" }, Value: AttributeArgument.NullValue }
             || file.Fields[0].Init.Value is not CirConstant { Type: TypeNode.Fqn { Name: "kotlin.Int" }, Value: AttributeArgument.Int32Value { Value: 42 } })
             throw new InvalidOperationException("Typed reference placeholders changed their source graph or failed to lower a field initializer");

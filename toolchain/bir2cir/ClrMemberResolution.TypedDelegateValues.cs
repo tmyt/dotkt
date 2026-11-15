@@ -51,10 +51,11 @@ static partial class ClrMemberResolution
 
     static MemberRefNode DelegateInvokeReference(TypeNode stated)
     {
-        var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
+        var context = DelegatePhysicalContext();
+        var physical = BirTypeLowering.LowerSlot(stated, context, BirTypeLowering.PhysicalSlotRole.Value);
         if (physical is TypeNode.Fn fnNode)
             physical = BirTypeLowering.DelegateFqnOf(
-                (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
+                (TypeNode.Fn)BirTypeLowering.LowerSlot(fnNode, context, BirTypeLowering.PhysicalSlotRole.Delegate));
         if (physical is not TypeNode.Fqn delegateFqn)
             throw new InvalidOperationException(
                 $"bir2cir: a function-type call lowers to {TypeNode.ToJson(physical)}, which is not a named type");
@@ -78,10 +79,11 @@ static partial class ClrMemberResolution
 
     static MemberRefNode DelegateConstructorReference(TypeNode stated)
     {
-        var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
+        var context = DelegatePhysicalContext();
+        var physical = BirTypeLowering.LowerSlot(stated, context, BirTypeLowering.PhysicalSlotRole.Value);
         if (physical is TypeNode.Fn fnNode)
             physical = BirTypeLowering.DelegateFqnOf(
-                (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
+                (TypeNode.Fn)BirTypeLowering.LowerSlot(fnNode, context, BirTypeLowering.PhysicalSlotRole.Delegate));
         if (physical is not TypeNode.Fqn delegateFqn)
             throw new InvalidOperationException(
                 $"bir2cir: a delegate construction lowers to {TypeNode.ToJson(physical)}, which is not a named type");
@@ -99,4 +101,11 @@ static partial class ClrMemberResolution
         return MemberRefOf(win, MemberRefNode.Kinds.Ctor, open,
             delegateFqn.Args ?? Array.Empty<TypeNode>(), ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
+
+    // These leaf bindings already have the resolver's reference universe and
+    // local/external boundary. They must not inherit a last lowered file/shadow.
+    static BirTypeLowering.PhysicalTypeContext DelegatePhysicalContext() => new(
+        refBuild: false, aliases: _refs.Aliases, isValue: _refs.IsValueType,
+        physicalNames: _refs.PhysicalTypeNames, localTypes: _localTypes,
+        nullableFrames: _refs.NullableTypeFrames);
 }

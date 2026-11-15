@@ -69,7 +69,7 @@ static partial class ClrMemberResolution
             if (!root.StructurallyEquals(json) || !root.StructurallyEquals(binary)
                 || !json.WellKnownRefs.Value.Members.Keys.SequenceEqual(roles) || !binary.WellKnownRefs.Value.Members.Keys.SequenceEqual(roles))
                 throw new InvalidOperationException("Owning role-table codecs changed identity, signatures, presence or role ordering");
-            var physical = new TypedCirProjection(new HashSet<string>(StringComparer.Ordinal)).ProjectCirFileDeclaration(root);
+            var physical = new TypedCirProjection(new HashSet<string>(StringComparer.Ordinal), new BirTypeLowering.PhysicalTypeContext(refBuild: true)).ProjectCirFileDeclaration(root);
             var physicalJson = DeclarationJson.Read(Encoding.UTF8.GetBytes(DeclarationJson.Write(physical)));
             var physicalBinary = CirFileCodec.Decode(CirFileCodec.Encode(physical));
             foreach (var restored in new[] { physicalJson, physicalBinary })

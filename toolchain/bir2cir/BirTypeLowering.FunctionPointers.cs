@@ -23,7 +23,7 @@ static partial class BirTypeLowering
         return shape;
     }
 
-    static bool TryLowerNativeSignature(TypeNode.Fqn type, bool refBuild, bool force, bool typeArg, out TypeNode native)
+    static bool TryLowerNativeSignature(TypeNode.Fqn type, PhysicalTypeContext context, bool force, bool typeArg, out TypeNode native)
     {
         native = null;
         if (type.Name == FunctionPointerVocabulary.Pointer)
@@ -32,8 +32,8 @@ static partial class BirTypeLowering
             var shape = FunctionPointerShape(type);
             var convention = FunctionPointerVocabulary.Conventions.Single(pair => pair.Value == ((TypeNode.Fqn)type.Args[0]).Name).Key;
             var pointer = new TypeNode.FnPtr(convention, 0, shape.Params.Length,
-                LowerNativeSlot(shape.Ret, refBuild, force, voidPosition: true),
-                shape.Params.Select(slot => LowerNativeSlot(slot, refBuild, force, voidPosition: false)).ToArray());
+                LowerNativeSlot(shape.Ret, context, force, voidPosition: true),
+                shape.Params.Select(slot => LowerNativeSlot(slot, context, force, voidPosition: false)).ToArray());
             ValidateNativePointer(pointer);
             native = pointer;
             return true;
@@ -43,36 +43,36 @@ static partial class BirTypeLowering
             if (type.Args is not [var marker, var underlying])
                 throw new InvalidDataException("A native signature modifier requires its marker and modified type");
             native = new TypeNode.Mod(type.Name == FunctionPointerVocabulary.Required,
-                LowerType(marker, refBuild, force, typeArg: false),
-                LowerType(underlying, refBuild, force, typeArg));
+                LowerType(marker, context, force, typeArg: false),
+                LowerType(underlying, context, force, typeArg));
             return true;
         }
         if (type.Name == FunctionPointerVocabulary.Value)
         {
             if (type.Args is not [var value]) throw new InvalidDataException("A native signature value requires its type");
-            native = LowerType(value, refBuild, force, typeArg);
+            native = LowerType(value, context, force, typeArg);
             return true;
         }
         if (FunctionPointerVocabulary.ArrayRanks.TryGetValue(type.Name, out var rank))
         {
             if (type.Args is not [var element]) throw new InvalidDataException("A native array signature requires its element type");
-            native = TypeNode.Array.General(LowerType(element, refBuild, force, typeArg: false), rank);
+            native = TypeNode.Array.General(LowerType(element, context, force, typeArg: false), rank);
             return true;
         }
         return false;
     }
 
-    static TypeNode LowerNativeSlot(TypeNode type, bool refBuild, bool force, bool voidPosition)
+    static TypeNode LowerNativeSlot(TypeNode type, PhysicalTypeContext context, bool force, bool voidPosition)
     {
         if (type is TypeNode.Star or TypeNode.Projection)
             throw new InvalidDataException("A CLR function pointer requires exact parameter and return types");
         if (type is TypeNode.Fqn { Name: FunctionPointerVocabulary.Required or FunctionPointerVocabulary.Optional,
                 Args: [var marker, var underlying] } modifier)
             return new TypeNode.Mod(modifier.Name == FunctionPointerVocabulary.Required,
-                LowerType(marker, refBuild, force, typeArg: false),
-                LowerNativeSlot(underlying, refBuild, force, voidPosition));
+                LowerType(marker, context, force, typeArg: false),
+                LowerNativeSlot(underlying, context, force, voidPosition));
         return voidPosition && type is TypeNode.Fqn { Name: "kotlin.Unit", Args: null }
-            ? VoidType : LowerType(type, refBuild, force, typeArg: false);
+            ? VoidType : LowerType(type, context, force, typeArg: false);
     }
 
     internal static void ValidateNativePointer(TypeNode.FnPtr pointer)

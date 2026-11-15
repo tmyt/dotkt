@@ -116,7 +116,7 @@ static partial class CirDeclarationProjection
                 Init = new CirConstant { Type = new TypeNode.Fqn("kotlin.Double"), Value = new AttributeArgument.Float64Value(BitConverter.DoubleToInt64Bits(1.0)) },
             } },
         };
-        var metadataPlaceholders = RefBodySquash.LowerLiteralPlaceholders(metadataOnly);
+        var metadataPlaceholders = RefBodySquash.LowerLiteralPlaceholders(metadataOnly, new BirTypeLowering.PhysicalTypeContext(refBuild: true));
         if (metadataPlaceholders.Fields[0].Init.Value is not CirConstant {
             Type: TypeNode.Fqn { Name: "System.Object" }, Value: AttributeArgument.NullValue })
             throw new InvalidOperationException("A metadata-only facade literal became a native runtime value");
@@ -181,7 +181,7 @@ static partial class CirDeclarationProjection
             ClrMemberResolution.Apply(operation, interopReferences, new HashSet<string>());
             var typedOperation = (BirGraphValue)BirGraphDom.ReadBirExpression(operation);
             ForeignNullableGenericCrossing.Check(typedOperation, "event-boundary");
-            var projectedEvent = (ICirExpression)new TypedCirProjection(new HashSet<string>()).ProjectNode(typedOperation);
+            var projectedEvent = (ICirExpression)new TypedCirProjection(new HashSet<string>(), new BirTypeLowering.PhysicalTypeContext(refBuild: true)).ProjectNode(typedOperation);
             using var physicalEvent = JsonDocument.Parse(JsonSerializer.Serialize(projectedEvent, AttributeJson.Options));
             var value = physicalEvent.RootElement;
             if (value.GetProperty("accessor").GetString() != accessor

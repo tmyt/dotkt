@@ -152,7 +152,7 @@ static class AttributeProjection
         var declaringGraph = BirGraphDom.ReadBirFileDeclaration(declaring);
         var emitted = graph.Types.OrEmpty().Concat(declaringGraph.Types.OrEmpty())
             .Select(TypedCirProjection.TypeName).ToHashSet(StringComparer.Ordinal);
-        var projected = new TypedCirProjection(emitted).ProjectCirFileDeclaration(graph);
+        var projected = new TypedCirProjection(emitted, new BirTypeLowering.PhysicalTypeContext(refBuild: true)).ProjectCirFileDeclaration(graph);
         using var doc = JsonSerializer.SerializeToDocument(projected, AttributeJson.Options);
         int attributes = 0, defaults = 0;
         void Check(JsonElement value)

@@ -5,7 +5,7 @@ using A = DotKt.Cir.AttributeArgument;
 
 // The physical projection consumes an owning lowering graph. No JSON objects or
 // text participate here; exact binding facts and opaque carrier bytes pass through.
-sealed partial class TypedCirProjection(IReadOnlySet<string> emitted)
+sealed partial class TypedCirProjection(IReadOnlySet<string> emitted, BirTypeLowering.PhysicalTypeContext physicalTypes)
 {
     internal static string TypeName(IBirTypeDeclaration type) => type switch {
         BirClassDefinition value => value.Name.OrDefault(),
@@ -28,9 +28,9 @@ sealed partial class TypedCirProjection(IReadOnlySet<string> emitted)
             throw new InvalidOperationException("Unconsumed stale physical result stamp");
     }
 
-    static IScalarValue ProjectExecutableLiteral(BirLiteral literal, TypeNode slot)
+    IScalarValue ProjectExecutableLiteral(BirLiteral literal, TypeNode slot)
     {
-        var scalarType = BirTypeLowering.LowerType(slot, refBuild: true, force: true, typeArg: false);
+        var scalarType = BirTypeLowering.LowerSlot(slot, physicalTypes, BirTypeLowering.PhysicalSlotRole.Value, force: true);
         return (IScalarValue)AttributeProjection.Literal(literal, scalarType);
     }
 
