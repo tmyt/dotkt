@@ -4,6 +4,10 @@ using DotKt.Cir;
 
 static partial class SuspendColdLowering
 {
+    // A lexical local's declared type and the authored evaluation role carried
+    // through a later materialized binding.
+    internal readonly record struct LocalDecl(TypeNode Type, string Role);
+
     internal readonly record struct SourceEvalSlot(BirGraphSlot Slot, bool PreserveLocation = false)
     {
         internal IBirExpression Value => (IBirExpression)Slot.Value;
@@ -138,8 +142,8 @@ static partial class SuspendColdLowering
             SourceOperand(receiver, write, address), value);
     }
 
-    // This is the same declared-local/index extension as ExprTyper. It does not
-    // select methods or infer declaration facts from physical names.
+    // Extend node-local type facts with the current declared-local/field index;
+    // do not select methods or infer declaration facts from physical names.
     internal sealed class SourceExprTyper
     {
         readonly IReadOnlyDictionary<string, TypeNode> methodReturns;

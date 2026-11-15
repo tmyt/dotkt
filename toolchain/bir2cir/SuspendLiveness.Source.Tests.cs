@@ -107,15 +107,16 @@ static partial class SuspendLiveness
         Check(structured.FirstSuspensionAcross("header") == "structured" && !structured.LivesAcrossSuspension("perIteration"),
             "structured-loop headers/backedges or continuing-loop scope changed");
 
-        // Concrete typed vocabulary must partition frames exactly like the
-        // emitter's live DOM vocabulary, without runtime tag dispatch.
+        // Concrete typed vocabulary owns the frame partition. Neither inline
+        // loops nor ordinary SAM construction are a separate callable frame.
         BirGraphNode[] otherFrames = { new BirNewClosure(), new BirNewDelegate(), new BirInlineLambda(), new BirNewSuspendLambda() };
         BirGraphNode[] inlineLoops = { new BirForEach(), new BirRepeat() };
         Check(otherFrames.All(SuspendColdLowering.IsSourceOtherFrame)
-            && otherFrames.Select(node => node.Tag).ToHashSet(StringComparer.Ordinal).SetEquals(SuspendColdLowering.OtherFrameBaseKinds)
             && inlineLoops.All(SuspendColdLowering.IsSourceInlineLoop)
-            && inlineLoops.Select(node => node.Tag).ToHashSet(StringComparer.Ordinal).SetEquals(SuspendColdLowering.InlineLoopKinds)
-            && !SuspendColdLowering.IsSourceOtherFrame(new BirNewSam()), "shared concrete frame classifiers lost the existing partition");
+            && !inlineLoops.Any(SuspendColdLowering.IsSourceOtherFrame)
+            && !otherFrames.Any(SuspendColdLowering.IsSourceInlineLoop)
+            && !SuspendColdLowering.IsSourceOtherFrame(new BirNewSam())
+            && !SuspendColdLowering.IsSourceInlineLoop(new BirNewSam()), "shared concrete frame classifiers lost the existing partition");
         Console.WriteLine("[typed suspend liveness] self-test OK (declaration facts, CFG/backedges, deferred operands, exceptional edges, capture/frame scopes)");
     }
 }

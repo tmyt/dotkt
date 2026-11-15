@@ -4,6 +4,10 @@ using DotKt.Cir;
 
 static partial class SuspendLambdaLowering
 {
+    static readonly TypeNode ContAnyTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
+    const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
+    const string RestrictedSuspendLambdaFqn = "kotlin.coroutines.clr.internal.RestrictedSuspendLambda";
+
     internal static void ApplyAll(SuspendColdLowering.SuspendModuleContext module)
     {
         module.BeginLambdaPhase();
