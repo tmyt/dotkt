@@ -675,7 +675,7 @@ sealed partial class ReferenceMetadataIndex
     MetadataLoadContext _netMlc;
     List<Assembly> _netRefAsms;       // the explicit --compile-refs assemblies (framework + user references)
     readonly Dictionary<string, Type> _netTypeCache = new(StringComparer.Ordinal);
-    readonly Dictionary<string, (bool Found, TypeNode Type, JsonNode Value)> _literalFieldCache =
+    readonly Dictionary<string, (bool Found, TypeNode Type, BirLiteral Value)> _literalFieldCache =
         new(StringComparer.Ordinal);
     readonly Dictionary<string, bool> _volatileFieldCache = new(StringComparer.Ordinal);
     bool _netInit;
@@ -1934,6 +1934,13 @@ sealed partial class ReferenceMetadataIndex
     // type here so ConstFieldLowering can author a `const` CIR node; ilemit must not rediscover this representation.
     public bool TryResolveLiteralField(TypeNode.Fqn owner, string name, out TypeNode type, out JsonNode value)
     {
+        var found = TryResolveLiteralFieldValue(owner, name, out type, out var literal);
+        value = literal?.ToDom();
+        return found;
+    }
+
+    internal bool TryResolveLiteralFieldValue(TypeNode.Fqn owner, string name, out TypeNode type, out BirLiteral value)
+    {
         type = null;
         value = null;
         if (owner == null || string.IsNullOrEmpty(name)) return false;
@@ -1941,7 +1948,7 @@ sealed partial class ReferenceMetadataIndex
         if (_literalFieldCache.TryGetValue(cacheKey, out var cached))
         {
             type = cached.Type;
-            value = cached.Value?.DeepClone();
+            value = cached.Value;
             return cached.Found;
         }
         var reflectedOwner = ResolveRefType(owner.Name, owner.Args?.Length ?? 0);
@@ -1960,13 +1967,13 @@ sealed partial class ReferenceMetadataIndex
         type = KotlinTypeOf(field.GetCustomAttributesData(), field.DeclaringType?.Assembly)
             ?? TypeNodeOf(field.FieldType);
         if (type == null) return CacheLiteralMiss(cacheKey, out type, out value);
-        value = LiteralValueNode(raw);
+        value = LiteralValue(raw);
         if (value == null) return CacheLiteralMiss(cacheKey, out type, out value);
-        _literalFieldCache[cacheKey] = (true, type, value.DeepClone());
+        _literalFieldCache[cacheKey] = (true, type, value);
         return true;
     }
 
-    bool CacheLiteralMiss(string cacheKey, out TypeNode type, out JsonNode value)
+    bool CacheLiteralMiss(string cacheKey, out TypeNode type, out BirLiteral value)
     {
         _literalFieldCache[cacheKey] = (false, null, null);
         type = null;
@@ -1976,15 +1983,25 @@ sealed partial class ReferenceMetadataIndex
 
     // Reference constants enter the same typed scalar vocabulary as Kotlin constants.
     // Retain floating bits; unsigned widths are still normalized by their owning physical binding.
-    internal static JsonNode LiteralValueNode(object raw) => raw switch
-    {
-        double value => new Float64Literal(BitConverter.DoubleToInt64Bits(value)).ToDom(),
-        float value => new Float32Literal(BitConverter.SingleToInt32Bits(value)).ToDom(),
-        uint value => JsonValue.Create(unchecked((int)value)),
-        ulong value => JsonValue.Create(unchecked((long)value)),
-        char value => JsonValue.Create((int)value),
-        string value => LiteralText.Encode(value),
-        _ => JsonSerializer.SerializeToNode(raw, raw.GetType()),
+    internal static JsonNode LiteralValueNode(object raw) => LiteralValue(raw)?.ToDom();
+
+    // CLI Constant-table primitives enter one semantic scalar representation.
+    // The unsigned reinterpretation is the existing physical literal policy.
+    internal static BirLiteral LiteralValue(object raw) => raw switch {
+        double value => new Float64Literal(BitConverter.DoubleToInt64Bits(value)),
+        float value => new Float32Literal(BitConverter.SingleToInt32Bits(value)),
+        uint value => new BirLiteral.IntegerLiteral(unchecked((int)value)),
+        ulong value => new BirLiteral.IntegerLiteral(unchecked((long)value)),
+        char value => new BirLiteral.IntegerLiteral(value),
+        string value => new BirLiteral.TextLiteral(value),
+        bool value => new BirLiteral.BooleanLiteral(value),
+        sbyte value => new BirLiteral.IntegerLiteral(value),
+        byte value => new BirLiteral.IntegerLiteral(value),
+        short value => new BirLiteral.IntegerLiteral(value),
+        ushort value => new BirLiteral.IntegerLiteral(value),
+        int value => new BirLiteral.IntegerLiteral(value),
+        long value => new BirLiteral.IntegerLiteral(value),
+        _ => null,
     };
 
     // Volatility of a referenced field is a concrete CLR representation fact. Resolve it while reading the reference
