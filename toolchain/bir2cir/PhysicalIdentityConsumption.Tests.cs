@@ -16,7 +16,11 @@ static class PhysicalIdentityConsumptionTests
         }
 
         foreach (var validator in new[] { "value", "unchecked" })
-        foreach (var change in new[] { "reported", "missing", "uncleared", "replaced", "projected-id" })
+        foreach (var transport in new[] { "physical", "metadata" })
+        foreach (var change in transport == "physical"
+            ? new[] { "reported", "missing", "uncleared", "replaced", "projected-id" }
+            : new[] { "reported", "missing", "uncleared", "replaced", "projected-id",
+                "metadata-target-replaced", "metadata-projection-replaced", "metadata-id-altered" })
         {
             var variable = new TypeNode.Tv("method", 0);
             var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
@@ -55,16 +59,38 @@ static class PhysicalIdentityConsumptionTests
             Reject(() => projection.ReportPhysicalIdentityConsumption(file, owner, method, "wrong-id"));
             projection.ReportPhysicalIdentityConsumption(file, other, helper, "physical-helper");
             helper.DeclarationId = default;
+            BirRoundtripDeclarationIdentity metadata = null;
+            if (transport == "metadata")
+            {
+                metadata = new() { DeclarationId = "shared-selection" };
+                Reject(() => projection.ReportMetadataIdentityTransfer(file, owner, method, metadata));
+                method.RoundtripDeclarationIdentity = metadata;
+                Reject(() => projection.ReportMetadataIdentityTransfer(file, other, method, metadata));
+                metadata.DeclarationId = "wrong-id";
+                Reject(() => projection.ReportMetadataIdentityTransfer(file, owner, method, metadata));
+                metadata.DeclarationId = "shared-selection";
+            }
             if (change != "missing")
             {
-                projection.ReportPhysicalIdentityConsumption(file, owner, method, "shared-selection");
-                Reject(() => projection.ReportPhysicalIdentityConsumption(file, owner, method, "shared-selection"));
+                void Report()
+                {
+                    if (metadata == null) projection.ReportPhysicalIdentityConsumption(file, owner, method, "shared-selection");
+                    else projection.ReportMetadataIdentityTransfer(file, owner, method, metadata);
+                }
+                Report();
+                Reject(Report);
             }
             if (change != "uncleared") method.DeclarationId = default;
+            if (change == "metadata-target-replaced")
+                method.RoundtripDeclarationIdentity = (BirRoundtripDeclarationIdentity)metadata.DeepClone();
+            if (change == "metadata-id-altered") metadata.DeclarationId = "invented";
             if (change == "replaced") owner.Methods = new[] { (BirFunctionDeclaration)method.DeepClone() };
             var dom = file.ToDom(projection.ObserveProjection);
             projection.ProjectRetiredForests();
             if (change == "projected-id") projection.Get(method)[DeclarationIdentityBinding.Key] = "invented";
+            if (change == "metadata-projection-replaced")
+                projection.Get(method)["roundtripDeclarationIdentity"] =
+                    projection.Get(method)["roundtripDeclarationIdentity"].DeepClone();
             void Bind()
             {
                 if (validator == "value") values.BindDomDeclarations(new JsonNode[] { dom }, projection.RetiredMethods, projection);
@@ -85,12 +111,12 @@ static class PhysicalIdentityConsumptionTests
                     && ReferenceEquals(originalBinding.Physical, projection.Get(method))
                     && !originalBinding.Physical.ContainsKey(DeclarationIdentityBinding.Key)
                     && sibling.DeclarationId.Value == "shared-selection"
-                    && projection.WasPhysicalIdentityConsumed(helper, "physical-helper"),
+                    && projection.WasIdentityConsumed(helper, "physical-helper"),
                     "consumption replaced original keys, a sibling identity or an uncaptured helper occurrence");
                 Bind();
                 projection.Release();
             }
         }
-        Console.WriteLine("[physical identity consumption] self-test OK (exact reports, source keys, sibling counts, helpers and strict value/unchecked handoff)");
+        Console.WriteLine("[physical identity consumption] self-test OK (exact allocation/metadata custody, source keys, sibling counts, helpers and strict value/unchecked handoff)");
     }
 }

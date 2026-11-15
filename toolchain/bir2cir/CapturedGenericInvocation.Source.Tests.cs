@@ -38,13 +38,28 @@ static partial class CapturedGenericInvocation
             new BirFileDeclaration { FileClass = "Second", Types = Array.Empty<IBirTypeDeclaration>(), Methods = new[] { Caller() } },
         }, references);
         CaptureParameterWitnesses(roots);
-        var dom = roots.Select(root => (JsonNode)root.ToDom()).ToArray();
-        var pending = PrepareLocalDeclarations(dom, flattenMissingOwners: false);
+        var selectedSource = roots[0].Types.Value[1].Methods.Value[0];
+        var pending = PrepareLocalDeclarations(roots, flattenMissingOwners: false);
         var originalRoots = pending.Roots;
         var savedBucket = pending.Declarations["selected-id"];
-        foreach (var root in dom) RoundtripMetadata.PrepareMetadata(root, runtimeMode: false);
-        Require(savedBucket[0].Dom[DeclarationIdentityBinding.Key] == null,
+        var bindings = new CurrentDeclarationBindings(roots);
+        var projection = new SourceDeclarationProjection(roots, bindings);
+        foreach (var root in roots) RoundtripMetadata.PrepareMetadata(root, runtimeMode: false, projection.ReportMetadataIdentityTransfer);
+        Require(!selectedSource.DeclarationId.IsPresent && ReferenceEquals(savedBucket[0].Source, selectedSource)
+            && selectedSource.RoundtripDeclarationIdentity.HasValue && savedBucket[0].Dom == null,
             "test must cross the real ID-consuming metadata phase");
+        var dom = roots.Select(root => (JsonNode)root.ToDom(projection.ObserveProjection)).ToArray();
+        projection.ProjectRetiredForests();
+        BindProjectedDeclarations(pending, projection);
+        Require(ReferenceEquals(savedBucket, pending.Declarations["selected-id"])
+            && ReferenceEquals(savedBucket[0].Dom, dom[0]["types"][1]["methods"][0]) && savedBucket[0].Source == null
+            && originalRoots.All(root => root.Source == null && root.SourceOccurrences == null
+                && root.File.Source == null && root.File.SourceOccurrences == null
+                && root.Types.All(type => type.Source == null && type.SourceOccurrences == null)),
+            "projection must transition the same captured rows once and release typed staging");
+        Reject(() => BindProjectedDeclarations(pending, projection));
+        bindings.BindProjected();
+        projection.Release();
         var physical = dom.Select(BirGraphDom.ReadBirFileDeclaration).ToArray();
         var prepared = BindPhysicalDeclarations(pending, dom, physical);
         var target = physical[0].Types.Value[1].Methods.Value[0];
@@ -88,14 +103,68 @@ static partial class CapturedGenericInvocation
 
         static void FrontierGuards()
         {
-            var source = new BirFileDeclaration { FileClass = "Guard", Types = Array.Empty<IBirTypeDeclaration>(),
-                Methods = new[] { new BirFunctionDeclaration { Name = "same", Static = true, DeclarationId = "guard-id" } } }.ToDom();
-            var pending = PrepareLocalDeclarations(new[] { source }, false);
-            // An equal replacement is not the captured actual occurrence.
-            source["methods"][0] = source["methods"][0].DeepClone();
-            Reject(() => BindPhysicalDeclarations(pending, new[] { source }, new[] { BirGraphDom.ReadBirFileDeclaration(source) }));
-            Require(pending.Roots != null && pending.Declarations["guard-id"][0].Dom != null,
-                "failed handoff must not release the original membership authority");
+            static (BirFileDeclaration Source, PendingDeclarations Pending, SourceDeclarationProjection Projection) Start()
+            {
+                var source = new BirFileDeclaration { FileClass = "Guard", Types = Array.Empty<IBirTypeDeclaration>(),
+                    Methods = new[] {
+                        new BirFunctionDeclaration { Name = "same", Static = true, DeclarationId = "guard-id" },
+                        new BirFunctionDeclaration { Name = "idless", Static = false },
+                    } };
+                var roots = new[] { source };
+                return (source, PrepareLocalDeclarations(roots, false), new SourceDeclarationProjection(roots, new CurrentDeclarationBindings(roots)));
+            }
+            void RejectSourceChange(Action<BirFileDeclaration> change)
+            {
+                var state = Start(); change(state.Source);
+                state.Source.ToDom(state.Projection.ObserveProjection);
+                state.Projection.ProjectRetiredForests();
+                Reject(() => BindProjectedDeclarations(state.Pending, state.Projection));
+                Require(state.Pending.Roots[0].Source != null && state.Pending.Declarations["guard-id"][0].Source != null
+                    && state.Pending.Declarations["guard-id"][0].Dom == null && !state.Pending.Projected,
+                    "failed source handoff must not partially release or re-admit membership");
+            }
+            RejectSourceChange(file => file.Methods.Value[0] = (BirFunctionDeclaration)file.Methods.Value[0].DeepClone());
+            RejectSourceChange(file => file.Methods.Value[1] = (BirFunctionDeclaration)file.Methods.Value[1].DeepClone());
+            RejectSourceChange(file => (file.Methods.Value[0], file.Methods.Value[1]) = (file.Methods.Value[1], file.Methods.Value[0]));
+            RejectSourceChange(file => file.Methods = file.Methods.Value.Append(new BirFunctionDeclaration { Name = "unreported" }).ToArray());
+
+            var replaced = Start();
+            var replacedDom = replaced.Source.ToDom(replaced.Projection.ObserveProjection);
+            replaced.Projection.ProjectRetiredForests();
+            replacedDom["methods"][1] = replacedDom["methods"][1].DeepClone();
+            Reject(() => BindProjectedDeclarations(replaced.Pending, replaced.Projection));
+            Require(replaced.Pending.Roots[0].Source != null && replaced.Pending.Declarations["guard-id"][0].Dom == null,
+                "ID-less DOM replacement must not be accepted or partly transition selected rows");
+
+            var reordered = Start();
+            var reorderedDom = reordered.Source.ToDom(reordered.Projection.ObserveProjection);
+            reordered.Projection.ProjectRetiredForests();
+            var vector = (JsonArray)reorderedDom["methods"];
+            var first = vector[0]; var second = vector[1]; vector.Clear(); vector.Add(second); vector.Add(first);
+            Reject(() => BindProjectedDeclarations(reordered.Pending, reordered.Projection));
+
+            // The real later handoff still rejects equal DOM replacements.
+            var physicalGuard = Start();
+            var sourceDom = physicalGuard.Source.ToDom(physicalGuard.Projection.ObserveProjection);
+            physicalGuard.Projection.ProjectRetiredForests();
+            BindProjectedDeclarations(physicalGuard.Pending, physicalGuard.Projection);
+            sourceDom["methods"][0] = sourceDom["methods"][0].DeepClone();
+            Reject(() => BindPhysicalDeclarations(physicalGuard.Pending, new JsonNode[] { sourceDom }, new[] { BirGraphDom.ReadBirFileDeclaration(sourceDom) }));
+            Require(physicalGuard.Pending.Roots != null && physicalGuard.Pending.Declarations["guard-id"][0].Dom != null,
+                "failed physical handoff must preserve the original captured DOM authority");
+
+            var one = new BirFunctionDeclaration { Name = "one", DeclarationId = "shared-id" };
+            var two = new BirFunctionDeclaration { Name = "two", DeclarationId = "shared-id" };
+            var earlier = new BirClassDefinition { Name = "Earlier", Kind = "class", Methods = new[] { one } };
+            var later = new BirClassDefinition { Name = "Later", Kind = "class", Methods = new[] { two } };
+            var last = new BirClassDefinition { Name = "Earlier", Kind = "class", Methods = Array.Empty<BirFunctionDeclaration>() };
+            var files = new[] { new BirFileDeclaration { FileClass = "First", Types = new IBirTypeDeclaration[] { earlier, later } },
+                new BirFileDeclaration { FileClass = "Last", Types = new IBirTypeDeclaration[] { last } } };
+            var captured = PrepareLocalDeclarations(files, true);
+            var bucket = captured.Declarations["shared-id"];
+            Require(bucket.Count == 2 && ReferenceEquals(bucket[0].Source, one) && ReferenceEquals(bucket[1].Source, two)
+                && ReferenceEquals(captured.Types["Earlier"], captured.Roots[1].Types[0]) && captured.FlattenMissingOwners,
+                "same-ID buckets, module order, last type membership or flatten mode changed");
         }
     }
 

@@ -1120,6 +1120,18 @@ sealed class Pipeline
             foreach (var source in captured) ExactExternalDeclarationIdentity.Apply(source, refs);
         finalCarrierTypes = FBoundStarProjectionErasure.RefreshCurrentPhysicalTypesSource(captured, carrierRealization);
 
+        // Capture current raw-ID membership before metadata consumes it. Grant
+        // only these actual declarations; later CGI helpers stay unmarked.
+        var capturedInvocations = CapturedGenericInvocation.PrepareLocalDeclarations(captured,
+            flattenMissingOwners: substituteStdlibBuild);
+        foreach (var source in captured)
+        {
+            RoundtripMetadata.PrepareMetadata(source, substituteStdlibBuild,
+                suspendTransitions.ReportMetadataIdentityTransfer);
+            SuspendResidueLowering.DropModifier(source);
+            ClrMemberResolution.EnsurePlainCallDescriptors(source);
+        }
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
@@ -1138,6 +1150,7 @@ sealed class Pipeline
         var continuingRoots = files.Select(file => file.Root).ToArray();
         suspendTransitions.Projection.ProjectRetiredForests();
         var retiredDom = suspendTransitions.Projection.RetiredMethods;
+        CapturedGenericInvocation.BindProjectedDeclarations(capturedInvocations, suspendTransitions.Projection);
         currentDeclarations.BindProjected();
         genericRepresentations.BindDomDeclarations(continuingRoots, aliasTransitions, suspendTransitions.Projection);
         valueRepresentations.BindDomDeclarations(continuingRoots, retiredDom, suspendTransitions.Projection);
@@ -1154,7 +1167,7 @@ sealed class Pipeline
         return new LoadedBirModule(files, sourceIndex,
             genericRepresentations, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, enums,
-                carrierContinuation, physicalPreparation));
+                carrierContinuation, physicalPreparation, capturedInvocations));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -1230,37 +1243,19 @@ sealed class Pipeline
         // Collection surfaces, their generated-call binding and exact external
         // declaration edges are complete on owning BIR before the frontier.
 
-        var capturedInvocations = CapturedGenericInvocation.PrepareLocalDeclarations(loweredRoots.Select(file => file.Root),
-            flattenMissingOwners: _options.SubstituteStdlibBuild);
+        var capturedInvocations = module.Preparation.CapturedInvocations;
         // PHASE 3B — metadata, exact external identities, and validation over the now-stable module graph.
         bool runtimeRepresentationTypes = false;
         foreach (var (lowered, outputName) in loweredRoots)
         {
-            // ROUNDTRIP METADATA (#71 S2): grant exact declaration/slot obligations and transfer metadata-only
-            // facts here. CompleteMetadata encodes them at the typed seam as CIR attrs/retAttrs emitted by ilemit's
-            // generic BuildCab path, with no Kotlin knowledge there. Materialized facts (nullableFlags,
-            // suspendFnType, inlineBir, mods, suspendBridge, readOnly) are all present. SKIPPED in the runtime build
-            // (`SubstituteStdlibBuild`) except for runtime linkage and representation-type associations. Placed after
-            // the earlier reference-body squash, which preserves all captured metadata. The attribute-class DEFS
-            // are emitted ONCE below (SynthDefsFile), not per-file.
-            if (!_options.SubstituteStdlibBuild) RoundtripMetadata.PrepareMetadata(lowered, runtimeMode: false);
-            // Runtime builds retain declaration linkage and representation-type associations, not source slots.
-            // Exact runtime MethodDefs are associated with their reference twins by declaration ID.
-            else
-            {
-                RoundtripMetadata.PrepareMetadata(lowered, runtimeMode: true);
-            }
-            // The Kotlin `suspend` modifier has no CLR meaning and every consumer of it is a bir2cir pass: the cold
-            // lowering, and the pending [KotlinFunction(Suspend)] obligation (which is how a referenced module still
-            // sees a suspend surface). DropModifier transfers that exact scalar before removing it — ilemit has no
-            // coroutine semantics to apply to it, and IrSanity refuses one that survives.
-            SuspendResidueLowering.DropModifier(lowered);
+            // Metadata obligations and the exact suspend scalar were transferred
+            // on owning BIR. The remaining CLR operation resolver consumes this
+            // final physical graph without regranting later declarations.
             // W1-S2 (#46): resolve every clrStatic/clrInstance/newClr against the ref.dll MLC. Internal
             // `resolvedMemberParams` carries matching inputs between bir2cir passes; Apply consumes it into the scalar
             // memberRef (+ `dispatch` on clrInstance). ilemit is a pure linker. Runs LAST — on
             // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
-            ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
         }
 
@@ -1574,7 +1569,8 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files,
     ModulePreparation Preparation);
 sealed record ModulePreparation(TypedModuleInventory Inventory, EnumPreparation Enums,
     FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers,
-    PhysicalAbiPreparation PhysicalAbi);
+    PhysicalAbiPreparation PhysicalAbi,
+    CapturedGenericInvocation.PendingDeclarations CapturedInvocations);
 sealed record PhysicalAbiPreparation(HashSet<string> EmittedLocalTypes,
     HashSet<string> ExternalCanonicalTypes,
     ExternalGenericConstraintValidation.Prepared GenericConstraints,

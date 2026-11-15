@@ -14,14 +14,13 @@ static partial class RoundtripMetadata
         var frame = new NullableRepresentationFrame(2, Array.Empty<int>(), new[] { 1, 0 });
         var source = new SourceTypeFacts(new Dictionary<int, TypeNode[]> { [0] = new[] { new TypeNode.Fqn("Probe.Bound") } })
             .MergeNullableFrame(frame);
-        var handoff = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
-            new BirClassDefinition { Name = "Probe.Handoff", Kind = "class", KotlinSupertypesPre = source },
-        } }.ToDom();
-        var oldFact = handoff["types"][0][KotlinSupertypesRecord.PreKey];
-        PrepareMetadata(handoff, runtimeMode: false);
-        if (oldFact == null || handoff["types"][0][KotlinSupertypesRecord.PreKey] != null
-            || !ReferenceEquals(handoff["types"][0]["roundtripSupertypesPre"], oldFact)
-            || handoff["types"][0]["roundtripTypeHeaderPending"]?.GetValue<bool>() != true)
+        var handoffType = new BirClassDefinition { Name = "Probe.Handoff", Kind = "class", KotlinSupertypesPre = source };
+        var handoff = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { handoffType } };
+        PrepareMetadata(handoff, runtimeMode: false, (_, _, _, _) =>
+            throw new InvalidOperationException("A type header has no method identity to transfer"));
+        if (handoffType.KotlinSupertypesPre.IsPresent
+            || !ReferenceEquals(handoffType.RoundtripSupertypesPre.Value, source)
+            || handoffType.RoundtripTypeHeaderPending.OrDefault() != true)
             throw new InvalidOperationException("Original stamp phase lost the exact frozen source-fact handoff");
         var member = new BirFunctionDeclaration { Name = "alreadyStamped" };
         var owner = new BirClassDefinition {

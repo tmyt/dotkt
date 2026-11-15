@@ -10,13 +10,14 @@ static partial class CapturedGenericInvocation
         internal readonly int Position;
         internal readonly string Name;
         internal readonly bool Static;
+        internal BirFunctionDeclaration Source;
         internal JsonObject Dom;
         internal BirFunctionDeclaration Method;
         internal string Owner => Container.Name;
-        internal MethodBinding(ContainerBinding container, int position, JsonObject method)
+        internal MethodBinding(ContainerBinding container, int position, BirFunctionDeclaration method)
         {
-            Container = container; Position = position; Dom = method;
-            Name = Str(method["name"]); Static = Bool(method["static"]);
+            Container = container; Position = position; Source = method;
+            Name = method.Name.OrDefault(); Static = method.Static.OrDefault();
         }
     }
 
@@ -25,14 +26,19 @@ static partial class CapturedGenericInvocation
         internal readonly string Name, Kind;
         internal readonly int Position;
         internal readonly int MethodCount;
+        internal BirGraphValue Source;
+        internal OptionalField<BirFunctionDeclaration[]> SourceMethods;
+        internal BirFunctionDeclaration[] SourceOccurrences;
         internal JsonObject Dom;
         internal JsonArray DomMethods;
         internal BirFunctionDeclaration[] Methods;
         internal IBirTypeDeclaration Type;
-        internal ContainerBinding(JsonObject node, int position, string name)
+        internal ContainerBinding(BirGraphValue node, int position, string name)
         {
-            Dom = node; Position = position; Name = name; Kind = Str(node["kind"]);
-            DomMethods = node["methods"] as JsonArray; MethodCount = DomMethods?.Count ?? 0;
+            Source = node; Position = position; Name = name;
+            Kind = node is IBirTypeDeclaration type ? type.Kind.OrDefault() : null;
+            SourceMethods = CurrentMethods(node);
+            SourceOccurrences = SourceMethods.OrEmpty().ToArray(); MethodCount = SourceOccurrences.Length;
         }
     }
 
@@ -40,12 +46,15 @@ static partial class CapturedGenericInvocation
     {
         internal readonly ContainerBinding File;
         internal readonly ContainerBinding[] Types;
+        internal BirFileDeclaration Source;
+        internal OptionalField<IBirTypeDeclaration[]> SourceTypes;
+        internal IBirTypeDeclaration[] SourceOccurrences;
         internal JsonArray DomTypes;
-        internal RootBinding(JsonObject root)
+        internal RootBinding(BirFileDeclaration root)
         {
-            File = new(root, -1, Str(root["fileClass"]));
-            DomTypes = root["types"] as JsonArray;
-            Types = DomTypes?.Select((type, index) => new ContainerBinding(type.AsObject(), index, Str(type["name"]))).ToArray() ?? [];
+            Source = root; File = new(root, -1, root.FileClass.OrDefault());
+            SourceTypes = root.Types; SourceOccurrences = root.Types.OrEmpty().ToArray();
+            Types = SourceOccurrences.Select((type, index) => new ContainerBinding((BirGraphValue)type, index, type.Name.OrDefault())).ToArray();
         }
     }
 
@@ -55,15 +64,16 @@ static partial class CapturedGenericInvocation
         internal readonly Dictionary<string, List<MethodBinding>> Declarations = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, ContainerBinding> Types = new(StringComparer.Ordinal);
         internal readonly bool FlattenMissingOwners;
+        internal bool Projected;
         internal PendingDeclarations(RootBinding[] roots, bool flatten) { Roots = roots; FlattenMissingOwners = flatten; }
     }
 
     // Capture admission and IDs before metadata preparation consumes the raw
     // keys. The dictionary itself crosses the frontier; it is not rebuilt from
     // pending metadata, attributes, names or current declaration membership.
-    internal static PendingDeclarations PrepareLocalDeclarations(IEnumerable<JsonNode> roots, bool flattenMissingOwners)
+    internal static PendingDeclarations PrepareLocalDeclarations(IReadOnlyList<BirFileDeclaration> roots, bool flattenMissingOwners)
     {
-        var pending = new PendingDeclarations(roots.OfType<JsonObject>().Select(root => new RootBinding(root)).ToArray(), flattenMissingOwners);
+        var pending = new PendingDeclarations(roots.Select(root => new RootBinding(root)).ToArray(), flattenMissingOwners);
         foreach (var root in pending.Roots)
         {
             Capture(root.File);
@@ -73,20 +83,96 @@ static partial class CapturedGenericInvocation
 
         void Capture(ContainerBinding owner)
         {
-            if (owner.DomMethods == null) return;
-            for (var index = 0; index < owner.DomMethods.Count; index++)
-                if (owner.DomMethods[index] is JsonObject method && Str(method[DeclarationIdentityBinding.Key]) is string id)
+            for (var index = 0; index < owner.SourceOccurrences.Length; index++)
+                if (owner.SourceOccurrences[index] is { DeclarationId.HasValue: true } method)
                 {
+                    var id = method.DeclarationId.Value;
                     if (!pending.Declarations.TryGetValue(id, out var bucket)) pending.Declarations[id] = bucket = [];
                     bucket.Add(new MethodBinding(owner, index, method));
                 }
         }
     }
 
+    // This is an address transition of the same captured rows, not another ID,
+    // signature or metadata admission pass. Validate every original vector,
+    // including ID-less methods, before replacing any source anchor with DOM.
+    internal static void BindProjectedDeclarations(PendingDeclarations pending, SourceDeclarationProjection projection)
+    {
+        if (pending.Roots == null || pending.Projected) throw FrontierMismatch();
+        foreach (var root in pending.Roots)
+        {
+            if (root.Source == null || !ReferenceEquals(root.File.Source, root.Source)
+                || root.Source.FileClass.OrDefault() != root.File.Name
+                || !SameVector(root.Source.Types, root.SourceTypes, root.SourceOccurrences)) throw FrontierMismatch();
+            var dom = projection.Get(root.Source);
+            var types = dom["types"] as JsonArray;
+            if (Str(dom["fileClass"]) != root.File.Name || (types?.Count ?? 0) != root.Types.Length
+                || (types != null) != root.SourceTypes.HasValue) throw FrontierMismatch();
+            Validate(root.File, dom);
+            foreach (var type in root.Types)
+            {
+                var source = root.SourceOccurrences[type.Position];
+                var projected = projection.Get((BirGraphValue)source);
+                if (!ReferenceEquals(type.Source, source) || source.Name.OrDefault() != type.Name || source.Kind.OrDefault() != type.Kind
+                    || !ReferenceEquals(types[type.Position], projected)
+                    || Str(projected["name"]) != type.Name || Str(projected["kind"]) != type.Kind) throw FrontierMismatch();
+                Validate(type, projected);
+            }
+        }
+        foreach (var bucket in pending.Declarations.Values)
+            foreach (var binding in bucket)
+            {
+                var method = binding.Source;
+                var dom = projection.Get(method);
+                if (!ReferenceEquals(binding.Container.SourceOccurrences[binding.Position], method)
+                    || method.Name.OrDefault() != binding.Name || method.Static.OrDefault() != binding.Static
+                    || Str(dom["name"]) != binding.Name || Bool(dom["static"]) != binding.Static) throw FrontierMismatch();
+            }
+
+        // All rows passed. Fill only observed addresses and release the typed
+        // staging forest; the original dictionaries and bucket rows stay live.
+        foreach (var bucket in pending.Declarations.Values)
+            foreach (var binding in bucket) { binding.Dom = projection.Get(binding.Source); binding.Source = null; }
+        foreach (var root in pending.Roots)
+        {
+            Bind(root.File);
+            foreach (var type in root.Types) Bind(type);
+            root.DomTypes = root.File.Dom["types"] as JsonArray;
+            root.Source = null; root.SourceTypes = default; root.SourceOccurrences = null;
+        }
+        pending.Projected = true;
+
+        void Validate(ContainerBinding owner, JsonObject dom)
+        {
+            var methods = dom["methods"] as JsonArray;
+            if (!SameVector(CurrentMethods(owner.Source), owner.SourceMethods, owner.SourceOccurrences)
+                || (methods?.Count ?? 0) != owner.MethodCount || (methods != null) != owner.SourceMethods.HasValue)
+                throw FrontierMismatch();
+            for (var index = 0; index < owner.SourceOccurrences.Length; index++)
+                if (!ReferenceEquals(methods[index], projection.Get(owner.SourceOccurrences[index]))) throw FrontierMismatch();
+        }
+        void Bind(ContainerBinding owner)
+        {
+            owner.Dom = projection.Get(owner.Source); owner.DomMethods = owner.Dom["methods"] as JsonArray;
+            owner.Source = null; owner.SourceMethods = default; owner.SourceOccurrences = null;
+        }
+    }
+
+    static OptionalField<BirFunctionDeclaration[]> CurrentMethods(BirGraphValue owner) => owner switch {
+        BirFileDeclaration file => file.Methods,
+        IBirTypeDeclaration type => type.Methods,
+        _ => throw FrontierMismatch(),
+    };
+
+    static bool SameVector<T>(OptionalField<T[]> current, OptionalField<T[]> captured, T[] occurrences) where T : class
+        => current.IsPresent == captured.IsPresent && current.IsNull == captured.IsNull
+            && (!current.HasValue || ReferenceEquals(current.Value, captured.Value)
+                && current.Value.SequenceEqual(occurrences, ReferenceEqualityComparer.Instance));
+
     internal static PreparedInvocation BindPhysicalDeclarations(PendingDeclarations pending,
         IReadOnlyList<JsonNode> domRoots, IReadOnlyList<BirFileDeclaration> typedRoots)
     {
-        if (pending.Roots == null || pending.Roots.Length != domRoots.Count || domRoots.Count != typedRoots.Count) throw FrontierMismatch();
+        if (pending.Roots == null || !pending.Projected || pending.Roots.Length != domRoots.Count || domRoots.Count != typedRoots.Count) throw FrontierMismatch();
         // Validate every original owning vector before transitioning any anchor.
         for (var index = 0; index < pending.Roots.Length; index++)
         {

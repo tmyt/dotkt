@@ -146,27 +146,86 @@ static partial class RoundtripMetadata
     {
         var original = new BirFunctionDeclaration { Name = "before", DeclarationId = "id", DeclarationSourceName = "source",
             Mods = new BirModifiers { Suspend = true }, MethodTypeParameterBoundsPre = new SourceBoundsSnapshot(new Dictionary<int, TypeNode[]> { [0] = new[] { type } }),
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } },
             Params = new[] { new BirParameter { Name = "p", Type = type } } };
-        var handoff = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
-            new BirClassDefinition { Name = "Probe", Kind = "class", Methods = new[] { original } },
-        } }.ToDom();
-        var declaration = handoff["types"][0]["methods"][0].AsObject();
-        var bounds = declaration[NullableGenericErasure.MethodTypeParameterBoundsPre];
-        PrepareMetadata(handoff, runtimeMode: false);
+        var frame = new NullableRepresentationFrame(1, Array.Empty<int>());
+        var signature = new SourceDeclarationSignature(new[] { type }, type);
+        var indices = Array.Empty<int>();
+        original.DeclarationSignatureAllocation = false;
+        original.DeclarationSemanticSignature = signature;
+        original.SemanticReifiedIndices = indices;
+        original.NullableWitnessIndices = OptionalField<int[]>.Null;
+        original.NullableRepresentationFrame = frame;
+        var constructor = new BirConstructor { DeclarationId = "ctor", DeclarationSourceName = "sourceCtor",
+            DeclarationSignatureAllocation = true, Params = new[] { new BirParameter { Name = "p", Type = type } } };
+        var owner = new BirClassDefinition { Name = "Probe", Kind = "class", Methods = new[] { original }, Ctors = new[] { constructor } };
+        var nullIdentity = new BirFunctionDeclaration { Name = "nullIdentity", DeclarationId = OptionalField<string>.Null,
+            DeclarationSourceName = OptionalField<string>.Null, DeclarationSignatureAllocation = OptionalField<bool>.Null,
+            DeclarationSemanticSignature = OptionalField<SourceDeclarationSignature>.Null, SemanticReifiedIndices = OptionalField<int[]>.Null,
+            NullableWitnessIndices = OptionalField<int[]>.Null, NullableRepresentationFrame = OptionalField<NullableRepresentationFrame>.Null,
+            MethodTypeParameterBoundsPre = OptionalField<SourceBoundsSnapshot>.Null };
+        var absentIdentity = new BirFunctionDeclaration { Name = "absent" };
+        var fileMethod = new BirFunctionDeclaration { Name = "file", DeclarationId = "file-id" };
+        var handoff = new BirFileDeclaration { Methods = new[] { fileMethod, nullIdentity, absentIdentity }, Types = new IBirTypeDeclaration[] { owner } };
+        var bounds = original.MethodTypeParameterBoundsPre.Value;
+        var methods = owner.Methods.Value;
+        var calls = new List<BirFunctionDeclaration>();
+        PrepareMetadata(handoff, runtimeMode: false, (file, actualOwner, method, pending) => {
+            if (!ReferenceEquals(file, handoff) || !ReferenceEquals(method.RoundtripDeclarationIdentity.Value, pending)
+                || !method.DeclarationId.HasValue || pending.DeclarationId.Value != method.DeclarationId.Value
+                || (ReferenceEquals(method, fileMethod) ? actualOwner != null : !ReferenceEquals(actualOwner, owner)))
+                throw new InvalidOperationException("Metadata identity custody was not reported while actual source/target were attached");
+            calls.Add(method);
+        });
         SuspendResidueLowering.DropModifier(handoff);
-        if (declaration.ContainsKey(DeclarationIdentityBinding.Key) || declaration.ContainsKey("declarationSourceName")
-            || declaration.ContainsKey(NullableGenericErasure.MethodTypeParameterBoundsPre)
-            || !ReferenceEquals(bounds, declaration["roundtripMethodBounds"])
-            || declaration["mods"].AsObject().Count != 0 || declaration["roundtripSuspend"].GetValue<bool>() != true
-            || declaration["params"][0]["roundtripMetadataPending"].GetValue<bool>() != true)
+        var identity = original.RoundtripDeclarationIdentity.Value;
+        if (!calls.SequenceEqual(new[] { fileMethod, original }) || !ReferenceEquals(owner.Methods.Value, methods)
+            || original.DeclarationId.IsPresent || original.DeclarationSourceName.IsPresent
+            || original.DeclarationSignatureAllocation.IsPresent || original.DeclarationSemanticSignature.IsPresent
+            || original.SemanticReifiedIndices.IsPresent || original.NullableWitnessIndices.IsPresent || original.NullableRepresentationFrame.IsPresent
+            || original.MethodTypeParameterBoundsPre.IsPresent || !ReferenceEquals(bounds, original.RoundtripMethodBounds.Value)
+            || !original.Mods.Value.StructurallyEquals(new BirModifiers()) || original.RoundtripSuspend.Value != true
+            || original.Params.Value[0].RoundtripMetadataPending.Value != true
+            || identity.DeclarationSignatureAllocation.IsNull || identity.DeclarationSignatureAllocation.Value != false
+            || !ReferenceEquals(identity.DeclarationSemanticSignature.Value, signature) || !ReferenceEquals(identity.SemanticReifiedIndices.Value, indices)
+            || !identity.NullableWitnessIndices.IsNull || !ReferenceEquals(identity.NullableRepresentationFrame.Value, frame)
+            || constructor.DeclarationId.IsPresent || constructor.DeclarationSourceName.IsPresent || constructor.DeclarationSignatureAllocation.IsPresent
+            || constructor.RoundtripDeclarationIdentity.Value.DeclarationId.Value != "ctor"
+            || constructor.RoundtripDeclarationIdentity.Value.DeclarationSourceName.Value != "sourceCtor"
+            || constructor.RoundtripDeclarationIdentity.Value.DeclarationSignatureAllocation.Value != true
+            || constructor.RoundtripDeclarationIdentity.Value.DeclarationSemanticSignature.IsPresent
+            || !constructor.Params.Value[0].RoundtripMetadataPending.Value)
             throw new InvalidOperationException("Metadata preparation lost original consumption clock or actual fact identity");
-        var enumeration = new BirEnumDefinition { Kind = "enum", Methods = new[] { original } }.ToDom();
-        var file = new JsonObject { ["types"] = new JsonArray(enumeration) };
-        PrepareMetadata(file, runtimeMode: false);
-        if (enumeration["methods"][0]["roundtripMetadataPending"] != null)
+        var nulls = nullIdentity.RoundtripDeclarationIdentity.Value;
+        if (!nulls.DeclarationId.IsNull || !nulls.DeclarationSourceName.IsNull || !nulls.DeclarationSignatureAllocation.IsNull
+            || !nulls.DeclarationSemanticSignature.IsNull || !nulls.SemanticReifiedIndices.IsNull || !nulls.NullableWitnessIndices.IsNull
+            || !nulls.NullableRepresentationFrame.IsNull || !nullIdentity.RoundtripMethodBounds.IsNull
+            || nullIdentity.DeclarationId.IsPresent || absentIdentity.RoundtripDeclarationIdentity.IsPresent)
+            throw new InvalidOperationException("Metadata preparation collapsed explicit-null identity/frame facts into absence");
+        var transported = BirFileCodec.Decode(BirFileCodec.Encode(handoff));
+        if (!transported.Methods.Value[1].RoundtripDeclarationIdentity.Value.StructurallyEquals(nulls)
+            || transported.Methods.Value[2].RoundtripDeclarationIdentity.IsPresent)
+            throw new InvalidOperationException("Metadata custody transport changed explicit-null versus absent identity fields");
+        var enumMethod = new BirFunctionDeclaration { Name = "enumMember", Static = true, DeclarationId = "enum-id",
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } }, MethodTypeParameterBoundsPre = bounds };
+        var enumFacts = SourceTypeFacts.Empty;
+        var enumeration = new BirEnumDefinition { Kind = "enum", Methods = new[] { enumMethod }, KotlinSupertypesPre = enumFacts };
+        var enumFile = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { enumeration } };
+        PrepareMetadata(enumFile, runtimeMode: false, (_, _, _, _) =>
+            throw new InvalidOperationException("Normal metadata unexpectedly visited a native enum member"));
+        if (enumMethod.RoundtripMetadataPending.IsPresent || !enumeration.RoundtripTypeHeaderPending.Value
+            || !ReferenceEquals(enumeration.KotlinSupertypesPre.Value, enumFacts)
+            || !ReferenceEquals(enumMethod.MethodTypeParameterBoundsPre.Value, bounds))
             throw new InvalidOperationException("Normal metadata granted enum members obligations beyond the original traversal");
-        PrepareMetadata(file, runtimeMode: true);
-        if (enumeration["methods"][0]["roundtripMetadataPending"]?.GetValue<bool>() != true)
+        var enumCalls = 0;
+        PrepareMetadata(enumFile, runtimeMode: true, (file, actualOwner, method, pending) => {
+            if (!ReferenceEquals(file, enumFile) || !ReferenceEquals(actualOwner, enumeration) || !ReferenceEquals(method, enumMethod)
+                || method.DeclarationId.Value != "enum-id" || !ReferenceEquals(method.RoundtripDeclarationIdentity.Value, pending))
+                throw new InvalidOperationException("Runtime enum metadata lost its actual method custody");
+            enumCalls++;
+        });
+        if (enumCalls != 1 || enumMethod.RoundtripMetadataPending.OrDefault() != true || enumeration.KotlinSupertypesPre.IsPresent
+            || enumMethod.DeclarationId.IsPresent || enumMethod.MethodTypeParameterBoundsPre.IsPresent || enumMethod.RoundtripMethodBounds.IsPresent)
             throw new InvalidOperationException("Runtime metadata lost its original enum-member visitation");
     }
 

@@ -187,7 +187,7 @@ static partial class UncheckedGenericCastReturnErasure
             }
             if (occurrence.Method >= occurrence.OriginalMethods.Length
                 || !ReferenceEquals(occurrence.OriginalMethods[occurrence.Method], occurrence.Declaration)
-                || !(declarations?.WasPhysicalIdentityConsumed(occurrence.Declaration, occurrence.Identity) == true
+                || !(declarations?.WasIdentityConsumed(occurrence.Declaration, occurrence.Identity) == true
                     ? !occurrence.Declaration.DeclarationId.IsPresent
                     : occurrence.Declaration.DeclarationId.OrDefault() == occurrence.Identity)
                 || occurrence.Declaration.Static.OrDefault() != occurrence.Facts.Static
@@ -241,7 +241,7 @@ static partial class UncheckedGenericCastReturnErasure
                     throw ProjectionMismatch();
                 method = continuing;
             }
-            if (!(declarations?.WasPhysicalIdentityConsumed(occurrence.Declaration, occurrence.Identity) == true
+            if (!(declarations?.WasIdentityConsumed(occurrence.Declaration, occurrence.Identity) == true
                     ? !method.ContainsKey(DeclarationIdentityBinding.Key)
                     : Str(method[DeclarationIdentityBinding.Key]) == occurrence.Identity)
                 || Bool(method["static"]) != occurrence.Facts.Static

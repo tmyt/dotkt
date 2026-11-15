@@ -10,7 +10,8 @@ sealed class SourceDeclarationProjection
 {
     sealed record TypeVector(BirFileDeclaration File, IBirTypeDeclaration[] Original,
         IBirTypeDeclaration[] Continuing, HashSet<IBirTypeDeclaration> Retired);
-    sealed record IdentityConsumption(BirFileDeclaration File, IBirTypeDeclaration Owner, string Identity);
+    sealed record IdentityConsumption(BirFileDeclaration File, IBirTypeDeclaration Owner, string Identity,
+        BirRoundtripDeclarationIdentity Metadata = null);
     internal sealed class MethodPlacement
     {
         internal BirFunctionDeclaration[] Before { get; }
@@ -61,21 +62,43 @@ sealed class SourceDeclarationProjection
     // before removing the field; binders never reconstruct a missing identity.
     internal void ReportPhysicalIdentityConsumption(BirFileDeclaration file, IBirTypeDeclaration owner,
         BirFunctionDeclaration method, string identity)
+        => ReportIdentityConsumption(file, owner, method, identity, null);
+
+    internal void ReportMetadataIdentityTransfer(BirFileDeclaration file, IBirTypeDeclaration owner,
+        BirFunctionDeclaration method, BirRoundtripDeclarationIdentity identity)
+    {
+        if (identity == null || !method.RoundtripDeclarationIdentity.HasValue
+            || !ReferenceEquals(method.RoundtripDeclarationIdentity.Value, identity)
+            || !identity.DeclarationId.HasValue) throw Mismatch();
+        ReportIdentityConsumption(file, owner, method, identity.DeclarationId.Value, identity);
+    }
+
+    void ReportIdentityConsumption(BirFileDeclaration file, IBirTypeDeclaration owner,
+        BirFunctionDeclaration method, string identity, BirRoundtripDeclarationIdentity metadata)
     {
         if (projected || released || identity == null || !types.TryGetValue(file, out var row)
             || !file.Types.OrEmpty().SequenceEqual(row.Continuing, ReferenceEqualityComparer.Instance)
             || owner != null && row.Continuing.Count(actual => ReferenceEquals(actual, owner)) != 1
             || CurrentMethods(file, owner).Count(actual => ReferenceEquals(actual, method)) != 1
             || !method.DeclarationId.HasValue || method.DeclarationId.Value != identity
-            || !consumedIdentities.TryAdd(method, new(file, owner, identity))) throw Mismatch();
+            || !consumedIdentities.TryAdd(method, new(file, owner, identity, metadata))) throw Mismatch();
     }
 
-    internal bool WasPhysicalIdentityConsumed(BirFunctionDeclaration method, string identity)
+    internal bool WasIdentityConsumed(BirFunctionDeclaration method, string identity)
     {
         if (released) throw Mismatch();
         if (!consumedIdentities.TryGetValue(method, out var row)) return false;
         if (!projected || row.Identity != identity || method.DeclarationId.IsPresent
             || CurrentMethods(row.File, row.Owner).Count(actual => ReferenceEquals(actual, method)) != 1)
+            throw Mismatch();
+        if (row.Metadata != null
+            && (!method.RoundtripDeclarationIdentity.HasValue
+                || !ReferenceEquals(method.RoundtripDeclarationIdentity.Value, row.Metadata)
+                || row.Metadata.DeclarationId.OrDefault() != identity
+                || !projections.TryGetValue(row.Metadata, out var target)
+                || !ReferenceEquals(Get(method)["roundtripDeclarationIdentity"], target)
+                || target["declarationId"] is not JsonValue value
+                || !value.TryGetValue<string>(out var transferred) || transferred != identity))
             throw Mismatch();
         return true;
     }
@@ -156,7 +179,8 @@ sealed class SourceDeclarationProjection
     internal void ObserveProjection(BirGraphValue actual, JsonObject target)
     {
         bindings.ObserveProjection(actual, target);
-        if (actual is IBirTypeDeclaration or BirFunctionDeclaration or BirFieldDeclaration or BirRefTypeDeclaration
+        if (actual is BirFileDeclaration or IBirTypeDeclaration or BirFunctionDeclaration or BirFieldDeclaration
+            or BirRefTypeDeclaration or BirRoundtripDeclarationIdentity
             || bindings.TryGetCapturedSource(actual, out _))
             if (!projections.TryAdd(actual, target)) throw Mismatch();
     }
