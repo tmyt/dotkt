@@ -17,7 +17,9 @@ static partial class ForeignStarProjectionBinding
         var projectedList = new TypeNode.Fqn("System.Collections.Generic.IList`1", new TypeNode[] { new TypeNode.Star() });
         foreach (var access in new[] { "get", "set" })
         {
-            var signature = access == "get" ? new[] { Int } : new[] { Int, AnyN };
+            // The selected CLR setter descriptor retains its declaring T slot;
+            // a star-projected value is not permission to write arbitrary Any?.
+            var signature = access == "get" ? new[] { Int } : new TypeNode[] { Int, new TypeNode.Tv("type", 0) };
             var propertyReceiver = new BirLocal { Name = "list", Sty = projectedList };
             var property = new BirConstrainedCall { Iface = projectedList, Method = "Item", Prop = access,
                 Recv = propertyReceiver, Sig = signature, Args = signature.Select((type, index) =>
