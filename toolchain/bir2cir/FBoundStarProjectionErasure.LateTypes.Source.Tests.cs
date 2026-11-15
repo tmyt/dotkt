@@ -68,6 +68,13 @@ static partial class FBoundStarProjectionErasure
             file.Types = new IBirTypeDeclaration[] { currentGeneric, generic, machine };
             var current = CurrentPhysicalTypeView.Capture(roots, context.Bindings);
             var projection = CarrierProjectionContext.ForCurrentSource(context, current);
+            var referencedProjection = CarrierProjectionContext.ForReferencedValuesSource(context, current);
+            Require(referencedProjection.Owners.Count == 0 && referencedProjection.LocalClrAliases == null
+                && ReferenceEquals(referencedProjection.Values, context.Values)
+                && ReferenceEquals(referencedProjection.NativeProofs, context.NativeProofs)
+                && referencedProjection.ProjectionCanChangeConstruction(new TypeNode.Fqn("LateGeneric", new TypeNode[] { text, text }))
+                && !referencedProjection.TryExistentialCarrier("LateGeneric", out _),
+                "referenced helper projection selected local owners, lost current-first facts or substituted policy");
             Require(ReferenceEquals(current.Definitions["LateGeneric"], currentGeneric)
                 && projection.ProjectionCanChangeConstruction(new TypeNode.Fqn("LateGeneric", new TypeNode[] { text, text }))
                 && ReferenceEquals(projection.OwnerFrame(projection.Owners["LateGeneric"]), frame)
@@ -128,12 +135,22 @@ static partial class FBoundStarProjectionErasure
                 "second projection missed an authored bridge or selected a new source carrier");
 
             // The SAME physical rows survive the one actual address handoff.
+            var referencedFinal = CarrierProjectionContext.ForReferencedValuesSource(context, finalCurrent);
+            TypeNode[] helperTypes = { star, new TypeNode.Nullable(star), new TypeNode.Array(star),
+                new TypeNode.Fqn("LateGeneric", new[] { text }), native };
+            var helperResults = helperTypes.Select(type => referencedFinal.Rewrite(type)).ToArray();
             var physical = file.ToDom(context.Bindings.ObserveProjection);
             context.Bindings.BindProjected();
             var physicalBridge = bridgeBinding.Physical;
             Require(context.NativeProofs.IsPhysicalConstraint(physicalBridge["typeParams"][0]["constraints"].AsArray(), native)
                 && ReferenceEquals(physical["types"][4], physicalBridge), "physical proof continuation changed at the frontier");
             BindRealizationContinuation(context, finalCurrent);
+            var continuingReferenced = CarrierProjectionContext.ForDom(
+                new Dictionary<string, Owner>(StringComparer.Ordinal), references, context.Values, context.NativeProofs);
+            Require(helperTypes.Select((type, index) => TypeNodeDataEquality.Equal(
+                    continuingReferenced.Rewrite(type), helperResults[index])).All(equal => equal),
+                "source referenced helper scope differs from its actual continuing scalar projection");
+            Reject(() => referencedFinal.Rewrite(native));
             Require(ReferenceEquals(context.Values.LocalDeclaration("LateBridge"), physicalBridge)
                 && ReferenceEquals(context.Values.LocalDeclaration("LateMachine"), machineBinding.Physical)
                 && ReferenceEquals(context.Values.LocalDeclaration("LateGeneric"), context.Bindings.GetPhysical(physical["types"][0].AsObject()).Physical)
@@ -161,6 +178,10 @@ static partial class FBoundStarProjectionErasure
                 CarrierProjectionContext.ForSource(aliasSurface.Demand, references, aliasLedger), references, aliasSurface.Demand.ReservedNames);
             var aliasCurrent = CurrentPhysicalTypeView.Capture(new[] { aliasFile }, aliasBindings);
             var aliasProjection = CarrierProjectionContext.ForCurrentSource(aliasContext, aliasCurrent, aliasLedger);
+            var referencedAlias = CarrierProjectionContext.ForReferencedValuesSource(aliasContext, aliasCurrent, aliasLedger);
+            Require(referencedAlias.RequiresOpaqueVariantAlias(new TypeNode.Fqn("RetainedAlias", new TypeNode[] { text }))
+                && !referencedAlias.TryExistentialCarrier("RetainedAlias", out _),
+                "referenced helper scope lost a retained logical alias header");
             Require(aliasCurrent.LocalClrAliases.Count == 0
                 && aliasProjection.RequiresOpaqueVariantAlias(new TypeNode.Fqn("RetainedAlias", new TypeNode[] { text }))
                 && !aliasProjection.TryExistentialCarrier("RetainedAlias", out _),

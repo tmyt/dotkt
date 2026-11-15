@@ -206,79 +206,12 @@ static partial class ClrMemberResolution
         return true;
     }
 
-    /// <summary>
-    /// Name an external declaration reached through a type emitted by this compilation.
-    /// </summary>
-    /// <remarks>
-    /// A call can quite correctly state a local receiver owner while its selected declaration lives on an
-    /// inherited external interface (for example, a local interface extending one with a default method).  The
-    /// early referenced-call pass must skip that owner because an older shipped copy of a local type is never an
-    /// authority.  Once all physically-lowered local declarations are available together, the shared supertype
-    /// graph can prove whether a local declaration answers the call and, only when none does, expose the external
-    /// declaration.  This keeps the receiver local while carrying the actual declarer to ilemit.
-    /// </remarks>
-    public static void ResolveInheritedExternalCalls(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
-    {
-        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
-        var all = roots.Where(root => root != null).ToList();
-        var defs = SupertypeGraph.Collect(all);
-        var methods = defs.ToDictionary(pair => pair.Key, pair => ReadInheritedLocalMethods(pair.Value.Methods), StringComparer.Ordinal);
-        foreach (var root in all) WalkInheritedExternalCalls(root, defs, methods, refs);
-    }
-
-    static void WalkInheritedExternalCalls(JsonNode node,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
-        IReadOnlyDictionary<string, InheritedLocalMethod[]> methods, ReferenceMetadataIndex refs)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                foreach (var kv in obj.ToList())
-                    if (kv.Value != null) WalkInheritedExternalCalls(kv.Value, defs, methods, refs);
-                ResolveInheritedExternalCall(obj, defs, methods, refs);
-                break;
-            case JsonArray arr:
-                foreach (var item in arr.ToList())
-                    if (item != null) WalkInheritedExternalCalls(item, defs, methods, refs);
-                break;
-        }
-    }
-
-    static void ResolveInheritedExternalCall(JsonObject call,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
-        IReadOnlyDictionary<string, InheritedLocalMethod[]> methods, ReferenceMetadataIndex refs)
-    {
-        if ((call["k"] as JsonValue)?.GetValue<string>() != "callInstance"
-            || call.ContainsKey("memberRef")
-            || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner
-            || (call["method"] as JsonValue)?.GetValue<string>() is not { } name
-            || call["sig"] is not JsonArray sig)
-            return;
-
-        var callSig = sig.Select(TypeJson.Read).ToArray();
-        if (callSig.Any(type => type == null)) return;
-        var methodArity = (call["typeArgs"] as JsonArray)?.Count ?? 0;
-        var chosen = PlanInheritedExternalCall(owner, name, methodArity, callSig, defs, methods, refs);
-        if (chosen == null) return;
-        call["memberRef"] = chosen.Reference.Write();
-        StampResolvedMethodTypeParameters(call, chosen.Declaration);
-        StampDelegateArgumentTargets(call, chosen.Declaration, chosen.OwnerArgs);
-        AdaptInheritedGenericResult(call);
-    }
 
     // These are current header views, not source-eligibility registrations.
-    // Both actual owning graphs and the genuine late DOM buyer use this plan.
+    // Both owning binding clocks use this same selection plan.
     sealed record InheritedLocalMethod(string Name, bool Static, int Arity, TypeNode[] Parameters);
     sealed record InheritedExternalCallPlan(MethodInfo Declaration, MemberRefNode Reference, TypeNode[] OwnerArgs);
 
-    static InheritedLocalMethod[] ReadInheritedLocalMethods(JsonArray methods) => methods.OfType<JsonObject>().Select(method => {
-        var parameters = method["params"] as JsonArray;
-        var types = parameters?.OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
-        if (types?.Length != parameters?.Count) types = null;
-        return new InheritedLocalMethod((method["name"] as JsonValue)?.GetValue<string>(),
-            (method["static"] as JsonValue)?.TryGetValue<bool>(out var isStatic) == true && isStatic,
-            (method["typeParams"] as JsonArray)?.Count ?? 0, types);
-    }).ToArray();
 
     static InheritedExternalCallPlan PlanInheritedExternalCall(TypeNode.Fqn owner, string name, int methodArity,
         TypeNode[] callSig, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
@@ -349,29 +282,6 @@ static partial class ClrMemberResolution
         return distinctAnswers.Count == 1 ? answers[0] : null;
     }
 
-    // dynRet is an already-instantiated caller fact; the MemberRef return belongs to the
-    // selected CLR declaration. An inherited alias slot can return S(E) where Kotlin observes
-    // E. State that scalar conversion in CIR instead of asking ilemit to treat the two TVs as
-    // the same stack type. Constructed-type differences are not licensed by this scalar rule.
-    internal static void AdaptInheritedGenericResult(JsonObject call)
-    {
-        var logical = TypeJson.Read(call["dynRet"]);
-        var reference = call["memberRef"] as JsonObject;
-        var physical = PlanInheritedGenericResult(logical, TypeJson.Read(reference?["declaringType"]),
-            TypeJson.Read(reference?["returnType"]),
-            (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>());
-        if (physical == null) return;
-        var inner = call.DeepClone().AsObject();
-        inner["ret"] = TypeJson.Write(physical);
-        inner["dynRet"] = TypeJson.Write(physical);
-        if (inner["sty"] != null) inner["sty"] = TypeJson.Write(physical);
-        var position = call["pos"]?.DeepClone();
-        call.Clear();
-        call["k"] = "cast";
-        call["type"] = TypeJson.Write(logical);
-        call["e"] = inner;
-        if (position != null) call["pos"] = position;
-    }
 
     internal static void InheritedGenericResultSelfTest()
     {

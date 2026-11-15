@@ -117,25 +117,6 @@ static partial class ClrMemberResolution
         }
     }
 
-    // A plain top-level/static Kotlin call into a referenced assembly is already attributed to its file class by
-    // MemberCallSubstitution (`owner`) or the frontend provenance carry (`calleeOwner`). Replace the frontend call-site
-    // `sig` with the referenced declaration's physical signature, then resolve the scalar memberRef. This is the plain-call
-    // counterpart of bir2cir's internal `resolvedMemberParams` on clr* nodes. Local same-assembly calls are absent from the
-    // reference index and remain unchanged.
-    public static void ResolveReferencedStaticCalls(JsonNode root, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTypes, IReadOnlySet<string> externalCanonicalTypes,
-        IReadOnlySet<string> localDeclarationIds, string file = null)
-    {
-        _refs = refs;
-        // This pass runs before Apply, which normally initializes the local/external boundary. Set it here as an
-        // explicit input too: retaining a prior file's static value (or the initial empty set) can bind a synthetic
-        // type emitted by this compilation to a stale copy from its compile references.
-        _localTypes = localTypes ?? new HashSet<string>();
-        _externalCanonicalTypes = externalCanonicalTypes ?? new HashSet<string>();
-        _localDeclarationIds = localDeclarationIds ?? new HashSet<string>();
-        WalkReferencedStaticCalls(root, file ?? "<unknown>");
-        DropKotlinSigSnapshots(root);
-    }
 
     // Normalize the frontend/synthetic call dialect to an explicit declaration signature. Empty accessors commonly
     // omitted `sig`; CLR emission must see `[]`, not absence. For non-empty calls, only an already-carried declaration
@@ -160,101 +141,6 @@ static partial class ClrMemberResolution
             foreach (var item in array.ToList()) if (item != null) EnsurePlainCallDescriptors(item);
     }
 
-    // Suspend lowering replaces a hot call with a cold call and supplies its appended ABI parameter.
-    // Project the preserved descriptor in this pass's side table; only its scalar token rides the call
-    // and is removed before CIR emission.
-    public static void CarryReferencedStaticCallSignatureSnapshot(JsonObject source, JsonObject target,
-        JsonNode appendedParameter)
-    {
-        if ((source[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
-            && AppendReferencedStaticSignatureSnapshot(snapshotId, TypeJson.Read(appendedParameter)) is { } projected)
-            target[KotlinSigSnapshotId] = projected;
-    }
-
-    static void WalkReferencedStaticCalls(JsonNode node, string context)
-    {
-        if (node is JsonObject obj)
-        {
-            var childContext = DeclarationContext(obj, context);
-            foreach (var kv in obj.ToList())
-                if (kv.Value != null) WalkReferencedStaticCalls(kv.Value, childContext);
-            if ((obj["k"] as JsonValue)?.GetValue<string>() is "callStatic" or "callInstance" or "newDelegate" or "newBoundDelegate"
-                || (obj["k"] as JsonValue)?.GetValue<string>() == "constrainedCall"
-                    && obj[DeclarationIdentityBinding.Key] != null)
-                ResolveReferencedStaticCall(obj, context);
-        }
-        else if (node is JsonArray arr)
-        {
-            foreach (var item in arr.ToList())
-                if (item != null) WalkReferencedStaticCalls(item, context);
-        }
-    }
-
-    static string DeclarationContext(JsonObject node, string fallback)
-    {
-        if (node["body"] is not JsonArray
-            || (node["name"] as JsonValue)?.TryGetValue<string>(out var name) != true) return fallback;
-        if (node["pos"] is JsonObject pos
-            && (pos["f"] as JsonValue)?.TryGetValue<string>(out var source) == true
-            && (pos["l"] as JsonValue)?.TryGetValue<int>(out var line) == true)
-        {
-            var column = (pos["c"] as JsonValue)?.TryGetValue<int>(out var parsedColumn) == true
-                ? $":{parsedColumn}" : "";
-            return $"{source}:{line}{column}: {name}";
-        }
-        return $"{fallback}: {name}";
-    }
-
-    static void ResolveReferencedStaticCall(JsonObject node, string context)
-    {
-        var kind = (node["k"] as JsonValue)?.GetValue<string>();
-        var owner = kind == "constrainedCall" ? node["iface"]
-            : node["owner"] is JsonNode explicitOwner && explicitOwner.GetValueKind() != System.Text.Json.JsonValueKind.Null
-                ? explicitOwner : node["calleeOwner"] ?? node["ownerType"];
-        var input = new ReferencedCallInput(kind, ReadOwnerNode(owner),
-            (node["method"] as JsonValue)?.GetValue<string>(), (node["sig"] as JsonArray)?.Select(TypeJson.Read).ToArray(),
-            (node["typeArgs"] as JsonArray)?.Count ?? 0,
-            (node[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>(),
-            node["memberRef"] is JsonObject && node[DeclarationIdentityBoundKey]?.GetValue<bool>() == true,
-            (node[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshot) == true ? snapshot : null,
-            (node[KotlinPropertyAccessors.SourceNameKey] as JsonValue)?.GetValue<string>(),
-            (node[KotlinPropertyAccessors.KindKey] as JsonValue)?.GetValue<string>(),
-            (node["prop"] as JsonValue)?.GetValue<string>(), (node["super"] as JsonValue)?.GetValue<bool>() == true);
-        var plan = PlanReferencedCall(input, context, _refs, _localTypes, _externalCanonicalTypes, _localDeclarationIds);
-        if (plan.PropertySelected)
-        {
-            KotlinPropertyAccessors.PreserveCallIdentity(node, plan.PropertyName, plan.PropertyKind);
-            node.Remove("prop");
-            node["method"] = plan.PhysicalName;
-            if (plan.SetVirtual) node["virtual"] = true;
-        }
-        if (plan.ClearIdentity) node.Remove(DeclarationIdentityBinding.Key);
-        if (plan.Signature == null) return;
-        node["sig"] = new JsonArray(plan.Signature.Select(TypeJson.Write).ToArray());
-        node["memberRef"] = plan.Reference.Write();
-        if (plan.IdentityBound) node[DeclarationIdentityBoundKey] = true;
-        StampResolvedMethodTypeParameters(node, plan.Declaration);
-        if (plan.StampReturn) StampResolvedMemberReturn(node, plan.Declaration.ReturnType);
-        StampDelegateArgumentTargets(node, plan.Declaration, plan.DelegateOwnerArguments);
-        node.Remove("argTypes");
-    }
-
-    static void DropKotlinSigSnapshots(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            if ((obj[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true)
-                KotlinSigSnapshots.Remove(snapshotId);
-            obj.Remove(KotlinSigSnapshotId);
-            foreach (var kv in obj.ToList())
-                if (kv.Value != null) DropKotlinSigSnapshots(kv.Value);
-        }
-        else if (node is JsonArray arr)
-        {
-            foreach (var item in arr.ToList())
-                if (item != null) DropKotlinSigSnapshots(item);
-        }
-    }
 
     // ---- constructors --------------------------------------------------------------------------
 
