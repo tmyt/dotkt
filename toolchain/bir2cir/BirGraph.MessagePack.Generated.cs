@@ -8507,56 +8507,59 @@ internal static class BirGraphMessagePack
         OptionalField<int> field33 = default;
         OptionalField<TypeNode> field34 = default;
         OptionalField<string> field35 = default;
-        OptionalField<bool> field36 = default;
-        OptionalField<BirRoundtripDeclarationIdentity> field37 = default;
-        OptionalField<SourceBoundsSnapshot> field38 = default;
+        OptionalField<string> field36 = default;
+        OptionalField<string> field37 = default;
+        OptionalField<bool> field38 = default;
         OptionalField<bool> field39 = default;
-        OptionalField<BirInnerConstructorFactory> field40 = default;
-        OptionalField<TypeNode> field41 = default;
-        OptionalField<int[]> field42 = default;
-        OptionalField<int[]> field43 = default;
+        OptionalField<BirRoundtripDeclarationIdentity> field40 = default;
+        OptionalField<SourceBoundsSnapshot> field41 = default;
+        OptionalField<bool> field42 = default;
+        OptionalField<BirInnerConstructorFactory> field43 = default;
         OptionalField<TypeNode> field44 = default;
-        OptionalField<TypeNode> field45 = default;
-        OptionalField<bool> field46 = default;
-        OptionalField<TypeNode[]> field47 = default;
+        OptionalField<int[]> field45 = default;
+        OptionalField<int[]> field46 = default;
+        OptionalField<TypeNode> field47 = default;
         OptionalField<TypeNode> field48 = default;
         OptionalField<bool> field49 = default;
-        OptionalField<OwnerConstraintOverrideBounds> field50 = default;
-        OptionalField<OwnerConstraintDispatchBounds> field51 = default;
+        OptionalField<TypeNode[]> field50 = default;
+        OptionalField<TypeNode> field51 = default;
         OptionalField<bool> field52 = default;
-        OptionalField<TypeNode> field53 = default;
-        OptionalField<bool> field54 = default;
+        OptionalField<OwnerConstraintOverrideBounds> field53 = default;
+        OptionalField<OwnerConstraintDispatchBounds> field54 = default;
         OptionalField<bool> field55 = default;
-        OptionalField<string> field56 = default;
-        OptionalField<TypeNode> field57 = default;
-        OptionalField<TypeNode> field58 = default;
+        OptionalField<TypeNode> field56 = default;
+        OptionalField<bool> field57 = default;
+        OptionalField<bool> field58 = default;
         OptionalField<string> field59 = default;
-        OptionalField<string> field60 = default;
+        OptionalField<TypeNode> field60 = default;
         OptionalField<TypeNode> field61 = default;
-        OptionalField<TypeNode> field62 = default;
+        OptionalField<string> field62 = default;
         OptionalField<string> field63 = default;
-        OptionalField<SourceBoundsSnapshot> field64 = default;
-        OptionalField<NullableRepresentationFrame> field65 = default;
-        OptionalField<EventPropertySourceFacts> field66 = default;
-        OptionalField<string[]> field67 = default;
-        OptionalField<BirAttribute[]> field68 = default;
-        OptionalField<bool> field69 = default;
-        OptionalField<bool> field70 = default;
-        OptionalField<bool> field71 = default;
+        OptionalField<TypeNode> field64 = default;
+        OptionalField<TypeNode> field65 = default;
+        OptionalField<string> field66 = default;
+        OptionalField<SourceBoundsSnapshot> field67 = default;
+        OptionalField<NullableRepresentationFrame> field68 = default;
+        OptionalField<EventPropertySourceFacts> field69 = default;
+        OptionalField<string[]> field70 = default;
+        OptionalField<BirAttribute[]> field71 = default;
         OptionalField<bool> field72 = default;
         OptionalField<bool> field73 = default;
-        OptionalField<BirMemberReference> field74 = default;
-        OptionalField<BirMethodImpl[]> field75 = default;
-        OptionalField<BirMethodImpl[]> field76 = default;
-        OptionalField<bool> field77 = default;
-        OptionalField<BirPInvoke> field78 = default;
-        OptionalField<bool> field79 = default;
+        OptionalField<bool> field74 = default;
+        OptionalField<bool> field75 = default;
+        OptionalField<bool> field76 = default;
+        OptionalField<BirMemberReference> field77 = default;
+        OptionalField<BirMethodImpl[]> field78 = default;
+        OptionalField<BirMethodImpl[]> field79 = default;
         OptionalField<bool> field80 = default;
-        OptionalField<bool> field81 = default;
-        OptionalField<byte[]> field82 = default;
+        OptionalField<BirPInvoke> field81 = default;
+        OptionalField<bool> field82 = default;
         OptionalField<bool> field83 = default;
-        OptionalField<int[]> field84 = default;
-        OptionalField<TypeNode> field85 = default;
+        OptionalField<bool> field84 = default;
+        OptionalField<byte[]> field85 = default;
+        OptionalField<bool> field86 = default;
+        OptionalField<int[]> field87 = default;
+        OptionalField<TypeNode> field88 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -8705,205 +8708,217 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, (UInt128)1 << 35);
                     field35 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "roundtripMetadataPending":
+                case "unsafeTargetDeclarationId":
                     Seen(ref seen, (UInt128)1 << 36);
-                    field36 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    field36 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "roundtripDeclarationIdentity":
+                case "unsafeSignatureTargetDeclarationId":
                     Seen(ref seen, (UInt128)1 << 37);
-                    field37 = reader.TryReadNil() ? OptionalField<BirRoundtripDeclarationIdentity>.Null : OptionalField<BirRoundtripDeclarationIdentity>.Of(ReadBirRoundtripDeclarationIdentity(ref reader));
+                    field37 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "roundtripMethodBounds":
+                case "nullableErasureOwnershipKnown":
                     Seen(ref seen, (UInt128)1 << 38);
-                    field38 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field38 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "roundtripSuspend":
+                case "roundtripMetadataPending":
                     Seen(ref seen, (UInt128)1 << 39);
                     field39 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "existentialInnerConstructorFactory":
+                case "roundtripDeclarationIdentity":
                     Seen(ref seen, (UInt128)1 << 40);
-                    field40 = reader.TryReadNil() ? OptionalField<BirInnerConstructorFactory>.Null : OptionalField<BirInnerConstructorFactory>.Of(ReadBirInnerConstructorFactory(ref reader));
+                    field40 = reader.TryReadNil() ? OptionalField<BirRoundtripDeclarationIdentity>.Null : OptionalField<BirRoundtripDeclarationIdentity>.Of(ReadBirRoundtripDeclarationIdentity(ref reader));
+                    break;
+                case "roundtripMethodBounds":
+                    Seen(ref seen, (UInt128)1 << 41);
+                    field41 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    break;
+                case "roundtripSuspend":
+                    Seen(ref seen, (UInt128)1 << 42);
+                    field42 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "existentialInnerConstructorFactory":
+                    Seen(ref seen, (UInt128)1 << 43);
+                    field43 = reader.TryReadNil() ? OptionalField<BirInnerConstructorFactory>.Null : OptionalField<BirInnerConstructorFactory>.Of(ReadBirInnerConstructorFactory(ref reader));
                     break;
                 case "collIdentityRet":
-                    Seen(ref seen, (UInt128)1 << 41);
-                    field41 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
-                    break;
-                case "semanticReifiedIndices":
-                    Seen(ref seen, (UInt128)1 << 42);
-                    field42 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
-                    break;
-                case "nullableWitnessIndices":
-                    Seen(ref seen, (UInt128)1 << 43);
-                    field43 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
-                    break;
-                case "suspendResult":
                     Seen(ref seen, (UInt128)1 << 44);
                     field44 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
                     break;
-                case "suspendTaskResult":
+                case "semanticReifiedIndices":
                     Seen(ref seen, (UInt128)1 << 45);
-                    field45 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    field45 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
                     break;
-                case "suspendTaskOnlyBridge":
+                case "nullableWitnessIndices":
                     Seen(ref seen, (UInt128)1 << 46);
-                    field46 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    field46 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
                     break;
-                case "suspendSourceParams":
+                case "suspendResult":
                     Seen(ref seen, (UInt128)1 << 47);
-                    field47 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    field47 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
                     break;
-                case "suspendSourceRet":
+                case "suspendTaskResult":
                     Seen(ref seen, (UInt128)1 << 48);
                     field48 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
-                case "dotktValueReturn":
+                case "suspendTaskOnlyBridge":
                     Seen(ref seen, (UInt128)1 << 49);
                     field49 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "_ownerConstraintOverrideBounds":
+                case "suspendSourceParams":
                     Seen(ref seen, (UInt128)1 << 50);
-                    field50 = reader.TryReadNil() ? OptionalField<OwnerConstraintOverrideBounds>.Null : OptionalField<OwnerConstraintOverrideBounds>.Of(OwnerConstraintOverrideBounds.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field50 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
                     break;
-                case "_ownerConstraintDispatchBounds":
+                case "suspendSourceRet":
                     Seen(ref seen, (UInt128)1 << 51);
-                    field51 = reader.TryReadNil() ? OptionalField<OwnerConstraintDispatchBounds>.Null : OptionalField<OwnerConstraintDispatchBounds>.Of(OwnerConstraintDispatchBounds.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field51 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
-                case "_physicalDeclarationSignature":
+                case "dotktValueReturn":
                     Seen(ref seen, (UInt128)1 << 52);
                     field52 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "retKotlinType":
+                case "_ownerConstraintOverrideBounds":
                     Seen(ref seen, (UInt128)1 << 53);
-                    field53 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field53 = reader.TryReadNil() ? OptionalField<OwnerConstraintOverrideBounds>.Null : OptionalField<OwnerConstraintOverrideBounds>.Of(OwnerConstraintOverrideBounds.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
-                case "_preparedDelegateReturnArgument":
+                case "_ownerConstraintDispatchBounds":
                     Seen(ref seen, (UInt128)1 << 54);
-                    field54 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    field54 = reader.TryReadNil() ? OptionalField<OwnerConstraintDispatchBounds>.Null : OptionalField<OwnerConstraintDispatchBounds>.Of(OwnerConstraintDispatchBounds.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
-                case "lateinit":
+                case "_physicalDeclarationSignature":
                     Seen(ref seen, (UInt128)1 << 55);
                     field55 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "extensionCoreDeclarationId":
+                case "retKotlinType":
                     Seen(ref seen, (UInt128)1 << 56);
-                    field56 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    field56 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
                     break;
-                case "nullableGenericRet":
+                case "_preparedDelegateReturnArgument":
                     Seen(ref seen, (UInt128)1 << 57);
-                    field57 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field57 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "nullableGenericSuspendRet":
+                case "lateinit":
                     Seen(ref seen, (UInt128)1 << 58);
-                    field58 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field58 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "declarationSourceName":
+                case "extensionCoreDeclarationId":
                     Seen(ref seen, (UInt128)1 << 59);
                     field59 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "kotlinSourceMember":
+                case "nullableGenericRet":
                     Seen(ref seen, (UInt128)1 << 60);
-                    field60 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    field60 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
                     break;
-                case "pendingOverrideOwner":
+                case "nullableGenericSuspendRet":
                     Seen(ref seen, (UInt128)1 << 61);
-                    field61 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    field61 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
                     break;
-                case "pendingOverrideReturn":
+                case "declarationSourceName":
                     Seen(ref seen, (UInt128)1 << 62);
-                    field62 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    field62 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "pendingOverrideMember":
+                case "kotlinSourceMember":
                     Seen(ref seen, (UInt128)1 << 63);
                     field63 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "methodTypeParameterBoundsPre":
+                case "pendingOverrideOwner":
                     Seen(ref seen, (UInt128)1 << 64);
-                    field64 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field64 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
+                case "pendingOverrideReturn":
+                    Seen(ref seen, (UInt128)1 << 65);
+                    field65 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
+                case "pendingOverrideMember":
+                    Seen(ref seen, (UInt128)1 << 66);
+                    field66 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "methodTypeParameterBoundsPre":
+                    Seen(ref seen, (UInt128)1 << 67);
+                    field67 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
                 case "nullableRepresentationFrame":
-                    Seen(ref seen, (UInt128)1 << 65);
-                    field65 = reader.TryReadNil() ? OptionalField<NullableRepresentationFrame>.Null : OptionalField<NullableRepresentationFrame>.Of(DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    Seen(ref seen, (UInt128)1 << 68);
+                    field68 = reader.TryReadNil() ? OptionalField<NullableRepresentationFrame>.Null : OptionalField<NullableRepresentationFrame>.Of(DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
                 case "kotlinPropertyAccessorCarrier":
-                    Seen(ref seen, (UInt128)1 << 66);
-                    field66 = reader.TryReadNil() ? OptionalField<EventPropertySourceFacts>.Null : OptionalField<EventPropertySourceFacts>.Of(ReadEventPropertySourceFacts(ref reader));
+                    Seen(ref seen, (UInt128)1 << 69);
+                    field69 = reader.TryReadNil() ? OptionalField<EventPropertySourceFacts>.Null : OptionalField<EventPropertySourceFacts>.Of(ReadEventPropertySourceFacts(ref reader));
                     break;
                 case "signatureOverrideDeclarations":
-                    Seen(ref seen, (UInt128)1 << 67);
-                    field67 = reader.TryReadNil() ? OptionalField<string[]>.Null : OptionalField<string[]>.Of(ReadArray<string>(ref reader, (ref MessagePackReader reader) => IrMessagePack.ReadString(ref reader)));
+                    Seen(ref seen, (UInt128)1 << 70);
+                    field70 = reader.TryReadNil() ? OptionalField<string[]>.Null : OptionalField<string[]>.Of(ReadArray<string>(ref reader, (ref MessagePackReader reader) => IrMessagePack.ReadString(ref reader)));
                     break;
                 case "retAttrs":
-                    Seen(ref seen, (UInt128)1 << 68);
-                    field68 = reader.TryReadNil() ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray<BirAttribute>(ref reader, (ref MessagePackReader reader) => ReadBirAttribute(ref reader)));
+                    Seen(ref seen, (UInt128)1 << 71);
+                    field71 = reader.TryReadNil() ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray<BirAttribute>(ref reader, (ref MessagePackReader reader) => ReadBirAttribute(ref reader)));
                     break;
                 case "clrFinal":
-                    Seen(ref seen, (UInt128)1 << 69);
-                    field69 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
-                    break;
-                case "specialName":
-                    Seen(ref seen, (UInt128)1 << 70);
-                    field70 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
-                    break;
-                case "suspendBridge":
-                    Seen(ref seen, (UInt128)1 << 71);
-                    field71 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
-                    break;
-                case "clrInterfaceSlotBridge":
                     Seen(ref seen, (UInt128)1 << 72);
                     field72 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "requiresClrOverride":
+                case "specialName":
                     Seen(ref seen, (UInt128)1 << 73);
                     field73 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "clrOverrideRef":
+                case "suspendBridge":
                     Seen(ref seen, (UInt128)1 << 74);
-                    field74 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
+                    field74 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "clrInterfaceSlotBridge":
+                    Seen(ref seen, (UInt128)1 << 75);
+                    field75 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "requiresClrOverride":
+                    Seen(ref seen, (UInt128)1 << 76);
+                    field76 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "clrOverrideRef":
+                    Seen(ref seen, (UInt128)1 << 77);
+                    field77 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
                 case "clrInterfaceImpls":
-                    Seen(ref seen, (UInt128)1 << 75);
-                    field75 = reader.TryReadNil() ? OptionalField<BirMethodImpl[]>.Null : OptionalField<BirMethodImpl[]>.Of(ReadArray<BirMethodImpl>(ref reader, (ref MessagePackReader reader) => ReadBirMethodImpl(ref reader)));
+                    Seen(ref seen, (UInt128)1 << 78);
+                    field78 = reader.TryReadNil() ? OptionalField<BirMethodImpl[]>.Null : OptionalField<BirMethodImpl[]>.Of(ReadArray<BirMethodImpl>(ref reader, (ref MessagePackReader reader) => ReadBirMethodImpl(ref reader)));
                     break;
                 case "clrBaseImpls":
-                    Seen(ref seen, (UInt128)1 << 76);
-                    field76 = reader.TryReadNil() ? OptionalField<BirMethodImpl[]>.Null : OptionalField<BirMethodImpl[]>.Of(ReadArray<BirMethodImpl>(ref reader, (ref MessagePackReader reader) => ReadBirMethodImpl(ref reader)));
+                    Seen(ref seen, (UInt128)1 << 79);
+                    field79 = reader.TryReadNil() ? OptionalField<BirMethodImpl[]>.Null : OptionalField<BirMethodImpl[]>.Of(ReadArray<BirMethodImpl>(ref reader, (ref MessagePackReader reader) => ReadBirMethodImpl(ref reader)));
                     break;
                 case "extern":
-                    Seen(ref seen, (UInt128)1 << 77);
-                    field77 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
-                    break;
-                case "pinvoke":
-                    Seen(ref seen, (UInt128)1 << 78);
-                    field78 = reader.TryReadNil() ? OptionalField<BirPInvoke>.Null : OptionalField<BirPInvoke>.Of(ReadBirPInvoke(ref reader));
-                    break;
-                case "bodyTerminates":
-                    Seen(ref seen, (UInt128)1 << 79);
-                    field79 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
-                    break;
-                case "independentAliasSlot":
                     Seen(ref seen, (UInt128)1 << 80);
                     field80 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "physicalSlotBridge":
+                case "pinvoke":
                     Seen(ref seen, (UInt128)1 << 81);
-                    field81 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    field81 = reader.TryReadNil() ? OptionalField<BirPInvoke>.Null : OptionalField<BirPInvoke>.Of(ReadBirPInvoke(ref reader));
                     break;
-                case "inlineBir":
+                case "bodyTerminates":
                     Seen(ref seen, (UInt128)1 << 82);
-                    field82 = reader.TryReadNil() ? OptionalField<byte[]>.Null : OptionalField<byte[]>.Of(reader.ReadBytes()?.ToArray() ?? throw new FormatException());
+                    field82 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "retNothing":
+                case "independentAliasSlot":
                     Seen(ref seen, (UInt128)1 << 83);
                     field83 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "retNullableFlags":
+                case "physicalSlotBridge":
                     Seen(ref seen, (UInt128)1 << 84);
-                    field84 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
+                    field84 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "inlineBir":
+                    Seen(ref seen, (UInt128)1 << 85);
+                    field85 = reader.TryReadNil() ? OptionalField<byte[]>.Null : OptionalField<byte[]>.Of(reader.ReadBytes()?.ToArray() ?? throw new FormatException());
+                    break;
+                case "retNothing":
+                    Seen(ref seen, (UInt128)1 << 86);
+                    field86 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "retNullableFlags":
+                    Seen(ref seen, (UInt128)1 << 87);
+                    field87 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
                     break;
                 case "retSuspendFnType":
-                    Seen(ref seen, (UInt128)1 << 85);
-                    field85 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    Seen(ref seen, (UInt128)1 << 88);
+                    field88 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -8947,63 +8962,66 @@ internal static class BirGraphMessagePack
             LexicalOwnerTypeParamCount = field33,
             RetSuspendFnTypePre = field34,
             ExistentialSourceMember = field35,
-            RoundtripMetadataPending = field36,
-            RoundtripDeclarationIdentity = field37,
-            RoundtripMethodBounds = field38,
-            RoundtripSuspend = field39,
-            ExistentialInnerConstructorFactory = field40,
-            CollIdentityRet = field41,
-            SemanticReifiedIndices = field42,
-            NullableWitnessIndices = field43,
-            SuspendResult = field44,
-            SuspendTaskResult = field45,
-            SuspendTaskOnlyBridge = field46,
-            SuspendSourceParams = field47,
-            SuspendSourceRet = field48,
-            DotktValueReturn = field49,
-            _ownerConstraintOverrideBounds = field50,
-            _ownerConstraintDispatchBounds = field51,
-            _physicalDeclarationSignature = field52,
-            RetKotlinType = field53,
-            _preparedDelegateReturnArgument = field54,
-            Lateinit = field55,
-            ExtensionCoreDeclarationId = field56,
-            NullableGenericRet = field57,
-            NullableGenericSuspendRet = field58,
-            DeclarationSourceName = field59,
-            KotlinSourceMember = field60,
-            PendingOverrideOwner = field61,
-            PendingOverrideReturn = field62,
-            PendingOverrideMember = field63,
-            MethodTypeParameterBoundsPre = field64,
-            NullableRepresentationFrame = field65,
-            KotlinPropertyAccessorCarrier = field66,
-            SignatureOverrideDeclarations = field67,
-            RetAttrs = field68,
-            ClrFinal = field69,
-            SpecialName = field70,
-            SuspendBridge = field71,
-            ClrInterfaceSlotBridge = field72,
-            RequiresClrOverride = field73,
-            ClrOverrideRef = field74,
-            ClrInterfaceImpls = field75,
-            ClrBaseImpls = field76,
-            Extern = field77,
-            Pinvoke = field78,
-            BodyTerminates = field79,
-            IndependentAliasSlot = field80,
-            PhysicalSlotBridge = field81,
-            InlineBir = field82,
-            RetNothing = field83,
-            RetNullableFlags = field84,
-            RetSuspendFnType = field85,
+            UnsafeTargetDeclarationId = field36,
+            UnsafeSignatureTargetDeclarationId = field37,
+            NullableErasureOwnershipKnown = field38,
+            RoundtripMetadataPending = field39,
+            RoundtripDeclarationIdentity = field40,
+            RoundtripMethodBounds = field41,
+            RoundtripSuspend = field42,
+            ExistentialInnerConstructorFactory = field43,
+            CollIdentityRet = field44,
+            SemanticReifiedIndices = field45,
+            NullableWitnessIndices = field46,
+            SuspendResult = field47,
+            SuspendTaskResult = field48,
+            SuspendTaskOnlyBridge = field49,
+            SuspendSourceParams = field50,
+            SuspendSourceRet = field51,
+            DotktValueReturn = field52,
+            _ownerConstraintOverrideBounds = field53,
+            _ownerConstraintDispatchBounds = field54,
+            _physicalDeclarationSignature = field55,
+            RetKotlinType = field56,
+            _preparedDelegateReturnArgument = field57,
+            Lateinit = field58,
+            ExtensionCoreDeclarationId = field59,
+            NullableGenericRet = field60,
+            NullableGenericSuspendRet = field61,
+            DeclarationSourceName = field62,
+            KotlinSourceMember = field63,
+            PendingOverrideOwner = field64,
+            PendingOverrideReturn = field65,
+            PendingOverrideMember = field66,
+            MethodTypeParameterBoundsPre = field67,
+            NullableRepresentationFrame = field68,
+            KotlinPropertyAccessorCarrier = field69,
+            SignatureOverrideDeclarations = field70,
+            RetAttrs = field71,
+            ClrFinal = field72,
+            SpecialName = field73,
+            SuspendBridge = field74,
+            ClrInterfaceSlotBridge = field75,
+            RequiresClrOverride = field76,
+            ClrOverrideRef = field77,
+            ClrInterfaceImpls = field78,
+            ClrBaseImpls = field79,
+            Extern = field80,
+            Pinvoke = field81,
+            BodyTerminates = field82,
+            IndependentAliasSlot = field83,
+            PhysicalSlotBridge = field84,
+            InlineBir = field85,
+            RetNothing = field86,
+            RetNullableFlags = field87,
+            RetSuspendFnType = field88,
         };
     }
 
     internal static void WriteBirFunctionDeclaration(ref MessagePackWriter writer, BirFunctionDeclaration value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Name.IsPresent ? 1 : 0) + (value.SourceName.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Override.IsPresent ? 1 : 0) + (value.Virtual.IsPresent ? 1 : 0) + (value.Generated.IsPresent ? 1 : 0) + (value.Params.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.SemanticOwner.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.Mods.IsPresent ? 1 : 0) + (value.SuspendRet.IsPresent ? 1 : 0) + (value.Overrides.IsPresent ? 1 : 0) + (value.ExplicitClrName.IsPresent ? 1 : 0) + (value.KotlinStatic.IsPresent ? 1 : 0) + (value.Abstract.IsPresent ? 1 : 0) + (value.ObjectOverride.IsPresent ? 1 : 0) + (value.Vis.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.CompanionMemberKind.IsPresent ? 1 : 0) + (value.CompanionSourceName.IsPresent ? 1 : 0) + (value.RetCtxFnType.IsPresent ? 1 : 0) + (value.Attrs.IsPresent ? 1 : 0) + (value.Pos.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.PropertyAssociation.IsPresent ? 1 : 0) + (value.EventProperty.IsPresent ? 1 : 0) + (value.FakeOverride.IsPresent ? 1 : 0) + (value.InheritedImplementation.IsPresent ? 1 : 0) + (value._syntheticTypeArgs.IsPresent ? 1 : 0) + (value.LexicalOwnerTypeParamCount.IsPresent ? 1 : 0) + (value.RetSuspendFnTypePre.IsPresent ? 1 : 0) + (value.ExistentialSourceMember.IsPresent ? 1 : 0) + (value.RoundtripMetadataPending.IsPresent ? 1 : 0) + (value.RoundtripDeclarationIdentity.IsPresent ? 1 : 0) + (value.RoundtripMethodBounds.IsPresent ? 1 : 0) + (value.RoundtripSuspend.IsPresent ? 1 : 0) + (value.ExistentialInnerConstructorFactory.IsPresent ? 1 : 0) + (value.CollIdentityRet.IsPresent ? 1 : 0) + (value.SemanticReifiedIndices.IsPresent ? 1 : 0) + (value.NullableWitnessIndices.IsPresent ? 1 : 0) + (value.SuspendResult.IsPresent ? 1 : 0) + (value.SuspendTaskResult.IsPresent ? 1 : 0) + (value.SuspendTaskOnlyBridge.IsPresent ? 1 : 0) + (value.SuspendSourceParams.IsPresent ? 1 : 0) + (value.SuspendSourceRet.IsPresent ? 1 : 0) + (value.DotktValueReturn.IsPresent ? 1 : 0) + (value._ownerConstraintOverrideBounds.IsPresent ? 1 : 0) + (value._ownerConstraintDispatchBounds.IsPresent ? 1 : 0) + (value._physicalDeclarationSignature.IsPresent ? 1 : 0) + (value.RetKotlinType.IsPresent ? 1 : 0) + (value._preparedDelegateReturnArgument.IsPresent ? 1 : 0) + (value.Lateinit.IsPresent ? 1 : 0) + (value.ExtensionCoreDeclarationId.IsPresent ? 1 : 0) + (value.NullableGenericRet.IsPresent ? 1 : 0) + (value.NullableGenericSuspendRet.IsPresent ? 1 : 0) + (value.DeclarationSourceName.IsPresent ? 1 : 0) + (value.KotlinSourceMember.IsPresent ? 1 : 0) + (value.PendingOverrideOwner.IsPresent ? 1 : 0) + (value.PendingOverrideReturn.IsPresent ? 1 : 0) + (value.PendingOverrideMember.IsPresent ? 1 : 0) + (value.MethodTypeParameterBoundsPre.IsPresent ? 1 : 0) + (value.NullableRepresentationFrame.IsPresent ? 1 : 0) + (value.KotlinPropertyAccessorCarrier.IsPresent ? 1 : 0) + (value.SignatureOverrideDeclarations.IsPresent ? 1 : 0) + (value.RetAttrs.IsPresent ? 1 : 0) + (value.ClrFinal.IsPresent ? 1 : 0) + (value.SpecialName.IsPresent ? 1 : 0) + (value.SuspendBridge.IsPresent ? 1 : 0) + (value.ClrInterfaceSlotBridge.IsPresent ? 1 : 0) + (value.RequiresClrOverride.IsPresent ? 1 : 0) + (value.ClrOverrideRef.IsPresent ? 1 : 0) + (value.ClrInterfaceImpls.IsPresent ? 1 : 0) + (value.ClrBaseImpls.IsPresent ? 1 : 0) + (value.Extern.IsPresent ? 1 : 0) + (value.Pinvoke.IsPresent ? 1 : 0) + (value.BodyTerminates.IsPresent ? 1 : 0) + (value.IndependentAliasSlot.IsPresent ? 1 : 0) + (value.PhysicalSlotBridge.IsPresent ? 1 : 0) + (value.InlineBir.IsPresent ? 1 : 0) + (value.RetNothing.IsPresent ? 1 : 0) + (value.RetNullableFlags.IsPresent ? 1 : 0) + (value.RetSuspendFnType.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Name.IsPresent ? 1 : 0) + (value.SourceName.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Override.IsPresent ? 1 : 0) + (value.Virtual.IsPresent ? 1 : 0) + (value.Generated.IsPresent ? 1 : 0) + (value.Params.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.SemanticOwner.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.Mods.IsPresent ? 1 : 0) + (value.SuspendRet.IsPresent ? 1 : 0) + (value.Overrides.IsPresent ? 1 : 0) + (value.ExplicitClrName.IsPresent ? 1 : 0) + (value.KotlinStatic.IsPresent ? 1 : 0) + (value.Abstract.IsPresent ? 1 : 0) + (value.ObjectOverride.IsPresent ? 1 : 0) + (value.Vis.IsPresent ? 1 : 0) + (value.CompanionReceiver.IsPresent ? 1 : 0) + (value.CompanionMemberKind.IsPresent ? 1 : 0) + (value.CompanionSourceName.IsPresent ? 1 : 0) + (value.RetCtxFnType.IsPresent ? 1 : 0) + (value.Attrs.IsPresent ? 1 : 0) + (value.Pos.IsPresent ? 1 : 0) + (value.PropertyName.IsPresent ? 1 : 0) + (value.PropertyAccessor.IsPresent ? 1 : 0) + (value.PropertyAssociation.IsPresent ? 1 : 0) + (value.EventProperty.IsPresent ? 1 : 0) + (value.FakeOverride.IsPresent ? 1 : 0) + (value.InheritedImplementation.IsPresent ? 1 : 0) + (value._syntheticTypeArgs.IsPresent ? 1 : 0) + (value.LexicalOwnerTypeParamCount.IsPresent ? 1 : 0) + (value.RetSuspendFnTypePre.IsPresent ? 1 : 0) + (value.ExistentialSourceMember.IsPresent ? 1 : 0) + (value.UnsafeTargetDeclarationId.IsPresent ? 1 : 0) + (value.UnsafeSignatureTargetDeclarationId.IsPresent ? 1 : 0) + (value.NullableErasureOwnershipKnown.IsPresent ? 1 : 0) + (value.RoundtripMetadataPending.IsPresent ? 1 : 0) + (value.RoundtripDeclarationIdentity.IsPresent ? 1 : 0) + (value.RoundtripMethodBounds.IsPresent ? 1 : 0) + (value.RoundtripSuspend.IsPresent ? 1 : 0) + (value.ExistentialInnerConstructorFactory.IsPresent ? 1 : 0) + (value.CollIdentityRet.IsPresent ? 1 : 0) + (value.SemanticReifiedIndices.IsPresent ? 1 : 0) + (value.NullableWitnessIndices.IsPresent ? 1 : 0) + (value.SuspendResult.IsPresent ? 1 : 0) + (value.SuspendTaskResult.IsPresent ? 1 : 0) + (value.SuspendTaskOnlyBridge.IsPresent ? 1 : 0) + (value.SuspendSourceParams.IsPresent ? 1 : 0) + (value.SuspendSourceRet.IsPresent ? 1 : 0) + (value.DotktValueReturn.IsPresent ? 1 : 0) + (value._ownerConstraintOverrideBounds.IsPresent ? 1 : 0) + (value._ownerConstraintDispatchBounds.IsPresent ? 1 : 0) + (value._physicalDeclarationSignature.IsPresent ? 1 : 0) + (value.RetKotlinType.IsPresent ? 1 : 0) + (value._preparedDelegateReturnArgument.IsPresent ? 1 : 0) + (value.Lateinit.IsPresent ? 1 : 0) + (value.ExtensionCoreDeclarationId.IsPresent ? 1 : 0) + (value.NullableGenericRet.IsPresent ? 1 : 0) + (value.NullableGenericSuspendRet.IsPresent ? 1 : 0) + (value.DeclarationSourceName.IsPresent ? 1 : 0) + (value.KotlinSourceMember.IsPresent ? 1 : 0) + (value.PendingOverrideOwner.IsPresent ? 1 : 0) + (value.PendingOverrideReturn.IsPresent ? 1 : 0) + (value.PendingOverrideMember.IsPresent ? 1 : 0) + (value.MethodTypeParameterBoundsPre.IsPresent ? 1 : 0) + (value.NullableRepresentationFrame.IsPresent ? 1 : 0) + (value.KotlinPropertyAccessorCarrier.IsPresent ? 1 : 0) + (value.SignatureOverrideDeclarations.IsPresent ? 1 : 0) + (value.RetAttrs.IsPresent ? 1 : 0) + (value.ClrFinal.IsPresent ? 1 : 0) + (value.SpecialName.IsPresent ? 1 : 0) + (value.SuspendBridge.IsPresent ? 1 : 0) + (value.ClrInterfaceSlotBridge.IsPresent ? 1 : 0) + (value.RequiresClrOverride.IsPresent ? 1 : 0) + (value.ClrOverrideRef.IsPresent ? 1 : 0) + (value.ClrInterfaceImpls.IsPresent ? 1 : 0) + (value.ClrBaseImpls.IsPresent ? 1 : 0) + (value.Extern.IsPresent ? 1 : 0) + (value.Pinvoke.IsPresent ? 1 : 0) + (value.BodyTerminates.IsPresent ? 1 : 0) + (value.IndependentAliasSlot.IsPresent ? 1 : 0) + (value.PhysicalSlotBridge.IsPresent ? 1 : 0) + (value.InlineBir.IsPresent ? 1 : 0) + (value.RetNothing.IsPresent ? 1 : 0) + (value.RetNullableFlags.IsPresent ? 1 : 0) + (value.RetSuspendFnType.IsPresent ? 1 : 0));
         if (value.Name.IsPresent)
         {
             writer.Write("name");
@@ -9356,6 +9374,33 @@ internal static class BirGraphMessagePack
             else
             {
                 IrMessagePack.WriteString(ref writer, value.ExistentialSourceMember.Value);
+            }
+        }
+        if (value.UnsafeTargetDeclarationId.IsPresent)
+        {
+            writer.Write("unsafeTargetDeclarationId");
+            if (value.UnsafeTargetDeclarationId.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.UnsafeTargetDeclarationId.Value);
+            }
+        }
+        if (value.UnsafeSignatureTargetDeclarationId.IsPresent)
+        {
+            writer.Write("unsafeSignatureTargetDeclarationId");
+            if (value.UnsafeSignatureTargetDeclarationId.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.UnsafeSignatureTargetDeclarationId.Value);
+            }
+        }
+        if (value.NullableErasureOwnershipKnown.IsPresent)
+        {
+            writer.Write("nullableErasureOwnershipKnown");
+            if (value.NullableErasureOwnershipKnown.IsNull) writer.WriteNil();
+            else
+            {
+                writer.Write(value.NullableErasureOwnershipKnown.Value);
             }
         }
         if (value.RoundtripMetadataPending.IsPresent)
