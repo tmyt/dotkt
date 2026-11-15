@@ -208,12 +208,7 @@ static partial class PhysicalValueCoercion
           [{"name":"<unused var>","type":{"t":"fqn","name":"object"}},
            {"name":"<unused var>","type":{"t":"fqn","name":"object"}}]
           """)!.AsArray().OfType<JsonObject>().ToArray();
-        var emptyBody = new JsonArray();
         var unchanged = new JsonArray(unusedParameters.Select(parameter => parameter.DeepClone()).ToArray()).ToJsonString();
-        AllocateNativeLocals(emptyBody, unusedParameters, emptyBody);
-        if (emptyBody.Count != 0 || unchanged != new JsonArray(
-                unusedParameters.Select(parameter => parameter.DeepClone()).ToArray()).ToJsonString())
-            throw new InvalidOperationException("Unused anonymous parameters acquired addressable storage");
         var owningParameters = unusedParameters.Select(BirGraphDom.ReadBirParameter).ToArray();
         var owningBody = new List<IBirStatement>();
         TypedPhysicalValueCoercion.AllocateNativeLocals(Array.Empty<BirGraphValue>(), owningParameters, owningBody);
@@ -241,19 +236,22 @@ static partial class PhysicalValueCoercion
         }
     }
 
-    static JsonObject NormalizeNumericForSelfTest(JsonObject before,
-        IReadOnlyDictionary<string, TypeNode> locals, bool referenceBuild)
+    static (BirFileDeclaration Root, BirExpressionStatement Statement) NumericFixtureForSelfTest(
+        IBirExpression expression, IReadOnlyDictionary<string, TypeNode> locals)
     {
-        var expression = BirGraphDom.ReadBirExpression(before);
         var statement = new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of(expression) };
         var root = new BirFileDeclaration { FileClass = "NumericValueEdges", Methods = new[] { new BirFunctionDeclaration {
             Name = "probe", Params = locals.Select(local => new BirParameter { Name = local.Key, Type = local.Value }).ToArray(),
             Ret = new TypeNode.Fqn("void"), Body = new IBirStatement[] { statement },
         } } };
+        return (root, statement);
+    }
+
+    static void NormalizeNumericForSelfTest(BirFileDeclaration root, bool referenceBuild) =>
         TypedPhysicalValueCoercion.ApplyAll(new[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"),
             _ => false, referenceBuild);
-        return ((BirGraphValue)statement.Expr.Value).ToDom();
-    }
+
+    static string Str(JsonNode node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 
     static void NumericOperandsSelfTest()
     {
@@ -268,51 +266,51 @@ static partial class PhysicalValueCoercion
             var locals = new Dictionary<string, TypeNode> {
                 ["left"] = new TypeNode.Fqn(left), ["right"] = new TypeNode.Fqn(right),
             };
-            var operation = new JsonObject {
-                ["k"] = "binOp", ["op"] = "+",
-                ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "left" },
-                ["rhs"] = new JsonObject { ["k"] = "local", ["name"] = "right" },
+            var operation = new BirBinaryOperation {
+                Op = "+", Lhs = new BirLocal { Name = "left" }, Rhs = new BirLocal { Name = "right" },
             };
-            operation = NormalizeNumericForSelfTest(operation, locals, referenceBuild);
-            var physicalResult = ResultTypeOracle(Array.Empty<JsonNode>());
-            foreach (var side in new[] { "lhs", "rhs" })
-                if (BirTypeLowering.CanonicalExpressionResult(physicalResult(operation[side], BirScope.FromVars(locals)))
+            var fixture = NumericFixtureForSelfTest(operation, locals);
+            NormalizeNumericForSelfTest(fixture.Root, referenceBuild);
+            var physicalResult = TypedPhysicalValueCoercion.ResultTypeOracle(new[] { fixture.Root });
+            foreach (var side in new[] { operation.Lhs.Value, operation.Rhs.Value })
+                if (BirTypeLowering.CanonicalExpressionResult(physicalResult((BirGraphValue)side, locals))
                     != new TypeNode.Fqn(target))
                     throw new InvalidOperationException($"Mixed arithmetic lost its physical width: {left}/{right}");
             var once = operation.DeepClone();
-            operation = NormalizeNumericForSelfTest(operation, locals, referenceBuild);
-            if (!JsonNode.DeepEquals(once, operation))
+            NormalizeNumericForSelfTest(fixture.Root, referenceBuild);
+            if (!once.StructurallyEquals((BirGraphValue)fixture.Statement.Expr.Value))
                 throw new InvalidOperationException("Numeric operand coercion is not stable on its first result");
             foreach (var shift in new[] { "<<", ">>", ">>>" })
             {
                 if (left != "long" || right != "int") continue;
-                var shifted = new JsonObject {
-                    ["k"] = "binOp", ["op"] = shift,
-                    ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = "left" },
-                    ["rhs"] = new JsonObject { ["k"] = "local", ["name"] = "right" },
+                var shifted = new BirBinaryOperation {
+                    Op = shift, Lhs = new BirLocal { Name = "left" }, Rhs = new BirLocal { Name = "right" },
                 };
                 var before = shifted.DeepClone();
-                shifted = NormalizeNumericForSelfTest(shifted, locals, referenceBuild);
-                if (!JsonNode.DeepEquals(before, shifted))
+                var shiftFixture = NumericFixtureForSelfTest(shifted, locals);
+                NormalizeNumericForSelfTest(shiftFixture.Root, referenceBuild);
+                if (!before.StructurallyEquals((BirGraphValue)shiftFixture.Statement.Expr.Value))
                     throw new InvalidOperationException("Numeric coercion rewrote a shift distance");
             }
         }
         foreach (var kind in new[] { "clrStatic", "clrInstance", "callStatic", "callInstance", "constrainedCall" })
         {
-            var call = new JsonObject { ["k"] = kind };
-            if (kind is "clrStatic" or "clrInstance")
-                call["memberRef"] = new JsonObject {
-                    ["returnType"] = TypeJson.Write(new TypeNode.ByRef(new TypeNode.Fqn("System.Int32"))),
-                };
-            else call["calleeRet"] = TypeJson.Fqn("System.Int32");
-            var operation = new JsonObject {
-                ["k"] = "binOp", ["op"] = "+", ["lhs"] = call,
-                ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int64"), ["value"] = 1 },
+            var integer = new TypeNode.Fqn("System.Int32");
+            var member = new BirMemberReference { ReturnType = new TypeNode.ByRef(integer) };
+            IBirExpression call = kind switch {
+                "clrStatic" => new BirNativeStatic { MemberRef = member },
+                "clrInstance" => new BirNativeInstance { MemberRef = member },
+                "callStatic" => new BirCallStatic { CalleeRet = integer },
+                "callInstance" => new BirCallInstance { CalleeRet = integer },
+                "constrainedCall" => new BirConstrainedCall { CalleeRet = integer },
+                _ => throw new InvalidOperationException("Unaccounted numeric call fixture"),
             };
-            operation = NormalizeNumericForSelfTest(operation, new Dictionary<string, TypeNode>(), referenceBuild: false);
-            if (Str(operation["lhs"]?["k"]) != "conv"
-                || TypeJson.Read(operation["lhs"]?["to"]) != new TypeNode.Fqn("System.Int64")
-                || !JsonNode.DeepEquals(operation["lhs"]?["e"], call))
+            var operation = new BirBinaryOperation { Op = "+", Lhs = OptionalField<IBirExpression>.Of(call),
+                Rhs = new BirConstant { Type = new TypeNode.Fqn("System.Int64"), Value = new BirLiteral.IntegerLiteral(1) } };
+            var fixture = NumericFixtureForSelfTest(operation, new Dictionary<string, TypeNode>());
+            NormalizeNumericForSelfTest(fixture.Root, referenceBuild: false);
+            if (operation.Lhs.Value is not BirConvert { To.Value: TypeNode.Fqn { Name: "System.Int64" } } conversion
+                || !ReferenceEquals(conversion.E.Value, call))
                 throw new InvalidOperationException($"Numeric coercion lost the exact copied result of {kind}");
         }
         Console.WriteLine("[numeric operands] self-test OK (widths, stack categories, signed ties, ref mode, shifts, call values)");
