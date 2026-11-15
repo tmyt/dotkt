@@ -2,6 +2,10 @@ using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
+// Kotlin Comparable<X> supplies only the generic CLR face. Erased consumers and Comparable<*> slots
+// also require System.IComparable, so non-reference builds add its CompareTo(Any) forwarding bridge
+// on classes. Keep the target's semantic return stamp until normalization: a legal Nothing override
+// must terminate this physical Int32 slot rather than return Nothing's CLR object erasure (#321).
 static partial class ComparableBridgeSynthesis
 {
     // Preserve vector order: the last non-collapsing application is the selected argument,
@@ -44,11 +48,13 @@ static partial class ComparableBridgeSynthesis
             if (selfArgument == null) continue;
             if (!declaration.Methods.HasValue) declaration.Methods = Array.Empty<BirFunctionDeclaration>();
             var methods = declaration.Methods.Value;
+            // A declared erased slot (including a prior synthesized bridge) already satisfies this ABI.
             if (methods.Any(method => IsErasedCompareTo(method.Name.OrDefault(),
                     method.Params.OrDefault()?.Select(parameter => parameter.Type.OrDefault()).ToArray()))) continue;
             var name = declaration.Name.OrDefault();
             if (string.IsNullOrEmpty(name)) continue;
-            // Selection is the frontend's Comparable override relation, never a same-name overload lookup.
+            // Only the frontend's Comparable override relation selects the target. A same-name unrelated
+            // overload can return Nothing and would give an otherwise returning bridge a false terminator.
             var targets = methods.Where(method => method.Name.OrDefault() is "CompareTo" or "compareTo"
                 && method.Params.HasValue && method.Params.Value.Length == 1
                 && method.Overrides.OrEmpty().Any(edge => IsComparableOverride(edge.Owner.OrDefault(),
