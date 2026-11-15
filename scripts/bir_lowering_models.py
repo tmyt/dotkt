@@ -445,7 +445,7 @@ def outputs(root, definitions):
             model += ["    public override OptionalField<string> DeclarationIdentityFact => DeclarationId;"]
         final_property_fields = {"propertyName", "propertyAccessor", "propertyAssociation", "explicitClrName", "physicalSlotBridge"} & shape["properties"].keys()
         if final_property_fields:
-            model += ["    public override void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity)", "    {"]
+            model += ["    public override void ConsumeFinalPropertyFacts(Func<string?, string?, bool> hasIdentity)", "    {"]
             if {"propertyName", "propertyAccessor"} <= final_property_fields:
                 model += ["        if (hasIdentity(PropertyName.OrDefault(), PropertyAccessor.OrDefault()))", "        {",
                           "            PropertyName = default; PropertyAccessor = default;"]

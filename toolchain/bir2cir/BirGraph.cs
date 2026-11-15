@@ -71,7 +71,7 @@ internal abstract record BirGraphValue
     public virtual void ClearResultTypeStamp() { }
     // The property finalizer owns this phase. Generated own-field access keeps
     // its identity/association cleanup on the actual modeled occurrences.
-    public virtual void ConsumeFinalPropertyFacts(Func<string, string, bool> hasIdentity) { }
+    public virtual void ConsumeFinalPropertyFacts(Func<string?, string?, bool> hasIdentity) { }
     public abstract void VisitStringFields(Action<string> visit);
     public virtual void ClearSyntheticFrameFacts() { }
     // Source recognition extends declaration parameters and walks each schema
