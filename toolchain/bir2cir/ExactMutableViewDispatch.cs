@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Reflection;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // An opaque value slot does not make its ordinary invariant source view unknown. Prove the
 // exact eligible native face at runtime, then call the already-selected MethodDef directly.
