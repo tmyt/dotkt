@@ -223,7 +223,8 @@ static partial class KotlinCollectionSlotSynthesis
         for (var index = declared.Length - 1; index >= 0; index--)
             if (slot.Parameters[index] == ParameterCarrier.ErasedValue)
                 forwarded = new BirConditional { Type = BirGraphValue.CopyType(slotReturn),
-                    Cond = SourceErasedValueCompatible(QueryGuard(index), "p" + index), Then = forwarded, Else = SourceErasedQueryMiss(slot) };
+                    Cond = SourceErasedValueCompatible(QueryGuard(index), "p" + index),
+                    Then = OptionalField<IBirExpression>.Of(forwarded), Else = OptionalField<IBirExpression>.Of(SourceErasedQueryMiss(slot)) };
         var bridge = new BirFunctionDeclaration { Name = slot.Bridge, Static = false, Override = false, Virtual = true,
             Abstract = false, ObjectOverride = false, Vis = "private", Generated = true, Params = bridgeParameters.ToArray(),
             Ret = BirGraphValue.CopyType(slotReturn), Body = new IBirStatement[] { new BirReturn { Value = OptionalField<IBirExpression>.Of(forwarded) } },
@@ -243,7 +244,7 @@ static partial class KotlinCollectionSlotSynthesis
 
     static BirConditional SourceErasedValueCompatible(TypeNode declared, string name) => new() {
         Type = new TypeNode.Fqn("kotlin.Boolean"), Cond = new BirBinaryOperation { Op = "===", Lhs = SourceLocal(name), Rhs = SourceNull() },
-        Then = SourceNullFits(declared), Else = new BirIsInstance { Type = BirGraphValue.CopyType(declared), E = SourceLocal(name) },
+        Then = OptionalField<IBirExpression>.Of(SourceNullFits(declared)), Else = new BirIsInstance { Type = BirGraphValue.CopyType(declared), E = SourceLocal(name) },
     };
 
     static IBirExpression SourceNullFits(TypeNode declared) => declared switch {

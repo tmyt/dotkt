@@ -1,6 +1,7 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
+using SelectedMethodHeader = KotlinOverrideSlotBridge.SelectedMethodHeader;
 
 static partial class KotlinCollectionSlotSynthesis
 {
