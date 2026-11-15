@@ -75,13 +75,13 @@ static partial class CovariantInterfaceReturnBridge
             && !bridged.Contains(new((BirFunctionDeclaration)implementation.DeepClone(), bridged.Single().Descriptor)),
             "bridged-slot identity matched a copied implementation rather than its actual occurrence");
         var sourceBinding = bindings.GetCapturedSource(implementation);
+        pending.Complete();
         var physical = file.ToDom(bindings.ObserveProjection);
         bindings.BindProjected();
-        var physicalParameters = pending.BindDom(new System.Text.Json.Nodes.JsonNode[] { physical });
         var lateSlot = BridgedSlotKey(sourceBinding.Physical, (TypeNode.Fqn)descriptor.Owner.Value, descriptor.Member.Value,
             descriptor.Arity.Value, descriptor.Params.Value, descriptor.Ret.Value, refs, isValue);
         Require(lateSlot.Descriptor == bridged.Single().Descriptor && ReferenceEquals(lateSlot.Implementation, physical["types"][0]["methods"][0])
-            && physicalParameters[sourceBinding.Physical].Single() == methodVariable,
+            && originalParameters[implementation].Single() == methodVariable,
             "single-frontier handoff lost exact original rows or late slot identity");
 
         PropertyAndInterfaceSourceSelfTest(refs, isValue, broad, narrow);

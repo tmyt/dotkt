@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -13,12 +12,9 @@ static partial class KotlinOverrideSlotBridge
     internal sealed class PendingSourceParameters
     {
         sealed record MethodRow(BirFunctionDeclaration Method, TypeNode[] Parameters);
-        sealed record MaterializedMethod(BirFunctionDeclaration Method, CurrentDeclarationBindings.DeclarationBinding Binding);
         sealed record OwnerRow(int File, int Position, IBirTypeDeclaration Owner, MethodRow[] Methods)
         {
-            internal readonly List<MaterializedMethod> Materialized = new();
-            internal readonly Dictionary<BirFunctionDeclaration, CurrentDeclarationBindings.DeclarationBinding> Retired
-                = new(ReferenceEqualityComparer.Instance);
+            internal readonly List<BirFunctionDeclaration> Materialized = new();
         }
         BirFileDeclaration[] files;
         OwnerRow[] owners;
@@ -60,31 +56,13 @@ static partial class KotlinOverrideSlotBridge
             var expected = CurrentMethods(row).Concat(appended).ToArray();
             if (expected.Distinct(ReferenceEqualityComparer.Instance).Count() != expected.Length
                 || !owner.Methods.OrEmpty().SequenceEqual(expected, ReferenceEqualityComparer.Instance)) throw Mismatch();
-            var continuations = appended.Select(method => new MaterializedMethod(method, bindings.GetSource(method))).ToArray();
-            row.Materialized.AddRange(continuations);
+            foreach (var method in appended) bindings.GetSource(method);
+            row.Materialized.AddRange(appended);
             return true;
         }
 
         static IEnumerable<BirFunctionDeclaration> CurrentMethods(OwnerRow row)
-            => row.Methods.Select(method => method.Method).Concat(row.Materialized.Select(method => method.Method))
-                .Where(method => !row.Retired.ContainsKey(method));
-
-        // Retirement changes current ownership, not the original snapshot's
-        // membership or frozen signatures. Only the producer's exact removals
-        // may disappear; their captured bindings cross the same frontier once.
-        internal bool RetireMethods(IBirTypeDeclaration owner, IReadOnlyList<BirFunctionDeclaration> methods,
-            CurrentDeclarationBindings bindings)
-        {
-            ValidateSourceRows();
-            var row = owners.SingleOrDefault(row => ReferenceEquals(row.Owner, owner));
-            if (row == null) return false;
-            var current = new HashSet<BirFunctionDeclaration>(CurrentMethods(row), ReferenceEqualityComparer.Instance);
-            var removed = new HashSet<BirFunctionDeclaration>(methods, ReferenceEqualityComparer.Instance);
-            if (removed.Count != methods.Count || methods.Any(method => !current.Contains(method))) throw Mismatch();
-            var continuations = methods.Select(method => (Method: method, Binding: bindings.GetCapturedSource(method))).ToArray();
-            foreach (var entry in continuations) row.Retired.Add(entry.Method, entry.Binding);
-            return true;
-        }
+            => row.Methods.Select(method => method.Method).Concat(row.Materialized);
 
         // The next owning passes read the same frozen source shapes before
         // projection. Producer-reported physical appends deliberately have no
@@ -110,51 +88,17 @@ static partial class KotlinOverrideSlotBridge
             }
         }
 
-        // The coordinator supplies the one actual projection. Associate by the
-        // retained occurrence and ordinal, never by a renamed member or its body.
-        internal IReadOnlyDictionary<JsonObject, TypeNode[]> BindDom(IReadOnlyList<JsonNode> roots)
+        // The final typed slot consumer has used the snapshot. Release it at
+        // that clock; no later physical pass consumes source parameter rows.
+        internal void Complete()
         {
-            if (consumed || roots.Count != files.Length) throw Mismatch();
             ValidateSourceRows();
-            var result = new Dictionary<JsonObject, TypeNode[]>(ReferenceEqualityComparer.Instance);
-            foreach (var row in owners)
-            {
-                if (roots[row.File] is not JsonObject file
-                    || (file["fileClass"] as JsonValue)?.GetValue<string>() != files[row.File].FileClass.OrDefault()
-                    || file["types"] is not JsonArray types || row.Position >= types.Count
-                    || types[row.Position] is not JsonObject owner
-                    || (owner["name"] as JsonValue)?.GetValue<string>() != row.Owner.Name.OrDefault()) throw Mismatch();
-                var methods = owner["methods"] as JsonArray;
-                if ((methods?.Count ?? 0) != CurrentMethods(row).Count()) throw Mismatch();
-                var index = 0;
-                foreach (var source in row.Methods)
-                {
-                    if (row.Retired.TryGetValue(source.Method, out var retired))
-                    {
-                        result.Add(retired.Physical, source.Parameters);
-                        continue;
-                    }
-                    if (methods[index] is not JsonObject method
-                        || (method["name"] as JsonValue)?.GetValue<string>() != source.Method.Name.OrDefault()
-                        || (method[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>() != source.Method.DeclarationId.OrDefault())
-                        throw Mismatch();
-                    result.Add(method, source.Parameters);
-                    index++;
-                }
-                foreach (var materialized in row.Materialized)
-                    if (!row.Retired.ContainsKey(materialized.Method))
-                    {
-                        if (!ReferenceEquals(methods[index], materialized.Binding.Physical)) throw Mismatch();
-                        index++;
-                    }
-            }
             consumed = true;
             files = null;
             owners = null;
-            return result;
         }
 
         static InvalidOperationException Mismatch()
-            => new("Source override parameter snapshot has no exact DOM continuation");
+            => new("Source override parameter snapshot no longer owns its exact declarations");
     }
 }

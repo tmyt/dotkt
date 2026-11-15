@@ -730,13 +730,17 @@ sealed class Pipeline
         ExistentialCaptureAlignment.ApplyAll(captured, localExistentialOwners, refs, isValueFqn, genericRepresentations,
             (owner, field, position, arity, storage) => NullableTvErasureCallRealign.RebindGeneratedCapture(
                 nullableDeclarations, owner, field, position, arity, storage));
-        void AdmitBridgeMethods(IBirTypeDeclaration owner, IReadOnlyList<BirFunctionDeclaration> appended)
+        void BindBridgeMethods(IBirTypeDeclaration owner, IReadOnlyList<BirFunctionDeclaration> appended)
         {
             foreach (var method in appended)
             {
                 currentDeclarations.GetSource(method);
                 foreach (var implementation in method.ClrInterfaceImpls.OrEmpty()) currentDeclarations.GetSource(implementation);
             }
+        }
+        void AdmitBridgeMethods(IBirTypeDeclaration owner, IReadOnlyList<BirFunctionDeclaration> appended)
+        {
+            BindBridgeMethods(owner, appended);
             pendingOverrideParameters.AdmitMaterializedMethods(owner, appended, currentDeclarations);
         }
         InheritedClassInterfaceBridge.ApplyAll(captured, AdmitBridgeMethods);
@@ -766,13 +770,13 @@ sealed class Pipeline
                 if (method != null) AdmitBridgeMethods(owner, new[] { method });
                 if (descriptor != null) currentDeclarations.GetSource(descriptor);
             });
+        pendingOverrideParameters.Complete();
         if (!referenceBuild)
-            KotlinCollectionSlotSynthesis.ApplyAll(captured, refs, isValueFqn, valueRepresentations, AdmitBridgeMethods);
+            KotlinCollectionSlotSynthesis.ApplyAll(captured, refs, isValueFqn, valueRepresentations, BindBridgeMethods);
         valueRepresentations.SynthesizeSlots(captured, isValueFqn, (owner, methods, properties) => {
             currentDeclarations.RetireSourceMembers(owner, methods, properties);
-            pendingOverrideParameters.RetireMethods(owner, methods, currentDeclarations);
             foreach (var method in methods) RetireDeclaration(method);
-        }, AdmitBridgeMethods);
+        }, BindBridgeMethods);
         ConstructedMemberReturnSubstitution.ApplyAll(captured);
 
         for (var index = 0; index < captured.Length; index++)
@@ -802,7 +806,6 @@ sealed class Pipeline
         valueRepresentations.BindDomDeclarations(continuingRoots, retiredDom);
         var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
             continuingRoots.Cast<JsonObject>().ToArray(), retiredDom, aliasTransitions);
-        var overrideSourceParameters = pendingOverrideParameters.BindDom(continuingRoots);
         var covariantBridgedSlots = continuingCovariantSlots.Select(slot =>
             new CovariantInterfaceReturnBridge.BridgedSlot(slot.Implementation.Physical, slot.Descriptor)).ToHashSet();
         var carrierContinuation = FBoundStarProjectionErasure.BindRealizationContinuation(carrierRealization);
@@ -812,7 +815,7 @@ sealed class Pipeline
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums,
-                moduleBindings, overrideSourceParameters, carrierContinuation, covariantBridgedSlots));
+                moduleBindings, carrierContinuation, covariantBridgedSlots));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -865,9 +868,8 @@ sealed class Pipeline
         foreach (var bir in birFiles)
             staged.Add((bir.Root, OutputNameFor(bir.Path)));
 
-        // Continue the owning prefix's selected carrier, source-parameter and
+        // Continue the owning prefix's selected carrier and
         // covariant-slot facts; do not reselect them after the frontier.
-        var overrideSourceParameters = module.Preparation.OverrideSourceParameters;
         var physicalDeclarationSources = module.Preparation.Carriers.PhysicalDeclarationSources;
         var localExistentialOwners = module.Preparation.Carriers.LocalOwners;
         var covariantBridgedSlots = module.Preparation.CovariantBridgedSlots;
@@ -1752,7 +1754,6 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
     ModuleBindingSnapshots Bindings,
-    IReadOnlyDictionary<JsonObject, TypeNode[]> OverrideSourceParameters,
     FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers,
     IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> CovariantBridgedSlots);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
