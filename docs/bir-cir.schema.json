@@ -5,7 +5,7 @@
   "description": "The compiler's internal interchange contract. Source BIR (kotc→bir2cir) and physical CLR CIR (bir2cir→ilemit) have distinct phase-owned definitions maintained here. Typed records and codecs are generated from those definitions. The source-node profile is still partial during migration; it is not yet a closed reader for every BIR producer. Internal ABI compatibility across compiler versions is not promised.",
 
   "type": "object",
-  "$comment": "A BIR/CIR file is a compilation unit. Executable inline/default carriers use codec bir-msgpack/1; their owning models share this schema's phase vocabulary. KotlinInline's envelope is the birInlinePayload definition. Other metadata carriers such as KotlinSuspendFunctionType still use bir-json/1. Attribute constructors and carrier placement live in spec §0.",
+  "$comment": "A BIR/CIR file is a compilation unit. Executable inline/default and TypeNode carriers use codec bir-msgpack/1; their owning models share this schema's phase vocabulary. KotlinInline's envelope is the birInlinePayload definition. Remaining metadata object carriers use bir-json/1. Attribute constructors and carrier placement live in spec §0.",
   "properties": {
     "typeAliases": { "type": "array", "items": { "$ref": "kotlin-typealias.schema.json" }, "description": "BIR-only actualized Kotlin alias declarations, encoded opaquely into CIR assemblyAttrs before physical lowering" },
     "assemblyAttrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" }, "description": "CIR assembly attribute applications, emitted literally after local constructors receive metadata tokens" },

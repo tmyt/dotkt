@@ -27,7 +27,8 @@ public static class TypeNodeCarrierSelfTest
         {
             var bytes = TypeNodeCarrier.Encode(codec, shape);
             var copy = TypeNodeCarrier.Decode(codec, bytes);
-            if (copy != shape) throw new Exception("TypeNode carrier changed a structural type, classifier, frame or optional vector");
+            if (!TypeNodeDataEquality.Equal(copy, shape))
+                throw new Exception("TypeNode carrier changed a structural type, classifier, frame or optional vector");
             if (codec == BirCarrier.JsonV1 && !bytes.AsSpan().SequenceEqual(BirCarrier.EncodeBody(codec, shape, TypeNode.WriteJson)))
                 throw new Exception("Explicit JSON type codec changed its current encoding");
             if (codec == BirCarrier.MessagePackV1)
