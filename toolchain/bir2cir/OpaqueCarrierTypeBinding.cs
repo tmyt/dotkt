@@ -17,61 +17,19 @@ static partial class OpaqueCarrierTypeBinding
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs,
         SourceDeclarationSignatures semanticSignatures = null)
     {
-        var declarations = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        var declarations = new List<PhysicalDeclaration>();
         var fileClasses = new HashSet<string>(StringComparer.Ordinal);
         foreach (var root in roots.OfType<JsonObject>())
         {
             if (Str(root["fileClass"]) is string fileClass) fileClasses.Add(fileClass);
             if (root["types"] is JsonArray types)
                 foreach (var type in types.OfType<JsonObject>())
-                    if (Str(type["name"]) is string name && !declarations.TryAdd(name, type))
-                    {
-                        // Shared synthesized declarations may intentionally be repeated in several BIR roots and are
-                        // de-duplicated by ilemit. They still have one representation; disagreement is the ambiguity.
-                        var prior = declarations[name];
-                        var priorArity = prior["typeParams"] is JsonArray priorParams ? priorParams.Count : 0;
-                        var arity = type["typeParams"] is JsonArray typeParams ? typeParams.Count : 0;
-                        if (Str(prior["nestedIn"]) != Str(type["nestedIn"]) || priorArity != arity)
-                            throw new InvalidOperationException(
-                                $"conflicting Kotlin type declaration identity '{name}' in opaque carrier binding");
-                    }
+                    if (Str(type["name"]) is string name)
+                        declarations.Add(new(name, Str(type["nestedIn"]),
+                            type["typeParams"] is JsonArray typeParams ? typeParams.Count : 0));
         }
 
-        var physicalBySemantic = new Dictionary<string, string>(StringComparer.Ordinal);
-        var active = new HashSet<string>(StringComparer.Ordinal);
-
-        string Physical(string name)
-        {
-            if (fileClasses.Contains(name)) return name;
-            if (physicalBySemantic.TryGetValue(name, out var cached)) return cached;
-            if (!declarations.TryGetValue(name, out var declaration)) return name;
-            if (!active.Add(name))
-                throw new InvalidOperationException($"cyclic Kotlin semantic type ownership at '{name}'");
-            try
-            {
-                var ownArity = declaration["typeParams"] is JsonArray typeParams ? typeParams.Count : 0;
-                var ownMetadataName = ownArity > 0 && !name.Contains('`') ? name + "`" + ownArity : name;
-                if (Str(declaration["nestedIn"]) is not string owner)
-                    return physicalBySemantic[name] = ownMetadataName;
-
-                // Match ilemit's one-to-one metadata spelling: nestedIn supplies the parent and the declaration's last
-                // dotted segment supplies the nested TypeDef name. Synthesized semantic identities need not use an
-                // owner-prefixed source spelling (state machines deliberately do not).
-                var simple = name.Contains('.') ? name.Substring(name.LastIndexOf('.') + 1) : name;
-                if (ownArity > 0 && !simple.Contains('`')) simple += "`" + ownArity;
-                return physicalBySemantic[name] = Physical(owner) + "+" + simple;
-            }
-            finally { active.Remove(name); }
-        }
-
-        // Only identities whose representation actually changed need binding. Top-level names continue through the
-        // ordinary type lowering path; nested names become exact '+' metadata tokens in the producer-authored carrier.
-        foreach (var (name, declaration) in declarations)
-            if (declaration["nestedIn"] != null) _ = Physical(name);
-
-        var nestedPhysical = physicalBySemantic
-            .Where(pair => declarations[pair.Key]["nestedIn"] != null)
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var nestedPhysical = PlanPhysicalNames(declarations, fileClasses);
 
         foreach (var root in roots)
         {

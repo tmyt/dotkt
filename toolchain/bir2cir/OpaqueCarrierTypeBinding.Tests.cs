@@ -112,18 +112,18 @@ static partial class OpaqueCarrierTypeBinding
             new BirClassDefinition { Name = "Carrier.Outer", Kind = "class", TypeParams = new[] { new BirTypeParameter { Name = "O" } } },
             new BirClassDefinition { Name = source.Name, Kind = "class", NestedIn = "Carrier.Outer",
                 TypeParams = new[] { new BirTypeParameter { Name = "I" }, new BirTypeParameter { Name = "N" } } },
-        }, Methods = new[] { new BirFunctionDeclaration { Name = "ordinary", Ret = source } } }.ToDom();
-        root["inlineBir"] = Convert.ToBase64String(ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, inline));
-        root["suspendResult"] = TypeNode.ToJson(source);
-        var defaultAttribute = DefaultBirCarrier.Create(0, defaultSource).ToDom();
-        root["attrs"] = new JsonArray(defaultAttribute);
-        ApplyAll(new JsonNode[] { root }, ReferenceMetadataIndex.Build(Array.Empty<string>()));
-        var outgoing = ExecutableBirCodec.ReadInline(ExecutableBirCodec.Codec, Convert.FromBase64String(root["inlineBir"].GetValue<string>()));
+        }, Methods = new[] { new BirFunctionDeclaration { Name = "ordinary", Ret = source,
+            InlineBir = ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, inline), SuspendResult = source,
+            Attrs = new[] { DefaultBirCarrier.Create(0, defaultSource) } } } };
+        var outerMethod = root.Methods.Value[0];
+        var defaultAttribute = outerMethod.Attrs.Value[0];
+        ApplyAll(new[] { root }, ReferenceMetadataIndex.Build(Array.Empty<string>()));
+        var outgoing = ExecutableBirCodec.ReadInline(ExecutableBirCodec.Codec, outerMethod.InlineBir.Value);
         Require(TypeNodeDataEquality.Equal(outgoing.Ret.Value, physical)
             && outgoing.Params.Value[0].StructurallyEquals(parameter)
-            && TypeNodeDataEquality.Equal(TypeNode.Parse(root["suspendResult"].GetValue<string>()), physical)
-            && TypeNodeDataEquality.Equal(((BirValueBlock)DefaultBirCarrier.DecodeTyped(defaultAttribute)).Type.Value, physical)
-            && TypeNodeDataEquality.Equal(TypeJson.Read(root["methods"][0]["ret"]), source),
+            && TypeNodeDataEquality.Equal(outerMethod.SuspendResult.Value, physical)
+            && TypeNodeDataEquality.Equal(((BirValueBlock)DefaultBirCarrier.Decode(defaultAttribute)).Type.Value, physical)
+            && TypeNodeDataEquality.Equal(outerMethod.Ret.Value, source),
             "outer carrier owner did not use typed payload binding or touched the live source declaration");
         SelfTestMetadataLeaves();
         Console.WriteLine("[typed opaque executable binding] self-test OK (inline/default codecs, parameter vectors, carried identities, spans and scalar boundary)");
@@ -164,12 +164,15 @@ static partial class OpaqueCarrierTypeBinding
         };
         var root = new BirFileDeclaration { FileClass = "Leaf.File", Types = new IBirTypeDeclaration[] {
             new BirClassDefinition { Name = "Leaf.Outer", Kind = "class" }, declaration,
-        }, Methods = new[] { method } }.ToDom();
-        ApplyAll(new JsonNode[] { root }, refs);
-        var bound = SourceTypeFacts.ReadFrozenText(root["types"][1][KotlinSupertypesRecord.PreKey].GetValue<string>());
+        }, Methods = new[] { method } };
+        ApplyAll(new[] { root }, refs);
+        // The sole projection here verifies the outgoing frozen leaf shape,
+        // not a second execution of a retired DOM transformation.
+        var projection = root.ToDom();
+        var bound = SourceTypeFacts.ReadFrozenText(projection["types"][1][KotlinSupertypesRecord.PreKey].GetValue<string>());
         var expectedText = "{\"interfaces\":[],\"bounds\":{\"3\":[" + TypeNode.ToJson(sourceBoundShape)
             + "],\"0\":[]},\"base\":" + TypeNode.ToJson(physical) + ",\"nullableFrame\":" + frame + "}";
-        var boundMethod = root["methods"][0];
+        var boundMethod = projection["methods"][0];
         var bounds = SourceBoundsSnapshot.ReadFrozenText(boundMethod[NullableGenericErasure.MethodTypeParameterBoundsPre].GetValue<string>());
         Require(bound.FrozenText == expectedText && bound.Bounds.Keys.SequenceEqual(new[] { 3, 0 })
             && bound.Interfaces.Count == 0 && bound.Bounds[0].Length == 0
