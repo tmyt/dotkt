@@ -1,41 +1,40 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 static partial class UnsafeAccessorLowering
 {
     // Family permission follows declaration ancestry, not equality of constructed generic arguments. The selected
     // member's complete owner/signature remains untouched; this only decides whether CLR access is already legal.
-    sealed class FamilyAccess
+    // Declaration/CLR-access policy. Receiver typing is supplied by the phase's
+    // existing physical expression oracle, not reconstructed from source names.
+    class FamilyAccessPolicy<THost> where THost : class
     {
-        readonly IReadOnlyDictionary<string, Host> _hosts;
+        readonly IReadOnlyDictionary<string, THost> _hosts;
         readonly IReadOnlyDictionary<string, SupertypeGraph.Def> _types;
         readonly ReferenceMetadataIndex _refs;
-        readonly Func<JsonNode, BirScope, TypeNode> _physicalType;
+        readonly Func<THost, string> _name, _nested, _visibility;
+        readonly Func<THost, TypeNode.Fqn> _self;
+        readonly Func<string, string, bool> _private;
 
-        internal FamilyAccess(IReadOnlyList<JsonNode> roots, IReadOnlyDictionary<string, Host> hosts,
-            ReferenceMetadataIndex refs)
-        {
-            _hosts = hosts;
-            _types = SupertypeGraph.Collect(roots);
-            _refs = refs;
-            _physicalType = PhysicalValueCoercion.ResultTypeOracle(roots);
-        }
+        internal FamilyAccessPolicy(IReadOnlyDictionary<string, THost> hosts,
+            IReadOnlyDictionary<string, SupertypeGraph.Def> types, ReferenceMetadataIndex refs,
+            Func<THost, string> name, Func<THost, string> nested, Func<THost, string> visibility,
+            Func<THost, TypeNode.Fqn> self, Func<string, string, bool> privateAccess)
+        { _hosts = hosts; _types = types; _refs = refs; _name = name; _nested = nested;
+            _visibility = visibility; _self = self; _private = privateAccess; }
 
-        internal bool Allows(Host caller, JsonNode receiver, TypeNode.Fqn owner, string visibility,
-            bool isStatic, BirScope scope, IEnumerable<TypeNode> signature)
+        internal bool Allows(THost caller, TypeNode receiverType, TypeNode.Fqn owner, string visibility,
+            bool isStatic, bool hasReceiver, IEnumerable<TypeNode> signature)
         {
-            if (visibility != "protected" || isStatic || receiver == null) return false;
-            var receiverType = receiver is JsonObject expression && Str(expression["k"]) == "this"
-                ? TypeJson.Read(SelfType(caller)) : _physicalType(receiver, scope);
+            if (visibility != "protected" || isStatic || !hasReceiver) return false;
             if (Head(receiverType) is not TypeNode.Fqn instance || !Visible(caller, owner)
                 || signature.Any(type => type == null || !Visible(caller, type))) return false;
             // A closure can retain the family rights of its enclosing derived class, but its receiver must still
             // be that derived class (or a subclass), not an arbitrary instance of the protected declaring base.
             foreach (var context in Contexts(caller))
-                if (TypeJson.Read(SelfType(context)) is TypeNode.Fqn family
+                if (_self(context) is TypeNode.Fqn family
                     && Derives(family, owner) && Derives(instance, family)) return true;
             return false;
         }
@@ -43,17 +42,17 @@ static partial class UnsafeAccessorLowering
         bool Derives(TypeNode.Fqn source, TypeNode.Fqn target) =>
             SupertypeGraph.ReachesClassDeclaration(source, target, _types, _refs);
 
-        IEnumerable<Host> Contexts(Host caller)
+        IEnumerable<THost> Contexts(THost caller)
         {
             var seen = new HashSet<string>(StringComparer.Ordinal);
-            while (caller != null && seen.Add(caller.Name))
+            while (caller != null && seen.Add(_name(caller)))
             {
                 yield return caller;
-                caller = caller.NestedIn != null && _hosts.TryGetValue(caller.NestedIn, out var parent) ? parent : null;
+                caller = _nested(caller) is string nested && _hosts.TryGetValue(nested, out var parent) ? parent : null;
             }
         }
 
-        bool Visible(Host caller, TypeNode type)
+        bool Visible(THost caller, TypeNode type)
         {
             switch (type)
             {
@@ -80,20 +79,20 @@ static partial class UnsafeAccessorLowering
                         name = ((TypeNode.Fqn)BirTypeLowering.CanonicalPhysicalSlotType(new TypeNode.Fqn(name))).Name;
                         return VisibleReferenced(caller, _refs?.ResolveRefType(name, owner.Args?.Length ?? 0));
                     }
-                    if (host.NestedIn == null) return true; // Every local top-level type is assembly-accessible.
-                    if (!Visible(caller, new TypeNode.Fqn(host.NestedIn))) return false;
-                    return Str(host.Declaration["vis"]) switch
+                    if (_nested(host) == null) return true; // Every local top-level type is assembly-accessible.
+                    if (!Visible(caller, new TypeNode.Fqn(_nested(host)))) return false;
+                    return _visibility(host) switch
                     {
-                        "private" => DirectPrivateAccessIsValid(caller.Name, host.NestedIn, _hosts),
+                        "private" => _private(_name(caller), _nested(host)),
                         "protected" => Contexts(caller).Any(context =>
-                            Derives((TypeNode.Fqn)TypeJson.Read(SelfType(context)), new TypeNode.Fqn(host.NestedIn))),
+                            Derives(_self(context), new TypeNode.Fqn(_nested(host)))),
                         _ => true,
                     };
                 default: return false;
             }
         }
 
-        bool VisibleReferenced(Host caller, Type declaration)
+        bool VisibleReferenced(THost caller, Type declaration)
         {
             if (declaration == null) return false;
             if (declaration.IsVisible) return true;
@@ -104,7 +103,7 @@ static partial class UnsafeAccessorLowering
             // operand construction. Another assembly's internal/private type cannot gain family permission.
             var enclosing = new TypeNode.Fqn(declaration.DeclaringType.FullName);
             return Contexts(caller).Any(context =>
-                Derives((TypeNode.Fqn)TypeJson.Read(SelfType(context)), enclosing));
+                Derives(_self(context), enclosing));
         }
 
         static TypeNode Head(TypeNode type) => type switch

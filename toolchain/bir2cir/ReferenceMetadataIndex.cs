@@ -343,38 +343,22 @@ sealed partial class ReferenceMetadataIndex
     // shared by an override family rather than allocated per declaration. In that current-format case, select from
     // the producing assembly's semantic declaration carriers using the complete frontend-selected signature. This is
     // the same exact semantic selection used for referenced override slots, and refuses an ambiguous overload set.
-    public bool TryUnsafeAccessorVirtualMethod(
-        string ownerFqn,
-        string sourceMember,
-        int methodArity,
-        bool isStatic,
-        IReadOnlyList<TypeNode> signature,
-        TypeNode resolvedReturn,
-        TypeNode[] ownerTypeArguments,
-        JsonArray selectedTypeParams,
-        out ReferencedUnsafeAccessorMethod declaration)
+
+    MemberBinding SelectUnsafeAccessorVirtualMethod(string ownerFqn, string sourceMember, int methodArity,
+        bool isStatic, IReadOnlyList<TypeNode> signature, TypeNode resolvedReturn, TypeNode[] ownerTypeArguments,
+        string selectedParameterShape)
     {
-        declaration = null;
-        if (!TryMembersByBirOwner(ownerFqn, out var members)) return false;
+        if (!TryMembersByBirOwner(ownerFqn, out var members)) return null;
         var matches = members.Where(member => member.SourcePropertyName == null
                 && member.IsStatic == isStatic
                 && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
                 && member.MethodArity == methodArity
-                && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                    member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
+                && KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(member.MethodTypeParams, ownerTypeArguments)
+                    == selectedParameterShape
                 && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments)
                 && member.SignatureParameters != null && member.SignatureReturn != null)
             .ToList();
-        if (matches.Count != 1) return false;
-        var match = matches[0];
-        declaration = new ReferencedUnsafeAccessorMethod(
-            match.Name,
-            match.SignatureParameters,
-            match.SignatureReturn,
-            match.MethodTypeParams,
-            match.NullableGenericRet,
-            match.IsPublic);
-        return true;
+        return matches.Count == 1 ? matches[0] : null;
     }
 
     internal ConstructorInfo UnsafeAccessorConstructor(TypeNode.Fqn owner, string identity)

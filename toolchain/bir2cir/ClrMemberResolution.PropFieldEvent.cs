@@ -4,6 +4,8 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // W1-S3 (#46 / #121) — the RESOLVED-CLR-IR carry extended to the remaining un-carried member axes: PROPERTY accessors
 // (clrPropGet/clrPropSet), FIELDS (an external private-backing-field property read as a `field`/`setFieldExpr`), and
@@ -19,11 +21,22 @@ static partial class ClrMemberResolution
     // UnsafeAccessor binds a field on its declaring TypeDef, unlike ordinary inherited
     // field lookup. Reuse the exact MemberRef projection, including constructed bases.
     internal static MemberRefNode ResolveFieldForUnsafeAccessor(ReferenceMetadataIndex refs,
-        TypeNode.Fqn owner, string name, bool isStatic, out JsonArray ownerParameters, out bool isPublic)
+        TypeNode.Fqn owner, string name, bool isStatic, out BirTypeParameter[] ownerParameters, out bool isPublic)
+    {
+        ownerParameters = null;
+        var selected = SelectUnsafeAccessorField(refs, owner, name, isStatic);
+        isPublic = selected?.IsPublic ?? false;
+        if (selected == null) return null;
+        ownerParameters = selected.DeclaringType.GetGenericArguments()
+            .Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray();
+        return selected.Reference;
+    }
+
+    sealed record UnsafeFieldSelection(MemberRefNode Reference, Type DeclaringType, bool IsPublic);
+    static UnsafeFieldSelection SelectUnsafeAccessorField(ReferenceMetadataIndex refs,
+        TypeNode.Fqn owner, string name, bool isStatic)
     {
         _refs = refs;
-        ownerParameters = null;
-        isPublic = false;
         var open = ResolveOwnerType(owner);
         if (open == null) return null;
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy
@@ -31,10 +44,7 @@ static partial class ClrMemberResolution
         var field = open.GetField(name, flags)
             ?? throw new InvalidOperationException($"UnsafeAccessor field '{owner.Name}.{name}' has no referenced FieldDef");
         var declaration = OpenFieldDeclarationOf(field);
-        isPublic = declaration.IsPublic;
-        ownerParameters = new JsonArray(declaration.DeclaringType.GetGenericArguments()
-            .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
-        return FieldRefOf(field, open, owner.Args);
+        return new(FieldRefOf(field, open, owner.Args), declaration.DeclaringType, declaration.IsPublic);
     }
 
     // ---- property get / set --------------------------------------------------------------------
@@ -209,9 +219,15 @@ static partial class ClrMemberResolution
     // on a DIFFERENT (base) interface; a base-CLASS accessor already re-anchors correctly through reflection.
     static void RetargetToBaseInterface(JsonObject node, string ownerSlot, Type open, MethodInfo acc, TypeNode.Fqn ownerFqn)
     {
-        if (!open.IsInterface) return;
+        var target = RetargetedInterfaceOwner(open, acc, ownerFqn);
+        if (!ReferenceEquals(target, ownerFqn)) node[ownerSlot] = TypeJson.Write(target);
+    }
+
+    static TypeNode RetargetedInterfaceOwner(Type open, MethodInfo acc, TypeNode.Fqn ownerFqn)
+    {
+        if (!open.IsInterface) return ownerFqn;
         var decl = acc.DeclaringType;
-        if (decl == null || SafeDef(decl) == SafeDef(open)) return;
+        if (decl == null || SafeDef(decl) == SafeDef(open)) return ownerFqn;
         // The metadata universe resolves an open generic owner through a harmless object-closed probe in a few
         // reflection paths.  An accessor obtained from that probe may therefore report
         // `IReadOnlyCollection<object>` even though the owner's actual base edge is
@@ -223,8 +239,7 @@ static partial class ClrMemberResolution
         var declarationEdge = SafeInterfaces(openDefinition)
             .Where(iface => SafeDef(iface) == SafeDef(decl))
             .SingleOrDefault() ?? decl;
-        node[ownerSlot] = TypeJson.Write(SubstOwnerParams(
-            declarationEdge, ownerFqn.Args ?? Array.Empty<TypeNode>()));
+        return SubstOwnerParams(declarationEdge, ownerFqn.Args ?? Array.Empty<TypeNode>());
     }
 
     // An MLC Type (a base interface instance `IReadOnlyCollection<T_open>`, its args naming the OWNER def's generic
@@ -341,32 +356,40 @@ static partial class ClrMemberResolution
     // Retained event callbacks are physical callers outside the source declaration's lexical family. Resolve a
     // restricted referenced accessor through Event/MethodSemantics, then use the ordinary member-call path before
     // UnsafeAccessorLowering. No target is widened and ilemit need not infer visibility or event semantics.
-    internal static JsonObject RestrictedEventCall(JsonObject node, ReferenceMetadataIndex refs)
+    sealed record RestrictedEventDispatch(TypeNode Owner, string Name, TypeNode[] Signature, bool Virtual, string Visibility);
+    static RestrictedEventDispatch RestrictedEventPlan(ReferenceMetadataIndex refs, TypeNode.Fqn owner,
+        string name, bool add, bool isStatic)
     {
         _refs = refs;
-        var kind = node["k"]?.GetValue<string>();
-        if (kind is not ("clrEventAdd" or "clrEventRemove")
-            || node["localAccessor"]?.GetValue<bool>() == true
-            || TypeJson.Read(node["type"]) is not TypeNode.Fqn owner) return null;
         var declaration = ResolveOwnerType(owner, refs);
         if (declaration == null) return null;
-        var isStatic = node["static"]?.GetValue<bool>() == true;
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy
             | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
-        var accessor = FindEventAccessor(declaration, node["event"]?.GetValue<string>(),
-            kind == "clrEventAdd", flags, allowNonPublic: true);
+        var accessor = FindEventAccessor(declaration, name, add, flags, allowNonPublic: true);
         if (accessor == null || !(accessor.IsPrivate || accessor.IsFamily || accessor.IsFamilyOrAssembly || accessor.IsAssembly)) return null;
-        RetargetToBaseInterface(node, "type", declaration, accessor, owner);
-        return new JsonObject
-        {
-            ["k"] = isStatic ? "callStatic" : "callInstance",
-            ["ownerType"] = node["type"]!.DeepClone(), ["method"] = accessor.Name,
-            ["sig"] = new JsonArray(accessor.GetParameters()
-                .Select(parameter => TypeJson.Write(MemberSigOf(parameter.ParameterType))).ToArray()),
-            ["recv"] = node["recv"]?.DeepClone(), ["args"] = new JsonArray(node["handler"]?.DeepClone()),
-            ["virtual"] = accessor.IsVirtual, ["ret"] = TypeJson.Fqn("void"), ["sty"] = TypeJson.Fqn("void"),
-            ["memberVisibility"] = accessor.IsPrivate ? "private" : accessor.IsAssembly ? "internal" : "protected",
-        };
+        return new(RetargetedInterfaceOwner(declaration, accessor, owner), accessor.Name,
+            accessor.GetParameters().Select(p => MemberSigOf(p.ParameterType)).ToArray(), accessor.IsVirtual,
+            accessor.IsPrivate ? "private" : accessor.IsAssembly ? "internal" : "protected");
+    }
+
+    internal static BirGraphValue RestrictedEventCall(BirEventAdd node, ReferenceMetadataIndex refs)
+        => RestrictedEventSourceCall(refs, node.Type.OrDefault(), node.Event.OrDefault(), true,
+            node.Static.OrDefault(), node.LocalAccessor.OrDefault(), node.Recv.OrDefault(), node.Handler.OrDefault());
+    internal static BirGraphValue RestrictedEventCall(BirEventRemove node, ReferenceMetadataIndex refs)
+        => RestrictedEventSourceCall(refs, node.Type.OrDefault(), node.Event.OrDefault(), false,
+            node.Static.OrDefault(), node.LocalAccessor.OrDefault(), node.Recv.OrDefault(), node.Handler.OrDefault());
+    static BirGraphValue RestrictedEventSourceCall(ReferenceMetadataIndex refs, TypeNode type, string name,
+        bool add, bool isStatic, bool localAccessor, IBirExpression receiver, IBirExpression handler)
+    {
+        if (localAccessor || type is not TypeNode.Fqn owner) return null;
+        var plan = RestrictedEventPlan(refs, owner, name, add, isStatic);
+        if (plan == null) return null;
+        if (isStatic) return new BirCallStatic { OwnerType = BirGraphValue.CopyType(plan.Owner), Method = plan.Name,
+            Sig = plan.Signature, Args = new[] { handler }, Virtual = plan.Virtual,
+            Ret = new TypeNode.Fqn("void"), Sty = new TypeNode.Fqn("void"), MemberVisibility = plan.Visibility };
+        return new BirCallInstance { OwnerType = BirGraphValue.CopyType(plan.Owner), Method = plan.Name,
+            Sig = plan.Signature, Recv = OptionalField<IBirExpression>.Of(receiver), Args = new[] { handler },
+            Virtual = plan.Virtual, Ret = new TypeNode.Fqn("void"), Sty = new TypeNode.Fqn("void"), MemberVisibility = plan.Visibility };
     }
 
     // ---- external field access (`field` / `setFieldExpr`) --------------------------------------
