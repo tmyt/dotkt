@@ -24,7 +24,7 @@ sealed partial class ReferenceMetadataIndex
     {
         declaration = null;
         var selected = SelectUnsafeAccessorVirtualMethod(owner, name, arity, isStatic, signature, result,
-            ownerArguments, KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(selectedParameters, ownerArguments));
+            ownerArguments, KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(selectedParameters, ownerArguments));
         if (selected == null) return false;
         declaration = new(selected.Name, selected.SignatureParameters, selected.SignatureReturn,
             CloneReferencedTypeParameters(selected.MethodTypeParams), selected.NullableGenericRet, selected.IsPublic);

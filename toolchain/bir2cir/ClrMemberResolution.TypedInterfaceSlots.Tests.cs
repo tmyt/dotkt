@@ -78,13 +78,13 @@ static partial class ClrMemberResolution
         var descriptor = new BirTypeParameter { Name = "DifferentSourceName",
             Constraints = new TypeNode[] { new TypeNode.Fqn("System.IComparable", new TypeNode[] { new TypeNode.Tv("method", 0) }) },
             SpecialConstraints = new[] { "class", "new" } };
-        var reflectedShape = KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(new[] { reflected }, Array.Empty<TypeNode>());
-        if (reflectedShape != KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(new[] { descriptor }, Array.Empty<TypeNode>())
+        var reflectedShape = KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(new[] { reflected }, Array.Empty<TypeNode>());
+        if (reflectedShape != KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(new[] { descriptor }, Array.Empty<TypeNode>())
             || reflected.Variance.IsPresent
             || !reflected.SpecialConstraints.Value.SequenceEqual(new[] { "class", "new" }))
             throw new InvalidOperationException("Typed reflected interface constraints lost class/new or recursive method-frame facts");
         descriptor.SpecialConstraints = new[] { "class" };
-        if (reflectedShape == KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(new[] { descriptor }, Array.Empty<TypeNode>()))
+        if (reflectedShape == KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(new[] { descriptor }, Array.Empty<TypeNode>()))
             throw new InvalidOperationException("Interface constraint selection ignored a reflected new() obligation");
         if (!reflected.Name.HasValue || !reflected.Constraints.HasValue || !reflected.SpecialConstraints.HasValue
             || reflected.Constraints.Value.Single() != descriptor.Constraints.Value.Single())

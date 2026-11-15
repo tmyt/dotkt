@@ -203,7 +203,7 @@ static partial class KotlinOverrideSlotBridge
                 string Key(TypeNode type) => SupertypeGraph.TypeKey(BirTypeLowering.CanonicalPhysicalSlotType(context.Physical(type)));
                 var shape = slot.DescriptorMember + "`" + implementation.Arity + "("
                     + string.Join(",",(slot.Signature ?? slot.Parameters).Select(Key)) + ")->" + Key(slot.Return)
-                    + SourceMethodTypeParameterShapeKey(typeParameters,ownArguments,
+                    + MethodTypeParameterShapeKey(typeParameters,ownArguments,
                         type => BirTypeLowering.CanonicalPhysicalSlotType(context.Physical(type)))
                     + (slot.UnitValueReturn ? "[value-return]" : "");
                 var claim = (implementation,shape);
@@ -244,7 +244,7 @@ static partial class KotlinOverrideSlotBridge
             // slots can forward to different overloads, and must not share the first body's cast.
             var key = slot.IdentityName + "`" + implementation.Arity + "("
                 + string.Join(",",(slot.Signature ?? slot.Parameters).Select(PhysicalKey)) + ")->" + PhysicalKey(slot.Return)
-                + "{" + implementation.Name + "<" + SourceMethodTypeParameterShapeKey(implementation.TypeParameters,ownArguments)
+                + "{" + implementation.Name + "<" + MethodTypeParameterShapeKey(implementation.TypeParameters,ownArguments)
                 + ">(" + string.Join(",",implementation.Parameters.Select(parameter => parameter.Type is {} type ? SupertypeGraph.TypeKey(type) : "?")) + ")}";
             if (selectedBody != null) key += "[body-owner:" + SupertypeGraph.TypeKey(selectedBody.Owner) + "]";
             // CoreCLR does not permit one private-final interface body to implement both declarations

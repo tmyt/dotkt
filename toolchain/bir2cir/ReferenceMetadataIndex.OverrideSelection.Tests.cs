@@ -39,7 +39,7 @@ sealed partial class ReferenceMetadataIndex
                 out _, accessorKind: "get", selectedDeclarationId: "not-selected"))
             throw new InvalidOperationException("Typed override selection lost accessor, exact identity, or separate owner constraint frames");
 
-        var selectedShape = KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(selected, implementationArgs);
+        var selectedShape = KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(selected, implementationArgs);
         if (!index.TrySelectedNullableGenericSlotByShape("ShapeOwner", "get_physical", false, 0, 1,
                 Array.Empty<TypeNode>(), result, declaringArgs, selectedShape,
                 out var returned, out _, out _, out var physical, out var parameters, out _, out _,

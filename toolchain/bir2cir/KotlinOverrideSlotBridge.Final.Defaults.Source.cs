@@ -210,7 +210,7 @@ static partial class KotlinOverrideSlotBridge
             var slotTypeParameters=SubstituteParameters(descriptor.TypeParams.OrDefault(),descriptorArguments);
             var property=accessor is "get" or "set";
             var key=(property ? "dim-property:" : "dim-method:")+owner.Name+":"+name+":"+accessor+"#"
-                +SourceMethodTypeParameterShapeKey(slotTypeParameters,[])+":"+descriptor.Arity.Value+"("
+                +MethodTypeParameterShapeKey(slotTypeParameters,[])+":"+descriptor.Arity.Value+"("
                 +string.Join(",",slotParameters.Select(SupertypeGraph.TypeKey))+")->"+SupertypeGraph.TypeKey(slotReturn);
             if (!bridges.TryGetValue(key,out var bridge))
             {

@@ -85,7 +85,7 @@ static partial class CovariantInterfaceReturnBridge
                 implementationReturn = SubstOwnerTvs(implementationReturn, owner.OwnArguments);
                 if (implementationReturn == slotReturn || KotlinOverrideSlotBridge.IsErasureDivergence(slotReturn, implementationReturn)) continue;
                 var key = SourceBridgeKey(implementation.Name.Value, arity,
-                    KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(slot.TypeParams.OrDefault(), arguments),
+                    KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(slot.TypeParams.OrDefault(), arguments),
                     slotParameters, slotReturn, valueReturn, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
@@ -164,7 +164,7 @@ static partial class CovariantInterfaceReturnBridge
                 // This is the actual post-erasure selector, not the earlier
                 // semantic-constraint declaration-materialization overload.
                 if (!refs.TrySelectedOverrideDeclarationByShape(semanticOwner.Name, sourceMember, accessor, arity,
-                        parameters, ownerArguments, KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(
+                        parameters, ownerArguments, KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                             implementation.TypeParams.OrDefault(), ownArguments, refs.PhysicalConstraintType),
                         suspend, out var declaration, semanticConstraints: false, selectedDeclarationId: null)) continue;
                 var declarationParameters = declaration.TypeParams;
@@ -192,7 +192,7 @@ static partial class CovariantInterfaceReturnBridge
                     var comparable = slotParameters.Select(type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases,
                         isValue, refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames)).ToArray();
                     if (!ClrMemberResolution.TryResolveAliasedInterfaceSlotByShape(refs, descriptorOwner, descriptorMember, arity,
-                            comparable, declarationParameters == null ? null : KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(
+                            comparable, declarationParameters == null ? null : KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                                 declarationParameters, physicalArguments), out descriptorOwner, out descriptorMember,
                             out slotParameters, out slotReturn)) continue;
                     var referenceReturn = SupertypeGraph.SubstOwnerTvs(declaration.PhysicalReturn, physicalArguments);
@@ -207,7 +207,7 @@ static partial class CovariantInterfaceReturnBridge
                         nullableFrames: refs.NullableTypeFrames, leftReturnsValue: !suspend && declaration.ReturnsValue)
                     || KotlinOverrideSlotBridge.IsErasureDivergence(slotReturn, implementationReturn)) continue;
                 var key = SourceBridgeKey(implementation.Name.Value, arity,
-                    KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(declarationParameters, physicalArguments),
+                    KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declarationParameters, physicalArguments),
                     slotParameters, slotReturn, valueReturn, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
                 {

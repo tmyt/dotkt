@@ -323,17 +323,11 @@ static partial class KotlinOverrideSlotBridge
 
     internal static bool SameSourceMethodTypeParameterShape(BirTypeParameter[] slotTypeParams,
         BirTypeParameter[] implementationTypeParams, TypeNode[] slotOwnerArgs, TypeNode[] implementationOwnerArgs)
-        => SourceMethodTypeParameterShapeKey(slotTypeParams, slotOwnerArgs)
-            == SourceMethodTypeParameterShapeKey(implementationTypeParams, implementationOwnerArgs);
+        => MethodTypeParameterShapeKey(slotTypeParams, slotOwnerArgs)
+            == MethodTypeParameterShapeKey(implementationTypeParams, implementationOwnerArgs);
 
 
     internal static string MethodTypeParameterShapeKey(IReadOnlyList<BirTypeParameter> typeParams, TypeNode[] ownerArgs,
-        Func<TypeNode, TypeNode> constraintType = null)
-        => ConstraintShapeKey(typeParams?.Select(parameter => (
-            Constraints: parameter.Constraints.OrEmpty().Where(constraint => constraint != null),
-            Specials: parameter.SpecialConstraints.OrEmpty().Where(value => value != null))), ownerArgs, constraintType);
-
-    internal static string SourceMethodTypeParameterShapeKey(BirTypeParameter[] typeParams, TypeNode[] ownerArgs,
         Func<TypeNode, TypeNode> constraintType = null)
         => ConstraintShapeKey(typeParams?.Select(parameter => (
             Constraints: (IEnumerable<TypeNode>)parameter.Constraints.OrEmpty(),

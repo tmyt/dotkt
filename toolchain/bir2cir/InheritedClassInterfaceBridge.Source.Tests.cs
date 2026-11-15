@@ -66,7 +66,7 @@ static partial class InheritedClassInterfaceBridge
         if (derived.Methods.Value.Length != 0)
             throw new InvalidOperationException("An already-virtual inherited target acquired an unnecessary suspend bridge");
 
-        var sourceShape = KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(sourceParameters, new TypeNode[] { text });
+        var sourceShape = KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(sourceParameters, new TypeNode[] { text });
         if (sourceShape != "1:{" + SupertypeGraph.TypeKey(text) + "}|{}"
             || sourceShape != KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(sourceParameters, new TypeNode[] { text })
             || KotlinOverrideSlotBridge.SameSourceMethodTypeParameterShape(sourceParameters,

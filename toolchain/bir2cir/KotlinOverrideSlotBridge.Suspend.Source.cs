@@ -104,7 +104,7 @@ static partial class KotlinOverrideSlotBridge
                     string Key(TypeNode type) => SupertypeGraph.TypeKey(BirTypeLowering.CanonicalPhysicalSlotType(Physical(type)));
                     var shape = slot.DescriptorMember + "`" + implementation.Arity + "("
                         + string.Join(",", (slot.Signature ?? slot.Parameters).Select(Key)) + ")->" + Key(slot.Return)
-                        + SourceMethodTypeParameterShapeKey(typeParams, ownArguments,
+                        + MethodTypeParameterShapeKey(typeParams, ownArguments,
                             type => BirTypeLowering.CanonicalPhysicalSlotType(Physical(type)))
                         + (slot.UnitValueReturn ? "[value-return]" : "");
                     var claim = (implementation, shape);
@@ -140,7 +140,7 @@ static partial class KotlinOverrideSlotBridge
                 var body = string.Join(",", implementation.Parameters.Select(parameter => parameter.Type is { } type ? SupertypeGraph.TypeKey(type) : "?"));
                 var bridgeKey = slot.IdentityName + "`" + implementation.Arity + "("
                     + string.Join(",", (slot.Signature ?? slot.Parameters).Select(PhysicalKey)) + ")->" + PhysicalKey(slot.Return)
-                    + "{" + implementation.Name + "<" + SourceMethodTypeParameterShapeKey(implementation.TypeParameters, ownArguments)
+                    + "{" + implementation.Name + "<" + MethodTypeParameterShapeKey(implementation.TypeParameters, ownArguments)
                     + ">(" + body + ")}";
                 if (selectedBody != null) bridgeKey += "[body-owner:" + SupertypeGraph.TypeKey(selectedBody.Owner) + "]";
                 if (definition.Kind == "interface") bridgeKey += "[slot:" + SupertypeGraph.TypeKey(slot.DescriptorSpec) + "::" + slot.DescriptorMember + "]";

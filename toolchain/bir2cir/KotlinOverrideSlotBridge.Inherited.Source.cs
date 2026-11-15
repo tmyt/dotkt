@@ -236,7 +236,7 @@ static partial class KotlinOverrideSlotBridge
                     if (suspendValues && fact.Header.Mods.OrDefault()?.Suspend.OrDefault() == true)
                     {
                         if (!refs.TrySelectedOverrideDeclarationByShape(spec.Name, member, accessor, arity, factParams, args,
-                            SourceMethodTypeParameterShapeKey(fact.ImplementationParameters, args, refs.PhysicalConstraintType),
+                            MethodTypeParameterShapeKey(fact.ImplementationParameters, args, refs.PhysicalConstraintType),
                             true, out source, false, null)) continue;
                         logical = SupertypeGraph.SubstOwnerTvs(source.Return, args);
                     }

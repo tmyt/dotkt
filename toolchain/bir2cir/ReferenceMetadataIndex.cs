@@ -3487,7 +3487,7 @@ sealed partial class ReferenceMetadataIndex
         BirTypeParameter[] selectedTypeParams, TypeNode[] selectedOwnerTypeArguments,
         out ReferencedMethodDeclaration declaration, string propertyAccessor = null)
         => TrySelectedMethodDeclarationByShape(ownerFqn, sourceMember, methodArity, signature, resolvedReturn,
-            ownerTypeArguments, KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(selectedTypeParams, selectedOwnerTypeArguments),
+            ownerTypeArguments, KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(selectedTypeParams, selectedOwnerTypeArguments),
             out declaration, propertyAccessor);
 
     bool TrySelectedMethodDeclarationByShape(string ownerFqn, string sourceMember, int methodArity,
@@ -3538,7 +3538,7 @@ sealed partial class ReferenceMetadataIndex
         TypeNode[] implementationOwnerTypeArguments, bool selectedSuspend, out ReferencedMethodDeclaration declaration,
         string accessorKind = null, string selectedDeclarationId = null)
         => TrySelectedOverrideDeclarationByShape(ownerFqn, sourceMember, accessorKind, methodArity, signature,
-            ownerTypeArguments, KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(selectedTypeParams,
+            ownerTypeArguments, KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(selectedTypeParams,
                 implementationOwnerTypeArguments), selectedSuspend, out declaration, semanticConstraints: true,
             selectedDeclarationId: selectedDeclarationId);
 
