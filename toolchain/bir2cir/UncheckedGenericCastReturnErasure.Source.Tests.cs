@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -21,7 +20,13 @@ static partial class UncheckedGenericCastReturnErasure
         static BirFileDeclaration Root(string owner, string identity) => new() {
             FileClass = owner, Methods = new[] { Method(identity) },
         };
-        static JsonObject[] Project(IReadOnlyList<BirFileDeclaration> roots) => roots.Select(root => root.ToDom()).ToArray();
+        static SourceDeclarationProjection Ledger(IReadOnlyList<BirFileDeclaration> roots)
+            => new(roots, new CurrentDeclarationBindings(roots));
+        static void Complete(PendingSourceIndex pending, IReadOnlyList<BirFileDeclaration> roots, SourceDeclarationProjection ledger)
+        {
+            ledger.SealSourceContinuations();
+            CompleteSourceDeclarations(pending, roots, null, ledger);
+        }
         static void Assert(bool condition, string message)
         { if (!condition) throw new InvalidOperationException("Unchecked typed snapshot: " + message); }
         static void Refuses(Action action, string message)
@@ -47,6 +52,8 @@ static partial class UncheckedGenericCastReturnErasure
             }).ToArray();
             var source = new[] { first, second };
             var pending = CaptureSource(source);
+            var ledger = Ledger(source);
+            var capturedIndex = pending.SourceDeclarations;
             var capturedRow = pending.SourceDeclarations.ByIdentity[second.Methods.Value[0].DeclarationId.Value];
             var other = second.Methods.Value[0];
             Apply(first, pending);
@@ -59,18 +66,18 @@ static partial class UncheckedGenericCastReturnErasure
             var currentReturn = new BirReturn { Value = OptionalField<IBirExpression>.Of(Cast()) };
             other.Body = new IBirStatement[] { currentReturn };
             Apply(second, pending);
-            var roots = Project(source);
-            var index = BindDomDeclarations(pending, roots);
+            Complete(pending, source, ledger);
             Assert(other.Ret.Value == new TypeNode.Fqn("object")
                 && ((BirCast)currentReturn.Value.Value).Type.Value == new TypeNode.Fqn("object")
-                && index.ByIdentity[other.DeclarationId.Value].Return == sourceReturn
-                && ReferenceEquals(capturedRow, index.ByIdentity[other.DeclarationId.Value]) && capturedRow.SourceMethod == null,
+                && capturedIndex.ByIdentity[other.DeclarationId.Value].Return == sourceReturn
+                && ReferenceEquals(capturedRow, capturedIndex.ByIdentity[other.DeclarationId.Value]) && capturedRow.SourceMethod == null,
                 "bound body edit or frozen pre-lowering return was lost");
-            Refuses(() => BindDomDeclarations(pending, roots), "a pending association bound twice");
+            Refuses(() => CompleteSourceDeclarations(pending, source, null, ledger), "a pending association completed twice");
         }
 
         var detachedSource = new[] { Root("Detached", "detached") };
         var detachedPending = CaptureSource(detachedSource);
+        var detachedLedger = Ledger(detachedSource);
         var bound = detachedSource[0].Methods.Value[0];
         var replacement = (BirFunctionDeclaration)bound.DeepClone();
         detachedSource[0].Methods.Value[0] = replacement;
@@ -78,11 +85,11 @@ static partial class UncheckedGenericCastReturnErasure
         Assert(bound.Ret.Value == Tv() && replacement.Ret.Value == Tv()
             && ReferenceEquals(detachedPending.SourceDeclarations.ByIdentity["detached"].SourceMethod, bound),
             "detached occurrence was mutated or its replacement was chased by identity");
-        Refuses(() => BindDomDeclarations(detachedPending, Project(detachedSource)), "a replacement rebound by its copied identity");
+        Refuses(() => Complete(detachedPending, detachedSource, detachedLedger), "a replacement rebound by its copied identity");
 
         // Witness synthesis explicitly retires actual generated targets. Only
         // those reports may shift a later captured declaration's owning slot.
-        var prefix = new BirFunctionDeclaration { Name = "prefix", DeclarationId = "survivor", Generated = true,
+        var prefix = new BirFunctionDeclaration { Name = "prefix", DeclarationId = "prefix-id", Generated = true,
             Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.Unit"), Body = Array.Empty<IBirStatement>() };
         var retiredTarget = Method("retired-target");
         retiredTarget.Generated = true;
@@ -90,56 +97,61 @@ static partial class UncheckedGenericCastReturnErasure
         var retirementSource = new[] { new BirFileDeclaration { FileClass = "Retirement",
             Methods = new[] { prefix, retiredTarget, survivor } } };
         var retirementPending = CaptureSource(retirementSource);
+        var retirementLedger = Ledger(retirementSource);
+        var retirementIndex = retirementPending.SourceDeclarations;
+        retirementLedger.RetireForest(prefix); retirementLedger.RetireForest(retiredTarget);
         retirementSource[0].Methods = new[] { survivor, new BirFunctionDeclaration { Name = "appended-helper" } };
         Apply(retirementSource[0], retirementPending);
-        var retirementRoots = Project(retirementSource);
-        var retiredProjection = retiredTarget.ToDom();
-        var retirements = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance) {
-            [prefix] = prefix.ToDom(), [retiredTarget] = retiredProjection,
-        };
-        var retirementIndex = BindDomDeclarations(retirementPending, retirementRoots, retirements);
-        Assert(ReferenceEquals(retirementIndex.ByIdentity["survivor"].Method, retirementRoots[0]["methods"][0])
-            && ReferenceEquals(retirementIndex.ByIdentity["retired-target"].Method, retiredProjection)
-            && retiredProjection.Parent == null, "reported retirement lost its shared detached projection or shifted by scalar identity");
-        Assert(TypeJson.Read(retirementRoots[0]["methods"][0]["ret"]) == new TypeNode.Fqn("object")
-            && TypeJson.Read(retiredProjection["ret"]) == Tv(),
+        Complete(retirementPending, retirementSource, retirementLedger);
+        Assert(retirementIndex.ByIdentity["survivor"].SourceMethod == null
+            && retirementIndex.ByIdentity["retired-target"].SourceMethod == null
+            && ReferenceEquals(retirementSource[0].Methods.Value[0], survivor)
+            && retirementLedger.IsRetired(retiredTarget) && retirementLedger.IsRetired(prefix),
+            "reported retirement lost its exact detached occurrences or shifted by scalar identity");
+        Assert(survivor.Ret.Value == new TypeNode.Fqn("object") && retiredTarget.Ret.Value == Tv(),
             "explicit retired declaration was mutated despite lacking continuing root ownership");
 
         var unreportedSource = new[] { new BirFileDeclaration { FileClass = "Unreported",
             Methods = new[] { prefix, Method("still-exact") } } };
         var unreportedPending = CaptureSource(unreportedSource);
+        var unreportedLedger = Ledger(unreportedSource);
         unreportedSource[0].Methods = new[] { unreportedSource[0].Methods.Value[1] };
-        Refuses(() => BindDomDeclarations(unreportedPending, Project(unreportedSource)),
+        Refuses(() => Complete(unreportedPending, unreportedSource, unreportedLedger),
             "an unreported preceding deletion silently shifted the selected occurrence");
 
         var pair = new[] { Root("A", "a"), Root("B", "b") };
         var wrongOrder = CaptureSource(pair);
-        Refuses(() => BindDomDeclarations(wrongOrder, Project(pair).Reverse().ToArray()), "file order silently rebound");
-        foreach (var mismatch in new[] { "identity", "static", "ordinal", "source" })
+        var wrongOrderLedger = Ledger(pair);
+        Refuses(() => Complete(wrongOrder, pair.Reverse().ToArray(), wrongOrderLedger), "file order silently rebound");
+        foreach (var mismatch in new[] { "identity", "static", "ordinal", "source", "return" })
         {
             var files = new[] { Root("Mismatch", "exact") };
             var pending = CaptureSource(files);
-            var roots = Project(files);
-            var method = roots[0]["methods"][0].AsObject();
-            if (mismatch == "identity") method[DeclarationIdentityBinding.Key] = "different";
-            else if (mismatch == "static") method["static"] = false;
-            else if (mismatch == "ordinal") roots[0]["methods"].AsArray().Insert(0, new JsonObject { ["name"] = "read" });
-            else files[0].Methods.Value[0] = (BirFunctionDeclaration)files[0].Methods.Value[0].DeepClone();
-            Refuses(() => BindDomDeclarations(pending, roots), "lost exact " + mismatch + " association");
+            var ledger = Ledger(files);
+            var method = files[0].Methods.Value[0];
+            if (mismatch == "identity") method.DeclarationId = "different";
+            else if (mismatch == "static") method.Static = false;
+            else if (mismatch == "ordinal") files[0].Methods = new[] { new BirFunctionDeclaration { Name = "read" }, method };
+            else if (mismatch == "return") method.Ret = new TypeNode.Fqn("object");
+            else files[0].Methods.Value[0] = (BirFunctionDeclaration)method.DeepClone();
+            Refuses(() => Complete(pending, files, ledger), "lost exact " + mismatch + " association");
         }
         var typeSource = new[] { new BirFileDeclaration { FileClass = "Facade", Types = new IBirTypeDeclaration[] {
             new BirClassDefinition { Name = "Owner", Kind = "class", Methods = new[] { Method("member") } },
         } } };
         var validMember = CaptureSource(typeSource);
-        var validMemberRoots = Project(typeSource);
-        var memberIndex = BindDomDeclarations(validMember, validMemberRoots);
+        var validLedger = Ledger(typeSource);
+        var memberIndex = validMember.SourceDeclarations;
+        var actualMember = typeSource[0].Types.Value[0].Methods.Value[0];
+        Complete(validMember, typeSource, validLedger);
         Assert(memberIndex.ByIdentity["member"].Owner == "Owner" && !memberIndex.ByIdentity["member"].TopLevel
-            && ReferenceEquals(memberIndex.ByIdentity["member"].Method, validMemberRoots[0]["types"][0]["methods"][0]),
+            && memberIndex.ByIdentity["member"].SourceMethod == null
+            && ReferenceEquals(actualMember, typeSource[0].Types.Value[0].Methods.Value[0]),
             "member occurrence did not retain its explicit owner axis");
         var memberPending = CaptureSource(typeSource);
-        var memberRoots = Project(typeSource);
-        memberRoots[0]["types"][0]["name"] = "OtherOwner";
-        Refuses(() => BindDomDeclarations(memberPending, memberRoots), "type owner axis silently rebound");
+        var memberLedger = Ledger(typeSource);
+        typeSource[0].Types.Value[0].Name = "OtherOwner";
+        Refuses(() => Complete(memberPending, typeSource, memberLedger), "type owner axis silently rebound");
 
         // Declaration-relative source discovery is deliberately narrower than
         // static-type inference, but not narrower than the former body walker.
@@ -148,7 +160,7 @@ static partial class UncheckedGenericCastReturnErasure
             var file = Root("Detection", "detect");
             file.Methods.Value[0].Body = new[] { statement };
             var roots = new[] { file };
-            return BindDomDeclarations(CaptureSource(roots), Project(roots)).ByIdentity.Count != 0;
+            return CaptureSource(roots).SourceDeclarations.ByIdentity.Count != 0;
         }
         Assert(!Captures(new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of(new BirNewClosure {
             SynthClass = new BirClosureDefinition { Body = Method("inner").Body },
@@ -168,6 +180,6 @@ static partial class UncheckedGenericCastReturnErasure
         })) }), "ret overrode explicit sty precedence");
         SelfTestCallableFlow();
         SelfTestReferencedUses();
-        Console.WriteLine("[unchecked cast ownership] self-test OK (typed capture, exact one-shot binding, both root orders, live bodies, detach, explicit source types)");
+        Console.WriteLine("[unchecked cast ownership] self-test OK (typed capture, exact one-shot completion, both root orders, live bodies, detach, explicit source types)");
     }
 }

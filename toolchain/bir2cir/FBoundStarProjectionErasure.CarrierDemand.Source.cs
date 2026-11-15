@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -10,8 +9,8 @@ static partial class FBoundStarProjectionErasure
         => new(preparation, nativeProofs, refs, values);
 
     // Names, eligibility and demand belong to this input clock. The continuation
-    // takes these SAME owners after their declaration bindings cross the frontier;
-    // it must not allocate names or discover demand a second time from physical IR.
+    // takes these SAME owners until source custody completes; it must not
+    // allocate names or discover demand a second time from physical IR.
     internal sealed class CarrierDemandPlan
     {
         readonly Dictionary<string, Owner> owners;
@@ -64,13 +63,14 @@ static partial class FBoundStarProjectionErasure
             }
         }
 
-        // Called only after BindProjected. Source-backed access cannot guess a
-        // missing continuation; each getter below requires its observed address.
-        internal Dictionary<string, Owner> BindOwners()
+        // End the same source authority without exporting a second graph.
+        internal void CompleteSourceLifetime()
         {
-            foreach (var owner in owners.Values) { _ = owner.Def; _ = owner.Root; }
-            _usedCarrierNames = usedNames;
-            return owners;
+            foreach (var owner in owners.Values)
+            {
+                _ = owner.DefinitionBinding.Source;
+                _ = owner.RootBinding.Source;
+            }
         }
     }
 
@@ -180,37 +180,29 @@ static partial class FBoundStarProjectionErasure
     {
         internal readonly CurrentDeclarationBindings.DeclarationBinding DefinitionBinding;
         internal readonly CurrentDeclarationBindings.DeclarationBinding RootBinding;
-        internal Owner() { } // Explicit already-physical late owner.
+        internal Owner() { } // An allocated carrier with no current local definition.
         internal Owner(GenericOwner source)
         {
             Name = source.Name; Arity = source.Arity; Needed = source.Needed;
             DefinitionBinding = source.Definition; RootBinding = source.Root;
         }
 
-        T Read<T>(Func<IBirTypeDeclaration, T> source, Func<JsonObject, T> physical) =>
-            DefinitionBinding is { IsPhysical: false } binding
-                ? source((IBirTypeDeclaration)binding.Source) : physical(Def);
-
-        internal string Kind => Read(type => type.Kind.OrDefault(), definition => Str(definition?["kind"]));
-        internal bool HasDefinition => DefinitionBinding != null || physicalDefinition != null;
-        internal string SemanticOwner => Read(type => type.SemanticOwner.OrDefault(), definition => Str(definition?["semanticOwner"]));
-        internal bool Inner => Read(type => type.Mods.OrDefault()?.Inner.OrDefault() == true, definition => definition != null && IsInner(definition));
-        internal int OuterCount => Read(type => (type as BirClassDefinition)?.OuterTypeParamCount.OrDefault() ?? 0,
-            definition => Int(definition?["outerTypeParamCount"]) ?? 0);
-        internal bool SourceGeneric => Read(type => IsSourceGeneric(type.Name.OrDefault(), type.Generated.OrDefault(),
-                type.Attrs.OrEmpty().Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" }),
-                type.TypeParams.OrEmpty().Length), definition => definition != null && IsSourceGeneric(definition));
-        internal IReadOnlyList<string> Variances => Read(type => type.TypeParams.HasValue
-                ? type.TypeParams.Value.Select(parameter => parameter.Variance.OrDefault()).ToArray() : null,
-            definition => (definition?["typeParams"] as JsonArray)?.Select(parameter => Str((parameter as JsonObject)?["variance"])).ToArray());
-        internal TypeNode.Fqn BaseType => Read(type => type.Base.OrDefault() as TypeNode.Fqn,
-            definition => TypeJson.Read(definition?["base"]) as TypeNode.Fqn);
-        internal TypeNode.Fqn[] InterfaceTypes => Read(type => type.Interfaces.OrEmpty().OfType<TypeNode.Fqn>().ToArray(),
-            definition => (definition?["interfaces"] as JsonArray)?.Select(TypeJson.Read).OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>());
-        internal IEnumerable<(TypeNode Return, TypeNode[] Parameters)> Signatures => Read(
-            type => type.Methods.OrEmpty().Select(method => (method.Ret.OrDefault(), method.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()).ToArray())).ToArray(),
-            definition => (definition?["methods"] as JsonArray)?.OfType<JsonObject>().Select(method =>
-                (TypeJson.Read(method["ret"]), (method["params"] as JsonArray)?.OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"])).ToArray()
-                    ?? Array.Empty<TypeNode>())).ToArray() ?? Array.Empty<(TypeNode, TypeNode[])>());
+        IBirTypeDeclaration Definition => DefinitionBinding == null ? null : (IBirTypeDeclaration)DefinitionBinding.Source;
+        internal string Kind => Definition?.Kind.OrDefault();
+        internal bool HasDefinition => DefinitionBinding != null;
+        internal string SemanticOwner => Definition?.SemanticOwner.OrDefault();
+        internal bool Inner => Definition?.Mods.OrDefault()?.Inner.OrDefault() == true;
+        internal int OuterCount => Definition is BirClassDefinition type ? type.OuterTypeParamCount.OrDefault() : 0;
+        internal bool SourceGeneric => Definition is { } type && IsSourceGeneric(type.Name.OrDefault(), type.Generated.OrDefault(),
+            type.Attrs.OrEmpty().Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" }),
+            type.TypeParams.OrEmpty().Length);
+        internal IReadOnlyList<string> Variances => Definition is { TypeParams.HasValue: true } type
+            ? type.TypeParams.Value.Select(parameter => parameter.Variance.OrDefault()).ToArray() : null;
+        internal TypeNode.Fqn BaseType => Definition?.Base.OrDefault() as TypeNode.Fqn;
+        internal TypeNode.Fqn[] InterfaceTypes => Definition?.Interfaces.OrEmpty().OfType<TypeNode.Fqn>().ToArray()
+            ?? Array.Empty<TypeNode.Fqn>();
+        internal IEnumerable<(TypeNode Return, TypeNode[] Parameters)> Signatures => Definition?.Methods.OrEmpty()
+            .Select(method => (method.Ret.OrDefault(), method.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()).ToArray())).ToArray()
+            ?? Array.Empty<(TypeNode, TypeNode[])>();
     }
 }

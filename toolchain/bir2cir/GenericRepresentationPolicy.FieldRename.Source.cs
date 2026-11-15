@@ -8,7 +8,7 @@ sealed partial class GenericRepresentationPolicy
     // Carry that operation through the already selected keys and occurrences.
     internal void ApplyFieldRenames(IReadOnlyList<BackingFieldRename.Rename> reports)
     {
-        if (!_sourceAwaitingDom || _pendingNativeOrigins == null || _pendingNativePhysicalBindings == null
+        if (!_sourceContinuationPending || _pendingNativeOrigins == null || _pendingNativePhysicalBindings == null
             || _refreshedNativeLocations == null)
             throw new InvalidOperationException("Field rename requires the pending native physical continuation");
         var seen = new HashSet<BirFieldDeclaration>(ReferenceEqualityComparer.Instance);

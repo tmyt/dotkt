@@ -132,6 +132,7 @@ static partial class ClrMemberResolution
             changed.Recv = block;
             var changedFile = File(changed, ListOwner());
             var bindings = new CurrentDeclarationBindings(new[] { changedFile }); var binding = bindings.GetSource(donor);
+            var ledger = new SourceDeclarationProjection(new[] { changedFile }, bindings);
             var changedArgs = changed.Args.Value;
             Resolve(changedFile);
             var result = ((BirReturn)changedFile.Methods.Value[0].Body.Value[0]).Value.Value;
@@ -141,9 +142,18 @@ static partial class ClrMemberResolution
                 && ReferenceEquals(((BirLocalFunction)block.Stmts.Value[0]).Decl.Value, donor), "result conversion cloned or re-evaluated a continuing subtree");
             Resolve(changedFile);
             Require(ReferenceEquals(((BirReturn)changedFile.Methods.Value[0].Body.Value[0]).Value.Value, result), "result conversion was duplicated");
-            var projected = changedFile.ToDom(bindings.ObserveProjection); bindings.BindProjected();
-            Require(ReferenceEquals(binding.Physical, projected["methods"][0]["body"][0]["value"]["e"]["recv"]["stmts"][0]["decl"]),
-                "registered donor lost its exact physical continuation");
+            ledger.SealSourceContinuations();
+            ledger.RequireOccurrence(changed); ledger.RequireOccurrence(donor);
+            Require(ReferenceEquals(binding.Source, ((BirLocalFunction)block.Stmts.Value[0]).Decl.Value)
+                && ReferenceEquals(binding.Source, donor) && !ledger.IsRetired(donor)
+                && ReferenceEquals(changed.Recv.Value, block),
+                "registered donor lost its exact owning continuation through the physical result conversion");
+            bindings.CompleteSourceCustody(ledger);
+            var released = false;
+            try { _ = binding.Source; } catch (InvalidOperationException) { released = true; }
+            Require(released && ReferenceEquals(((BirLocalFunction)block.Stmts.Value[0]).Decl.Value, donor),
+                "terminal custody retained the donor capability or replaced its actual occurrence");
+            ledger.Release();
             foreach (var stamp in new[] { default(OptionalField<TypeNode>), OptionalField<TypeNode>.Null })
             {
                 var unstamped = Call(new TypeNode.Fqn("LocalList", new TypeNode[] { storage }), "get_Item", logical, integer);

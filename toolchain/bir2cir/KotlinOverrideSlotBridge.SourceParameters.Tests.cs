@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -73,37 +72,44 @@ static partial class KotlinOverrideSlotBridge
         var file = new BirFileDeclaration { FileClass = "RetirementFile", Types = new IBirTypeDeclaration[] { owner } };
         var roots = new[] { file };
         var bindings = new CurrentDeclarationBindings(roots);
+        var ledger = new SourceDeclarationProjection(roots, bindings);
         var signatures = FBoundStarProjectionErasure.CaptureSourceSignatures(bindings);
         var removedBinding = bindings.GetCapturedSource(removed);
         removed.Params.Value[0].Type = physical;
         var bridge = Method("bridge");
         owner.Methods = owner.Methods.Value.Append(bridge).ToArray();
         bindings.GetSource(bridge);
+        ledger.PublishMethods(file, owner, new[] { bridge });
         Require(!bindings.TryGetCapturedSource(property, out _), "property acquired an unnecessary detached buyer");
         Refused(() => bindings.RetireSourceMembers(owner, new[] { Method("placeholder") }, Array.Empty<BirPropertyDeclaration>()));
         bindings.RetireSourceMembers(owner, new[] { removed }, new[] { property });
+        ledger.RetireForest(removed); ledger.RetireForest(property);
         Refused(() => bindings.RetireSourceMembers(owner, new[] { removed }, Array.Empty<BirPropertyDeclaration>()));
         owner.Methods = new[] { first, last, bridge };
         owner.Properties = Array.Empty<BirPropertyDeclaration>();
-        var live = file.ToDom(bindings.ObserveProjection);
-        var detached = removed.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
-        var physicalSignatures = signatures.BindPhysical();
-        Require(physicalSignatures.Count == 3 && physicalSignatures[detached].Single() == original
-            && ReferenceEquals(removedBinding.Physical, detached)
-            && ReferenceEquals(bindings.GetPhysical(detached), removedBinding)
-            && TypeJson.Read(detached["params"][0]["type"]) == physical
-            && physicalSignatures.ContainsKey(live["types"][0]["methods"][1].AsObject())
-            && !physicalSignatures.ContainsKey(live["types"][0]["methods"][2].AsObject()),
+        ledger.SealSourceContinuations();
+        Require(signatures.GetSourceSignature(removedBinding).Single() == original
+            && ReferenceEquals(removedBinding.Source, removed) && ledger.IsRetired(removed)
+            && removed.Params.Value[0].Type.Value == physical
+            && signatures.GetSourceSignature(bindings.GetCapturedSource(first)).Single() == original
+            && signatures.GetSourceSignature(bindings.GetCapturedSource(last)).Single() == original
+            && ReferenceEquals(owner.Methods.Value[1], last) && ReferenceEquals(owner.Methods.Value[2], bridge),
             "survivor order, exact detached binding or shared frozen-signature continuation changed");
+        Refused(() => signatures.GetSourceSignature(bindings.GetCapturedSource(bridge)));
+        signatures.CompleteSourceLifetime();
+        Refused(() => signatures.GetSourceSignature(removedBinding));
+        bindings.CompleteSourceCustody(ledger);
+        Refused(() => { _ = removedBinding.Source; });
+        ledger.Release();
 
         var stillOwned = Method("stillOwned");
         var stillOwner = new BirClassDefinition { Name = "StillOwner", Methods = new[] { stillOwned } };
         var stillFile = new BirFileDeclaration { FileClass = "StillFile", Types = new IBirTypeDeclaration[] { stillOwner } };
         var stillBindings = new CurrentDeclarationBindings(new[] { stillFile });
+        var stillLedger = new SourceDeclarationProjection(new[] { stillFile }, stillBindings);
         stillBindings.RetireSourceMembers(stillOwner, new[] { stillOwned }, Array.Empty<BirPropertyDeclaration>());
-        stillFile.ToDom(stillBindings.ObserveProjection);
-        Refused(stillBindings.BindProjected);
+        stillLedger.SealSourceContinuations();
+        Refused(() => stillBindings.CompleteSourceCustody(stillLedger));
     }
 
     static void MaterializedSourceParameterSnapshotSelfTest()

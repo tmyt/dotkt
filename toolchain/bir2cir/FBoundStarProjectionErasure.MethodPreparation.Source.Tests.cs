@@ -72,7 +72,7 @@ static partial class OwnerConstrainedMethodLowering
             Record(ownerBound, definition, bindings);
             Require(Methods.Count == 6 && ReferenceEquals(Methods[5].MethodBinding, Methods[0].MethodBinding),
                 "registration removed duplicate/order semantics");
-            Reject(() => ConfigurePreparedMethods(bindings, refs));
+            Reject(() => CompleteMethodPreparation(new CurrentDeclarationBindings(roots), refs));
 
             // This mutation is actual accessor authoring, not another method
             // inventory. Source signatures must include these new ID-less rows.
@@ -102,26 +102,30 @@ static partial class OwnerConstrainedMethodLowering
                 "source continuation did not use live registered constraints or admitted appended accessors");
             ownerBound.Params.Value[0].Type = new TypeNode.Fqn("AfterCapture");
             inputType.Args[0] = new TypeNode.Fqn("MutatedArgument");
-            var projected = root.ToDom(bindings.ObserveProjection);
-            bindings.BindProjected();
-            var actualOwner = projected["types"][0].AsObject();
-            var actualMethod = actualOwner["methods"][0].AsObject();
-            var mappedSignatures = signatures.BindPhysical();
-            Require(mappedSignatures.Count == definition.Methods.Value.Length
-                && ReferenceEquals(mappedSignatures[actualMethod], sourceSignature)
-                && !mappedSignatures.ContainsKey(projected["methods"][0].AsObject())
-                && mappedSignatures[actualMethod] is [TypeNode.Fqn { Name: "Box", Args: [TypeNode.Tv { Scope: "type", I: 0 }] }]
-                && mappedSignatures[actualOwner["methods"][5].AsObject()].Length == 0
-                && mappedSignatures[actualOwner["methods"][6].AsObject()] is [TypeNode.Fqn { Name: "Box", Args: [TypeNode.Tv { I: 0 }] }],
-                "signature capture was late, aliased mutable type vectors, included facade methods or lost appended records");
-            Reject(() => signatures.BindPhysical());
+            Require(definition.Methods.Value.All(method =>
+                    signatures.GetSourceSignature(bindings.GetCapturedSource(method)) != null)
+                && ReferenceEquals(signatures.GetSourceSignature(signatureBinding), sourceSignature)
+                && sourceSignature is [TypeNode.Fqn { Name: "Box", Args: [TypeNode.Tv { Scope: "type", I: 0 }] }]
+                && signatures.GetSourceSignature(bindings.GetCapturedSource(accessors[0])).Length == 0
+                && signatures.GetSourceSignature(bindings.GetCapturedSource(accessors[1])) is
+                    [TypeNode.Fqn { Name: "Box", Args: [TypeNode.Tv { I: 0 }] }],
+                "signature capture was late, aliased mutable type vectors or lost appended records");
+            Reject(() => signatures.GetSourceSignature(bindings.GetCapturedSource(top)));
+            Require(Methods.Count == 6 && ReferenceEquals(Methods[0].Method, ownerBound)
+                && ReferenceEquals(Methods[0].Owner, definition), "source continuation rebuilt or cleared the registrations");
+            Require(ownerBound.TypeParams.Value[0].Constraints.Value.Length == 0
+                && ownerBound.TypeParams.Value[0].ErasedInnerConstraints.Value[0] == ownerVariable,
+                "terminal custody lost the source continuation's physical constraint result");
+            var ledger = new SourceDeclarationProjection(roots, bindings);
+            ledger.SealSourceContinuations();
+            FBoundStarProjectionErasure.CompleteRealization(context);
+            Reject(() => signatures.CompleteSourceLifetime());
             Reject(() => signatures.GetSourceSignature(signatureBinding));
-            ConfigurePreparedMethods(bindings, refs);
-            Require(Methods.Count == 6 && ReferenceEquals(Methods[0].Method, actualMethod)
-                && ReferenceEquals(Methods[0].Owner, actualOwner), "physical configure rebuilt or cleared the registrations");
-            Require(actualMethod["typeParams"][0]["constraints"].AsArray().Count == 0
-                && TypeJson.Read(actualMethod["typeParams"][0][FBoundStarProjectionErasure.ErasedInnerConstraintKey][0]) == ownerVariable,
-                "the one frontier lost the source continuation's physical constraint result");
+            Reject(() => CompleteMethodPreparation(bindings, refs));
+            Require(Methods.Count == 0 && MethodBindings == null && !PreparedMethods && ReferenceEquals(References, refs),
+                "completion kept prepared declarations or changed the actual reference authority");
+            bindings.CompleteSourceCustody(ledger);
+            ledger.Release();
             Reset(refs);
             Require(Methods.Count == 0 && MethodBindings == null && !PreparedMethods, "ordinary Reset retained a prior module registration");
         }

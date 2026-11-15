@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -20,7 +19,7 @@ sealed partial class GenericRepresentationPolicy
     internal void RegisterNativeStorageMaterialization(BirGraphValue origin, BirGraphValue physical)
     {
         if (!_sourceNativeStorage.Contains(origin)) return;
-        if (!_sourceAwaitingDom || _pendingNativeOrigins == null || _pendingNativePhysicalBindings == null
+        if (!_sourceContinuationPending || _pendingNativeOrigins == null || _pendingNativePhysicalBindings == null
             || !_pendingNativeOrigins.TryGetValue(origin, out var key)
             || !_pendingNativePhysicalBindings.Contains(key))
             throw new InvalidOperationException("Native storage materialization has no pending selected source origin");
@@ -45,7 +44,7 @@ sealed partial class GenericRepresentationPolicy
     // not add source origins or reconsider source existential eligibility.
     internal void RefreshPhysicalNativeLocations(IReadOnlyList<BirFileDeclaration> roots)
     {
-        if (!_sourceAwaitingDom || _pendingNativePhysicalBindings == null)
+        if (!_sourceContinuationPending || _pendingNativePhysicalBindings == null)
             throw new InvalidOperationException("Physical native refresh requires the pending source frontier");
         if (_refreshedNativeLocations != null)
             throw new InvalidOperationException("Physical native locations were already refreshed");
@@ -149,7 +148,7 @@ sealed partial class GenericRepresentationPolicy
     // changes source origins, eligibility, fields or the captured type prefix.
     internal void AdmitMaterializedNativeTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> appended)
     {
-        if (!_sourceAwaitingDom || _refreshedNativeLocations == null || _nativeRefreshRoots == null
+        if (!_sourceContinuationPending || _refreshedNativeLocations == null || _nativeRefreshRoots == null
             || _nativeRefreshTypeVectors == null || appended == null)
             throw new InvalidOperationException("Native materialized types have no pending physical refresh");
         var index = Array.FindIndex(_nativeRefreshRoots, root => ReferenceEquals(root, file));
@@ -166,7 +165,7 @@ sealed partial class GenericRepresentationPolicy
 
     internal void RetireMaterializedNativeTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> removed)
     {
-        if (!_sourceAwaitingDom || _nativeRefreshRoots == null || _nativeRefreshTypeVectors == null)
+        if (!_sourceContinuationPending || _nativeRefreshRoots == null || _nativeRefreshTypeVectors == null)
             throw new InvalidOperationException("Native type retirement has no pending physical refresh");
         var index = Array.FindIndex(_nativeRefreshRoots, root => ReferenceEquals(root, file));
         if (index < 0) throw new InvalidOperationException("Native type retirement changed its owning file");
@@ -193,33 +192,28 @@ sealed partial class GenericRepresentationPolicy
         _ => (null, null),
     };
 
-    void BindRefreshedNativeLocations(IReadOnlyList<JsonNode> roots, SourceDeclarationProjection declarations = null)
+    void CompleteRefreshedNativeLocations(IReadOnlyList<BirFileDeclaration> roots,
+        SourceDeclarationProjection declarations)
     {
         if (_refreshedNativeLocations == null) return;
         if (roots.Count != _nativeRefreshRoots.Length)
             throw new InvalidOperationException("Native physical admission changed module occurrences");
         for (var index = 0; index < roots.Count; index++)
-            if (!_nativeRefreshRoots[index].Types.OrEmpty().SequenceEqual(
-                    _nativeRefreshTypeVectors[index].Continuing, ReferenceEqualityComparer.Instance)
-                || roots[index] is not JsonObject root
-                || ((root["types"] as JsonArray)?.Count ?? 0) != _nativeRefreshTypeVectors[index].Continuing.Length)
+            if (!ReferenceEquals(roots[index], _nativeRefreshRoots[index])
+                || !_nativeRefreshRoots[index].Types.OrEmpty().SequenceEqual(
+                    _nativeRefreshTypeVectors[index].Continuing, ReferenceEqualityComparer.Instance))
                 throw new InvalidOperationException("Native physical admission changed its reported type occurrences");
-        var admitted = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
+        var admitted = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
         foreach (var occurrence in _refreshedNativeLocations)
         {
             ValidateOriginalNativeAdmission(occurrence);
             var typeVector = _nativeRefreshTypeVectors[occurrence.FileIndex];
-            if (!ReferenceEquals(_nativeRefreshRoots[occurrence.FileIndex], occurrence.File)
+            if (!ReferenceEquals(roots[occurrence.FileIndex], occurrence.File)
                 || occurrence.File.FileClass.OrDefault() != occurrence.FileClass
-                || typeVector.Original.Length != occurrence.TypeCount
-                || roots[occurrence.FileIndex] is not JsonObject file
-                || Text(file["fileClass"]) != occurrence.FileClass
-                || ((file["types"] as JsonArray)?.Count ?? 0) != typeVector.Continuing.Length)
+                || typeVector.Original.Length != occurrence.TypeCount)
                 throw new InvalidOperationException("Native physical admission changed its owning file");
-            var sourceOwner = occurrence.Owner;
-            JsonObject owner;
-            if (occurrence.TypeIndex < 0) owner = file;
-            else
+            declarations.RequireOccurrence(occurrence.File);
+            if (occurrence.TypeIndex >= 0)
             {
                 var position = Array.FindIndex(typeVector.Continuing, actual => ReferenceEquals(actual, occurrence.Owner));
                 if (position >= 0)
@@ -227,57 +221,44 @@ sealed partial class GenericRepresentationPolicy
                     if (position >= occurrence.File.Types.OrEmpty().Length
                         || !ReferenceEquals(occurrence.File.Types.Value[position], occurrence.Owner))
                         throw new InvalidOperationException("Native physical admission lost its continuing owner");
-                    owner = (file["types"] as JsonArray)?[position] as JsonObject;
                 }
-                else if (declarations != null && declarations.TryGet(occurrence.Owner, out var retired)
-                    && declarations.IsRetired(occurrence.Owner, retired)) owner = retired;
-                else throw new InvalidOperationException("Native physical admission has no reported owner retirement");
+                else if (!declarations.IsRetired(occurrence.Owner))
+                    throw new InvalidOperationException("Native physical admission has no reported owner retirement");
+                var owner = (IBirTypeDeclaration)occurrence.Owner;
+                if (!ReferenceEquals(typeVector.Original[occurrence.TypeIndex], occurrence.Owner)
+                    || owner.Name.OrDefault() != occurrence.OwnerName || owner.Kind.OrDefault() != occurrence.OwnerKind)
+                    throw new InvalidOperationException("Native physical admission changed its declaring occurrence");
             }
-            if (!ReferenceEquals(sourceOwner, occurrence.Owner) || owner == null
-                || occurrence.TypeIndex >= 0 && !ReferenceEquals(typeVector.Original[occurrence.TypeIndex], occurrence.Owner)
-                || occurrence.TypeIndex >= 0 && (Text(owner["name"]) != occurrence.OwnerName
-                    || Text(owner["kind"]) != occurrence.OwnerKind
-                    || ((IBirTypeDeclaration)sourceOwner).Name.OrDefault() != occurrence.OwnerName
-                    || ((IBirTypeDeclaration)sourceOwner).Kind.OrDefault() != occurrence.OwnerKind))
-                throw new InvalidOperationException("Native physical admission changed its declaring occurrence");
-            JsonObject declaration;
-            TypeNode type;
+            declarations.RequireOccurrence(occurrence.Owner);
+            BirGraphValue actual;
             (string Owner, string Name, bool Static, string Receiver) key;
             if (occurrence.Cell)
             {
                 var cells = occurrence.File.RefTypes.OrEmpty();
                 if (cells.Length != occurrence.StorageCount || !ReferenceEquals(cells[occurrence.Index], occurrence.Declaration)
-                    || !cells[occurrence.Index]._nativeLocation.OrDefault()
-                    || owner["refTypes"] is not JsonArray domCells || domCells.Count != cells.Length
-                    || domCells[occurrence.Index] is not JsonObject cell)
+                    || !cells[occurrence.Index]._nativeLocation.OrDefault())
                     throw new InvalidOperationException("Native physical capture admission changed its storage occurrence");
-                declaration = cell;
-                type = cells[occurrence.Index].Elem.OrDefault();
-                key = FieldKey(Text(cell["name"]), "v", false, cell);
-                if (FieldKey(cells[occurrence.Index].Name.OrDefault(), "v", false, (TypeNode)null) != occurrence.Key)
-                    throw new InvalidOperationException("Native physical capture admission changed its selected role");
+                actual = cells[occurrence.Index];
+                key = FieldKey(cells[occurrence.Index].Name.OrDefault(), "v", false, (TypeNode)null);
             }
             else
             {
-                var fields = sourceOwner is BirFileDeclaration root ? root.Fields.OrEmpty() : ((IBirTypeDeclaration)sourceOwner).Fields.OrEmpty();
+                var fields = occurrence.Owner is BirFileDeclaration file ? file.Fields.OrEmpty()
+                    : ((IBirTypeDeclaration)occurrence.Owner).Fields.OrEmpty();
                 if (fields.Length != occurrence.StorageCount || !ReferenceEquals(fields[occurrence.Index], occurrence.Declaration)
-                    || !fields[occurrence.Index]._nativeLocation.OrDefault()
-                    || owner["fields"] is not JsonArray domFields || domFields.Count != fields.Length
-                    || domFields[occurrence.Index] is not JsonObject field)
+                    || !fields[occurrence.Index]._nativeLocation.OrDefault())
                     throw new InvalidOperationException("Native physical field admission changed its storage occurrence");
-                declaration = field;
-                type = fields[occurrence.Index].Type.OrDefault();
-                key = FieldKey(occurrence.OwnerName, Text(field["name"]), field["static"]?.GetValue<bool>() == true, field);
-                var current = fields[occurrence.Index];
-                if (FieldKey(occurrence.OwnerName, current.Name.OrDefault(), current.Static.OrDefault(), current.CompanionReceiver.OrDefault()) != occurrence.Key)
-                    throw new InvalidOperationException("Native physical field admission changed its selected role");
+                var field = fields[occurrence.Index];
+                actual = field;
+                key = FieldKey(occurrence.OwnerName, field.Name.OrDefault(), field.Static.OrDefault(), field.CompanionReceiver.OrDefault());
             }
-            if (key != occurrence.Key || declaration[NativeLocationKey]?.GetValue<bool>() != true
-                || !TypeNodeDataEquality.Equal(type, TypeJson.Read(declaration[occurrence.Cell ? "elem" : "type"]))
-                || !admitted.Add(declaration))
+            declarations.RequireOccurrence(actual);
+            if (key != occurrence.Key || !admitted.Add(actual))
                 throw new InvalidOperationException("Native physical admission does not match the continuing declaration");
+            // Type/Elem remains live on this SAME field/cell occurrence. There
+            // is no second projected copy to compare or freeze; the exact owner,
+            // vector, key, origin and occurrence checks above still apply.
         }
-        foreach (var declaration in admitted) _nativeFields.Add(declaration);
         _refreshedNativeLocations = null;
         _nativeRefreshRoots = null;
         _nativeRefreshTypeVectors = null;

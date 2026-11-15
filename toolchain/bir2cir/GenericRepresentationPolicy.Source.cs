@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -130,10 +129,10 @@ sealed partial class GenericRepresentationPolicy
     // Placement changes a physical owner/name, not the source decision about
     // which storage needs a native slot. Follow the selected owning records;
     // neither carrier spelling nor a newly generated field can select an origin.
-    internal void PrepareDomLocations(IReadOnlyList<BirFileDeclaration> roots)
+    internal void PrepareSourceLocations(IReadOnlyList<BirFileDeclaration> roots)
     {
-        if (!_sourceAwaitingDom) throw new InvalidOperationException("Source generic policy already crossed its owning frontier");
-        if (_pendingNativePhysicalBindings != null) throw new InvalidOperationException("Source native locations are already prepared for their DOM continuation");
+        if (!_sourceContinuationPending) throw new InvalidOperationException("Source generic policy already completed its owning continuation");
+        if (_pendingNativePhysicalBindings != null) throw new InvalidOperationException("Source native locations are already prepared for their owning continuation");
         var matched = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
         var physical = new HashSet<(string Owner, string Name, bool Static, string Receiver)>();
         var origins = new Dictionary<BirGraphValue, (string Owner, string Name, bool Static, string Receiver)>(ReferenceEqualityComparer.Instance);
@@ -174,111 +173,81 @@ sealed partial class GenericRepresentationPolicy
         _pendingNativeOrigins = origins;
     }
 
-    // Re-associate only the exact declarations carried across the one-way
-    // frontier. Selection, source eligibility, and native flags already exist.
-    internal void BindDomDeclarations(IReadOnlyList<JsonNode> roots, AliasDeclarationTransitions aliases = null,
-        SourceDeclarationProjection declarations = null)
+    // Complete custody on the SAME current/explicitly retired occurrences.
+    // Native selection, physical refresh, materialization and renaming already
+    // happened at their owning clocks. This is validation, never re-admission.
+    internal void CompleteSourceContinuation(IReadOnlyList<BirFileDeclaration> roots,
+        AliasDeclarationTransitions aliases, SourceDeclarationProjection declarations)
     {
-        if (!_sourceAwaitingDom) throw new InvalidOperationException("Source generic policy is already bound to its DOM continuation");
+        ArgumentNullException.ThrowIfNull(declarations);
+        if (!_sourceContinuationPending)
+            throw new InvalidOperationException("Source generic policy already completed its owning continuation");
         var expected = _pendingNativePhysicalBindings
-            ?? throw new InvalidOperationException("Source native locations were not prepared for their DOM continuation");
-        var matched = new HashSet<(string Owner, string Name, bool Static, string Receiver)>();
-        aliases?.ValidateProjection(roots);
+            ?? throw new InvalidOperationException("Source native locations were not prepared for their continuation");
+        if (_pendingNativeOrigins == null)
+            throw new InvalidOperationException("Source native locations lost their selected origins");
+        foreach (var root in roots) declarations.RequireOccurrence(root);
+        aliases?.ValidateSourceContinuations(roots);
         if (aliases?.HasTransitions == true)
             foreach (var field in _sourceNativeStorage.OfType<BirFieldDeclaration>()) aliases.ValidateNativeField(field);
-        void BindOwners(JsonObject declaration)
-        {
-            if (declaration["kind"] != null && Text(declaration["name"]) is string owner)
-                _localDeclarations[owner] = declaration;
-            foreach (var type in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                BindOwners(type);
-            foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(cell["name"]) is string cellOwner) _localDeclarations[cellOwner] = cell;
-        }
-        void BindFields(JsonObject container, string owner)
-        {
-            foreach (var field in (container["fields"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (owner != null && Text(field["name"]) is string name && TypeJson.Read(field["type"]) != null)
-                {
-                    var key = FieldKey(owner, name, field["static"]?.GetValue<bool>() == true, field);
-                    BindNative(key, field);
-                }
-            foreach (var cell in (container["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(cell["name"]) is string name)
-                {
-                    BindNative(FieldKey(name, "v", false, cell), cell);
-                }
-            foreach (var type in (container["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                BindFields(type, Text(type["name"]));
-        }
-        void BindNative((string Owner, string Name, bool Static, string Receiver) key, JsonObject declaration)
+        var matched = new HashSet<(string Owner, string Name, bool Static, string Receiver)>();
+        void BindNative((string Owner, string Name, bool Static, string Receiver) key, BirGraphValue actual)
         {
             if (!expected.Contains(key)) return;
-            if (declarations != null && (_pendingNativeOrigins == null || !_pendingNativeOrigins.Any(origin => {
-                if (origin.Value != key) return false;
-                var actual = _nativeStorageMaterializations.TryGetValue(origin.Key, out var materialized) ? materialized : origin.Key;
-                return declarations.TryGet(actual, out var projected) && ReferenceEquals(projected, declaration);
-            }))) throw new InvalidOperationException("Native source storage changed its exact projected origin");
-            if (declaration[NativeLocationKey]?.GetValue<bool>() != true)
-                throw new InvalidOperationException("Native storage selection was not carried across the owning frontier");
-            _nativeFields.Add(declaration);
+            if (!_pendingNativeOrigins.Any(origin => origin.Value == key
+                && ReferenceEquals(_nativeStorageMaterializations.TryGetValue(origin.Key, out var materialized)
+                    ? materialized : origin.Key, actual)))
+                throw new InvalidOperationException("Native source storage changed its exact continuing origin");
+            declarations.RequireOccurrence(actual);
+            var marked = actual switch {
+                BirFieldDeclaration field => field._nativeLocation.OrDefault(),
+                BirRefTypeDeclaration cell => cell._nativeLocation.OrDefault(),
+                _ => false,
+            };
+            if (!marked) throw new InvalidOperationException("Native storage selection was not carried through its owning continuation");
             matched.Add(key);
         }
-        for (var file = 0; file < roots.Count; file++)
+        void Fields(string owner, IEnumerable<BirFieldDeclaration> fields)
         {
-            if (roots[file] is not JsonObject root) continue;
-            if (aliases?.HasTransitions == true)
-            {
-                // The alias host/helper are physical output, not replacement
-                // source declarations. Preserve the original per-file order.
-                foreach (var owner in aliases.LogicalOwners(file, root, declarations)) BindOwners(owner);
-                foreach (var cell in (root["refTypes"] as JsonArray ?? new()).OfType<JsonObject>())
-                    if (Text(cell["name"]) is string cellOwner) _localDeclarations[cellOwner] = cell;
-            }
-            else if (declarations != null)
-            {
-                foreach (var owner in declarations.LogicalOwners(file, root)) BindOwners(owner);
-                foreach (var cell in (root["refTypes"] as JsonArray ?? new()).OfType<JsonObject>())
-                    if (Text(cell["name"]) is string cellOwner) _localDeclarations[cellOwner] = cell;
-            }
-            else BindOwners(root);
-            BindFields(root, Text(root["fileClass"]));
+            foreach (var field in fields)
+                if (owner != null && field.Name.HasValue && field.Type.HasValue)
+                    BindNative(FieldKey(owner, field.Name.Value, field.Static.OrDefault(), field.CompanionReceiver.OrDefault()), field);
         }
-        if (declarations != null)
-            foreach (var owner in declarations.RetiredTypes)
-            {
-                var retired = declarations.Get((BirGraphValue)owner);
-                if (!declarations.IsRetired((BirGraphValue)owner, retired))
-                    throw new InvalidOperationException("Native owner is not inside its reported retired forest");
-                BindFields(retired, owner.Name.OrDefault());
-            }
+        foreach (var root in roots)
+        {
+            Fields(root.FileClass.OrDefault(), root.Fields.OrEmpty());
+            foreach (var type in root.Types.OrEmpty()) Fields(type.Name.OrDefault(), type.Fields.OrEmpty());
+            foreach (var cell in root.RefTypes.OrEmpty())
+                if (cell.Name.HasValue) BindNative(FieldKey(cell.Name.Value, "v", false, (TypeNode)null), cell);
+        }
+        foreach (var owner in declarations.RetiredTypes)
+        {
+            var actual = (BirGraphValue)owner;
+            declarations.RequireOccurrence(actual);
+            if (!declarations.IsRetired(actual))
+                throw new InvalidOperationException("Native owner is not inside its reported retired forest");
+            Fields(owner.Name.OrDefault(), owner.Fields.OrEmpty());
+        }
         if (aliases != null)
             foreach (var (_, field) in aliases.RetiredFields)
             {
                 if (!_sourceNativeStorage.Contains(field)) continue;
-                if (_pendingNativeOrigins == null || !_pendingNativeOrigins.TryGetValue(field, out var key)
-                    || !expected.Contains(key) || matched.Contains(key)
-                    || !field._nativeLocation.OrDefault()
+                if (!_pendingNativeOrigins.TryGetValue(field, out var key)
+                    || !expected.Contains(key) || matched.Contains(key) || !field._nativeLocation.OrDefault()
                     || FieldKey(key.Owner, field.Name.OrDefault(), field.Static.OrDefault(), field.CompanionReceiver.OrDefault()) != key)
                     throw new InvalidOperationException("Retired native storage does not match its selected source occurrence");
-                // Explicit owner retirement is not a missing-field fallback.
-                // This exact selected field has one detached physical projection.
-                if (declarations != null)
-                {
-                    var retired = declarations.Get(field);
-                    if (!declarations.IsRetired(field, retired))
-                        throw new InvalidOperationException("Native field is not inside its reported retired forest");
-                    BindNative(key, retired);
-                }
-                else BindNative(key, field.ToDom());
+                declarations.RequireOccurrence(field);
+                if (!declarations.IsRetired(field))
+                    throw new InvalidOperationException("Native field is not inside its reported retired forest");
+                BindNative(key, field);
             }
         if (!matched.SetEquals(expected))
-            throw new InvalidOperationException("A selected native source declaration is absent from its DOM continuation");
-        BindRefreshedNativeLocations(roots, declarations);
+            throw new InvalidOperationException("A selected native source declaration is absent from its owning continuation");
+        CompleteRefreshedNativeLocations(roots, declarations);
         _nativeStorageMaterializations.Clear();
         _sourceNativeStorage.Clear();
         _pendingNativePhysicalBindings = null;
         _pendingNativeOrigins = null;
-        _sourceAwaitingDom = false;
+        _sourceContinuationPending = false;
     }
 }

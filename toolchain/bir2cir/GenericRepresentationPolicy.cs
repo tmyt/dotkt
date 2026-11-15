@@ -14,69 +14,31 @@ sealed partial class GenericRepresentationPolicy
     internal const string PhysicalDeclarationSignatureKey = "_physicalDeclarationSignature";
     readonly Dictionary<string, string> _aliases;
     readonly ReferenceMetadataIndex _references;
-    readonly Dictionary<string, JsonObject> _localDeclarations = new(StringComparer.Ordinal);
     readonly HashSet<string> _localOwners = new(StringComparer.Ordinal);
     readonly HashSet<string> _existentialOwners = new(StringComparer.Ordinal);
-    readonly HashSet<JsonObject> _nativeFields = new();
     readonly HashSet<(string Owner, string Name, bool Static, string Receiver)> _nativeFieldNames = new();
-    bool _sourceAwaitingDom;
+    bool _sourceContinuationPending;
 
     GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases,
         ReferenceMetadataIndex references, bool sourceOwned)
     {
         _aliases = new Dictionary<string, string>(aliases, StringComparer.Ordinal);
         _references = references;
-        _sourceAwaitingDom = sourceOwned;
+        _sourceContinuationPending = sourceOwned;
     }
 
     public GenericRepresentationPolicy(IReadOnlyDictionary<string, string> aliases,
-        ReferenceMetadataIndex references = null, IEnumerable<JsonNode> roots = null)
-        : this(aliases, references, sourceOwned: false)
-    {
-        void Collect(JsonNode node)
-        {
-            if (node is not JsonObject declaration) return;
-            if (declaration["kind"] != null && declaration["name"] is JsonValue name
-                && name.TryGetValue<string>(out var owner))
-            {
-                _localDeclarations[owner] = declaration;
-                _localOwners.Add(owner);
-                if (FBoundStarProjectionErasure.IsSourceGeneric(declaration)) _existentialOwners.Add(owner);
-            }
-            foreach (var child in declaration["types"] as JsonArray ?? new JsonArray()) Collect(child);
-            foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(cell["name"]) is string cellOwner)
-                {
-                    _localDeclarations[cellOwner] = cell;
-                    _localOwners.Add(cellOwner);
-                }
-        }
-        var inputs = (roots ?? Array.Empty<JsonNode>()).ToArray();
-        foreach (var root in inputs) Collect(root);
-        RecordNativeFields(inputs);
-    }
-
-    // Local ownership and declaration facts include aliases and generated physical types. Carrier eligibility is
-    // a separate source declaration decision; discovering a late physical type must never allocate it a carrier.
-    internal void RegisterLocalDefinitions(IReadOnlyDictionary<string, JsonObject> declarations,
-        IReadOnlyDictionary<string, string> aliases)
-    {
-        foreach (var (name, declaration) in declarations)
-        {
-            _localDeclarations[name] = declaration;
-        }
-        RegisterCurrentPhysicalOwners(declarations.Keys, aliases);
-    }
+        ReferenceMetadataIndex references = null)
+        : this(aliases, references, sourceOwned: false) { }
 
     // The current physical inventory can grow without granting source carrier
-    // eligibility. Source preparation and its DOM continuation share this set.
+    // eligibility. Source preparation and its owning continuation share this set.
     internal void RegisterCurrentPhysicalOwners(IEnumerable<string> names, IReadOnlyDictionary<string, string> aliases)
     {
         foreach (var name in names) _localOwners.Add(name);
         foreach (var (name, target) in aliases) _aliases[name] = target;
     }
 
-    internal JsonObject LocalDeclaration(string owner) => _localDeclarations.GetValueOrDefault(owner);
     internal string BindingAlias(string owner) => owner == null ? null
         : _aliases.GetValueOrDefault(ReferenceMetadataIndex.BareOwnerFqn(owner));
 
@@ -95,85 +57,6 @@ sealed partial class GenericRepresentationPolicy
         isStatic = kind == "staticField";
         return isStatic || kind == "field";
     }
-
-    // Revisit newly materialized source/capture fields before value projection. Selected managed-reference
-    // parameter shapes own these locations; the late value-flow pass separately allocates exact native locals.
-    internal void RecordNativeFields(IEnumerable<JsonNode> roots)
-    {
-        var inputs = roots.ToArray();
-        var fields = new Dictionary<(string Owner, string Name, bool Static, string Receiver), JsonObject>();
-        void IndexFields(JsonObject declaration)
-        {
-            var owner = Text(declaration["name"]) ?? Text(declaration["fileClass"]);
-            foreach (var field in (declaration["fields"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (owner != null && Text(field["name"]) is string name
-                    && TypeJson.Read(field["type"]) != null)
-                {
-                    var key = FieldKey(owner, name, field["static"]?.GetValue<bool>() == true, field);
-                    fields.Add(key, field);
-                    // An explicit field export requests native typed storage even without an address use.
-                    // An ordinary Kotlin property can also be published as a CLR field (notably a file value);
-                    // visibility alone does not turn its source-owned value slot into a native location.
-                    if ((field["attrs"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-                        .Any(attribute => TypeJson.OwnerName(attribute["attr"]) == "kotlin.clr.ClrField"))
-                    {
-                        _nativeFields.Add(field);
-                        _nativeFieldNames.Add(key);
-                    }
-                }
-            foreach (var cell in (declaration["refTypes"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(cell["name"]) is string cellOwner) fields.Add(FieldKey(cellOwner, "v", false, cell), cell);
-            foreach (var child in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                IndexFields(child);
-        }
-        foreach (var root in inputs.OfType<JsonObject>()) IndexFields(root);
-        void FindAddresses(JsonNode node)
-        {
-            if (node is JsonArray array)
-                foreach (var child in array) FindAddresses(child);
-            else if (node is JsonObject obj)
-            {
-                // The selected declaration supplies the managed-reference shape.
-                // Decide field layout while source bodies still exist in both
-                // reference and runtime builds, not after reference-body removal.
-                var kind = Text(obj["k"]);
-                if (NativeRefreshCall(kind)
-                    && NativeRefreshParameters(obj["shapeTypes"], obj["sig"], obj["memberSignature"], obj["argTypes"]) is JsonArray parameters
-                    && obj["args"] is JsonArray arguments && parameters.Count == arguments.Count)
-                    for (var i = 0; i < parameters.Count; i++)
-                    {
-                        if (!NativeRefreshAddress(TypeJson.Read(parameters[i]))
-                            || arguments[i] is not JsonObject argument) continue;
-                        var location = Text(argument["k"]) == "byrefOf" ? argument["inner"] as JsonObject : argument;
-                        if (location == null || !NativeRefreshLocation(Text(location["k"]), out var isStatic)
-                            || TypeJson.OwnerName(location["ownerType"] ?? location["owner"]) is not string owner
-                            || Text(location["name"]) is not string name) continue;
-                        var key = FieldKey(owner, name, isStatic, location);
-                        if (fields.TryGetValue(key, out var declaration))
-                        {
-                            _nativeFields.Add(declaration);
-                            _nativeFieldNames.Add(key);
-                        }
-                        else if (_localOwners.Contains(owner)
-                            || _references?.HasReferencedFieldLocation(TypeJson.Read(location["ownerType"] ?? location["owner"]) as TypeNode.Fqn,
-                                name, key.Item3) != true) continue;
-                        // An address use is not a value read. Keep this selected FieldDef through value projection;
-                        // other reads of the same referenced field may still use its ordinary carrier getter.
-                        location[FieldAddressKey] = true;
-                        location[NativeLocationKey] = true;
-                    }
-                foreach (var (key, child) in obj)
-                    if (key != "attrs") FindAddresses(child);
-            }
-        }
-        foreach (var root in inputs) FindAddresses(root);
-        foreach (var field in _nativeFields) field[NativeLocationKey] = true;
-    }
-
-    internal bool IsNativeField(JsonObject node) => node[NativeLocationKey]?.GetValue<bool>() == true || _nativeFields.Contains(node)
-        || IsNativeFieldUse(Text(node["k"]), TypeJson.Read(node["ownerType"] ?? node["owner"]), Text(node["name"]),
-            Text(node["companionReceiver"]) is string receiver ? TypeNode.Parse(receiver) : null);
-
     bool IsNativeFieldUse(string kind, TypeNode ownerType, string name, TypeNode companionReceiver) =>
         kind is "field" or "staticField" or "setField" or "setStaticField" && ownerType is TypeNode.Fqn owner && name != null
         && _nativeFieldNames.Contains(FieldKey(owner.Name, name, kind is "staticField" or "setStaticField", companionReceiver));
@@ -191,10 +74,6 @@ sealed partial class GenericRepresentationPolicy
 
     // Before companion binding allocates physical storage names, the explicit association is part of a
     // field's semantic identity. The same declaration object retains its location role after binding.
-    static (string Owner, string Name, bool Static, string Receiver) FieldKey(
-        string owner, string name, bool isStatic, JsonObject declarationOrUse) =>
-        FieldKey(owner, name, isStatic, Text(declarationOrUse["companionReceiver"]) is string receiver
-            ? TypeNode.Parse(receiver) : null);
 
     static (string Owner, string Name, bool Static, string Receiver) FieldKey(
         string owner, string name, bool isStatic, TypeNode receiver)
@@ -205,7 +84,6 @@ sealed partial class GenericRepresentationPolicy
         return (owner, name, isStatic, TypeNode.ToJson(new TypeNode.Fqn(classifier)));
     }
 
-    static string Text(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var text) == true ? text : null;
 
     internal bool OwnsValueSlots(string owner) => owner != null && !UsesNativeOwnerSlots(owner)
         && (_localOwners.Contains(owner) || _references?.HasDotKtOwner(owner) == true);

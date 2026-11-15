@@ -13,11 +13,6 @@ static partial class FBoundStarProjectionErasure
         internal IReadOnlyDictionary<string, DeclarationBinding> Bindings { get; }
         internal IReadOnlyDictionary<string, string> LocalClrAliases { get; }
 
-        // The same exact bindings change addresses once; no current graph is
-        // rediscovered after the source side has been consumed.
-        internal Dictionary<string, System.Text.Json.Nodes.JsonObject> BindDefinitions() => Bindings
-            .ToDictionary(pair => pair.Key, pair => pair.Value.Physical, StringComparer.Ordinal);
-
         CurrentPhysicalTypeView(Dictionary<string, IBirTypeDeclaration> definitions,
             Dictionary<string, DeclarationBinding> bindings, IReadOnlyDictionary<string, string> aliases)
         { Definitions = definitions; Bindings = bindings; LocalClrAliases = aliases; }

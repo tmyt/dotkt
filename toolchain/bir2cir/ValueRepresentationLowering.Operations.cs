@@ -91,7 +91,7 @@ sealed partial class ValueRepresentationLowering
     void BindOperationRoot(BirGraphValue root, OperationLexicalContext context, bool preserveOwnership)
     {
         if (referenceBuild || bindings.Count == 0) return;
-        if (domBound) throw new InvalidOperationException("Source value operations used after DOM declaration handoff");
+        if (sourceCompleted) throw new InvalidOperationException("Source value operations used after source declaration completion");
         var suffix = 0;
         var names = new HashSet<string>(StringComparer.Ordinal);
         root.Visit(node => node.VisitNameFields(name => names.Add(name)));

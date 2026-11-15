@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -131,32 +130,35 @@ static partial class UncheckedGenericCastReturnErasure
         return found;
     }
 
-    // The only graph handoff is an association with the actual continuing DOM
-    // occurrence produced by the single module projection. No candidate search,
-    // name matching, body snapshot, or later replacement chasing occurs here.
-    public static DeclIndex BindDomDeclarations(PendingSourceIndex pending, IReadOnlyList<JsonObject> actualRoots,
-        IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations = null,
-        AliasDeclarationTransitions aliases = null, SourceDeclarationProjection declarations = null)
+    // Its last call consumer has finished. Validate the same captured rows
+    // against producer-reported ownership, then end this source-only capability.
+    // Neither current names nor pending metadata can admit a declaration here.
+    public static void CompleteSourceDeclarations(PendingSourceIndex pending,
+        IReadOnlyList<BirFileDeclaration> actualRoots, AliasDeclarationTransitions aliases,
+        SourceDeclarationProjection declarations)
     {
-        var (roots, occurrences, index) = pending.Consume();
+        ArgumentNullException.ThrowIfNull(declarations);
+        var (roots, occurrences, _) = pending.Consume();
         if (actualRoots.Count != roots.Length) throw ProjectionMismatch();
-        aliases?.ValidateProjection(actualRoots);
-        var associated = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
+        aliases?.ValidateSourceContinuations(actualRoots);
+        for (var file = 0; file < roots.Length; file++)
+            if (!ReferenceEquals(actualRoots[file], roots[file].Declaration)
+                || actualRoots[file].FileClass.OrDefault() != roots[file].FileClass) throw ProjectionMismatch();
+
+        var associated = new HashSet<BirFunctionDeclaration>(ReferenceEqualityComparer.Instance);
         foreach (var occurrence in occurrences)
         {
             var sourceRoot = roots[occurrence.File];
-            var root = actualRoots[occurrence.File];
-            if (sourceRoot.Declaration.FileClass.OrDefault() != sourceRoot.FileClass
-                || Str(root["fileClass"]) != sourceRoot.FileClass) throw ProjectionMismatch();
+            declarations.RequireOccurrence(sourceRoot.Declaration);
             BirFunctionDeclaration[] sourceMethods;
-            JsonObject container;
+            BirGraphValue container;
             SourceDeclarationProjection.MethodPlacement placement = null;
             var retiredOwner = false;
             if (occurrence.Type < 0)
             {
                 sourceMethods = sourceRoot.Declaration.Methods.OrEmpty();
-                container = root;
-                if (declarations?.TryMethodPlacement(sourceRoot.Declaration, out var reported) == true)
+                container = sourceRoot.Declaration;
+                if (declarations.TryMethodPlacement(sourceRoot.Declaration, out var reported))
                 {
                     placement = reported;
                     sourceMethods = reported.Before;
@@ -166,93 +168,85 @@ static partial class UncheckedGenericCastReturnErasure
             {
                 var sourceTypes = sourceRoot.Declaration.Types.OrEmpty();
                 var position = occurrence.Type;
-                var reported = aliases?.TryOwner(sourceRoot.Declaration, occurrence.Type, occurrence.Owner,
+                var aliasReported = aliases?.TryOwner(sourceRoot.Declaration, occurrence.Type, occurrence.Owner,
                     out position, out retiredOwner) == true;
-                if (!reported && declarations != null)
+                var reported = aliasReported;
+                if (!reported)
                     reported = declarations.TryOwner(sourceRoot.Declaration, occurrence.Type, occurrence.Owner,
                         out position, out retiredOwner);
                 if (occurrence.Owner.Name.OrDefault() != occurrence.Facts.Owner) throw ProjectionMismatch();
-                JsonObject owner = null;
                 if (!retiredOwner)
                 {
-                    if (position < 0 || position >= sourceTypes.Length || !ReferenceEquals(sourceTypes[position], occurrence.Owner)
-                        || root["types"] is not JsonArray types || position >= types.Count
-                        || types[position] is not JsonObject projectedOwner || Str(projectedOwner["name"]) != occurrence.Facts.Owner)
+                    if (position < 0 || position >= sourceTypes.Length || !ReferenceEquals(sourceTypes[position], occurrence.Owner))
                         throw ProjectionMismatch();
-                    owner = projectedOwner;
                 }
                 else if (!reported || sourceTypes.Any(type => ReferenceEquals(type, occurrence.Owner))) throw ProjectionMismatch();
+                // An explicitly replaced alias keeps only its logical source
+                // owner; each method still requires its own retired occurrence.
+                if (!aliasReported || !retiredOwner || !aliases.IsReplacedLogicalOwner(occurrence.Owner))
+                    declarations.RequireOccurrence((BirGraphValue)occurrence.Owner);
                 sourceMethods = occurrence.Owner.Methods.OrEmpty();
-                container = owner;
+                container = (BirGraphValue)occurrence.Owner;
             }
+            var consumed = declarations.WasIdentityConsumed(occurrence.Declaration, occurrence.Identity);
             if (occurrence.Method >= occurrence.OriginalMethods.Length
                 || !ReferenceEquals(occurrence.OriginalMethods[occurrence.Method], occurrence.Declaration)
-                || !(declarations?.WasIdentityConsumed(occurrence.Declaration, occurrence.Identity) == true
-                    ? !occurrence.Declaration.DeclarationId.IsPresent
+                || !ReferenceEquals(occurrence.Facts.SourceMethod, occurrence.Declaration)
+                || !(consumed ? !occurrence.Declaration.DeclarationId.IsPresent
                     : occurrence.Declaration.DeclarationId.OrDefault() == occurrence.Identity)
                 || occurrence.Declaration.Static.OrDefault() != occurrence.Facts.Static
                 || occurrence.Declaration.Ret.OrDefault() != occurrence.ExpectedPhysicalReturn) throw ProjectionMismatch();
-            JsonObject method;
-            if (retiredDeclarations != null && retiredDeclarations.TryGetValue(occurrence.Declaration, out var retired))
+
+            declarations.RequireOccurrence(occurrence.Declaration);
+            if (declarations.IsRetired(occurrence.Declaration))
             {
                 var stillOwned = retiredOwner
                     ? sourceRoot.Declaration.Methods.OrEmpty().Concat(sourceRoot.Declaration.Types.OrEmpty()
                         .SelectMany(type => type.Methods.OrEmpty())).Any(value => ReferenceEquals(value, occurrence.Declaration))
                     : sourceMethods.Any(value => ReferenceEquals(value, occurrence.Declaration));
-                if (retired == null || retired.Parent != null && declarations?.IsRetired(occurrence.Declaration, retired) != true || stillOwned)
-                    throw ProjectionMismatch();
-                method = retired;
+                if (stillOwned) throw ProjectionMismatch();
             }
             else
             {
                 if (retiredOwner) throw ProjectionMismatch();
-                // Only explicit retirements in this captured owning vector can move this exact occurrence.
                 var position = occurrence.Method;
-                if (retiredDeclarations != null)
-                    for (var previous = 0; previous < occurrence.Method; previous++)
-                        if (retiredDeclarations.ContainsKey(occurrence.OriginalMethods[previous]))
-                        {
-                            if (sourceMethods.Any(value => ReferenceEquals(value, occurrence.OriginalMethods[previous])))
-                                throw ProjectionMismatch();
-                            position--;
-                        }
-                if (position >= sourceMethods.Length || !ReferenceEquals(sourceMethods[position], occurrence.Declaration))
+                for (var previous = 0; previous < occurrence.Method; previous++)
+                    if (declarations.IsRetired(occurrence.OriginalMethods[previous]))
+                    {
+                        if (sourceMethods.Any(value => ReferenceEquals(value, occurrence.OriginalMethods[previous])))
+                            throw ProjectionMismatch();
+                        position--;
+                    }
+                if (position < 0 || position >= sourceMethods.Length || !ReferenceEquals(sourceMethods[position], occurrence.Declaration))
                     throw ProjectionMismatch();
                 if (placement?.TryMove(occurrence.Declaration, out var move) == true)
                 {
-                    if (move.SourceOrdinal != position
-                        || move.DestinationOrdinal >= move.Destination.Methods.OrEmpty().Length
+                    if (move.SourceOrdinal != position || move.DestinationOrdinal >= move.Destination.Methods.OrEmpty().Length
                         || !ReferenceEquals(move.Destination.Methods.Value[move.DestinationOrdinal], occurrence.Declaration))
                         throw ProjectionMismatch();
-                    container = declarations.Get((BirGraphValue)move.Destination);
+                    container = (BirGraphValue)move.Destination;
                     position = move.DestinationOrdinal;
                 }
                 else if (placement != null)
                 {
-                    // The reported vector explains only these actual removals;
-                    // an unrelated reorder or replacement remains a mismatch.
                     position -= placement.Moves.Count(value => value.SourceOrdinal < position);
-                    if (position >= placement.After.Length || !ReferenceEquals(placement.After[position], occurrence.Declaration))
+                    if (position < 0 || position >= placement.After.Length || !ReferenceEquals(placement.After[position], occurrence.Declaration))
                         throw ProjectionMismatch();
                 }
-                if (container["methods"] is not JsonArray methods || position >= methods.Count
-                    || methods[position] is not JsonObject continuing
-                    || placement != null && !ReferenceEquals(declarations.Get(occurrence.Declaration), continuing))
-                    throw ProjectionMismatch();
-                method = continuing;
+                var methods = container switch {
+                    BirFileDeclaration file => file.Methods.OrEmpty(),
+                    IBirTypeDeclaration type => type.Methods.OrEmpty(),
+                    _ => throw ProjectionMismatch(),
+                };
+                if (position >= methods.Length || !ReferenceEquals(methods[position], occurrence.Declaration)) throw ProjectionMismatch();
             }
-            if (!(declarations?.WasIdentityConsumed(occurrence.Declaration, occurrence.Identity) == true
-                    ? !method.ContainsKey(DeclarationIdentityBinding.Key)
-                    : Str(method[DeclarationIdentityBinding.Key]) == occurrence.Identity)
-                || Bool(method["static"]) != occurrence.Facts.Static
-                || TypeJson.Read(method["ret"]) != occurrence.ExpectedPhysicalReturn
-                || !associated.Add(method)) throw ProjectionMismatch();
-            occurrence.Facts.Method = method;
-            occurrence.Facts.SourceMethod = null;
+            if (!associated.Add(occurrence.Declaration)) throw ProjectionMismatch();
         }
-        return index;
+        // Retain Facts.Return as the original captured body-Tv. Only the
+        // compiler stage's exact report could change ExpectedPhysicalReturn.
+        foreach (var occurrence in occurrences) occurrence.Facts.SourceMethod = null;
     }
 
     static InvalidOperationException ProjectionMismatch() =>
-        new("Unchecked declaration snapshot does not match its projected occurrence");
+        new("Unchecked declaration snapshot does not match its continuing occurrence");
 }

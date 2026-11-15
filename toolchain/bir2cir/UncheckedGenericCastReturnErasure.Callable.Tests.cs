@@ -70,13 +70,21 @@ static partial class UncheckedGenericCastReturnErasure
                 new BirVariable { Name = "function", Init = new BirNewDelegate { Method = "reported", CalleeOwner = new TypeNode.Fqn("Reported"),
                     FuncType = new TypeNode.Fn(false, erased, Array.Empty<TypeNode>()) } } } } } };
         var reportedPending = CaptureSource(new[] { reportedRoot });
-        var row = reportedPending.SourceDeclarations.ByIdentity["reported"];
+        var reportedIndex = reportedPending.SourceDeclarations;
+        var row = reportedIndex.ByIdentity["reported"];
         Require(reportedPending.AlignDelegateTargets(reportedRoot, _ => true) && reported.Ret.Value == erased
             && row.Return == variable, "reported physical alignment changed the captured body variable");
         Apply(reportedRoot, reportedPending);
-        var bound = BindDomDeclarations(reportedPending, new[] { reportedRoot.ToDom() });
-        Require(ReferenceEquals(bound.ByIdentity["reported"], row) && row.SourceMethod == null && row.Method != null
-            && row.Return == variable && TypeJson.Read(row.Method["ret"]) == erased, "physical signature report lost its exact single-row handoff");
+        var reportedBindings = new CurrentDeclarationBindings(new[] { reportedRoot });
+        var reportedBinding = reportedBindings.GetCapturedSource(reported);
+        var reportedLedger = new SourceDeclarationProjection(new[] { reportedRoot }, reportedBindings);
+        reportedLedger.SealSourceContinuations();
+        CompleteSourceDeclarations(reportedPending, new[] { reportedRoot }, null, reportedLedger);
+        Require(ReferenceEquals(reportedIndex.ByIdentity["reported"], row) && row.SourceMethod == null
+            && ReferenceEquals(reportedBinding.Source, reported) && row.Return == variable && reported.Ret.Value == erased,
+            "physical signature report lost its exact single-row terminal custody");
+        reportedBindings.CompleteSourceCustody(reportedLedger);
+        reportedLedger.Release();
         foreach (var tamperAfterReport in new[] { false, true })
         {
             var source = (BirFileDeclaration)reportedRoot.DeepClone();
@@ -84,8 +92,11 @@ static partial class UncheckedGenericCastReturnErasure
             var captured = CaptureSource(new[] { source });
             if (tamperAfterReport) captured.AlignDelegateTargets(source, _ => true);
             source.Methods.Value[0].Ret = text;
+            var bindings = new CurrentDeclarationBindings(new[] { source });
+            var ledger = new SourceDeclarationProjection(new[] { source }, bindings);
+            ledger.SealSourceContinuations();
             var refused = false;
-            try { BindDomDeclarations(captured, new[] { source.ToDom() }); }
+            try { CompleteSourceDeclarations(captured, new[] { source }, null, ledger); }
             catch (InvalidOperationException) { refused = true; }
             Require(refused, "unreported return mutation passed exact physical association");
         }

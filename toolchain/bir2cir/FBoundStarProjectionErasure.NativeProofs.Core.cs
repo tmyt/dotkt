@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -97,9 +96,6 @@ static partial class FBoundStarProjectionErasure
         IReadOnlyDictionary<int, List<TypeNode>> Rows(DeclarationBinding declaration) =>
             declaration != null && rows.TryGetValue(declaration, out var value) ? value : new Dictionary<int, List<TypeNode>>();
 
-        IReadOnlyDictionary<int, List<TypeNode>> Rows(JsonObject declaration) =>
-            bindings.TryGetPhysical(declaration, out var binding) ? Rows(binding) : new Dictionary<int, List<TypeNode>>();
-
         IReadOnlyDictionary<int, List<TypeNode>> TypeRows(string owner)
         {
             if (lateLocalTypes.TryGetValue(owner, out var physicalRows)) return physicalRows;
@@ -147,8 +143,8 @@ static partial class FBoundStarProjectionErasure
             return false;
         }
 
-        static bool TypeDeclaration(DeclarationBinding declaration) => declaration.IsPhysical
-            ? IsTypeDefinition(declaration.Physical) : declaration.Source is IBirTypeDeclaration type && IsTypeDefinition(type.Kind.OrDefault());
+        static bool TypeDeclaration(DeclarationBinding declaration) =>
+            declaration.Source is IBirTypeDeclaration type && IsTypeDefinition(type.Kind.OrDefault());
 
         static IReadOnlyList<BirTypeParameter> SourceParameters(BirGraphValue source) => source switch {
             IBirTypeDeclaration value => TypeParameterFrame.Declarations(value).ToArray(), BirFunctionDeclaration value => value.TypeParams.OrEmpty(),
@@ -158,42 +154,31 @@ static partial class FBoundStarProjectionErasure
             _ => throw new InvalidOperationException("Unaccounted native proof declaration: " + source.GetType().Name),
         };
 
-        static IReadOnlyList<TypeNode[]> Constraints(DeclarationBinding declaration)
-        {
-            if (!declaration.IsPhysical)
-                return SourceParameters(declaration.Source).Select(parameter => parameter.Constraints.OrEmpty()).ToArray();
-            var physical = declaration.Physical;
-            // Placement separates declaration-owned captures without changing !N.
-            // Callable and MethodImpl generic frames have no enclosing prefix.
-            var parameters = TypeDeclaration(declaration) ? TypeParameterFrame.Declarations(physical)
-                : (physical["typeParams"] as JsonArray)?.AsEnumerable() ?? Enumerable.Empty<JsonNode>();
-            return parameters.Select(parameter =>
-                (parameter?["constraints"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>()).ToArray();
-        }
+        // Placement separates declaration-owned captures without changing !N.
+        // Callable and MethodImpl generic frames have no enclosing prefix.
+        static IReadOnlyList<TypeNode[]> Constraints(DeclarationBinding declaration) =>
+            SourceParameters(declaration.Source).Select(parameter => parameter.Constraints.OrEmpty()).ToArray();
 
-        static NullableRepresentationFrame Frame(DeclarationBinding declaration) => declaration.IsPhysical
-            ? TypeDeclaration(declaration) ? KotlinSupertypesRecord.ReadNullableFrame(declaration.Physical)
-                : OwnerConstrainedMethodLowering.ReadMethodFrame(declaration.Physical)
-            : TypeDeclaration(declaration) ? NullableRepresentationViews.TypeFacts(declaration.Source)?.NullableFrame
+        static NullableRepresentationFrame Frame(DeclarationBinding declaration) =>
+            TypeDeclaration(declaration) ? NullableRepresentationViews.TypeFacts(declaration.Source)?.NullableFrame
                 : (declaration.Source as BirFunctionDeclaration)?.NullableRepresentationFrame.OrDefault();
 
-        static bool Generated(DeclarationBinding declaration) => declaration.IsPhysical ? Bool(declaration.Physical["generated"])
-            : declaration.Source switch { IBirTypeDeclaration type => type.Generated.OrDefault(),
+        static bool Generated(DeclarationBinding declaration) =>
+            declaration.Source switch { IBirTypeDeclaration type => type.Generated.OrDefault(),
                 BirFunctionDeclaration method => method.Generated.OrDefault(), _ => false };
 
-        static int OuterCount(DeclarationBinding declaration) => declaration.IsPhysical ? Int(declaration.Physical["outerTypeParamCount"]) ?? 0
-            : (declaration.Source as BirClassDefinition)?.OuterTypeParamCount.OrDefault() ?? 0;
+        static int OuterCount(DeclarationBinding declaration) =>
+            (declaration.Source as BirClassDefinition)?.OuterTypeParamCount.OrDefault() ?? 0;
 
-        static string Identity(DeclarationBinding declaration) => declaration.IsPhysical ? Str(declaration.Physical[DeclarationIdentityBinding.Key])
-            : (declaration.Source as BirFunctionDeclaration)?.DeclarationId.OrDefault();
+        static string Identity(DeclarationBinding declaration) =>
+            (declaration.Source as BirFunctionDeclaration)?.DeclarationId.OrDefault();
 
-        bool ProjectsMethodBound(DeclarationBinding declaration, int index, TypeNode bound) => declaration.IsPhysical
-            ? OwnerConstrainedMethodLowering.ProjectsBound(declaration.Physical, index, bound)
-            : OwnerConstrainedMethodLowering.ProjectsBound(index, bound, Frame(declaration),
+        bool ProjectsMethodBound(DeclarationBinding declaration, int index, TypeNode bound) =>
+            OwnerConstrainedMethodLowering.ProjectsBound(index, bound, Frame(declaration),
                 (declaration.Source as BirFunctionDeclaration)?._ownerConstraintOverrideBounds.OrDefault(), references);
 
-        static bool SourceGeneric(DeclarationBinding declaration) => declaration.IsPhysical ? IsSourceGeneric(declaration.Physical)
-            : declaration.Source is IBirTypeDeclaration type && IsSourceGeneric(type.Name.OrDefault(), type.Generated.OrDefault(),
+        static bool SourceGeneric(DeclarationBinding declaration) =>
+            declaration.Source is IBirTypeDeclaration type && IsSourceGeneric(type.Name.OrDefault(), type.Generated.OrDefault(),
                 type.Attrs.OrEmpty().Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" }),
                 type.TypeParams.OrEmpty().Length);
     }

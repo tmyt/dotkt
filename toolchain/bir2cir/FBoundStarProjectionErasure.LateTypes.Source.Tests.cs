@@ -1,6 +1,5 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
-using System.Text.Json.Nodes;
 
 static partial class FBoundStarProjectionErasure
 {
@@ -23,12 +22,11 @@ static partial class FBoundStarProjectionErasure
             Params = Array.Empty<BirParameter>(), Ret = text, Body = Array.Empty<IBirStatement>() };
         var file = new BirFileDeclaration { FileClass = "LateProjectionTests", Types = new IBirTypeDeclaration[] { generic },
             Methods = new[] { originalMethod } };
-        var savedPolicy = _valueSlots; var savedProofs = _nativeProofs; var savedNames = _usedCarrierNames;
-        var savedGraph = _sourceSupertypes; var savedMethods = _localMethods; var savedDeclarations = _localDeclarations;
         try
         {
             var context = SourceSynthesisTestContext(file, references);
             var roots = new[] { file };
+            context.Values.PrepareSourceLocations(roots);
             var oldDefinitions = context.Bindings.SourceDefinitions;
             var oldDeclarations = context.Bindings.SourceLocalDeclarations;
             var star = new TypeNode.Fqn("LateGeneric", new TypeNode[] { new TypeNode.Star() });
@@ -134,29 +132,34 @@ static partial class FBoundStarProjectionErasure
                 && !context.Owners.ContainsKey("LateBridge") && !context.Bindings.SourceDefinitions.ContainsKey("LateBridge"),
                 "second projection missed an authored bridge or selected a new source carrier");
 
-            // The SAME physical rows survive the one actual address handoff.
+            // The SAME physical rows and original frozen catalogs reach
+            // terminal custody. No rendered declaration registry is installed.
             var referencedFinal = CarrierProjectionContext.ForReferencedValuesSource(context, finalCurrent);
             TypeNode[] helperTypes = { star, new TypeNode.Nullable(star), new TypeNode.Array(star),
                 new TypeNode.Fqn("LateGeneric", new[] { text }), native };
             var helperResults = helperTypes.Select(type => referencedFinal.Rewrite(type)).ToArray();
-            var physical = file.ToDom(context.Bindings.ObserveProjection);
-            context.Bindings.BindProjected();
-            var physicalBridge = bridgeBinding.Physical;
-            Require(context.NativeProofs.IsPhysicalConstraint(physicalBridge["typeParams"][0]["constraints"].AsArray(), native)
-                && ReferenceEquals(physical["types"][4], physicalBridge), "physical proof continuation changed at the frontier");
-            BindRealizationContinuation(context, finalCurrent);
-            var continuingReferenced = CarrierProjectionContext.ForDom(
-                new Dictionary<string, Owner>(StringComparer.Ordinal), references, context.Values, context.NativeProofs);
+            var custody = new SourceDeclarationProjection(roots, context.Bindings);
+            custody.SealSourceContinuations();
+            custody.RequireOccurrence(bridge);
+            Require(context.NativeProofs.IsPhysicalConstraint(bridgeBinding, 0, native)
+                && ReferenceEquals(bridgeBinding.Source, file.Types.Value[4])
+                && ReferenceEquals(machineBinding.Source, machine),
+                "physical proof or exact born declaration changed before completion");
+            context.Values.CompleteSourceContinuation(roots, null, custody);
+            var continuingReferenced = CarrierProjectionContext.ForReferencedValuesSource(context, finalCurrent);
             Require(helperTypes.Select((type, index) => TypeNodeDataEquality.Equal(
                     continuingReferenced.Rewrite(type), helperResults[index])).All(equal => equal),
-                "source referenced helper scope differs from its actual continuing scalar projection");
-            Reject(() => referencedFinal.Rewrite(native));
-            Require(ReferenceEquals(context.Values.LocalDeclaration("LateBridge"), physicalBridge)
-                && ReferenceEquals(context.Values.LocalDeclaration("LateMachine"), machineBinding.Physical)
-                && ReferenceEquals(context.Values.LocalDeclaration("LateGeneric"), context.Bindings.GetPhysical(physical["types"][0].AsObject()).Physical)
+                "terminal custody changed the same selected current/referenced helper scope");
+            Require(ReferenceEquals(finalCurrent.Definitions["LateBridge"], bridge)
+                && ReferenceEquals(finalCurrent.Definitions["LateMachine"], machine)
+                && ReferenceEquals(finalCurrent.Definitions["LateGeneric"], generic)
                 && !oldDefinitions.ContainsKey("LateBridge") && !oldDeclarations.ContainsKey(("LateBridge", "late-bridge")),
-                "current physical declaration handoff was replaced by an early/logical header or extended source catalogs");
+                "current physical membership was replaced by an early/logical header or extended source catalogs");
+            CompleteRealization(context);
+            context.Bindings.CompleteSourceCustody(custody);
+            Reject(() => referencedFinal.Rewrite(native));
             Reject(() => RewriteLateTypesSource(roots, context));
+            custody.Release();
 
             var alias = new BirClassDefinition { Name = "RetainedAlias", Kind = "class",
                 TypeParams = new[] { new BirTypeParameter { Name = "T", Variance = "out" } },
@@ -165,7 +168,7 @@ static partial class FBoundStarProjectionErasure
             var aliasFile = new BirFileDeclaration { FileClass = "LateAliasTests", Types = new IBirTypeDeclaration[] { alias } };
             var aliasValues = GenericRepresentationPolicy.CreateSource(new[] { aliasFile },
                 new Dictionary<string, string> { ["RetainedAlias"] = "System.Collections.Generic.IReadOnlyCollection" }, references);
-            aliasValues.PrepareDomLocations(new[] { aliasFile });
+            aliasValues.PrepareSourceLocations(new[] { aliasFile });
             var aliasLedger = new AliasDeclarationTransitions();
             var originalAliasVector = aliasFile.Types.Value;
             aliasFile.Types = Array.Empty<IBirTypeDeclaration>();
@@ -191,23 +194,27 @@ static partial class FBoundStarProjectionErasure
             aliasLedger.AdmitMaterializedTypes(aliasFile, new[] { physicalHost });
             aliasBindings.GetSource(physicalHost);
             var aliasFinal = RewriteLateTypesSource(new[] { aliasFile }, aliasContext, aliasLedger);
-            var aliasDom = aliasFile.ToDom(aliasBindings.ObserveProjection);
-            aliasBindings.BindProjected();
-            aliasValues.BindDomDeclarations(new JsonNode[] { aliasDom }, aliasLedger);
-            Require(aliasValues.LocalDeclaration("RetainedAlias")["typeParams"].AsArray().Count == 1
-                && !ReferenceEquals(aliasValues.LocalDeclaration("RetainedAlias"), aliasDom["types"][0]),
-                "retained logical alias header clock was not exercised before the physical continuation");
-            BindRealizationContinuation(aliasContext, aliasFinal);
-            Require(ReferenceEquals(aliasValues.LocalDeclaration("RetainedAlias"), aliasDom["types"][0])
-                && !aliasValues.LocalDeclaration("RetainedAlias").ContainsKey("typeParams")
+            var aliasCustody = new SourceDeclarationProjection(new[] { aliasFile }, aliasBindings);
+            aliasCustody.SealSourceContinuations();
+            aliasValues.CompleteSourceContinuation(new[] { aliasFile }, aliasLedger, aliasCustody);
+            Require(aliasLedger.TryRetiredLogicalHeader("RetainedAlias", out var logicalHeader)
+                && logicalHeader.TypeParams.Value.Length == 1 && aliasLedger.IsReplacedLogicalOwner(alias)
+                && !ReferenceEquals(alias, physicalHost)
+                && aliasContext.Projection.RequiresOpaqueVariantAlias(new TypeNode.Fqn("RetainedAlias", new TypeNode[] { text })),
+                "retained logical alias header was lost or conflated with the actual physical host");
+            var currentAliasProjection = CarrierProjectionContext.ForCurrentSource(aliasContext, aliasFinal, aliasLedger);
+            Require(ReferenceEquals(aliasFinal.Definitions["RetainedAlias"], physicalHost)
+                && !physicalHost.TypeParams.IsPresent
+                && !currentAliasProjection.RequiresOpaqueVariantAlias(new TypeNode.Fqn("RetainedAlias", new TypeNode[] { text }))
                 && aliasBindings.SourceDefinitions.Count == 0,
-                "late physical alias host was shadowed by its retained logical header or admitted as a source owner");
+                "late physical alias host was shadowed by a retained logical header or admitted as a source owner");
+            CompleteRealization(aliasContext);
+            aliasBindings.CompleteSourceCustody(aliasCustody);
+            aliasCustody.Release();
             aliasLedger.Release();
         }
         finally
         {
-            _valueSlots = savedPolicy; _nativeProofs = savedProofs; _usedCarrierNames = savedNames;
-            _sourceSupertypes = savedGraph; _localMethods = savedMethods; _localDeclarations = savedDeclarations;
             OwnerConstrainedMethodLowering.Reset(references);
         }
         Console.WriteLine("[current physical carrier projection] self-test OK (two clocks, exact births, current-first frames, source facts and native proof continuation)");

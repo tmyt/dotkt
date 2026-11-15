@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -55,7 +54,7 @@ static partial class SuspendColdLowering
             var pending = UncheckedGenericCastReturnErasure.CaptureSource(roots);
             Require(pending.SourceDeclarations.ByIdentity.ContainsKey("read-source"), "fixture did not use the actual unchecked source selector");
             pending.EraseOwnedReturn(pending.SourceDeclarations.ByIdentity["read-source"]);
-            generic.PrepareDomLocations(roots); generic.RefreshPhysicalNativeLocations(roots);
+            generic.PrepareSourceLocations(roots); generic.RefreshPhysicalNativeLocations(roots);
             var bindings = new CurrentDeclarationBindings(roots);
             var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(bindings, references, generic);
             proofs.Add(bindings.GetCapturedSource(method), 0, native);
@@ -76,7 +75,7 @@ static partial class SuspendColdLowering
             "exact same-frame birth filtered owner proofs or shared their nested vectors");
         continuing.Keeper.Body = new IBirStatement[] { new BirExpressionStatement { Expr = copy } };
         // These overlapping reports deliberately share one containing retired
-        // method; the donor must not be separately projected a second time.
+        // method; the donor must have exactly one retired owning occurrence.
         continuing.Transitions.RetireDiscardedSubtree(continuing.Donor);
         continuing.Transitions.RetireMethod(continuing.File, continuing.Owner, continuing.Method);
         var projection = new BirFunctionDeclaration { Name = "read", DeclarationId = "read-source", Static = false,
@@ -89,55 +88,58 @@ static partial class SuspendColdLowering
             continuing.Bindings.GetCapturedSource(continuing.Method))
             && continuing.Proofs.Bounds(continuing.Bindings.GetCapturedSource(projection), 0).Contains(native),
             "physical projection replaced source selection or lost its exact native rows");
-        var root = continuing.File.ToDom(continuing.Transitions.Projection.ObserveProjection);
-        continuing.Transitions.Projection.ProjectRetiredForests();
-        var donorDom = continuing.Transitions.Projection.Get(continuing.Donor);
-        Require(donorDom.Parent != null && continuing.Transitions.Projection.IsRetired(continuing.Donor, donorDom),
+        var continuingFacts = continuing.Unchecked.SourceDeclarations.ByIdentity["read-source"];
+        continuing.Transitions.Projection.SealSourceContinuations();
+        Require(continuing.Transitions.Projection.IsRetired(continuing.Donor)
+            && ReferenceEquals(originalDonor.Source, continuing.Donor),
             "nested retired donor lost its actual containing forest");
-        continuing.Bindings.BindProjected();
-        continuing.Generic.BindDomDeclarations(new[] { root }, declarations: continuing.Transitions.Projection);
-        continuing.Values.BindDomDeclarations(new[] { root }, continuing.Transitions.Projection.RetiredMethods,
-            continuing.Transitions.Projection);
-        var uncheckedIndex = UncheckedGenericCastReturnErasure.BindDomDeclarations(continuing.Unchecked, new[] { root },
-            continuing.Transitions.Projection.RetiredMethods, declarations: continuing.Transitions.Projection);
-        Require(ReferenceEquals(uncheckedIndex.ByIdentity["read-source"].Method,
-            continuing.Transitions.Projection.Get(continuing.Method))
-            && ReferenceEquals(continuing.Bindings.GetPhysical(donorDom), originalDonor),
-            "late buyers selected the new same-ID Task method or a reconstructed donor");
+        continuing.Generic.CompleteSourceContinuation(new[] { continuing.File }, null, continuing.Transitions.Projection);
+        continuing.Values.CompleteSourceContinuation(new[] { continuing.File }, null, continuing.Transitions.Projection);
+        UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(continuing.Unchecked, new[] { continuing.File },
+            null, continuing.Transitions.Projection);
+        Require(continuingFacts.SourceMethod == null && continuingFacts.Return == variable
+            && ReferenceEquals(continuing.Proofs.LocalSourceMethodBinding("read-source"),
+                continuing.Bindings.GetCapturedSource(continuing.Method))
+            && ReferenceEquals(continuing.Bindings.GetCapturedSource(continuing.Donor), originalDonor)
+            && continuing.Transitions.Projection.IsPublished(projection),
+            "late buyers selected the new same-ID Task method or reconstructed a donor");
+        continuing.Bindings.CompleteSourceCustody(continuing.Transitions.Projection);
+        Reject(() => { _ = originalDonor.Source; }, "source binding after terminal completion");
         continuing.Transitions.Release();
 
         var retiredType = Fixture();
         retiredType.Transitions.RetireTypes(retiredType.File, new IBirTypeDeclaration[] { retiredType.Owner });
         retiredType.File.Types = Array.Empty<IBirTypeDeclaration>();
-        var retiredRoot = retiredType.File.ToDom(retiredType.Transitions.Projection.ObserveProjection);
-        retiredType.Transitions.Projection.ProjectRetiredForests();
-        var oldMethod = retiredType.Transitions.Projection.Get(retiredType.Method);
-        Require(oldMethod.Parent != null && retiredType.Transitions.Projection.IsRetired(retiredType.Method, oldMethod),
-            "retired type did not retain its actual member parent");
-        retiredType.Bindings.BindProjected();
-        retiredType.Generic.BindDomDeclarations(new[] { retiredRoot }, declarations: retiredType.Transitions.Projection);
-        retiredType.Values.BindDomDeclarations(new[] { retiredRoot }, retiredType.Transitions.Projection.RetiredMethods,
-            retiredType.Transitions.Projection);
-        var retiredIndex = UncheckedGenericCastReturnErasure.BindDomDeclarations(retiredType.Unchecked, new[] { retiredRoot },
-            retiredType.Transitions.Projection.RetiredMethods, declarations: retiredType.Transitions.Projection);
-        Require(ReferenceEquals(retiredIndex.ByIdentity["read-source"].Method, oldMethod)
-            && retiredType.Generic.IsNativeField(retiredType.Transitions.Projection.Get(retiredType.Owner.Fields.Value[0])),
+        var retiredFacts = retiredType.Unchecked.SourceDeclarations.ByIdentity["read-source"];
+        retiredType.Transitions.Projection.SealSourceContinuations();
+        Require(retiredType.Transitions.Projection.IsRetired(retiredType.Method)
+            && ReferenceEquals(retiredType.Owner.Methods.Value[0], retiredType.Method),
+            "retired type did not retain its actual member ownership");
+        retiredType.Generic.CompleteSourceContinuation(new[] { retiredType.File }, null, retiredType.Transitions.Projection);
+        retiredType.Values.CompleteSourceContinuation(new[] { retiredType.File }, null, retiredType.Transitions.Projection);
+        UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(retiredType.Unchecked, new[] { retiredType.File },
+            null, retiredType.Transitions.Projection);
+        Require(retiredFacts.SourceMethod == null && retiredFacts.Return == variable
+            && retiredType.Generic.IsNativeField(retiredType.Owner.Fields.Value[0])
+            && retiredType.Transitions.Projection.IsRetired(retiredType.Owner.Fields.Value[0]),
             "type retirement lost the original method/native field authority");
+        retiredType.Bindings.CompleteSourceCustody(retiredType.Transitions.Projection);
         retiredType.Transitions.Release();
 
         var stillLive = Fixture();
         stillLive.Transitions.RetireTypes(stillLive.File, new IBirTypeDeclaration[] { stillLive.Owner });
-        Reject(stillLive.Transitions.Projection.ProjectRetiredForests, "retired owner still live");
+        Reject(stillLive.Transitions.Projection.SealSourceContinuations, "retired owner still live");
         var missing = Fixture(); missing.File.Types = Array.Empty<IBirTypeDeclaration>();
-        Reject(missing.Transitions.Projection.ProjectRetiredForests, "unreported owner loss");
+        Reject(missing.Transitions.Projection.SealSourceContinuations, "unreported owner loss");
         var duplicate = Fixture();
         Reject(() => duplicate.Transitions.RetireTypes(duplicate.File, new IBirTypeDeclaration[] { duplicate.Owner, duplicate.Owner }),
             "duplicate retirement");
         var lostCopy = Fixture();
         lostCopy.Owner.Methods = new[] { (BirFunctionDeclaration)lostCopy.Method.DeepClone(), lostCopy.Keeper };
-        _ = lostCopy.File.ToDom(lostCopy.Transitions.Projection.ObserveProjection);
-        lostCopy.Transitions.Projection.ProjectRetiredForests();
-        Reject(lostCopy.Bindings.BindProjected, "unreported same-ID copy replacing a captured declaration");
+        Reject(lostCopy.Transitions.Projection.SealSourceContinuations,
+            "unreported same-ID copy replacing a captured declaration");
+        Require(ReferenceEquals(lostCopy.Bindings.GetCapturedSource(lostCopy.Method).Source, lostCopy.Method),
+            "failed seal consumed its captured source authority");
         var wrongParent = Fixture();
         var foreignOwner = new BirClassDefinition { Name = "OtherOwner", Methods = new[] { projection } };
         wrongParent.File.Types = wrongParent.File.Types.Value.Append(foreignOwner).ToArray();

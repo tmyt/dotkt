@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -99,26 +98,24 @@ sealed partial class ValueRepresentationLowering
         if (!indexed.locals["source-value-method"].Method.HasSource
             || indexed.locals["source-value-method"].Method.Return != new TypeNode.Fqn("kotlin.Long"))
             throw new InvalidOperationException("Value representation source association copied a stale method header");
+        owner.Name = "PhysicalShape";
+        method.Name = "physicalEntry";
         var declarations = FixtureProjection(root);
-        var continuation = root.ToDom(declarations.ObserveProjection);
-        declarations.ProjectRetiredForests();
-        var physicalOwner = continuation["types"][0].AsObject();
-        physicalOwner["name"] = "PhysicalShape";
-        var physicalMethod = physicalOwner["methods"][0].AsObject();
-        physicalMethod["name"] = "physicalEntry";
-        indexed.BindDomDeclarations(new JsonNode[] { continuation }, null, declarations);
-        physicalMethod["ret"] = TypeJson.Fqn("kotlin.Int");
+        declarations.SealSourceContinuations();
+        indexed.CompleteSourceContinuation(new[] { root }, null, declarations);
+        method.Ret = new TypeNode.Fqn("kotlin.Int");
         if (!indexed.localParameters["SourceShape"].SequenceEqual(new[] { "out" })
             || indexed.localParameters.ContainsKey("PhysicalShape") || indexed.localParameters.ContainsKey("AbsentShape")
             || indexed.localParameters.ContainsKey("NullShape") || indexed.localParameters["EmptyShape"].Count != 0
             || indexed.locals["source-value-method"].Owner != "SourceShape"
-            || !ReferenceEquals(indexed.locals["source-value-method"].Method.Dom, physicalMethod)
+            || !ReferenceEquals(indexed.locals["source-value-method"].Method.SourceOccurrence, method)
             || indexed.adapters["source-value-method"] != "Helpers.original"
             || indexed.members["source-value-method"].Slot != "Slots.original"
-            || !ReferenceEquals(indexed.members["source-value-method"].Method.Dom, physicalMethod)
-            || indexed.locals["source-value-method"].Method.HasSource
+            || !ReferenceEquals(indexed.members["source-value-method"].Method.SourceOccurrence, method)
+            || !indexed.locals["source-value-method"].Method.HasSource
             || indexed.locals["source-value-method"].Method.Return != new TypeNode.Fqn("kotlin.Int"))
             throw new InvalidOperationException("Value representation recaptured expanded source facts or detached its continuing physical method");
+        declarations.Release();
         Console.WriteLine("[value source index] self-test OK (parameter presence, initial shape, captured metadata, exact live identity)");
         SourceRetirementSelfTest();
     }
@@ -143,19 +140,18 @@ sealed partial class ValueRepresentationLowering
         values.RetireSourceDeclaration(Method("untracked"));
         retired.Ret = new TypeNode.Fqn("kotlin.Long");
         retiredOwner.Methods = Array.Empty<BirFunctionDeclaration>();
-        var continuing = root.ToDom(declarations.ObserveProjection);
-        declarations.ProjectRetiredForests();
-        var retiredProjection = declarations.RetiredMethods[retired];
-        values.BindDomDeclarations(new JsonNode[] { continuing }, declarations.RetiredMethods, declarations);
-        if (retiredView.HasSource || liveView.HasSource || values.sourceMethods.Count != 0
-            || !ReferenceEquals(liveView.Dom, continuing["types"][1]["methods"][0])
-            || !ReferenceEquals(retiredView.Dom, retiredProjection)
+        declarations.SealSourceContinuations();
+        values.CompleteSourceContinuation(new[] { root }, null, declarations);
+        if (!retiredView.HasSource || !liveView.HasSource || values.sourceMethods.Count != 0
+            || !ReferenceEquals(liveView.SourceOccurrence, live)
+            || !ReferenceEquals(retiredView.SourceOccurrence, retired)
             || retiredView.Return != new TypeNode.Fqn("kotlin.Long")
             || !ReferenceEquals(values.locals["shared-source-id"].Method, liveView))
-            throw new InvalidOperationException("Explicit value declaration retirement lost actual occurrence order or retained source references");
-        retiredView.Dom["ret"] = TypeJson.Fqn("kotlin.Int");
+            throw new InvalidOperationException("Explicit value declaration retirement lost actual occurrence order or continuing source identity");
+        retired.Ret = new TypeNode.Fqn("kotlin.Int");
         if (retiredView.Return != new TypeNode.Fqn("kotlin.Int"))
-            throw new InvalidOperationException("Retired value declaration became a frozen source header after handoff");
+            throw new InvalidOperationException("Retired value declaration became a frozen source header after completion");
+        declarations.Release();
 
         var missingOwner = new BirClassDefinition { Kind = "class", Name = "MissingOwner", Methods = new[] { Method("first") } };
         var missingRoot = new BirFileDeclaration { FileClass = "Missing", Types = new IBirTypeDeclaration[] {
@@ -165,10 +161,12 @@ sealed partial class ValueRepresentationLowering
             new ValueRepresentationSourcePolicy(new[] { missingRoot }, null, false), CaptureSource(new[] { missingRoot }), null);
         var missingDeclarations = FixtureProjection(missingRoot);
         missingOwner.Methods = Array.Empty<BirFunctionDeclaration>();
-        var missingDom = missingRoot.ToDom(missingDeclarations.ObserveProjection);
-        missingDeclarations.ProjectRetiredForests();
         var refused = false;
-        try { missing.BindDomDeclarations(new JsonNode[] { missingDom }, null, missingDeclarations); }
+        try
+        {
+            missingDeclarations.SealSourceContinuations();
+            missing.CompleteSourceContinuation(new[] { missingRoot }, null, missingDeclarations);
+        }
         catch (InvalidOperationException) { refused = true; }
         if (!refused) throw new InvalidOperationException("An unreported missing source occurrence bypassed strict value declaration handoff");
     }

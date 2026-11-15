@@ -733,7 +733,7 @@ sealed partial class TypedCirProjection
         return new CirConstant
         {
             Type = Require(value.Type),
-            Value = ProjectExecutableLiteral(Require(value.Value), Require(value.Type)),
+            Value = ProjectExecutableLiteral(value.Value.IsNull ? new BirLiteral.NullLiteral() : Require(value.Value), Require(value.Type)),
         };
     }
 

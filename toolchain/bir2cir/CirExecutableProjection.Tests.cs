@@ -8,6 +8,7 @@ static partial class CirDeclarationProjection
 {
     public static void SelfTestExecutable()
     {
+        SelfTestTypedNullConstants();
         JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
         var sourceLocal = Local("receiver");
         sourceLocal["sty"] = TypeJson.Fqn("Consumer");
@@ -232,5 +233,58 @@ static partial class CirDeclarationProjection
                 throw new InvalidOperationException("Interop reshaping lost the intermediate result fact before operand planning");
         }
         Console.WriteLine("[CIR executable boundary] self-test OK (scalar widths, source handoffs, exact calls, executable type lowering)");
+    }
+
+    static void SelfTestTypedNullConstants()
+    {
+        static void Need(bool condition, string message)
+        { if (!condition) throw new InvalidOperationException("Typed constant projection: " + message); }
+        static void Reject(Action action)
+        {
+            try { action(); } catch (FormatException) { return; }
+            throw new InvalidOperationException("Typed constant projection accepted a missing required value or type");
+        }
+        var objectType = new TypeNode.Fqn("System.Object");
+        var booleanType = new TypeNode.Fqn("System.Boolean");
+        var integerType = new TypeNode.Fqn("System.Int32");
+        foreach (var referenceBuild in new[] { false, true })
+        {
+            var projection = new TypedCirProjection(new HashSet<string>(),
+                new BirTypeLowering.PhysicalTypeContext(refBuild: referenceBuild));
+            var literal = new BirLiteral.NullLiteral();
+            var presentNull = new BirConstant { Type = objectType, Value = OptionalField<BirLiteral>.Null };
+            var semanticNull = new BirConstant { Type = objectType, Value = literal };
+            // Direct actual records: the old DOM test reader normalizes the
+            // first form into the second and cannot exercise this distinction.
+            foreach (var constant in new[] { presentNull, semanticNull })
+            {
+                var before = constant.Value;
+                Need(projection.ProjectNode(constant) is CirConstant { Value: AttributeArgument.NullValue }
+                    && constant.Value.Equals(before) && constant.Type.Value == objectType
+                    && (before.IsNull ? constant.Value.IsPresent && constant.Value.IsNull
+                        : ReferenceEquals(constant.Value.Value, literal)),
+                    "valid null form was refused or its actual source presence/literal was rewritten");
+            }
+            var falseLiteral = new BirLiteral.BooleanLiteral(false);
+            var zeroLiteral = new BirLiteral.IntegerLiteral(0);
+            var falseConstant = new BirConstant { Type = booleanType, Value = falseLiteral };
+            var zeroConstant = new BirConstant { Type = integerType, Value = zeroLiteral };
+            Need(projection.ProjectNode(falseConstant) is CirConstant { Value: AttributeArgument.BooleanValue { Value: false } }
+                && projection.ProjectNode(zeroConstant) is CirConstant { Value: AttributeArgument.Int32Value { Value: 0 } }
+                && ReferenceEquals(falseConstant.Value.Value, falseLiteral) && ReferenceEquals(zeroConstant.Value.Value, zeroLiteral),
+                "false/zero were treated as missing or their actual semantic literal changed");
+            var nested = new BirValueBlock { Type = objectType, Stmts = Array.Empty<IBirStatement>(),
+                Result = new BirCast { Type = objectType, E = new BirConditional {
+                    Type = objectType, Cond = falseConstant, Then = presentNull, Else = semanticNull,
+                } } };
+            Need(projection.ProjectNode(nested) is CirValueBlock { Result: CirCast { E: CirConditional {
+                Then: CirConstant { Value: AttributeArgument.NullValue },
+                Else: CirConstant { Value: AttributeArgument.NullValue } } } }
+                && presentNull.Value.IsNull && ReferenceEquals(semanticNull.Value.Value, literal),
+                "nested value-block/cast/conditional lost null semantics or mutated owning operands");
+            Reject(() => projection.ProjectNode(new BirConstant { Type = objectType }));
+            Reject(() => projection.ProjectNode(new BirConstant { Value = OptionalField<BirLiteral>.Null }));
+            Reject(() => projection.ProjectNode(new BirConstant { Type = OptionalField<TypeNode>.Null, Value = literal }));
+        }
     }
 }

@@ -84,9 +84,12 @@ static partial class FBoundStarProjectionErasure
             var count = root.Types.Value.Length;
             SynthesizeSource(selected, context);
             Require(root.Types.Value.Length == count && owner.Methods.Value.Length == 2, "synthesis was not idempotent for an attached carrier");
-            _ = root.ToDom(context.Bindings.ObserveProjection);
-            context.Bindings.BindProjected();
-            Require(context.Bindings.GetPhysical(row.Original.Physical) == row.Original, "one frontier lost the original binding");
+            var custody = new SourceDeclarationProjection(new[] { root }, context.Bindings);
+            custody.SealSourceContinuations();
+            custody.RequireOccurrence(method);
+            Require(ReferenceEquals(row.Original.Source, method), "source synthesis lost the original binding");
+            context.Bindings.CompleteSourceCustody(custody);
+            custody.Release();
             context.Declarations.ReleaseSourceRows();
         }
         finally { OwnerConstrainedMethodLowering.Reset(references); }

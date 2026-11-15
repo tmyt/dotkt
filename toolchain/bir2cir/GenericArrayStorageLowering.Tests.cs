@@ -1,82 +1,79 @@
-using System;
-using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class GenericArrayStorageLowering
 {
     static void FreshNamesSelfTest()
     {
-        void Expect(bool condition, string message)
-        {
-            if (!condition) throw new InvalidOperationException("Array fresh names: " + message);
-        }
+        static void Expect(bool condition, string message)
+        { if (!condition) throw new InvalidOperationException("Array fresh names: " + message); }
         var arrayType = new TypeNode.Fqn("System.Array");
         var objectType = new TypeNode.Fqn("System.Object");
-        JsonObject LoopNode(string variable) => new() {
-            ["k"] = "forArray", ["array"] = Local("array", arrayType),
-            ["var"] = variable, ["elem"] = TypeJson.Write(objectType), ["body"] = new JsonArray(),
+        var intType = new TypeNode.Fqn("System.Int32");
+        BirLocal Read(string name, TypeNode type) => new() { Name = name, Sty = type };
+        BirForArray LoopNode(string variable) => new() {
+            Array = Read("array", arrayType), Var = variable, Elem = objectType, Body = Array.Empty<IBirStatement>(),
         };
         var inner = LoopNode("inner");
         var outer = LoopNode("outer");
-        outer["body"].AsArray().Add(inner);
-        var store = new JsonObject {
-            ["k"] = "arraySet", ["array"] = Local("receiverEffect", arrayType),
-            ["index"] = Local("indexEffect", new TypeNode.Fqn("System.Int32")),
-            ["value"] = Local("valueEffect", objectType),
-        };
-        var cast = new JsonObject { ["k"] = "cast", ["e"] = Local("value", objectType) };
-        var file = new JsonObject {
-            ["methods"] = new JsonArray(new JsonObject {
-                ["body"] = new JsonArray(outer, store, cast),
-            }, new JsonObject {
-                // Both declarations and loop variables in a later method must be reserved up front.
-                ["params"] = new JsonArray(new JsonObject { ["name"] = "$arrayStorage$0" }),
-                ["body"] = new JsonArray(new JsonObject { ["name"] = "$arrayIndex$0" },
-                    new JsonObject { ["var"] = "$arrayLength$0" },
-                    new JsonObject { ["name"] = "$arrayValue$0" },
-                    new JsonObject { ["name"] = "$arrayComponent$0" },
-                    new JsonObject { ["name"] = "$arrayCast$0" },
-                    new JsonObject { ["name"] = "$arrayCastType$0" }),
-            }),
-        };
-        var names = new FreshNames(file);
+        outer.Body = new IBirStatement[] { inner };
+        var store = new BirArraySet { Array = Read("receiverEffect", arrayType),
+            Index = Read("indexEffect", intType), Value = Read("valueEffect", objectType) };
+        var cast = new BirCast { Type = new TypeNode.Array(new TypeNode.Star()), E = Read("value", objectType) };
+        var method = new BirFunctionDeclaration { Name = "first", Params = Array.Empty<BirParameter>(),
+            Body = new IBirStatement[] { outer, new BirExpressionStatement { Expr = store }, new BirExpressionStatement { Expr = cast } } };
+        var file = new BirFileDeclaration { Methods = new[] { method, new BirFunctionDeclaration {
+            Name = "later", Params = new[] { new BirParameter { Name = "$arrayStorage$0", Type = arrayType } },
+            // Both declarations and loop variables in a later method are reserved up front.
+            Body = new IBirStatement[] { new BirVariable { Name = "$arrayIndex$0", Type = intType },
+                LoopNode("$arrayLength$0"), new BirVariable { Name = "$arrayValue$0", Type = objectType },
+                new BirVariable { Name = "$arrayComponent$0", Type = objectType },
+                new BirVariable { Name = "$arrayCast$0", Type = objectType },
+                new BirVariable { Name = "$arrayCastType$0", Type = objectType } },
+        } } };
+        var names = new TypedGenericArrayStorageLowering.FreshNames(file);
         var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
-        Expect(LowerOperation(inner, refs, names) && LowerOperation(outer, refs, names), "nested loops not lowered");
-        Expect(Text(outer["body"]?[0]?["name"]) == "$arrayStorage$2"
-            && Text(outer["body"]?[2]?["body"]?[1]?["body"]?[0]?["name"]) == "$arrayStorage$1",
-            "post-order loop allocations collided or changed order");
-        Expect(LowerOperation(store, refs, names), "store not lowered");
-        var statements = store["stmts"].AsArray();
-        Expect(Text(statements[0]?["name"]) == "$arrayStorage$3"
-            && Text(statements[1]?["name"]) == "$arrayIndex$3"
-            && Text(statements[2]?["name"]) == "$arrayValue$1"
-            && Text(statements[3]?["name"]) == "$arrayComponent$1", "store names collided");
-        Expect(statements.Take(3).Select(node => Text(node?["init"]?["name"]))
+        var loweredInner = (BirBlock)TypedGenericArrayStorageLowering.LowerOperation(inner, refs, names);
+        outer.Body = new IBirStatement[] { loweredInner };
+        var loweredOuter = (BirBlock)TypedGenericArrayStorageLowering.LowerOperation(outer, refs, names);
+        method.Body.Value[0] = loweredOuter;
+        Expect(((BirVariable)loweredOuter.Body.Value[0]).Name.Value == "$arrayStorage$2"
+            && ReferenceEquals(((BirFor)loweredOuter.Body.Value[2]).Body.Value[1], loweredInner)
+            && ((BirVariable)loweredInner.Body.Value[0]).Name.Value == "$arrayStorage$1",
+            "post-order loop allocations collided or changed actual body ownership");
+        var loweredStore = (BirValueBlock)TypedGenericArrayStorageLowering.LowerOperation(store, refs, names);
+        ((BirExpressionStatement)method.Body.Value[1]).Expr = loweredStore;
+        var statements = loweredStore.Stmts.Value;
+        Expect(((BirVariable)statements[0]).Name.Value == "$arrayStorage$3"
+            && ((BirVariable)statements[1]).Name.Value == "$arrayIndex$3"
+            && ((BirVariable)statements[2]).Name.Value == "$arrayValue$1"
+            && ((BirVariable)statements[3]).Name.Value == "$arrayComponent$1", "store names collided");
+        Expect(statements.Take(3).Cast<BirVariable>().Select(node => ((BirLocal)node.Init.Value).Name.Value)
             .SequenceEqual(new[] { "receiverEffect", "indexEffect", "valueEffect" }),
             "store receiver/index/value evaluation order changed");
-        LowerTypeOperation(cast, new TypeNode.Array(new TypeNode.Star()), null, null, refs,
-            type => type, _ => false, names);
-        Expect(Text(cast["stmts"]?[0]?["name"]) == "$arrayCast$1"
-            && Text(cast["stmts"]?[2]?["branches"]?[0]?["body"]?[0]?["name"]) == "$arrayCastType$1",
+        var loweredCast = (BirValueBlock)LowerTypeOperation(cast, cast.Type.Value, null, null, refs,
+            type => type, _ => false, names, (_, _) => null);
+        ((BirExpressionStatement)method.Body.Value[2]).Expr = loweredCast;
+        Expect(((BirVariable)loweredCast.Stmts.Value[0]).Name.Value == "$arrayCast$1"
+            && ((BirVariable)((BirIf)loweredCast.Stmts.Value[2]).Branches.Value[0].Body.Value[0]).Name.Value == "$arrayCastType$1",
             "cast names collided with later declarations");
 
-        // A newly synthesized subtree must be reserved before attachment/rewrite. The allocator does not
-        // discover arbitrary mutations, nor depend on Parent links while operating on detached nodes.
+        // Destination reservations do not rely on attachment or Parent links.
         var detached = LoopNode("$arrayStorage$4");
         names.Reserve(detached);
-        Expect(LowerOperation(detached, refs, names)
-            && Text(detached["body"]?[0]?["name"]) == "$arrayStorage$5", "detached rewrite lost destination names");
-        outer.Clear();
+        var loweredDetached = (BirBlock)TypedGenericArrayStorageLowering.LowerOperation(detached, refs, names);
+        Expect(((BirVariable)loweredDetached.Body.Value[0]).Name.Value == "$arrayStorage$5",
+            "detached rewrite lost destination names");
+        method.Body.Value[0] = new BirBlock { Body = Array.Empty<IBirStatement>() };
         Expect(names.Next("$arrayStorage$") == "$arrayStorage$6", "removed/generated reservations were reused");
-        var secondFile = new FreshNames(new JsonObject());
+        var secondFile = new TypedGenericArrayStorageLowering.FreshNames(new BirFileDeclaration());
         Expect(secondFile.Next("$arrayStorage$") == "$arrayStorage$0", "allocator leaked across files");
-        var lazyFile = new JsonObject();
-        var lazyNames = new FreshNames(lazyFile);
-        lazyFile["name"] = "$arrayStorage$0";
+        var lazyFile = new BirFileDeclaration();
+        var lazyNames = new TypedGenericArrayStorageLowering.FreshNames(lazyFile);
+        lazyFile.Fields = new[] { new BirFieldDeclaration { Name = "$arrayStorage$0", Type = arrayType } };
         Expect(lazyNames.Next("$arrayStorage$") == "$arrayStorage$1", "file was not seeded at first allocation");
-        var nextPhase = new FreshNames(file);
+        var nextPhase = new TypedGenericArrayStorageLowering.FreshNames(file);
         Expect(nextPhase.Next("$arrayStorage$") == "$arrayStorage$1", "new phase retained removed names");
         EntryPointFreshNamesSelfTest(refs);
         TypedGenericArrayStorageLowering.SelfTest(refs);
@@ -100,41 +97,26 @@ static partial class GenericArrayStorageLowering
         foreach (var physical in new[] { false, true })
         {
             var sources = new[] { File("FirstArrayFile", "$arrayIndex$0"), File("SecondArrayFile", "$arrayStorage$1") };
-            var values = GenericRepresentationPolicy.CreateSource(sources, refs.Aliases, refs);
-            values.PrepareDomLocations(sources);
-            JsonObject first, second;
-            FBoundStarProjectionErasure.CarrierRealizationContext realization = null;
             if (physical)
-            {
-                first = sources[0].ToDom();
-                second = sources[1].ToDom();
-            }
-            else
-            {
-                var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(sources, values, out var preparation);
-                var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, values);
-                var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, values);
-                realization = new(surface, FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs),
-                    refs, surface.Demand.ReservedNames);
-                FBoundStarProjectionErasure.RealizeCarriersSource(sources, realization,
-                    Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null, (_, _) => { });
-                first = sources[0].ToDom(declarations.ObserveProjection);
-                second = sources[1].ToDom(declarations.ObserveProjection);
-                declarations.BindProjected();
-            }
-            var roots = new JsonNode[] { first, second };
-            values.BindDomDeclarations(roots);
-            if (physical)
-                PhysicalValueCoercion.ApplyFixtureForSelfTest(roots,
+                TypedPhysicalValueCoercion.ApplyAll(sources,
                     () => throw new InvalidOperationException("Unexpected array Unit conversion"),
                     type => type.Name == "System.Int32", references: refs);
             else
-                FBoundStarProjectionErasure.BindRealizationContinuation(realization);
-            var firstBody = first["methods"]?[0]?["body"]?[0]?["body"];
-            var secondBody = second["methods"]?[0]?["body"]?[0]?["body"];
-            if (Text(firstBody?[0]?["name"]) != "$arrayStorage$0"
-                || Text(firstBody?[2]?["var"]) != "$arrayIndex$1"
-                || Text(secondBody?[0]?["name"]) != "$arrayStorage$0")
+            {
+                var values = GenericRepresentationPolicy.CreateSource(sources, refs.Aliases, refs);
+                var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(sources, values, out var preparation);
+                var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, values);
+                var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, values);
+                var realization = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
+                    FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs, surface.Demand.ReservedNames);
+                FBoundStarProjectionErasure.RealizeCarriersSource(sources, realization,
+                    Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null, (_, _) => { });
+            }
+            var firstBody = ((BirBlock)sources[0].Methods.Value[0].Body.Value[0]).Body.Value;
+            var secondBody = ((BirBlock)sources[1].Methods.Value[0].Body.Value[0]).Body.Value;
+            if (((BirVariable)firstBody[0]).Name.Value != "$arrayStorage$0"
+                || ((BirFor)firstBody[2]).Var.Value != "$arrayIndex$1"
+                || ((BirVariable)secondBody[0]).Name.Value != "$arrayStorage$0")
                 throw new InvalidOperationException("Array allocator entrypoint lost file lifetime or later declarations: "
                     + (physical ? "physical coercion" : "FBound"));
         }

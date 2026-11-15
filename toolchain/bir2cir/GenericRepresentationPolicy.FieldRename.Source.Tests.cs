@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -55,7 +54,7 @@ sealed partial class GenericRepresentationPolicy
             // Select an ordinary supported byref field argument, not a ClrField
             // annotation combined artificially with a Kotlin Property row.
             var policy = CreateSource(roots, new Dictionary<string, string>(), null);
-            policy.PrepareDomLocations(roots);
+            policy.PrepareSourceLocations(roots);
             Need(policy._sourceNativeStorage.SetEquals(new BirGraphValue[] { fields[0] })
                 && !fields[1]._nativeLocation.IsPresent && !fields[2]._nativeLocation.IsPresent,
                 "source native selection did not follow the actual early address use");
@@ -111,31 +110,23 @@ sealed partial class GenericRepresentationPolicy
             "renamed physical uses lost native storage or an ordinary sibling acquired it");
 
         var roots = new[] { state.File };
-        var bindings = new CurrentDeclarationBindings(roots);
-        var projection = new SourceDeclarationProjection(roots, bindings);
-        var continuation = state.File.ToDom(projection.ObserveProjection);
-        projection.ProjectRetiredForests();
-        bindings.BindProjected();
-        var earlyPhysical = projection.Get(state.Early);
-        var latePhysical = projection.Get(state.Late);
-        var plainPhysical = projection.Get(state.Plain);
-        policy.BindDomDeclarations(new JsonNode[] { continuation }, declarations: projection);
-        Need(ReferenceEquals(continuation["types"][0]["fields"][0], earlyPhysical)
-            && ReferenceEquals(continuation["types"][0]["fields"][1], latePhysical)
-            && policy._nativeFields.Count == 2 && policy._nativeFields.Contains(earlyPhysical)
-            && policy._nativeFields.Contains(latePhysical) && !policy.IsNativeField(plainPhysical)
+        var projection = SourcePolicyCustody(state.File);
+        policy.CompleteSourceContinuation(roots, null, projection);
+        Need(ReferenceEquals(state.Owner.Fields.Value[0], state.Early)
+            && ReferenceEquals(state.Owner.Fields.Value[1], state.Late)
+            && policy.IsNativeField(state.Early) && policy.IsNativeField(state.Late) && !policy.IsNativeField(state.Plain)
             && policy._pendingNativeOrigins == null && policy._pendingNativePhysicalBindings == null
             && policy._refreshedNativeLocations == null && originalStorage.Count == 0,
-            "single frontier lost exact native declaration identity, selected plain storage, or retained source staging");
+            "typed completion lost exact native declaration identity, selected plain storage, or retained source staging");
         projection.Release();
 
         var unreported = Prepared();
-        Reject(() => unreported.Policy.BindDomDeclarations(new JsonNode[] { unreported.File.ToDom() }),
+        Reject(() => unreported.Policy.CompleteSourceContinuation(new[] { unreported.File }, null, SourcePolicyCustody(unreported.File)),
             "an actual native backing rename without its producer report");
         var replaced = Prepared();
         replaced.Policy.ApplyFieldRenames(replaced.Reports);
         replaced.Owner.Fields = new[] { (BirFieldDeclaration)replaced.Early.DeepClone(), replaced.Late, replaced.Plain };
-        Reject(() => replaced.Policy.BindDomDeclarations(new JsonNode[] { replaced.File.ToDom() }),
+        Reject(() => replaced.Policy.CompleteSourceContinuation(new[] { replaced.File }, null, SourcePolicyCustody(replaced.File)),
             "an equal replacement of the exact selected field after its reported rename");
         Console.WriteLine("[native backing rename] self-test OK (actual allocation/byref selection, same source authorities, physical-only refresh, exact reported keys/frontier and strict negative ownership)");
     }

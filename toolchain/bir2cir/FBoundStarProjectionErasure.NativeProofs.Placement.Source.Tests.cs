@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -42,22 +41,16 @@ static partial class FBoundStarProjectionErasure
             "source queries did not read the live own constraint at its captured-prefix offset");
         own.Constraints = ownConstraints;
 
-        var physicalRoot = root.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
-        var physical = physicalRoot["types"][1].AsObject();
-        var capturedConstraints = physical["capturedTypeParams"][0]["constraints"].AsArray();
-        var declaredConstraints = physical["typeParams"][0]["constraints"].AsArray();
-        Require(ReferenceEquals(original.Physical, physical)
-            && proofs.IsPhysicalConstraint(capturedConstraints, capturedBound)
-            && !proofs.IsPhysicalConstraint(capturedConstraints, ownBound)
-            && proofs.IsPhysicalConstraint(declaredConstraints, ownBound)
-            && !proofs.IsPhysicalConstraint(declaredConstraints, capturedBound)
-            && !proofs.Bounds(physical, 0).Any() && !proofs.Bounds(physical, 1).Any(),
-            "one frontier rebound proof rows, shifted captures, or failed to offset own declaration-array queries");
-        var retained = declaredConstraints.DeepClone();
-        physical["typeParams"][0]["constraints"] = new JsonArray();
-        Require(proofs.Bounds(physical, 1).SequenceEqual(new[] { ownBound }) && !proofs.Bounds(physical, 0).Any(),
-            "physical retained-bound suppression used the own-only rather than flattened CLR frame");
-        physical["typeParams"][0]["constraints"] = retained;
+        Require(ReferenceEquals(original.Source, inner)
+            && proofs.IsPhysicalConstraint(original, 0, capturedBound)
+            && !proofs.IsPhysicalConstraint(original, 0, ownBound)
+            && proofs.IsPhysicalConstraint(original, 1, ownBound)
+            && !proofs.IsPhysicalConstraint(original, 1, capturedBound),
+            "current physical queries rebound proof rows or failed to offset the own declaration frame");
+        var ledger = new SourceDeclarationProjection(roots, bindings);
+        ledger.SealSourceContinuations();
+        bindings.CompleteSourceCustody(ledger);
+        Require(bindings.IsBound, "physical placement did not complete its exact source custody");
+        ledger.Release();
     }
 }

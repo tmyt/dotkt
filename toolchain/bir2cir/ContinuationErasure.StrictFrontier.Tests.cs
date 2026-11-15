@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -9,6 +8,11 @@ static partial class ContinuationErasure
     {
         static void Need(bool condition, string message)
         { if (!condition) throw new InvalidOperationException("Continuation strict frontier: " + message); }
+        static void Reject(Action action)
+        {
+            try { action(); } catch (InvalidOperationException) { return; }
+            throw new InvalidOperationException("Continuation strict custody accepted an unreported occurrence transition");
+        }
         static OptionalField<IBirExpression> E(IBirExpression value) => OptionalField<IBirExpression>.Of(value);
         var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
         var ownerVariable = new TypeNode.Tv("type", 0);
@@ -64,7 +68,7 @@ static partial class ContinuationErasure
         Need(uncheckedIndex.ByIdentity.Count == 1 && ReferenceEquals(uncheckedIndex.ByIdentity[uncheckedMethod.DeclarationId.Value].SourceMethod, uncheckedMethod),
             "fixture did not select its exact original unchecked declaration");
         UncheckedGenericCastReturnErasure.Apply(file, pending);
-        generic.PrepareDomLocations(roots);
+        generic.PrepareSourceLocations(roots);
         generic.RefreshPhysicalNativeLocations(roots);
         var bindings = new CurrentDeclarationBindings(roots);
         var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(bindings, references, generic);
@@ -74,6 +78,8 @@ static partial class ContinuationErasure
         var ownerBinding = bindings.GetCapturedSource(owner);
         var signatureBinding = bindings.GetCapturedSource(signature);
         var constructorBinding = bindings.GetCapturedSource(constructor);
+        var transitions = new SuspendColdLowering.SourcePipelineTransitions(roots, bindings, proofs, generic, null,
+            values.RetireSourceDeclaration, Array.Empty<BirFunctionDeclaration>());
         var originalSignature = signatures.GetSourceSignature(signatureBinding);
         var ownerMethods = owner.Methods.Value;
         var fields = owner.Fields.Value;
@@ -133,38 +139,55 @@ static partial class ContinuationErasure
             && uncheckedIndex.ByIdentity[uncheckedMethod.DeclarationId.Value].Return == methodVariable,
             "physical type rewriting lost source signatures, ownership, unchecked guards or exact native authority");
 
-        var projection = new SourceDeclarationProjection(roots, bindings);
-        var dom = file.ToDom(projection.ObserveProjection);
-        static bool HasOuter(JsonNode node) => node switch {
-            JsonObject obj => obj.ContainsKey("outer") || obj.Any(pair => HasOuter(pair.Value)),
-            JsonArray array => array.Any(HasOuter),
-            _ => false,
-        };
-        Need(!HasOuter(dom), "an exact outer role escaped the single source frontier before any DOM cleanup");
-        projection.ProjectRetiredForests();
-        bindings.BindProjected();
-        generic.BindDomDeclarations(new JsonNode[] { dom }, declarations: projection);
-        values.BindDomDeclarations(new JsonNode[] { dom }, projection.RetiredMethods, projection);
-        var continuedUnchecked = UncheckedGenericCastReturnErasure.BindDomDeclarations(pending, new[] { dom },
-            projection.RetiredMethods, declarations: projection);
-        var continuedSignatures = signatures.BindPhysical();
-        var physicalField = projection.Get(native);
-        var physicalMethod = projection.Get(signature);
-        Need(ReferenceEquals(ownerBinding.Physical, projection.Get(owner))
-            && ReferenceEquals(signatureBinding.Physical, physicalMethod)
-            && ReferenceEquals(constructorBinding.Physical, projection.Get(constructor))
-            && ReferenceEquals(dom["types"][0]["fields"][0], physicalField)
-            && TypeJson.Read(physicalField["type"]) == native.Type.Value
-            && TypeJson.Read(physicalMethod["params"][0]["type"]) == parameter.Type.Value
-            && TypeJson.Read(physicalMethod["ret"]) == signature.Ret.Value
-            && generic.IsNativeField(physicalField) && !generic.IsNativeField(projection.Get(ordinary))
-            && ReferenceEquals(continuedSignatures[physicalMethod], originalSignature)
+        var projection = transitions.Projection;
+        // The SAME backend's method-vector callback participates in sealing;
+        // equal IDs/names or an unchanged count cannot authorize replacements.
+        owner.Methods.Value[0] = (BirFunctionDeclaration)address.DeepClone();
+        Reject(projection.SealSourceContinuations);
+        owner.Methods.Value[0] = address;
+        (owner.Methods.Value[0], owner.Methods.Value[1]) = (owner.Methods.Value[1], owner.Methods.Value[0]);
+        Reject(projection.SealSourceContinuations);
+        (owner.Methods.Value[0], owner.Methods.Value[1]) = (owner.Methods.Value[1], owner.Methods.Value[0]);
+        var currentTypes = file.Types.Value;
+        var emitted = new BirClassDefinition { Name = "ContinuationPhysicalHelper", Kind = "class", Generated = true };
+        file.Types = currentTypes.Append(emitted).ToArray();
+        Reject(projection.SealSourceContinuations);
+        transitions.PublishTypes(file, new IBirTypeDeclaration[] { emitted });
+        var appendedBinding = bindings.GetCapturedSource(emitted);
+        projection.SealSourceContinuations();
+        Reject(() => projection.RequireOccurrence(native.DeepClone()));
+        Reject(() => projection.RequireOccurrence(signature.DeepClone()));
+        Need(!outer.Outer.IsPresent && ReferenceEquals(ownerBinding.Source, owner)
+            && ReferenceEquals(signatureBinding.Source, signature)
+            && ReferenceEquals(constructorBinding.Source, constructor)
+            && ReferenceEquals(appendedBinding.Source, emitted)
+            && ReferenceEquals(owner.Fields.Value[0], native)
+            && TypeNodeDataEquality.Equal(native.Type.Value, expectedNativeType)
+            && TypeNodeDataEquality.Equal(parameter.Type.Value, expectedNativeType)
+            && generic.IsNativeField(native) && !generic.IsNativeField(ordinary)
+            && ReferenceEquals(signatures.GetSourceSignature(signatureBinding), originalSignature)
             && proofs.ExactTypeArgument(owner.Name.Value, 0)
-            && ReferenceEquals(proofs.LocalMethod(signature.DeclarationId.Value), physicalMethod)
-            && ReferenceEquals(continuedUnchecked.ByIdentity[uncheckedMethod.DeclarationId.Value].Method, projection.Get(uncheckedMethod))
-            && continuedUnchecked.ByIdentity[uncheckedMethod.DeclarationId.Value].Return == methodVariable,
-            "the single observed frontier lost current physical types or the original exact signature/native/unchecked authorities");
-        projection.Release();
-        Console.WriteLine("[continuation strict frontier] self-test OK (actual byref field, current signatures, exact outer consumption, original catalogs and one observed handoff)");
+            && ReferenceEquals(proofs.LocalSourceMethod(signature.DeclarationId.Value), signature),
+            "typed seal lost physical types or exact original signature/native/proof authorities");
+        generic.CompleteSourceContinuation(roots, null, projection);
+        values.CompleteSourceContinuation(roots, null, projection);
+        UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(pending, roots, null, projection);
+        Need(uncheckedIndex.ByIdentity[uncheckedMethod.DeclarationId.Value].SourceMethod == null
+            && uncheckedIndex.ByIdentity[uncheckedMethod.DeclarationId.Value].Return == methodVariable
+            && ReferenceEquals(signature.Params.Value, parameters) && ReferenceEquals(owner.Fields.Value, fields),
+            "terminal continuation changed original unchecked facts or current owned fields/signatures");
+        signatures.CompleteSourceLifetime();
+        Reject(() => signatures.GetSourceSignature(signatureBinding));
+        bindings.CompleteSourceCustody(projection);
+        Reject(() => { _ = ownerBinding.Source; });
+        Reject(() => { _ = signatureBinding.Source; });
+        Reject(() => { _ = constructorBinding.Source; });
+        Reject(() => { _ = appendedBinding.Source; });
+        Reject(() => bindings.CompleteSourceCustody(projection));
+        Need(ReferenceEquals(file.Types.Value[0], owner) && ReferenceEquals(owner.Methods.Value[2], signature)
+            && ReferenceEquals(file.Types.Value.Last(), emitted), "custody completion replaced the actual physical graph");
+        transitions.Release();
+        Reject(() => projection.RequireOccurrence(signature));
+        Console.WriteLine("[continuation strict frontier] self-test OK (actual byref field, physical signatures, outer consumption, original catalogs, strict backend vectors and terminal custody)");
     }
 }

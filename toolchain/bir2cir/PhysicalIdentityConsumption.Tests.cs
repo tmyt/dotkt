@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -18,9 +17,9 @@ static class PhysicalIdentityConsumptionTests
         foreach (var validator in new[] { "value", "unchecked" })
         foreach (var transport in new[] { "physical", "metadata" })
         foreach (var change in transport == "physical"
-            ? new[] { "reported", "missing", "uncleared", "replaced", "projected-id" }
-            : new[] { "reported", "missing", "uncleared", "replaced", "projected-id",
-                "metadata-target-replaced", "metadata-projection-replaced", "metadata-id-altered" })
+            ? new[] { "reported", "missing", "uncleared", "replaced", "continuing-id" }
+            : new[] { "reported", "missing", "uncleared", "replaced", "continuing-id",
+                "metadata-target-replaced", "metadata-target-replaced-after-seal", "metadata-id-altered" })
         {
             var variable = new TypeNode.Tv("method", 0);
             var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
@@ -85,37 +84,32 @@ static class PhysicalIdentityConsumptionTests
                 method.RoundtripDeclarationIdentity = (BirRoundtripDeclarationIdentity)metadata.DeepClone();
             if (change == "metadata-id-altered") metadata.DeclarationId = "invented";
             if (change == "replaced") owner.Methods = new[] { (BirFunctionDeclaration)method.DeepClone() };
-            var dom = file.ToDom(projection.ObserveProjection);
-            projection.ProjectRetiredForests();
-            if (change == "projected-id") projection.Get(method)[DeclarationIdentityBinding.Key] = "invented";
-            if (change == "metadata-projection-replaced")
-                projection.Get(method)["roundtripDeclarationIdentity"] =
-                    projection.Get(method)["roundtripDeclarationIdentity"].DeepClone();
-            void Bind()
+            void Complete()
             {
-                if (validator == "value") values.BindDomDeclarations(new JsonNode[] { dom }, projection.RetiredMethods, projection);
+                projection.SealSourceContinuations();
+                if (change == "continuing-id") method.DeclarationId = "invented";
+                if (change == "metadata-target-replaced-after-seal")
+                    method.RoundtripDeclarationIdentity = (BirRoundtripDeclarationIdentity)metadata.DeepClone();
+                if (validator == "value") values.CompleteSourceContinuation(roots, null, projection);
                 else
                 {
-                    var continued = UncheckedGenericCastReturnErasure.BindDomDeclarations(pending,
-                        new[] { dom }, projection.RetiredMethods, declarations: projection);
-                    Need(ReferenceEquals(continued.ByIdentity["shared-selection"], original)
-                        && ReferenceEquals(original.Method, projection.Get(method)) && original.Return == variable,
-                        "the original unchecked selection row or return was recaptured");
+                    UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(pending, roots, null, projection);
+                    Need(original.SourceMethod == null && original.Return == variable,
+                        "terminal completion recaptured the original unchecked return or kept ended source staging");
                 }
-            }
-            if (change != "reported") Reject(Bind);
-            else
-            {
-                bindings.BindProjected();
                 Need(ReferenceEquals(selectionKeys[(owner.Name.Value, "shared-selection")], originalBinding)
-                    && ReferenceEquals(originalBinding.Physical, projection.Get(method))
-                    && !originalBinding.Physical.ContainsKey(DeclarationIdentityBinding.Key)
+                    && ReferenceEquals(originalBinding.Source, method)
+                    && !method.DeclarationId.IsPresent
                     && sibling.DeclarationId.Value == "shared-selection"
-                    && projection.WasIdentityConsumed(helper, "physical-helper"),
-                    "consumption replaced original keys, a sibling identity or an uncaptured helper occurrence");
-                Bind();
+                    && projection.WasIdentityConsumed(helper, "physical-helper")
+                    && (metadata == null || ReferenceEquals(method.RoundtripDeclarationIdentity.Value, metadata)),
+                    "consumption replaced original keys, sibling identity, metadata target or helper occurrence");
+                bindings.CompleteSourceCustody(projection);
+                Reject(() => { _ = originalBinding.Source; });
                 projection.Release();
             }
+            if (change != "reported") Reject(Complete);
+            else Complete();
         }
         Console.WriteLine("[physical identity consumption] self-test OK (exact allocation/metadata custody, source keys, sibling counts, helpers and strict value/unchecked handoff)");
     }

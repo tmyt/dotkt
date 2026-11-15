@@ -61,13 +61,15 @@ static partial class ErasedElementValues
             && guard.Type.Value == new TypeNode.Nullable(new TypeNode.Fqn("Bound"))
             && arrayRead.Elem.Value == variable && !read.ErasedValueVariableFact.IsPresent,
             "late storage repair replayed array mode, cloned an operand, lost selected calls or changed origin ownership");
-        var physical = root.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
-        Require(originalNested.IsPhysical && originalDonor.IsPhysical && originalReceiver.IsPhysical
-            && ReferenceEquals(bindings.GetPhysical(originalNested.Physical), originalNested)
-            && ReferenceEquals(bindings.GetPhysical(originalDonor.Physical), originalDonor)
-            && physical["types"][0]["methods"][0]["body"].AsArray().Count == body.Length,
-            "late wrappers did not preserve exact registered nested declarations through one frontier");
+        var ledger = new SourceDeclarationProjection(new[] { root }, bindings);
+        ledger.SealSourceContinuations();
+        ledger.RequireOccurrence(nested); ledger.RequireOccurrence(donor); ledger.RequireOccurrence(receiverDeclaration);
+        Require(ReferenceEquals(originalNested.Source, nested) && ReferenceEquals(originalDonor.Source, donor)
+            && ReferenceEquals(originalReceiver.Source, receiverDeclaration)
+            && ReferenceEquals(owner.Methods.Value[0], method) && method.Body.Value.Length == body.Length,
+            "late wrappers did not preserve exact registered nested declarations through terminal custody");
+        bindings.CompleteSourceCustody(ledger);
+        ledger.Release();
 
         var suspendRead = new BirLocal { Name = "captured", Sty = variable };
         var suspendVariable = new BirVariable { Name = "copy", Type = variable, Init = suspendRead };

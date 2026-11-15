@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -56,50 +55,50 @@ static partial class FBoundStarProjectionErasure
             && preparation.GenericOwners.All(row => row.Needed == (row.Name != "Private"))
             && preparation.LocalClrAliases["Alias"] == "System.Collections.Generic.List`1",
             "eligibility, visibility, aliases, declaration occurrence or root association was reselected");
-        var premature = false;
-        try { preparation.BindDefinitions(); } catch (InvalidOperationException) { premature = true; }
-        Require(premature && ownerShape.Node == null && ownerShape.Methods == null,
-            "a DOM capability was fabricated before the owning frontier");
-
-        // Physical proof demand may add constraints to the same declaration;
-        // it does not replace this captured membership or supertype snapshot.
+        // Physical proof demand changes live declarations, not the original
+        // selection keys, aliases, eligibility or scalar supertype snapshot.
+        var ledger = new SourceDeclarationProjection(new[] { first, second }, bindings);
         owner.TypeParams.Value[0].Constraints = new TypeNode[] { new TypeNode.Fqn("System.IDisposable") };
-        var firstDom = first.ToDom(bindings.ObserveProjection);
-        var secondDom = second.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
-        var liveOwner = ownerBinding.Physical;
-        liveOwner["name"] = "PhysicalOwner";
-        liveOwner["base"] = TypeJson.Fqn("PhysicalBase");
-        readBinding.Physical["name"] = "physicalRead";
-        readBinding.Physical[DeclarationIdentityBinding.Key] = "physical-read";
-        var liveAlias = bindings.SourceDefinitions["Alias"].Physical;
-        liveAlias["attrs"][0]["args"][0]["value"] = "Physical.Alias.Target";
-        var definitions = preparation.BindDefinitions();
-        var methods = preparation.BindLocalMethods();
-        var declarations = preparation.BindLocalDeclarations();
-        var boundHierarchy = preparation.BindSourceSupertypes();
-        Require(ReferenceEquals(definitions["Owner"], liveOwner) && !definitions.ContainsKey("PhysicalOwner")
-            && ReferenceEquals(definitions["Shared"], firstDom["types"][8])
-            && ReferenceEquals(methods["Owner\0read"].Single(), readBinding.Physical)
-            && ReferenceEquals(methods["First\0top"].Single(), firstDom["methods"][0])
-            && methods["Shared\0invoke"].Count == 2
-            && ReferenceEquals(declarations[("Owner", "owner-read")], readBinding.Physical)
-            && ReferenceEquals(declarations[("First", "facade-top")], firstDom["methods"][0])
+        RoundtripMetadata.PrepareMetadata(first, false, ledger.ReportMetadataIdentityTransfer);
+        RoundtripMetadata.PrepareMetadata(second, false, ledger.ReportMetadataIdentityTransfer);
+        owner.Name = "PhysicalOwner";
+        owner.Base = new TypeNode.Fqn("PhysicalBase");
+        read.Name = "physicalRead";
+        ((BirConstant)alias.Attrs.Value[0].Args.Value[0]).Value = new BirLiteral.TextLiteral("Physical.Alias.Target");
+        var late = Method("late");
+        owner.Methods = owner.Methods.Value.Append(late).ToArray();
+        bindings.GetSource(late); // Actual producer birth, not original membership.
+        ledger.PublishMethods(first, owner, new[] { late });
+        ledger.SealSourceContinuations();
+        Require(ReferenceEquals(bindings.SourceDefinitions["Owner"].Source, owner)
+            && !bindings.SourceDefinitions.ContainsKey("PhysicalOwner")
+            && ReferenceEquals(bindings.SourceDefinitions["Shared"].Source, shared)
+            && ReferenceEquals(bindings.SourceLocalMethods["Owner\0read"].Single().Source, read)
+            && ReferenceEquals(bindings.SourceLocalMethods["First\0top"].Single().Source, top)
+            && bindings.SourceLocalMethods["Shared\0invoke"].Count == 2
+            && ReferenceEquals(bindings.SourceLocalDeclarations[("Owner", "owner-read")].Source, read)
+            && ReferenceEquals(bindings.SourceLocalDeclarations[("First", "facade-top")].Source, top)
+            && ledger.WasIdentityConsumed(read, "owner-read")
             && preparation.LocalClrAliases["Alias"] == "System.Collections.Generic.List`1",
-            "DOM continuation used names, identities, aliases or layout to recollect captured facts");
-        Require(ReferenceEquals(boundHierarchy, hierarchy) && ReferenceEquals(boundHierarchy["Owner"], ownerShape)
-            && ReferenceEquals(ownerShape.Node, liveOwner) && ReferenceEquals(ownerShape.Methods, liveOwner["methods"])
+            "continuation used current names, consumed IDs, aliases or layout to recollect captured facts");
+        Require(ReferenceEquals(preparation.SourceSupertypes, hierarchy)
+            && ReferenceEquals(hierarchy["Owner"], ownerShape)
             && ownerShape.Name == "Owner" && ownerShape.Arity == 1
             && ownerShape.Base == new TypeNode.Fqn("Parent", new TypeNode[] { new TypeNode.Tv("type", 0) })
             && ownerShape.Interfaces is [TypeNode.Fqn { Name: "Contract", Args: [TypeNode.Tv { Scope: "type", I: 0 }] }]
-            && ReferenceEquals(boundHierarchy["Shared"].Node, secondDom["types"][0])
-            && ReferenceEquals(preparation.GenericOwners[0].Definition.Physical, liveOwner)
-            && ReferenceEquals(preparation.GenericOwners[0].Root.Physical, firstDom),
-            "hierarchy source shapes, occurrence winner or actual mutable capabilities were replaced");
-        ((JsonArray)liveOwner["methods"]).Add(new JsonObject { ["name"] = "late" });
-        Require(ownerShape.Methods.Count == 2 && methods["Owner\0read"].Count == 1
-            && !preparation.BindLocalMethods().ContainsKey("Owner\0late"),
-            "live method capability was frozen or captured method membership was recollected");
+            && ReferenceEquals(preparation.GenericOwners[0].Definition.Source, owner)
+            && ReferenceEquals(preparation.GenericOwners[0].Root.Source, first),
+            "hierarchy scalar shapes, original owner identity or root membership was replaced");
+        Require(owner.Methods.Value.Length == 2 && ReferenceEquals(ownerBinding.Source, owner)
+            && ((BirFunctionDeclaration)readBinding.Source).Name.Value == "physicalRead"
+            && bindings.SourceLocalMethods["Owner\0read"].Count == 1
+            && !bindings.SourceLocalMethods.ContainsKey("Owner\0late") && ledger.IsPublished(late),
+            "current method facts froze or appended membership was recaptured");
+        bindings.CompleteSourceCustody(ledger);
+        var released = false;
+        try { _ = readBinding.Source; } catch (InvalidOperationException) { released = true; }
+        Require(released, "completed custody kept its declaration capability");
+        ledger.Release();
         Console.WriteLine("[current FBound declarations] self-test OK (source selection, occurrence handoff, hierarchy clock, method indexes)");
     }
 }

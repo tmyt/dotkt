@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -102,49 +101,50 @@ static partial class FBoundStarProjectionErasure
         Require(projection.Rewrite(projectedMarker) == new TypeNode.Fqn(surface.Demand.Owners["Marker"].ErasedName)
             && ConstructionHasHiddenWitnessSource(requiredConstruction, constructionState),
             "carrier construction discarded its demanded native witness");
-        var projected = root.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
-        Require(ReferenceEquals(ctorBinding.Physical, projected["types"][1]["ctors"][0])
-            && ReferenceEquals(donorBinding.Physical, projected["methods"][2]["body"][0]["expr"]),
-            "ID-less constructor/donor binding used an inferred declaration rather than the observed actual record");
-        Reject(() => { _ = donorBinding.Source; });
-        var sourceMethod = projected["methods"][0].AsObject();
-        var pureMethod = projected["methods"][1].AsObject();
-        var owner = projected["types"][1].AsObject();
+        Require(ReferenceEquals(ctorBinding.Source, declaration.Ctors.Value[0])
+            && ReferenceEquals(donorBinding.Source, ((BirExpressionStatement)root.Methods.Value[2].Body.Value[0]).Expr.Value),
+            "ID-less constructor/donor binding used an inferred rather than the actual continuing record");
+        var sourceMethod = construct;
+        var pureMethod = pure;
+        var owner = declaration;
+        var ownerBinding = bindings.GetCapturedSource(owner);
         var requiredBound = new TypeNode.Fqn("Marker", new TypeNode[] { ownerTag });
-        plan.Add(bindings.GetPhysical(owner), 1, requiredBound);
-        var copiedOwner = owner.DeepClone().AsObject();
-        Require(plan.IsPhysicalConstraint(copiedOwner["typeParams"][1]["constraints"].AsArray(), requiredBound)
-            && !plan.IsPhysicalConstraint(copiedOwner["typeParams"][1]["constraints"].AsArray(), new TypeNode.Fqn("Unrequired"))
-            && !plan.IsPhysicalConstraint(new JsonArray(TypeJson.Write(requiredBound)), requiredBound),
-            "late cloned constraint lost its declaration/index ownership");
+        plan.Add(ownerBinding, 1, requiredBound);
+        Require(plan.IsPhysicalConstraint(ownerBinding, 1, requiredBound)
+            && !plan.IsPhysicalConstraint(ownerBinding, 1, new TypeNode.Fqn("Unrequired")),
+            "late constraint lost its exact declaration/index ownership");
+        Reject(() => bindings.GetCapturedSource(owner.DeepClone()));
         var methodProof = new TypeNode.Fqn("Marker", new TypeNode[] { methodTag });
         var ownerMethodProof = new TypeNode.Fqn("Marker", new TypeNode[] { ownerTag });
-        plan.Add(bindings.GetPhysical(sourceMethod), 1, methodProof);
-        plan.Add(bindings.GetPhysical(sourceMethod), 1, ownerMethodProof);
+        plan.Add(bindings.GetCapturedSource(sourceMethod), 1, methodProof);
+        plan.Add(bindings.GetCapturedSource(sourceMethod), 1, ownerMethodProof);
         var physicalMethod = new BirFunctionDeclaration { Name = "physical", DeclarationId = "authored-physical-slot",
-            TypeParams = construct.TypeParams.Value.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray() }.ToDom();
-        plan.TransferIndependentMethodProofs(sourceMethod, physicalMethod);
+            TypeParams = construct.TypeParams.Value.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray() };
         var privateBody = new BirFunctionDeclaration { Name = "private", DeclarationId = "separate-private-storage-body",
-            TypeParams = pure.TypeParams.Value.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray() }.ToDom();
+            TypeParams = pure.TypeParams.Value.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray() };
+        owner.Methods = owner.Methods.OrEmpty().Concat(new[] { physicalMethod, privateBody }).ToArray();
+        plan.TransferIndependentMethodProofs(sourceMethod, physicalMethod);
         plan.TransferIndependentMethodProofs(pureMethod, privateBody);
-        Require(plan.IsPhysicalConstraint(physicalMethod["typeParams"][1]["constraints"].AsArray(), methodProof)
-            && plan.IsPhysicalConstraint(physicalMethod.DeepClone()["typeParams"][1]["constraints"].AsArray(), methodProof)
-            && !plan.IsPhysicalConstraint(privateBody["typeParams"][1]["constraints"].AsArray(), methodProof)
-            && !plan.IsPhysicalConstraint(physicalMethod["typeParams"][1]["constraints"].AsArray(), ownerMethodProof)
-            && ReferenceEquals(plan.LocalMethod("authored-physical-slot"), physicalMethod),
+        Require(plan.IsPhysicalConstraint(physicalMethod, 1, methodProof)
+            && !plan.IsPhysicalConstraint(privateBody, 1, methodProof)
+            && !plan.IsPhysicalConstraint(physicalMethod, 1, ownerMethodProof)
+            && ReferenceEquals(plan.LocalSourceMethod("authored-physical-slot"), physicalMethod),
             "late physical proof transfer changed an independent private body or method identity");
+        Reject(() => plan.IsPhysicalConstraint((BirFunctionDeclaration)physicalMethod.DeepClone(), 1, methodProof));
         var late = new BirClassDefinition { Name = "LateLocal", Kind = "class",
             TypeParams = new[] { Parameter("Tag"), Parameter("T", new TypeNode.Fqn("System.Collections.Generic.IEnumerable`1",
                 new TypeNode[] { ownerTag })), Parameter("Storage", disposable) },
-            KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(frame) }.ToDom();
-        plan.RegisterPhysicalLocalDefinitions(new Dictionary<string, JsonObject> { ["LateLocal"] = late });
+            KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(frame) };
+        root.Types = root.Types.Value.Append(late).ToArray();
+        bindings.GetSource(late); // The actual attached producer admits this occurrence.
+        plan.RegisterCurrentSourceDefinitions(CurrentPhysicalTypeView.Capture(new[] { root }, bindings));
         Require(plan.ExactTypeArgument("LateLocal", 1) && !plan.ExactTypeArgument("LateLocal", 2),
             "late physical declaration rows were projected again or borrowed a same-named source declaration");
-        var before = sourceMethod["typeParams"][1]["constraints"].DeepClone();
-        sourceMethod["typeParams"][1]["constraints"] = new JsonArray(TypeJson.Write(disposable));
-        Require(!plan.Bounds(sourceMethod, 1).Contains(disposable), "late query froze captured constraints instead of reading the live declaration");
-        sourceMethod["typeParams"][1]["constraints"] = before;
+        var before = sourceMethod.TypeParams.Value[1].Constraints;
+        sourceMethod.TypeParams.Value[1].Constraints = new TypeNode[] { disposable };
+        Require(!plan.Bounds(bindings.GetCapturedSource(sourceMethod), 1).Contains(disposable),
+            "late query froze captured constraints instead of reading the live declaration");
+        sourceMethod.TypeParams.Value[1].Constraints = before;
 
         // Carrier-surface preparation above legitimately authored methods and
         // source-bound facts. A fresh proof plan must leave THAT current graph
@@ -152,10 +152,16 @@ static partial class FBoundStarProjectionErasure
         var currentBeforePlanning = root.DeepClone();
         var missingBindings = PrepareCurrentDeclarations(new[] { root }, values);
         _ = PrepareNativeProofs(missingBindings, refs, values);
-        root.ToDom((source, actual) => { if (!ReferenceEquals(source, donor)) missingBindings.ObserveProjection(source, actual); });
-        Reject(missingBindings.BindProjected);
+        var ledger = new SourceDeclarationProjection(new[] { root }, missingBindings);
+        var donorStatement = (BirExpressionStatement)root.Methods.Value[2].Body.Value[0];
+        donorStatement.Expr = (BirNewSuspendLambda)donor.DeepClone();
+        ledger.SealSourceContinuations();
+        Reject(() => missingBindings.CompleteSourceCustody(ledger));
+        Require(ReferenceEquals(missingBindings.GetCapturedSource(donor).Source, donor),
+            "failed custody released an original ID-less donor binding");
+        donorStatement.Expr = donor;
         Require(root.StructurallyEquals(currentBeforePlanning), "proof planning mutated the continuing typed graph");
         NativeProofPlacementSourceSelfTest();
-        Console.WriteLine("[owning native proof plan] self-test OK (source/physical constraints, fixed-point demand, native witnesses, ID-less handoff, live late rows and independent transfers)");
+        Console.WriteLine("[owning native proof plan] self-test OK (source/physical constraints, fixed-point demand, native witnesses, exact ID-less custody, live late rows and independent transfers)");
     }
 }

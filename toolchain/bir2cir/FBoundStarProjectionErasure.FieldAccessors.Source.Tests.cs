@@ -106,12 +106,17 @@ static partial class FBoundStarProjectionErasure
         Require(AddFieldAccessorsSource("Owner", 1, definition, bindings).Count == 0
             && ReferenceEquals(definition.Methods.Value, methodsAfter), "second preparation appended competing accessors");
 
-        // Validate each generated declaration's actual one-way projection.
-        var projected = root.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
+        // The appended ID-less records keep their actual captured occurrence.
+        var ledger = new SourceDeclarationProjection(new[] { root }, bindings);
+        ledger.SealSourceContinuations();
         for (var index = 0; index < appended.Count; index++)
-            Require(ReferenceEquals(bindings.GetPhysical(projected["types"][0]["methods"][originals.Length + index].AsObject()).Physical,
-                projected["types"][0]["methods"][originals.Length + index]), "generated ID-less method was not captured for its actual projection");
+        {
+            ledger.RequireOccurrence(appended[index]);
+            Require(ReferenceEquals(bindings.GetCapturedSource(appended[index]).Source,
+                definition.Methods.Value[originals.Length + index]), "generated ID-less method lost its actual occurrence");
+        }
+        bindings.CompleteSourceCustody(ledger);
+        ledger.Release();
 
         var absent = new BirClassDefinition { Name = "Absent", Kind = "class" };
         var empty = new BirClassDefinition { Name = "Empty", Kind = "class", Fields = Array.Empty<BirFieldDeclaration>() };

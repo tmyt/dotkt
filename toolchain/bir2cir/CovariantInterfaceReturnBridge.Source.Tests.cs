@@ -75,16 +75,25 @@ static partial class CovariantInterfaceReturnBridge
             && !bridged.Contains(new((BirFunctionDeclaration)implementation.DeepClone(), bridged.Single().Descriptor)),
             "bridged-slot identity matched a copied implementation rather than its actual occurrence");
         var sourceBinding = bindings.GetCapturedSource(implementation);
+        var descriptorBinding = bindings.GetSource(descriptor);
         pending.Complete();
-        var physical = file.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
-        Require(ReferenceEquals(sourceBinding.Physical, physical["types"][0]["methods"][0])
+        var ledger = new SourceDeclarationProjection(roots, bindings);
+        ledger.SealSourceContinuations();
+        ledger.RequireOccurrence(implementation); ledger.RequireOccurrence(descriptor);
+        Require(ReferenceEquals(sourceBinding.Source, owner.Methods.Value[0])
+            && ReferenceEquals(descriptorBinding.Source, generated.ClrInterfaceImpls.Value[0])
             && originalParameters[implementation].Single() == methodVariable,
-            "single-frontier handoff lost exact original rows or the actual implementation occurrence");
+            "terminal custody lost exact original rows or the actual implementation/descriptor occurrence");
+        bindings.CompleteSourceCustody(ledger);
+        var released = false;
+        try { _ = sourceBinding.Source; } catch (InvalidOperationException) { released = true; }
+        Require(released && ReferenceEquals(bridged.Single().Implementation, implementation),
+            "custody retained its source capability or changed the actual bridged-slot handle");
+        ledger.Release();
 
         PropertyAndInterfaceSourceSelfTest(refs, isValue, broad, narrow);
         ReferencedAndSuspendSourceSelfTest(refs, isValue, broad, narrow);
-        Console.WriteLine("[owning covariant interface bridge] self-test OK (exact source identity, frames, virtual forwarding, property/DIM, referenced slots, suspend and one frontier)");
+        Console.WriteLine("[owning covariant interface bridge] self-test OK (exact source identity, frames, virtual forwarding, property/DIM, referenced slots, suspend and terminal custody)");
     }
 
     static void PropertyAndInterfaceSourceSelfTest(ReferenceMetadataIndex refs, ValueTypeOracle isValue, TypeNode broad, TypeNode narrow)

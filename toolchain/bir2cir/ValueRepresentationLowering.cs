@@ -249,9 +249,10 @@ sealed partial class ValueRepresentationLowering
             Params = Array.Empty<TypeNode>(), Ret = new TypeNode.Fqn("Union") } };
         sourceMethod.ClrBaseImpls = new[] { (BirMethodImpl)sourceMethod.ClrInterfaceImpls.Value[0].DeepClone() };
         policy.RecordSourceTypes(source);
-        root = source.ToDom(declarations.ObserveProjection);
-        declarations.ProjectRetiredForests();
-        policy.BindDomDeclarations(new[] { root }, declarations.RetiredMethods, declarations);
+        declarations.SealSourceContinuations();
+        policy.CompleteSourceContinuation(new[] { source }, null, declarations);
+        // Terminal inspection only; custody completed on the actual records.
+        root = source.ToDom();
         var method = root["methods"].AsArray().OfType<JsonObject>().Single(method => Text(method["name"]) == "use");
         if (root["types"][2]["methods"].AsArray().OfType<JsonObject>().Count() != 1
             || !Bool(root["types"][2]["methods"][0]["generated"]))
@@ -279,6 +280,7 @@ sealed partial class ValueRepresentationLowering
             || Text(bridge["body"][0]["value"][DeclarationIdentityBinding.Key]) != "child-convert"
             || Text(bridge["clrInterfaceImpls"][0]["member"]) != "convert")
             throw new InvalidOperationException("Nominal slots lost exact override/member bindings");
+        declarations.Release();
         var referenceSource = ReadFixture(referenceRoot);
         var referencePolicy = CreateSource(new[] { referenceSource }, null, true,
             new ValueRepresentationSourcePolicy(new[] { referenceSource }, null, true), CaptureSource(new[] { referenceSource }), null);
@@ -362,9 +364,9 @@ sealed partial class ValueRepresentationLowering
         var result = CreateSource(new[] { source }, null, referenceBuild,
             new ValueRepresentationSourcePolicy(new[] { source }, null, referenceBuild), CaptureSource(new[] { source }), null);
         var declarations = FixtureProjection(source);
-        var physical = source.ToDom(declarations.ObserveProjection);
-        declarations.ProjectRetiredForests();
-        result.BindDomDeclarations(new[] { physical }, null, declarations);
+        declarations.SealSourceContinuations();
+        result.CompleteSourceContinuation(new[] { source }, null, declarations);
+        declarations.Release();
         return result;
     }
 
@@ -395,17 +397,20 @@ sealed partial class ValueRepresentationLowering
             Name = "forwarder", DeclarationId = "new-physical-only", Generated = true,
             Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.String"),
         };
-        source.Methods = source.Methods.Value.Append(forwarder).ToArray();
-        declarations.PublishMethods(source, null, new[] { forwarder });
-        var root = source.ToDom(declarations.ObserveProjection);
-        declarations.ProjectRetiredForests();
-        indexed.BindDomDeclarations(new[] { root }, null, declarations);
-        var method = root["methods"][0].AsObject();
-        method["ret"] = TypeJson.Fqn("kotlin.Int");
+        var repeatedIdentity = new BirFunctionDeclaration { Name = "physicalTwin", DeclarationId = "existing-generated",
+            Generated = true, Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.String") };
+        source.Methods = source.Methods.Value.Concat(new[] { forwarder, repeatedIdentity }).ToArray();
+        declarations.PublishMethods(source, null, new[] { forwarder, repeatedIdentity });
+        declarations.SealSourceContinuations();
+        indexed.CompleteSourceContinuation(new[] { source }, null, declarations);
+        var method = source.Methods.Value[0];
+        method.Ret = new TypeNode.Fqn("kotlin.Int");
         if (!indexed.locals.ContainsKey("existing-generated") || indexed.locals.ContainsKey("new-physical-only")
-            || !ReferenceEquals(indexed.locals["existing-generated"].Method.Dom, method)
+            || !ReferenceEquals(indexed.locals["existing-generated"].Method.SourceOccurrence, method)
+            || ReferenceEquals(indexed.locals["existing-generated"].Method.SourceOccurrence, repeatedIdentity)
             || indexed.locals["existing-generated"].Method.Return is not TypeNode.Fqn { Name: "kotlin.Int" })
             throw new InvalidOperationException("Source membership lost preexisting generated declarations or live representation signatures");
+        declarations.Release();
         SourceIndexSelfTest();
     }
 }

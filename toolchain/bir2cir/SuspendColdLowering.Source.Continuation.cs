@@ -31,6 +31,11 @@ static partial class SuspendColdLowering
                 foreach (var owner in file.Types.OrEmpty()) Record(file, owner, owner.Methods.OrEmpty());
             }
             foreach (var declaration in earlierRetiredDeclarations) Projection.RetireForest(declaration);
+            Projection.RegisterMethodVectorValidation(() => {
+                foreach (var row in methodVectors.Values)
+                    if (!CurrentMethods(row.File, row.Owner).SequenceEqual(row.Continuing, ReferenceEqualityComparer.Instance))
+                        throw Mismatch();
+            });
             // Alias lowering already selected these exact fields. They have one
             // projection alongside any later retired containing forest.
             if (aliases != null)
