@@ -82,6 +82,7 @@ static partial class KotlinPropertyAccessors
     {
         void Walk(BirGraphValue node)
         {
+            if (node is IBirExecutablePayload) return;
             var (methods, properties) = node switch {
                 BirFileDeclaration file => (file.Methods.OrEmpty(), file.Properties.OrEmpty()),
                 IBirTypeDeclaration type => (type.Methods.OrEmpty(), type.Properties.OrEmpty()),
@@ -91,7 +92,9 @@ static partial class KotlinPropertyAccessors
                 if (TryIdentity(method, out var sourceName, out var kind) && method.Name.OrDefault() == sourceName)
                     SetPhysicalName(method, PhysicalName(sourceName, kind));
             foreach (var property in properties) AllocateProperty(property, methods, stripIdentity: false);
-            node.VisitChildren(Walk);
+            node.VisitOwnChildSlots((_, role, slot) => {
+                if (role != BirGenericFrameRole.FrozenSourceFact) Walk(slot.Value);
+            });
         }
         foreach (var root in roots) Walk(root);
     }

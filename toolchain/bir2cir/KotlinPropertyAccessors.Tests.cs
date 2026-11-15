@@ -39,5 +39,27 @@ static partial class KotlinPropertyAccessors
         var parameter = new BirParameter { Type = physical, FunctionSignatureType = function };
         if (FunctionSignatureIdentity.SignatureType(parameter) is not TypeNode.Mod { Req: false })
             throw new InvalidOperationException("Property signature lost its exact function discriminator");
+
+        // This same allocator runs again after physical bridge/suspend births.
+        // Allocate the actual appended declaration without replaying call binding
+        // or removing an unrepresentable generic Property row prematurely.
+        var lateGetter = new BirFunctionDeclaration { Name = "late", PropertyName = "late", PropertyAccessor = "get",
+            PropertyAssociation = "late-p", Params = Array.Empty<BirParameter>(), Ret = physical };
+        var lateProperty = new BirPropertyDeclaration { Name = "late", PropertyAssociation = "late-p", KotlinAccessors = new[] { "get" }, Type = physical };
+        var untouchedCall = new BirCallStatic { Owner = new TypeNode.Fqn("PropertyTests"), Method = "late", Prop = "get" };
+        lateGetter.Body = new IBirStatement[] { new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of(untouchedCall) } };
+        var saved = new byte[] { 1, 2, 3 }; lateGetter.InlineBir = saved;
+        root.Methods = root.Methods.Value.Append(lateGetter).ToArray();
+        root.Properties = root.Properties.Value.Append(lateProperty).ToArray();
+        var methods = root.Methods.Value; var properties = root.Properties.Value;
+        AllocateDeclarationsAndProperties(new[] { root });
+        AllocateDeclarationsAndProperties(new[] { root });
+        if (!ReferenceEquals(root.Methods.Value, methods) || !ReferenceEquals(root.Properties.Value, properties)
+            || !ReferenceEquals(root.Methods.Value[^1], lateGetter) || !ReferenceEquals(root.Properties.Value[^1], lateProperty)
+            || lateGetter.Name.Value != PhysicalName("late", "get") || lateProperty.Get.Value != lateGetter.Name.Value
+            || !lateProperty.Set.IsNull || lateProperty.SetSig.IsPresent || !lateProperty.KotlinAccessors.HasValue
+            || lateProperty.PropertyAssociation.Value != "late-p" || untouchedCall.Method.Value != "late" || untouchedCall.Prop.Value != "get"
+            || !ReferenceEquals(lateGetter.InlineBir.Value, saved) || nested.Properties.Value.Length != 1)
+            throw new InvalidOperationException("Late property declaration allocation changed graph ownership, call binding or descriptor lifetime");
     }
 }

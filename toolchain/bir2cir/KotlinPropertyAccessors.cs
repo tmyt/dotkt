@@ -124,16 +124,10 @@ static partial class KotlinPropertyAccessors
         declaration.Remove(AssociationKey);
     }
 
-    // Late closure/slot synthesis still authors declarations in the remaining DOM phase.
-    public static void AllocateDeclarationsAndProperties(IEnumerable<JsonNode> roots)
-    {
-        foreach (var root in roots) Walk(root, allocateCalls: false, null, null);
-    }
-
     public static void AllocateAll(JsonNode root, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
             IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> localAccessors) =>
-        Walk(root, allocateCalls: true, refs, localAccessors, stripPropertyIdentity: false);
+        Walk(root, refs, localAccessors, stripPropertyIdentity: false);
 
     // #395 may rename an accessor only after CLR type lowering exposes its real MethodDef collision set. Keep #397's
     // exact association alive until that allocation is complete, then rebuild the Property descriptor from the
@@ -348,7 +342,7 @@ static partial class KotlinPropertyAccessors
                 ". Assign distinct @get:ClrName values; automatic hash suffixes are not used");
     }
 
-    static void Walk(JsonNode node, bool allocateCalls, ReferenceMetadataIndex refs,
+    static void Walk(JsonNode node, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
             IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> localAccessors,
         bool stripPropertyIdentity = false)
@@ -356,7 +350,7 @@ static partial class KotlinPropertyAccessors
         if (node is JsonObject obj)
         {
             var propertyAccess = Str(obj["prop"]);
-            if (allocateCalls && Str(obj["k"]) is "callStatic" or "callInstance" or "constrainedCall"
+            if (Str(obj["k"]) is "callStatic" or "callInstance" or "constrainedCall"
                 && propertyAccess is "get" or "set"
                 && Str(obj["method"]) is string propertyName)
             {
@@ -422,17 +416,16 @@ static partial class KotlinPropertyAccessors
                 foreach (var property in properties.OfType<JsonObject>())
                     if (!AllocateProperty(property, ownerMethods, stripPropertyIdentity))
                         unrepresentable.Add(property);
-                if (allocateCalls)
-                    foreach (var property in unrepresentable)
-                        properties.Remove(property);
+                foreach (var property in unrepresentable)
+                    properties.Remove(property);
             }
 
             foreach (var child in obj.Select(pair => pair.Value).ToArray())
-                if (child != null) Walk(child, allocateCalls, refs, localAccessors, stripPropertyIdentity);
+                if (child != null) Walk(child, refs, localAccessors, stripPropertyIdentity);
         }
         else if (node is JsonArray array)
             foreach (var child in array.ToArray())
-                if (child != null) Walk(child, allocateCalls, refs, localAccessors, stripPropertyIdentity);
+                if (child != null) Walk(child, refs, localAccessors, stripPropertyIdentity);
     }
 
     // Returns whether this semantic Kotlin property has a representable CLR Property signature. A MethodDef may own
