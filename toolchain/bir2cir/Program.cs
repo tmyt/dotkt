@@ -107,6 +107,9 @@ static class Bir2Cir
                 ClrMemberResolution.SourceLocalConstructorsSelfTest();
                 ClrMemberResolution.PhysicalLocalDelegateTargetsSourceSelfTest();
                 ClrMemberResolution.SourceInheritedExternalCallsSelfTest();
+                ClrMemberResolution.NativeCallsSourceSelfTest();
+                ClrMemberResolution.NativeStorageSourceSelfTest();
+                ClrMemberResolution.NativeTemplatesSourceSelfTest();
                 ClrMemberResolution.TypedGenericParameterFactsSelfTest();
                 BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
@@ -1244,20 +1247,8 @@ sealed class Pipeline
         // declaration edges are complete on owning BIR before the frontier.
 
         var capturedInvocations = module.Preparation.CapturedInvocations;
-        // PHASE 3B — metadata, exact external identities, and validation over the now-stable module graph.
+        // PHASE 3B — final native binding and validation of the stable physical graph.
         bool runtimeRepresentationTypes = false;
-        foreach (var (lowered, outputName) in loweredRoots)
-        {
-            // Metadata obligations and the exact suspend scalar were transferred
-            // on owning BIR. The remaining CLR operation resolver consumes this
-            // final physical graph without regranting later declarations.
-            // W1-S2 (#46): resolve every clrStatic/clrInstance/newClr against the ref.dll MLC. Internal
-            // `resolvedMemberParams` carries matching inputs between bir2cir passes; Apply consumes it into the scalar
-            // memberRef (+ `dispatch` on clrInstance). ilemit is a pure linker. Runs LAST — on
-            // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
-            // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
-            ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
-        }
 
         var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
             root["assemblyAttrs"] is JsonArray { Count: > 0 });
@@ -1267,6 +1258,10 @@ sealed class Pipeline
         var physicalRoots = loweredRoots.Select(file =>
             (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
+        // Pure physical re-read precedes the same final native resolver. Resolve
+        // every file's operands before declaration binding or CGI can add edits.
+        foreach (var root in physicalDocuments)
+            ClrMemberResolution.Apply(root, refs, emittedLocalTypes);
         // Resolve declaration operands on the continuing physical records before
         // invocation adaptation can append methods. The ordinary operation walk
         // has already bound its own call sites; it does not consume these edits.
